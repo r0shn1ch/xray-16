@@ -29,11 +29,17 @@ void CRT::create(LPCSTR Name, u32 w, u32 h, D3DFORMAT f, u32 SampleCount /*= 1*/
     dwWidth = w;
     dwHeight = h;
     fmt = f;
+#if defined(XR_PLATFORM_ANDROID)
+    // GLES 3.0 does not expose the desktop multisample texture API used by
+    // this renderer.  Keep the first Android bring-up path deterministic and
+    // let the renderer run without MSAA until an ES resolve path is added.
+    SampleCount = 1;
+#endif
     sampleCount = SampleCount;
 
     // Get caps
     GLint max_width, max_height;
-#ifdef XR_PLATFORM_APPLE
+#if defined(XR_PLATFORM_ANDROID) || defined(XR_PLATFORM_APPLE)
     // https://developer.apple.com/library/archive/documentation/GraphicsImaging/Conceptual/OpenGL-MacProgGuide/opengl_offscreen/opengl_offscreen.html
     CHK_GL(glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_width));
     max_height = max_width;

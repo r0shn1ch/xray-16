@@ -224,14 +224,26 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
         sh_name.append(option);
     };
 
+#if defined(XR_PLATFORM_ANDROID)
+    // The Android bring-up renderer is OpenGL ES 3.0.  Desktop GLSL 4.10
+    // and ARB program pipelines are not legal in an ES shader compiler.
+    options.add("#version 300 es");
+    options.add("precision highp float;");
+    options.add("precision highp int;");
+#else
     options.add("#version 410");
     options.add("#extension GL_ARB_separate_shader_objects : enable");
+#endif
 
 #ifdef DEBUG
+#if !defined(XR_PLATFORM_ANDROID)
     options.add("#pragma optimize (off)");
+#endif
     sh_name.append(0u);
 #else
+#if !defined(XR_PLATFORM_ANDROID)
     options.add("#pragma optimize (on)");
+#endif
     sh_name.append(1u);
 #endif
 

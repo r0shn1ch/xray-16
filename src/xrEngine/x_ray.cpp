@@ -14,6 +14,8 @@
 #include "xrCore/Threading/TaskManager.hpp"
 #include "xrNetServer/NET_AuthCheck.h"
 
+#include <fstream>
+
 #include "IGame_Persistent.h"
 #include "LightAnimLibrary.h"
 #include "XR_IOConsole.h"
@@ -205,6 +207,8 @@ constexpr pcstr FRAME_MARK_APPLICATION_RUN = "Application run";
 
 CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array<RendererModule*, 2>& modules)
 {
+    m_headless_smoke = commandLine && strstr(commandLine, "-headless-smoke");
+
     TracySetProgramName("OpenXRay");
     Threading::SetCurrentThreadName("Primary thread");
     FrameMarkStart(FRAME_MARK_APPLICATION_STARTUP);
@@ -215,10 +219,39 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
     xrDebug::Initialize(commandLine);
     {
         ZoneScopedN("SDL_Init");
-        u32 flags = SDL_INIT_VIDEO;
-        if (!strstr(commandLine, "-no_gamepad"))
+        // The smoke path intentionally exercises the native core without
+        // requiring a display, EGL context, game data or a sound backend.
+        u32 flags = m_headless_smoke ? SDL_INIT_TIMER | SDL_INIT_EVENTS : SDL_INIT_VIDEO;
+        if (!m_headless_smoke && !strstr(commandLine, "-no_gamepad"))
             flags |= SDL_INIT_GAMECONTROLLER;
         R_ASSERT3(SDL_Init(flags) == 0, "Unable to initialize SDL", SDL_GetError());
+    }
+
+    if (m_headless_smoke)
+    {
+        // This is a real engine bootstrap: SDL, xrCore, CPU feature probing,
+        // task scheduler and the platform filesystem locator are initialized.
+        // Renderer, input, sound, scripts and game modules are deliberately
+        // skipped so the check is deterministic and requires no proprietary
+        // game files.
+        m_headless_root = std::filesystem::temp_directory_path() /
+            ("openxray-headless-smoke-" + std::to_string(SDL_GetTicks()));
+        std::filesystem::create_directories(m_headless_root);
+        {
+            std::ofstream marker(m_headless_root / "openxray_headless_smoke.marker");
+            marker << "OpenXRay headless smoke\n";
+        }
+
+        Core.Initialize("OpenXRay", commandLine, false);
+        FS._initialize(CLocatorAPI::flTargetFolderOnly, m_headless_root.string().c_str(), nullptr);
+
+        const auto marker = m_headless_root / "openxray_headless_smoke.marker";
+        R_ASSERT2(std::filesystem::exists(marker), "headless smoke marker is missing from the native filesystem");
+        R_ASSERT2(FS.get_path("$target_folder$") != nullptr, "headless smoke target folder is missing");
+
+        string_path marker_path;
+        FS.update_path(marker_path, "$target_folder$", "openxray_headless_smoke.marker", false);
+        return;
     }
 
 #ifdef XR_PLATFORM_WINDOWS
@@ -314,6 +347,17 @@ CApplication::~CApplication()
 {
     FrameMarkStart(FRAME_MARK_APPLICATION_SHUTDOWN);
 
+    if (m_headless_smoke)
+    {
+        Core._destroy();
+        if (!m_headless_root.empty())
+            std::filesystem::remove_all(m_headless_root);
+        SDL_Quit();
+        xrDebug::Finalize();
+        FrameMarkEnd(FRAME_MARK_APPLICATION_SHUTDOWN);
+        return;
+    }
+
     if (g_pGamePersistent)
         g_pGamePersistent->OnAppEnd();
 
@@ -366,6 +410,12 @@ CApplication::~CApplication()
 
 int CApplication::Run()
 {
+    if (m_headless_smoke)
+    {
+        Log("[headless-smoke] SDL/Core bootstrap completed");
+        return 0;
+    }
+
     HideSplash();
     Device.Run();
 

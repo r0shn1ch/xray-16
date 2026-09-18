@@ -135,10 +135,20 @@ endif()
 
 set(CCOPTIONS "${CCOPT};${XCFLAGS}")
 
+if (ANDROID)
+    # CMake adds these flags to normal compile rules, but this architecture
+    # probe invokes the compiler directly. Keep the probe on the Android ABI
+    # instead of inspecting the host compiler target.
+    set(LUAJIT_TARGET_FLAGS
+        "--target=${CMAKE_C_COMPILER_TARGET}"
+        "--sysroot=${CMAKE_SYSROOT}"
+    )
+endif()
+
 target_compile_options(xrLuaJIT PRIVATE ${CCOPTIONS})
 
 execute_process(
-    COMMAND ${CMAKE_C_COMPILER} ${CCOPTIONS} -E lj_arch.h -dM
+    COMMAND ${CMAKE_C_COMPILER} ${LUAJIT_TARGET_FLAGS} ${CCOPTIONS} -E lj_arch.h -dM
     WORKING_DIRECTORY "${LUAJIT_DIR}"
     OUTPUT_VARIABLE TESTARCH_OUTPUT
     ERROR_VARIABLE TESTARCH_ERROR
@@ -306,8 +316,22 @@ if (TARGET_LJARCH STREQUAL "ppc")
     endif()
 endif()
 
-set(HOST_ACFLAGS "${CMAKE_C_FLAGS} ${CCOPTIONS} ${TARGET_ARCH}")
-set(HOST_ALDFLAGS "${CMAKE_C_FLAGS}")
+# minilua/buildvm run on the build machine. Do not pass Android target flags
+# (for example -mthumb) to these host-only helper projects.
+set(HOST_ACFLAGS "${TARGET_ARCH}")
+set(HOST_ALDFLAGS "")
+
+if (ANDROID AND CMAKE_SIZEOF_VOID_P EQUAL 4 AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+    # LuaJIT's buildvm validates that its host pointer size matches the
+    # target ABI. Build the helper tools as i386 binaries for armeabi-v7a.
+    string(APPEND HOST_ACFLAGS " -m32")
+    string(APPEND HOST_ALDFLAGS " -m32")
+
+    # Some sandboxed Linux environments cannot execute i386 ELF binaries
+    # natively even when multilib compilation is available. Use qemu-i386
+    # when present; on regular Linux hosts the prefix remains empty.
+    find_program(LUAJIT_HOST_EXECUTABLE_PREFIX qemu-i386)
+endif()
 
 string(APPEND TARGET_XCFLAGS " -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -U_FORTIFY_SOURCE")
 
@@ -346,7 +370,7 @@ add_custom_command(
 )
 
 add_custom_command(OUTPUT ${BUILDVM_ARCH}
-    COMMAND "${MINILUA_FILE}" ${DASM} ${DASM_FLAGS} -o ${BUILDVM_ARCH} ${DASM_DASC}
+    COMMAND ${LUAJIT_HOST_EXECUTABLE_PREFIX} "${MINILUA_FILE}" ${DASM} ${DASM_FLAGS} -o ${BUILDVM_ARCH} ${DASM_DASC}
     DEPENDS "${MINILUA_FILE}"
 )
 
@@ -409,7 +433,7 @@ endif()
 macro(add_buildvm_target target mode)
     add_custom_command(
         OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${target}"
-        COMMAND "${BUILDVM_FILE}" ARGS -m ${mode} -o ${CMAKE_CURRENT_BINARY_DIR}/${target} ${ARGN}
+        COMMAND ${LUAJIT_HOST_EXECUTABLE_PREFIX} "${BUILDVM_FILE}" ARGS -m ${mode} -o ${CMAKE_CURRENT_BINARY_DIR}/${target} ${ARGN}
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         DEPENDS buildvm ${ARGN}
     )

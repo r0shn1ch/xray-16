@@ -3,6 +3,7 @@
 
 #include <mutex>
 #include <array>
+#include <filesystem>
 
 #include "xrEngine/Engine.h"
 
@@ -22,6 +23,8 @@ class ENGINE_API CApplication final
     std::atomic_bool m_should_exit;
 
     SDL_Surface* m_surface;
+    bool m_headless_smoke{};
+    std::filesystem::path m_headless_root;
 
 private:
     std::mutex m_discord_lock;

@@ -455,7 +455,13 @@ ICF void CBackend::set_FillMode(u32 _mode)
     if (fill_mode != _mode)
     {
         fill_mode = _mode;
+#if !defined(XR_PLATFORM_ANDROID)
         glPolygonMode(GL_FRONT_AND_BACK, glStateUtils::ConvertFillMode(_mode));
+#else
+        // Polygon rasterization modes are not part of OpenGL ES.  The Android
+        // path always uses filled triangles.
+        (void)_mode;
+#endif
     }
 }
 

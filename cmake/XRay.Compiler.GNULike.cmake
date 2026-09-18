@@ -141,6 +141,9 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 if (NOT WIN32)
+    # Android dependencies are expected to be built for the selected NDK ABI
+    # and exposed through CMAKE_PREFIX_PATH.  Do not silently fall back to
+    # host libraries when configuring a cross build.
     find_package(SDL2 2.0.18 REQUIRED)
     find_package(OpenAL REQUIRED)
     find_package(JPEG)
