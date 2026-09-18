@@ -30,6 +30,16 @@ endif()
 
 add_subdirectory(imgui-proj)
 
+if (XRAY_STATIC_PIC)
+    # The Android SDL activity loads the engine as libmain.so.  Keep the
+    # static external archives PIC without requiring changes in submodules.
+    foreach (xray_static_target IN ITEMS xrLuaFix GameSpy-oxr xrImGui)
+        if (TARGET ${xray_static_target})
+            set_property(TARGET ${xray_static_target} PROPERTY POSITION_INDEPENDENT_CODE ON)
+        endif()
+    endforeach()
+endif()
+
 if (NOT TARGET xrLuabind)
     message(FATAL_ERROR
         "You probably have downloaded OpenXRay sources as ZIP archive, you can't do that. Use git to clone the repository.\n"

@@ -15,9 +15,35 @@ fi
 set -- "$@"
 if [ -n "$deps_prefix" ]; then
     set -- "$@" "-DCMAKE_PREFIX_PATH=$deps_prefix"
+    if [ -f "$deps_prefix/lib/cmake/SDL2/SDL2Config.cmake" ]; then
+        set -- "$@" "-DSDL2_DIR=$deps_prefix/lib/cmake/SDL2"
+    fi
+    if [ -f "$deps_prefix/lib/cmake/OpenAL/OpenALConfig.cmake" ]; then
+        set -- "$@" "-DOpenAL_DIR=$deps_prefix/lib/cmake/OpenAL"
+    fi
+    set -- "$@" \
+        "-DJPEG_INCLUDE_DIR=$deps_prefix/include" \
+        "-DJPEG_LIBRARY=$deps_prefix/lib/libjpeg.a" \
+        "-DOGG_INCLUDE_DIR=$deps_prefix/include" \
+        "-DOGG_LIBRARY=$deps_prefix/lib/libogg.a" \
+        "-DVORBIS_INCLUDE_DIR=$deps_prefix/include" \
+        "-DVORBIS_LIBRARY=$deps_prefix/lib/libvorbis.a" \
+        "-DVORBISENC_LIBRARY=$deps_prefix/lib/libvorbisenc.a" \
+        "-DVORBISFILE_LIBRARY=$deps_prefix/lib/libvorbisfile.a" \
+        "-DTHEORA_INCLUDE_DIR=$deps_prefix/include" \
+        "-DTHEORA_LIBRARY=$deps_prefix/lib/libtheora.a" \
+        "-DTHEORADEC_LIBRARY=$deps_prefix/lib/libtheoradec.a" \
+        "-DTHEORAENC_LIBRARY=$deps_prefix/lib/libtheoraenc.a" \
+        "-DLZO_ROOT_DIR=$deps_prefix" \
+        "-DLZO_INCLUDE_DIR=$deps_prefix/include" \
+        "-DLZO_LIBRARY=$deps_prefix/lib/liblzo2.a"
 fi
 if [ -n "${SDL2_DIR:-}" ]; then
     set -- "$@" "-DSDL2_DIR=$SDL2_DIR"
+fi
+if [ "${XRAY_ANDROID_SHARED:-OFF}" = "ON" ]; then
+    set -- "$@" "-DXRAY_ANDROID_SHARED=ON"
+    set -- "$@" "-DCMAKE_POSITION_INDEPENDENT_CODE=ON"
 fi
 
 cmake -S "$repo_dir" -B "$build_dir" -G "${CMAKE_GENERATOR:-Ninja}" \

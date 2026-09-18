@@ -1,5 +1,9 @@
 #include "stdafx.h"
 
+#if defined(XR_PLATFORM_ANDROID)
+#include <SDL_main.h>
+#endif
+
 #include "xrEngine/x_ray.h"
 #include "xrGame/xrGame.h"
 #include "Include/xrRender/xrRender.h"
