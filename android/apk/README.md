@@ -27,6 +27,10 @@ SDL2_ANDROID_HOME=/path/to/SDL \
 ./android/build-apk-armv7.sh
 ```
 
+The APK build disables LTO by default so the ARMv7 shared-library link stays
+bounded on ordinary build hosts. Set `XRAY_ANDROID_ENABLE_LTO=ON` when a long
+LTO link is desired.
+
 The resulting debug APK is `build/openxray-armv7-debug.apk`. It is a
 bring-up artifact, not a playable release: proprietary game data and touch
 controls are not bundled. This test proves the Android window/context and
@@ -35,10 +39,20 @@ game-data render feature is already GLES-compatible.
 
 ## Launcher and diagnostics on a phone
 
-1. Install the APK and open **OpenXRay Launcher**.
-2. Press **Доступ к памяти** and enable **Allow management of all files** for
-   this app. This is a special Android settings grant, not a normal install
-   permission dialog.
+1. Remove the previous bring-up APK once before installing version 0.2.0. The
+   old package registered `XRayActivity` itself as the launcher, so a pinned
+   old icon can bypass the launcher entirely:
+
+   ```sh
+   adb uninstall org.openxray.stalker
+   adb install -r build/openxray-armv7-debug.apk
+   adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
+   ```
+
+2. On Android 11 and newer the launcher immediately shows an explanation and
+   opens the system page for **Allow access to manage all files** on first
+   start. This is a special Android settings grant, not a normal install
+   permission dialog. If it was dismissed, press **Доступ к памяти**.
 3. Press **Выбрать** and select the STALKER installation directory, or enter
    its direct path manually (for example `/storage/emulated/0/STALKER`).
 4. Press **Проверить GLES** to test the Android renderer without game files.
@@ -69,7 +83,7 @@ then exits. Collect both file and logcat diagnostics with:
 ```sh
 adb logcat -c
 adb shell am force-stop org.openxray.stalker
-adb shell monkey -p org.openxray.stalker 1
+adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
 adb logcat -d -b all -v threadtime OpenXRay:I DEBUG:E '*:S' > openxray-logcat.txt
 adb pull /sdcard/openxray/android.log openxray-engine.log
 adb pull /sdcard/openxray/activity.log openxray-activity.log

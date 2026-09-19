@@ -2,6 +2,8 @@ package org.openxray.app;
 
 import android.app.Activity;
 import android.app.ActivityManager;
+import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
@@ -70,6 +72,7 @@ public final class LauncherActivity extends Activity {
         gamePath.setText(preferences.getString(PREF_GAME_PATH, "/storage/emulated/0/STALKER"));
         refreshAccessStatus();
         refreshLog();
+        handler.post(this::showStorageAccessPromptIfNeeded);
     }
 
     @Override
@@ -200,10 +203,22 @@ public final class LauncherActivity extends Activity {
                 | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
                 | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
-        startActivityForResult(intent, REQUEST_GAME_TREE);
+        try {
+            startActivityForResult(intent, REQUEST_GAME_TREE);
+        } catch (ActivityNotFoundException error) {
+            setStatus("На устройстве нет системного выбора папки: " + error.getMessage());
+        }
     }
 
     private void requestAllFilesAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && Build.VERSION.SDK_INT < Build.VERSION_CODES.R
+                && checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[] { android.Manifest.permission.WRITE_EXTERNAL_STORAGE }, 1002);
+            return;
+        }
+
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             setStatus("На этой версии Android отдельный All files access не требуется.");
             return;
@@ -218,9 +233,43 @@ public final class LauncherActivity extends Activity {
             Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
                     Uri.parse("package:" + getPackageName()));
             startActivity(intent);
-        } catch (SecurityException error) {
-            startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+        } catch (SecurityException | ActivityNotFoundException error) {
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+            } catch (SecurityException | ActivityNotFoundException fallbackError) {
+                setStatus("Android не смог открыть страницу доступа к файлам: "
+                        + fallbackError.getMessage());
+            }
         }
+    }
+
+    private void showStorageAccessPromptIfNeeded() {
+        if (hasStorageAccess())
+            return;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Нужен доступ к файлам")
+                    .setMessage("OpenXRay должен читать файлы STALKER и писать лог в "
+                            + "/storage/emulated/0/openxray/android.log. Android 11 и новее "
+                            + "не показывают для этого обычное окно разрешения: включите "
+                            + "«Разрешить управление всеми файлами» на системной странице приложения.")
+                    .setPositiveButton("Открыть настройки", (dialog, which) -> requestAllFilesAccess())
+                    .setNegativeButton("Позже", (dialog, which) ->
+                            setStatus("Доступ не выдан. Для запуска игры откройте «Доступ к памяти»."))
+                    .show();
+        } else {
+            requestAllFilesAccess();
+        }
+    }
+
+    private boolean hasStorageAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+            return Environment.isExternalStorageManager();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+            return checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        return true;
     }
 
     private void launchEngine(boolean rendererSmoke) {
@@ -240,30 +289,40 @@ public final class LauncherActivity extends Activity {
             intent.putExtra(EXTRA_GAME_PATH, selectedPath);
         setStatus(rendererSmoke ? "Запускаю GLES smoke test…" : "Запускаю OpenXRay…");
         Toast.makeText(this, "OpenXRay: запуск движка…", Toast.LENGTH_SHORT).show();
-        startActivity(intent);
+        try {
+            startActivity(intent);
+        } catch (RuntimeException error) {
+            setStatus("Не удалось запустить процесс движка: " + error.getMessage());
+            Toast.makeText(this, "OpenXRay: не удалось запустить движок", Toast.LENGTH_LONG).show();
+        }
     }
 
     private boolean prepareGameRoot() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+        if (!hasStorageAccess()) {
             setStatus("Сначала нажмите «Доступ к памяти» и включите «Разрешить управление всеми файлами»."
                     + " Обычного разрешения при установке Android не показывает.");
             return false;
         }
 
-        File root = new File(gamePath.getText().toString().trim());
-        if (!root.isDirectory()) {
-            setStatus("Папка игры не найдена: " + root);
-            return false;
-        }
+        try {
+            File root = new File(gamePath.getText().toString().trim());
+            if (!root.isDirectory()) {
+                setStatus("Папка игры не найдена: " + root);
+                return false;
+            }
 
-        File fsgame = new File(root, "fsgame.ltx");
-        if (!fsgame.exists() && !copyBundledFsgame(fsgame)) {
-            setStatus("В папке нет fsgame.ltx и не удалось создать его: " + fsgame);
+            File fsgame = new File(root, "fsgame.ltx");
+            if (!fsgame.exists() && !copyBundledFsgame(fsgame)) {
+                setStatus("В папке нет fsgame.ltx и не удалось создать его: " + fsgame);
+                return false;
+            }
+            if (!new File(root, "gamedata").isDirectory())
+                setStatus("Предупреждение: в папке нет gamedata/. Запуск всё равно продолжится.");
+            return true;
+        } catch (SecurityException error) {
+            setStatus("Android запретил доступ к папке игры: " + error.getMessage());
             return false;
         }
-        if (!new File(root, "gamedata").isDirectory())
-            setStatus("Предупреждение: в папке нет gamedata/. Запуск всё равно продолжится.");
-        return true;
     }
 
     private boolean copyBundledFsgame(File destination) {
@@ -274,7 +333,7 @@ public final class LauncherActivity extends Activity {
             while ((count = input.read(buffer)) != -1)
                 output.write(buffer, 0, count);
             return true;
-        } catch (IOException error) {
+        } catch (IOException | SecurityException error) {
             return false;
         }
     }
@@ -290,8 +349,7 @@ public final class LauncherActivity extends Activity {
     }
 
     private void refreshAccessStatus() {
-        boolean granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.R
-                || Environment.isExternalStorageManager();
+        boolean granted = hasStorageAccess();
         accessStatus.setText("Доступ ко всей памяти: " + (granted ? "выдан" : "нужен")
                 + "\nЛоги также читаются из app-specific fallback, если root storage закрыт.");
     }

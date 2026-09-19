@@ -101,6 +101,8 @@ void CHW::CreateDevice(SDL_Window* hWnd)
     if (MakeContextCurrent(IRender::PrimaryContext) != 0)
     {
         Log("! OpenGL: could not make context current:", SDL_GetError());
+        SDL_GL_DeleteContext(m_context);
+        m_context = nullptr;
         return;
     }
 
@@ -114,6 +116,8 @@ void CHW::CreateDevice(SDL_Window* hWnd)
         Log("! OpenGL: could not initialize GLAD.");
         if (const auto err = SDL_GetError())
             Log("SDL Error:", err);
+        SDL_GL_DeleteContext(m_context);
+        m_context = nullptr;
         return;
     }
 
@@ -197,7 +201,8 @@ void CHW::SetPrimaryAttributes(u32& windowFlags)
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 
-    if (!strstr(Core.Params, "-no_gl_context"))
+    const pcstr commandLine = Core.Params ? Core.Params : "";
+    if (!strstr(commandLine, "-no_gl_context"))
     {
 #if defined(XR_PLATFORM_ANDROID)
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);

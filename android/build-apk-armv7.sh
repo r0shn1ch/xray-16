@@ -8,6 +8,7 @@ sdk_dir=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}
 deps_prefix=${ANDROID_DEPS_PREFIX:-}
 sdl_dir=${SDL2_ANDROID_HOME:-}
 gradle_bin=${GRADLE_BIN:-}
+android_lto=${XRAY_ANDROID_ENABLE_LTO:-OFF}
 build_dir=${XRAY_ANDROID_APK_BUILD_DIR:-"$repo_dir/build/android-apk-armv7"}
 
 if [ -z "$ndk_dir" ] || [ ! -f "$ndk_dir/build/cmake/android.toolchain.cmake" ]; then
@@ -32,7 +33,7 @@ ANDROID_NDK_HOME="$ndk_dir" \
 ANDROID_DEPS_PREFIX="$deps_prefix" \
 XRAY_ANDROID_BUILD_DIR="$native_build_dir" \
 XRAY_ANDROID_SHARED=ON \
-"$script_dir/build-armv7.sh" "$@"
+"$script_dir/build-armv7.sh" "-DXRAY_ENABLE_LTO=$android_lto" "$@"
 
 native_lib="$repo_dir/bin/armv7-a/ReleaseMasterGold/libmain.so"
 if [ ! -f "$native_lib" ]; then
@@ -41,6 +42,7 @@ if [ ! -f "$native_lib" ]; then
 fi
 
 project_dir="$build_dir/gradle-project"
+rm -rf "$project_dir"
 mkdir -p "$project_dir"
 cp -R "$sdl_dir/android-project/." "$project_dir/"
 cp "$repo_dir/android/apk/app/build.gradle" "$project_dir/app/build.gradle"
@@ -67,9 +69,9 @@ chmod +x "$project_dir/gradlew"
 (
     cd "$project_dir"
     if [ -n "$gradle_bin" ]; then
-        "$gradle_bin" --no-daemon clean assembleDebug
+        "$gradle_bin" --no-daemon assembleDebug
     else
-        ./gradlew --no-daemon clean assembleDebug
+        ./gradlew --no-daemon assembleDebug
     fi
 )
 

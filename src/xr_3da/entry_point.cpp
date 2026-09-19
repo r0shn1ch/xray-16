@@ -50,6 +50,7 @@ struct tracy_raii
 int entry_point(pcstr commandLine)
 {
     tracy_raii raii;
+    commandLine = commandLine ? commandLine : "";
     // Renderer smoke is deliberately independent from proprietary game data:
     // it exercises the Android window/context/shader path only.
     auto* game = strstr(commandLine, "-nogame") || strstr(commandLine, "-renderer-smoke") ? nullptr : &xrGame;

@@ -285,6 +285,9 @@ void show_renderer_smoke_status(bool success)
 
 std::filesystem::path android_game_root_from_command_line(pcstr commandLine)
 {
+    if (!commandLine)
+        return {};
+
     constexpr pcstr option = "-android-game-root-hex ";
     const pcstr encoded = strstr(commandLine, option);
     if (!encoded)
@@ -502,6 +505,7 @@ void destroy_renderer_smoke(renderer_smoke_state& state)
 
 CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array<RendererModule*, 2>& modules)
 {
+    commandLine = commandLine ? commandLine : "";
     m_headless_smoke = commandLine && strstr(commandLine, "-headless-smoke");
     m_renderer_smoke = commandLine && strstr(commandLine, "-renderer-smoke");
 

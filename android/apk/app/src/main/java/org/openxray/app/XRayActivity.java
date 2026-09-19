@@ -31,11 +31,21 @@ public final class XRayActivity extends SDLActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        diagnosticsFile = createDiagnosticsFile();
+        try {
+            diagnosticsFile = createDiagnosticsFile();
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Unable to initialize diagnostics storage", error);
+            diagnosticsFile = new File(getFilesDir(), "activity.log");
+        }
         installCrashHandler();
         writeDiagnostic("activity onCreate; sdk=" + Build.VERSION.SDK_INT
-                + "; abi=" + Build.SUPPORTED_ABIS[0]);
+                + "; abi=" + (Build.SUPPORTED_ABIS.length == 0 ? "unknown" : Build.SUPPORTED_ABIS[0]));
+        try {
+            super.onCreate(savedInstanceState);
+        } catch (RuntimeException error) {
+            writeDiagnostic("SDL activity startup failed: " + Log.getStackTraceString(error));
+            throw error;
+        }
     }
 
     @Override
@@ -101,7 +111,7 @@ public final class XRayActivity extends SDLActivity {
 
         try (FileOutputStream stream = new FileOutputStream(file, true)) {
             return true;
-        } catch (IOException error) {
+        } catch (IOException | SecurityException error) {
             Log.w(TAG, "Shared-storage diagnostics unavailable: " + file, error);
             return false;
         }
@@ -128,7 +138,7 @@ public final class XRayActivity extends SDLActivity {
             String timestamp = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
                     .format(new Date());
             writer.println(timestamp + " " + message);
-        } catch (IOException error) {
+        } catch (IOException | SecurityException error) {
             Log.e(TAG, "Unable to write diagnostics: " + diagnosticsFile, error);
         }
     }
