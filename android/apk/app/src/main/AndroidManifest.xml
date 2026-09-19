@@ -13,12 +13,16 @@
     <application
         android:allowBackup="false"
         android:hardwareAccelerated="true"
-        android:label="OpenXRay Android renderer smoke">
+        android:label="OpenXRay Launcher">
         <activity
             android:name="org.openxray.app.XRayActivity"
             android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:exported="false"
+            android:process=":engine"
+            android:theme="@style/AppTheme" />
+        <activity
+            android:name="org.openxray.app.LauncherActivity"
             android:exported="true"
-            android:launchMode="singleInstance"
             android:theme="@style/AppTheme">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

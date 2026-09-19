@@ -41,11 +41,13 @@ scheduler and the platform locator without creating a window or renderer and
 without opening any game files. A successful exit is only the native bootstrap
 check; it is not yet evidence that a game can render on a particular GPU.
 
-The APK uses the separate `-renderer-smoke` mode. It creates the Android SDL
-window and OpenXRay `CHW`, loads GLES through the same GLAD-backed renderer
-library, compiles a minimal ES 3.0 shader pair and verifies a pixel readback.
-This keeps the test independent of proprietary game data while exercising the
-actual Android window/context and shader compiler path.
+The APK opens a launcher and its **Проверить GLES** action uses the separate
+`-renderer-smoke` mode. It creates the Android SDL window and OpenXRay `CHW`,
+loads GLES through the same GLAD-backed renderer library, compiles a minimal ES
+3.0 shader pair and verifies a pixel readback. This keeps the test independent
+of proprietary game data while exercising the actual Android window/context
+and shader compiler path. The native activity runs in a separate `:engine`
+process, so the launcher can remain visible after a native crash.
 
 ## Android renderer status
 
@@ -59,6 +61,8 @@ before it can be called complete.
 
 The APK displays a Toast after the renderer readback: successful initialization
 keeps the smoke window open, while failure shows the error, waits briefly and
-exits. The native engine log targets `/storage/emulated/0/openxray/android.log`
-first and falls back to SDL's app-specific external directory when Android
-scoped storage denies the public path.
+exits. The launcher also shows the current log tail and reports whether the
+engine process finished successfully or crashed. The native engine log targets
+`/storage/emulated/0/openxray/android.log` first and falls back to SDL's
+app-specific external/internal directory when Android storage policy denies the
+public path.

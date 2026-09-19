@@ -1,11 +1,16 @@
 # Android ARMv7 APK bring-up
 
 `build-apk-armv7.sh` packages the Android shared target as an SDL2 APK for
-`armeabi-v7a`. The debug APK starts with `-renderer-smoke -nogame`, so it
-contains the complete native `xr_3da`/`xrRender_GL` engine link but no STALKER
-game data. It creates a real OpenXRay `CHW` GLES 3.0 context, compiles an ES
-3.0 vertex/fragment shader pair, draws a triangle and validates a framebuffer
-readback. The renderer smoke screen stays open until the user closes it.
+`armeabi-v7a`. The APK opens an OpenXRay launcher first. It contains the
+complete native `xr_3da`/`xrRender_GL` engine link but no proprietary STALKER
+game data. The launcher can run a renderer smoke test, choose a game root and
+start the native engine in a separate process so a native crash does not take
+the launcher or its visible log with it.
+
+The renderer smoke path creates a real OpenXRay `CHW` GLES 3.0 context,
+compiles an ES 3.0 vertex/fragment shader pair, draws a triangle and validates
+a framebuffer readback. A successful or failed load is shown in a toast and in
+the launcher's status line.
 
 The build uses the SDL2 `android-project` Java activity as an external source
 dependency. Set `SDL2_ANDROID_HOME` to an SDL2 source tree (the same SDL2
@@ -28,13 +33,27 @@ controls are not bundled. This test proves the Android window/context and
 shader path; it does not claim that every original desktop shader or every
 game-data render feature is already GLES-compatible.
 
-## Diagnostics on a phone
+## Launcher and diagnostics on a phone
+
+1. Install the APK and open **OpenXRay Launcher**.
+2. Press **Доступ к памяти** and enable **Allow management of all files** for
+   this app. This is a special Android settings grant, not a normal install
+   permission dialog.
+3. Press **Выбрать** and select the STALKER installation directory, or enter
+   its direct path manually (for example `/storage/emulated/0/STALKER`).
+4. Press **Проверить GLES** to test the Android renderer without game files.
+   Press **Запустить движок** only after placing the original game files in the
+   selected directory.
+
+The launcher continuously displays the tail of the engine and activity logs.
+It reports a successful engine load or a process failure in the status line and
+also shows a toast. **Очистить лог** starts the next test with an empty log.
 
 The native engine log is written to
 `/storage/emulated/0/openxray/android.log`. Java lifecycle and exception
 records go to `/storage/emulated/0/openxray/activity.log`. If Android refuses
-shared-storage access, both writers fall back to the app-specific external
-directory so a failure is still diagnosable.
+shared-storage access, both writers fall back to the app-specific external or
+internal directory; the launcher reads all of these locations.
 
 Android 11 and newer may require enabling **All files access** for this debug
 APK. With USB debugging enabled, grant it before launch:

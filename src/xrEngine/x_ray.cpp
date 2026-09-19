@@ -242,6 +242,9 @@ bool initialize_android_engine_log()
     if (const char* external_path = SDL_AndroidGetExternalStoragePath())
         candidates.emplace_back(std::filesystem::path(external_path) / "openxray/android.log");
 
+    if (const char* internal_path = SDL_AndroidGetInternalStoragePath())
+        candidates.emplace_back(std::filesystem::path(internal_path) / "openxray/android.log");
+
     for (const auto& candidate : candidates)
     {
         std::error_code error;
@@ -278,6 +281,34 @@ void show_renderer_smoke_status(bool success)
 {
     SDL_AndroidShowToast(success ? "OpenXRay: engine loaded" :
         "OpenXRay: engine load failed; see android.log", 1, -1, 0, 0);
+}
+
+std::filesystem::path android_game_root_from_command_line(pcstr commandLine)
+{
+    constexpr pcstr option = "-android-game-root-hex ";
+    const pcstr encoded = strstr(commandLine, option);
+    if (!encoded)
+        return {};
+
+    const pcstr value = encoded + xr_strlen(option);
+    std::string decoded;
+    decoded.reserve(xr_strlen(value) / 2);
+    for (size_t i = 0; value[i] && value[i] != ' ' && value[i] != '\t'; i += 2)
+    {
+        if (!value[i + 1] || !isxdigit(static_cast<unsigned char>(value[i])) ||
+            !isxdigit(static_cast<unsigned char>(value[i + 1])))
+            return {};
+
+        const auto high = static_cast<unsigned char>(tolower(static_cast<unsigned char>(value[i])));
+        const auto low = static_cast<unsigned char>(tolower(static_cast<unsigned char>(value[i + 1])));
+        const auto hex_value = [](unsigned char digit) -> unsigned char
+        {
+            return digit >= 'a' ? static_cast<unsigned char>(digit - 'a' + 10) : digit - '0';
+        };
+        decoded.push_back(static_cast<char>((hex_value(high) << 4) | hex_value(low)));
+    }
+
+    return decoded.empty() ? std::filesystem::path{} : std::filesystem::path(decoded);
 }
 
 struct renderer_smoke_state
@@ -527,6 +558,10 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
 #if defined(XR_PLATFORM_ANDROID)
     if (m_renderer_smoke)
     {
+        // CHW::SetPrimaryAttributes reads Core.Params. Initialize xrCore before
+        // creating the Android GLES context, even in the no-game smoke mode.
+        Core.Initialize("OpenXRay", commandLine, false);
+
         auto* state = new renderer_smoke_state;
         m_renderer_smoke_state = state;
         if (!initialize_renderer_smoke(*state))
@@ -571,7 +606,18 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
         sscanf(strstr(commandLine, fsltx) + sz, "%[^ ] ", fsgame);
     }
 
-    Core.Initialize("OpenXRay", commandLine, true, *fsgame ? fsgame : nullptr);
+#if defined(XR_PLATFORM_ANDROID)
+    const auto android_game_root = android_game_root_from_command_line(commandLine);
+    if (!android_game_root.empty())
+    {
+        const auto android_fsgame = android_game_root / "fsgame.ltx";
+        if (!std::filesystem::exists(android_fsgame))
+            Log("! [android] game root has no fsgame.ltx: %s", android_fsgame.string().c_str());
+        Core.Initialize("OpenXRay", commandLine, true, android_fsgame.string().c_str());
+    }
+    else
+#endif
+        Core.Initialize("OpenXRay", commandLine, true, *fsgame ? fsgame : nullptr);
 
     InitSettings();
     // Adjust player & computer name for Asian
@@ -625,6 +671,11 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
     else
         Console->Show();
 
+#if defined(XR_PLATFORM_ANDROID)
+    Log("[android] engine loaded");
+    SDL_AndroidShowToast("OpenXRay: engine loaded", 1, -1, 0, 0);
+#endif
+
     FrameMarkEnd(FRAME_MARK_APPLICATION_STARTUP);
 }
 
@@ -656,6 +707,7 @@ CApplication::~CApplication()
             delete state;
             m_renderer_smoke_state = nullptr;
         }
+        Core._destroy();
         SDL_Quit();
 #if defined(XR_PLATFORM_ANDROID)
         shutdown_android_engine_log();

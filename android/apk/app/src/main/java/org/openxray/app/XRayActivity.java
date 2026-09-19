@@ -13,6 +13,7 @@ import java.io.PrintWriter;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.nio.charset.StandardCharsets;
 
 import org.libsdl.app.SDLActivity;
 
@@ -57,9 +58,27 @@ public final class XRayActivity extends SDLActivity {
 
     @Override
     protected String[] getArguments() {
-        String[] args = new String[] { "-renderer-smoke", "-nogame", "-no_gamepad", "-nosplash" };
+        boolean rendererSmoke = getIntent().getBooleanExtra(LauncherActivity.EXTRA_RENDERER_SMOKE, true);
+        String selectedPath = getIntent().getStringExtra(LauncherActivity.EXTRA_GAME_PATH);
+        String[] args;
+        if (rendererSmoke) {
+            args = new String[] { "-renderer-smoke", "-nogame", "-no_gamepad", "-nosplash" };
+        } else if (selectedPath != null && !selectedPath.isEmpty()) {
+            args = new String[] { "-android-game-root-hex", encodeHex(selectedPath),
+                    "-no_gamepad", "-nosplash" };
+        } else {
+            args = new String[] { "-headless-smoke", "-no_gamepad", "-nosplash" };
+        }
         writeDiagnostic("native arguments: " + String.join(" ", args));
         return args;
+    }
+
+    private String encodeHex(String value) {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        StringBuilder result = new StringBuilder(bytes.length * 2);
+        for (byte item : bytes)
+            result.append(String.format(Locale.US, "%02x", item & 0xff));
+        return result.toString();
     }
 
     private File createDiagnosticsFile() {
