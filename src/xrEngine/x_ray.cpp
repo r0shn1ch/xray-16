@@ -18,6 +18,7 @@
 
 #if defined(XR_PLATFORM_ANDROID)
 #include <glad/gl.h>
+#include <SDL_system.h>
 #include "Common/d3d9compat.hpp"
 #define RENDER_NAMESPACE render_gl
 #include "Layers/xrRenderGL/glHW.h"
@@ -214,6 +215,71 @@ constexpr pcstr FRAME_MARK_APPLICATION_SHUTDOWN = "Application shutdown";
 constexpr pcstr FRAME_MARK_APPLICATION_RUN = "Application run";
 
 #if defined(XR_PLATFORM_ANDROID)
+struct android_engine_log_state
+{
+    std::ofstream stream;
+    std::filesystem::path path;
+    LogCallback previous_callback{};
+    bool callback_installed{};
+};
+
+android_engine_log_state g_android_engine_log;
+
+void android_engine_log_callback(void*, const char* line)
+{
+    if (!line || !g_android_engine_log.stream.is_open())
+        return;
+
+    g_android_engine_log.stream << line << '\n';
+    g_android_engine_log.stream.flush();
+}
+
+bool initialize_android_engine_log()
+{
+    std::vector<std::filesystem::path> candidates;
+    candidates.emplace_back("/storage/emulated/0/openxray/android.log");
+
+    if (const char* external_path = SDL_AndroidGetExternalStoragePath())
+        candidates.emplace_back(std::filesystem::path(external_path) / "openxray/android.log");
+
+    for (const auto& candidate : candidates)
+    {
+        std::error_code error;
+        std::filesystem::create_directories(candidate.parent_path(), error);
+        if (error)
+            continue;
+
+        g_android_engine_log.stream.open(candidate, std::ios::out | std::ios::app);
+        if (!g_android_engine_log.stream)
+            continue;
+
+        g_android_engine_log.path = candidate;
+        g_android_engine_log.previous_callback = SetLogCB({ android_engine_log_callback, nullptr });
+        g_android_engine_log.callback_installed = true;
+        Msg("[android] engine log: %s", g_android_engine_log.path.string().c_str());
+        return true;
+    }
+
+    return false;
+}
+
+void shutdown_android_engine_log()
+{
+    if (g_android_engine_log.callback_installed)
+        SetLogCB(g_android_engine_log.previous_callback);
+
+    g_android_engine_log.stream.flush();
+    g_android_engine_log.stream.close();
+    g_android_engine_log.path.clear();
+    g_android_engine_log.callback_installed = false;
+}
+
+void show_renderer_smoke_status(bool success)
+{
+    SDL_AndroidShowToast(success ? "OpenXRay: engine loaded" :
+        "OpenXRay: engine load failed; see android.log", 1, -1, 0, 0);
+}
+
 struct renderer_smoke_state
 {
     SDL_Window* window{};
@@ -222,6 +288,8 @@ struct renderer_smoke_state
     GLuint vertex_buffer{};
     bool pixel_readback_done{};
     bool passed{};
+    bool initialized{};
+    bool status_reported{};
 };
 
 GLuint compile_renderer_smoke_shader(GLenum type, pcstr source, pcstr label)
@@ -324,6 +392,8 @@ void main()
         GLsizei info_length = 0;
         glGetProgramInfoLog(state.program, sizeof(info_log) - 1, &info_length, info_log);
         Msg("! [renderer-smoke] GLES program link failed: %.*s", info_length, info_log);
+        glDeleteProgram(state.program);
+        state.program = 0;
         return false;
     }
 
@@ -346,6 +416,7 @@ void main()
         reinterpret_cast<const void*>(2 * sizeof(float)));
     glBindVertexArray(0);
 
+    state.initialized = true;
     Log("[renderer-smoke] OpenXRay CHW and GLES 3.0 shader pipeline initialized");
     return true;
 }
@@ -373,6 +444,8 @@ void render_renderer_smoke(renderer_smoke_state& state)
         glReadPixels(width / 2, height / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
         state.passed = pixel[3] != 0;
         state.pixel_readback_done = true;
+        show_renderer_smoke_status(state.passed);
+        state.status_reported = true;
         Msg("[renderer-smoke] center pixel RGBA=(%u,%u,%u,%u): %s", pixel[0], pixel[1], pixel[2], pixel[3],
             state.passed ? "PASS" : "FAIL");
     }
@@ -419,6 +492,11 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
         R_ASSERT3(SDL_Init(flags) == 0, "Unable to initialize SDL", SDL_GetError());
     }
 
+#if defined(XR_PLATFORM_ANDROID)
+    if (!initialize_android_engine_log())
+        Log("! [android] unable to open engine log in shared storage or app-specific storage");
+#endif
+
     if (m_headless_smoke)
     {
         // This is a real engine bootstrap: SDL, xrCore, CPU feature probing,
@@ -452,7 +530,11 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
         auto* state = new renderer_smoke_state;
         m_renderer_smoke_state = state;
         if (!initialize_renderer_smoke(*state))
+        {
             Log("! [renderer-smoke] initialization failed");
+            show_renderer_smoke_status(false);
+            state->status_reported = true;
+        }
         return;
     }
 #endif
@@ -556,6 +638,9 @@ CApplication::~CApplication()
         if (!m_headless_root.empty())
             std::filesystem::remove_all(m_headless_root);
         SDL_Quit();
+#if defined(XR_PLATFORM_ANDROID)
+        shutdown_android_engine_log();
+#endif
         xrDebug::Finalize();
         FrameMarkEnd(FRAME_MARK_APPLICATION_SHUTDOWN);
         return;
@@ -572,6 +657,9 @@ CApplication::~CApplication()
             m_renderer_smoke_state = nullptr;
         }
         SDL_Quit();
+#if defined(XR_PLATFORM_ANDROID)
+        shutdown_android_engine_log();
+#endif
         xrDebug::Finalize();
         FrameMarkEnd(FRAME_MARK_APPLICATION_SHUTDOWN);
         return;
@@ -624,6 +712,10 @@ CApplication::~CApplication()
         SDL_Quit();
     }
 
+#if defined(XR_PLATFORM_ANDROID)
+    shutdown_android_engine_log();
+#endif
+
     xrDebug::Finalize();
     FrameMarkEnd(FRAME_MARK_APPLICATION_SHUTDOWN);
 }
@@ -634,8 +726,13 @@ int CApplication::Run()
     if (m_renderer_smoke)
     {
         auto* state = static_cast<renderer_smoke_state*>(m_renderer_smoke_state);
-        if (!state || !state->program)
+        if (!state || !state->initialized)
+        {
+            if (!state || !state->status_reported)
+                show_renderer_smoke_status(false);
+            SDL_Delay(3500);
             return EXIT_FAILURE;
+        }
 
         while (!SDL_QuitRequested())
         {
@@ -646,6 +743,11 @@ int CApplication::Run()
                     return state->passed ? EXIT_SUCCESS : EXIT_FAILURE;
             }
             render_renderer_smoke(*state);
+            if (state->pixel_readback_done && !state->passed)
+            {
+                SDL_Delay(3500);
+                return EXIT_FAILURE;
+            }
         }
         return state->passed ? EXIT_SUCCESS : EXIT_FAILURE;
     }

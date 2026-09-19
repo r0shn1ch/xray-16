@@ -55,3 +55,9 @@ reported separately because this sandbox has no ARM Android runtime. Game-data
 rendering still needs a separate GLES compatibility pass for desktop-only
 framebuffer/shader assumptions and a device test with the original game files
 before it can be called complete.
+
+The APK displays a Toast after the renderer readback: successful initialization
+keeps the smoke window open, while failure shows the error, waits briefly and
+exits. The native engine log targets `/storage/emulated/0/openxray/android.log`
+first and falls back to SDL's app-specific external directory when Android
+scoped storage denies the public path.

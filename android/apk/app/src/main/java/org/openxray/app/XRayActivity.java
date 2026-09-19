@@ -2,9 +2,11 @@ package org.openxray.app;
 
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.util.Log;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -61,14 +63,29 @@ public final class XRayActivity extends SDLActivity {
     }
 
     private File createDiagnosticsFile() {
+        File publicFile = new File(Environment.getExternalStorageDirectory(), "openxray/activity.log");
+        if (canAppend(publicFile))
+            return publicFile;
+
         File root = getExternalFilesDir("openxray");
-        if (root == null) {
+        if (root == null)
             root = new File(getFilesDir(), "openxray");
-        }
-        if (!root.exists() && !root.mkdirs()) {
+        if (!root.exists() && !root.mkdirs())
             Log.e(TAG, "Unable to create diagnostics directory: " + root);
+        return new File(root, "activity.log");
+    }
+
+    private boolean canAppend(File file) {
+        File parent = file.getParentFile();
+        if (parent == null || (!parent.exists() && !parent.mkdirs()))
+            return false;
+
+        try (FileOutputStream stream = new FileOutputStream(file, true)) {
+            return true;
+        } catch (IOException error) {
+            Log.w(TAG, "Shared-storage diagnostics unavailable: " + file, error);
+            return false;
         }
-        return new File(root, "android.log");
     }
 
     private void installCrashHandler() {
