@@ -6,7 +6,8 @@ codec dependencies must therefore be built for the same NDK ABI and supplied
 through `CMAKE_PREFIX_PATH`.
 
 The target ABI is `armeabi-v7a`, which is the Android NDK name for 32-bit ARM
-with Thumb-2 and Neon. The minimum platform is API 36 (Android 16).
+with Thumb-2 and Neon. The APK currently supports API 26 and targets/compiles
+against API 36 (Android 16).
 
 ## Configure and build
 
