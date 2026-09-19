@@ -40,10 +40,18 @@ scheduler and the platform locator without creating a window or renderer and
 without opening any game files. A successful exit is only the native bootstrap
 check; it is not yet evidence that a game can render on a particular GPU.
 
+The APK uses the separate `-renderer-smoke` mode. It creates the Android SDL
+window and OpenXRay `CHW`, loads GLES through the same GLAD-backed renderer
+library, compiles a minimal ES 3.0 shader pair and verifies a pixel readback.
+This keeps the test independent of proprietary game data while exercising the
+actual Android window/context and shader compiler path.
+
 ## Android renderer status
 
-The initial Android path requests an OpenGL ES 3.0 context, disables MSAA
-texture allocation and ignores desktop polygon modes. The OpenGL renderer still
-has desktop shader and framebuffer assumptions, so game-data rendering needs a
-separate GLES compatibility pass and a device test before it can be called
-complete.
+The Android path requests an OpenGL ES 3.0 context, disables MSAA texture
+allocation and ignores desktop polygon modes. The smoke mode is built and
+statically validated in the ARMv7 APK; its runtime device result is deliberately
+reported separately because this sandbox has no ARM Android runtime. Game-data
+rendering still needs a separate GLES compatibility pass for desktop-only
+framebuffer/shader assumptions and a device test with the original game files
+before it can be called complete.

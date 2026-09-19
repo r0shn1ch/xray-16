@@ -24,7 +24,9 @@ class ENGINE_API CApplication final
 
     SDL_Surface* m_surface;
     bool m_headless_smoke{};
+    bool m_renderer_smoke{};
     std::filesystem::path m_headless_root;
+    void* m_renderer_smoke_state{};
 
 private:
     std::mutex m_discord_lock;

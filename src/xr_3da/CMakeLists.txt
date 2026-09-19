@@ -26,6 +26,7 @@ set_property(
 target_include_directories(xr_3da
     PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_SOURCE_DIR}/sdk/include"
 )
 
 target_link_libraries(xr_3da

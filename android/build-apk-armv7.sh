@@ -63,9 +63,9 @@ chmod +x "$project_dir/gradlew"
 (
     cd "$project_dir"
     if [ -n "$gradle_bin" ]; then
-        "$gradle_bin" --no-daemon assembleDebug
+        "$gradle_bin" --no-daemon clean assembleDebug
     else
-        ./gradlew --no-daemon assembleDebug
+        ./gradlew --no-daemon clean assembleDebug
     fi
 )
 

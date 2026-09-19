@@ -16,6 +16,14 @@
 
 #include <fstream>
 
+#if defined(XR_PLATFORM_ANDROID)
+#include <glad/gl.h>
+#include "Common/d3d9compat.hpp"
+#define RENDER_NAMESPACE render_gl
+#include "Layers/xrRenderGL/glHW.h"
+#undef RENDER_NAMESPACE
+#endif
+
 #include "IGame_Persistent.h"
 #include "LightAnimLibrary.h"
 #include "XR_IOConsole.h"
@@ -205,9 +213,193 @@ constexpr pcstr FRAME_MARK_APPLICATION_STARTUP = "Application startup";
 constexpr pcstr FRAME_MARK_APPLICATION_SHUTDOWN = "Application shutdown";
 constexpr pcstr FRAME_MARK_APPLICATION_RUN = "Application run";
 
+#if defined(XR_PLATFORM_ANDROID)
+struct renderer_smoke_state
+{
+    SDL_Window* window{};
+    GLuint program{};
+    GLuint vertex_array{};
+    GLuint vertex_buffer{};
+    bool pixel_readback_done{};
+    bool passed{};
+};
+
+GLuint compile_renderer_smoke_shader(GLenum type, pcstr source, pcstr label)
+{
+    const GLuint shader = glCreateShader(type);
+    if (!shader)
+    {
+        Log("! [renderer-smoke] glCreateShader failed");
+        return 0;
+    }
+
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+
+    GLint compiled = GL_FALSE;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+    if (compiled == GL_TRUE)
+        return shader;
+
+    char info_log[2048]{};
+    GLsizei info_length = 0;
+    glGetShaderInfoLog(shader, sizeof(info_log) - 1, &info_length, info_log);
+    glDeleteShader(shader);
+    Msg("! [renderer-smoke] %s shader compilation failed: %.*s", label, info_length, info_log);
+    return 0;
+}
+
+bool initialize_renderer_smoke(renderer_smoke_state& state)
+{
+    u32 window_flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
+    xray::render::render_gl::HW.SetPrimaryAttributes(window_flags);
+
+    state.window = SDL_CreateWindow("OpenXRay GLES renderer smoke", SDL_WINDOWPOS_CENTERED,
+        SDL_WINDOWPOS_CENTERED, 960, 540, window_flags);
+    if (!state.window)
+    {
+        Msg("! [renderer-smoke] SDL_CreateWindow failed: %s", SDL_GetError());
+        return false;
+    }
+
+    xray::render::render_gl::HW.CreateDevice(state.window);
+    if (!xray::render::render_gl::HW.m_context)
+    {
+        Log("! [renderer-smoke] OpenXRay CHW could not create an GLES context");
+        return false;
+    }
+
+    const char* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+    const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+    const char* shading = reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION));
+    Msg("[renderer-smoke] GL_VERSION=%s", version ? version : "<null>");
+    Msg("[renderer-smoke] GL_RENDERER=%s", renderer ? renderer : "<null>");
+    Msg("[renderer-smoke] GLSL=%s", shading ? shading : "<null>");
+
+    constexpr pcstr vertex_source = R"glsl(#version 300 es
+precision highp float;
+layout(location = 0) in vec2 a_position;
+layout(location = 1) in vec3 a_color;
+out vec3 v_color;
+void main()
+{
+    gl_Position = vec4(a_position, 0.0, 1.0);
+    v_color = a_color;
+}
+)glsl";
+
+    constexpr pcstr fragment_source = R"glsl(#version 300 es
+precision mediump float;
+in vec3 v_color;
+layout(location = 0) out vec4 out_color;
+void main()
+{
+    out_color = vec4(v_color, 1.0);
+}
+)glsl";
+
+    const GLuint vertex_shader = compile_renderer_smoke_shader(GL_VERTEX_SHADER, vertex_source, "vertex");
+    const GLuint fragment_shader = compile_renderer_smoke_shader(GL_FRAGMENT_SHADER, fragment_source, "fragment");
+    if (!vertex_shader || !fragment_shader)
+    {
+        if (vertex_shader)
+            glDeleteShader(vertex_shader);
+        if (fragment_shader)
+            glDeleteShader(fragment_shader);
+        return false;
+    }
+
+    state.program = glCreateProgram();
+    glAttachShader(state.program, vertex_shader);
+    glAttachShader(state.program, fragment_shader);
+    glLinkProgram(state.program);
+    glDeleteShader(vertex_shader);
+    glDeleteShader(fragment_shader);
+
+    GLint linked = GL_FALSE;
+    glGetProgramiv(state.program, GL_LINK_STATUS, &linked);
+    if (linked != GL_TRUE)
+    {
+        char info_log[2048]{};
+        GLsizei info_length = 0;
+        glGetProgramInfoLog(state.program, sizeof(info_log) - 1, &info_length, info_log);
+        Msg("! [renderer-smoke] GLES program link failed: %.*s", info_length, info_log);
+        return false;
+    }
+
+    constexpr float vertices[] =
+    {
+        -0.80f, -0.75f, 1.0f, 0.15f, 0.10f,
+         0.80f, -0.75f, 0.10f, 0.85f, 0.20f,
+         0.00f,  0.80f, 0.15f, 0.35f, 1.00f,
+    };
+
+    glGenVertexArrays(1, &state.vertex_array);
+    glGenBuffers(1, &state.vertex_buffer);
+    glBindVertexArray(state.vertex_array);
+    glBindBuffer(GL_ARRAY_BUFFER, state.vertex_buffer);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), nullptr);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float),
+        reinterpret_cast<const void*>(2 * sizeof(float)));
+    glBindVertexArray(0);
+
+    Log("[renderer-smoke] OpenXRay CHW and GLES 3.0 shader pipeline initialized");
+    return true;
+}
+
+void render_renderer_smoke(renderer_smoke_state& state)
+{
+    int width = 0;
+    int height = 0;
+    SDL_GL_GetDrawableSize(state.window, &width, &height);
+    if (width <= 0 || height <= 0)
+        return;
+
+    glViewport(0, 0, width, height);
+    glClearColor(0.025f, 0.035f, 0.060f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    glUseProgram(state.program);
+    glBindVertexArray(state.vertex_array);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+
+    if (!state.pixel_readback_done)
+    {
+        glFinish();
+        std::array<GLubyte, 4> pixel{};
+        glReadPixels(width / 2, height / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
+        state.passed = pixel[3] != 0;
+        state.pixel_readback_done = true;
+        Msg("[renderer-smoke] center pixel RGBA=(%u,%u,%u,%u): %s", pixel[0], pixel[1], pixel[2], pixel[3],
+            state.passed ? "PASS" : "FAIL");
+    }
+
+    SDL_GL_SwapWindow(state.window);
+}
+
+void destroy_renderer_smoke(renderer_smoke_state& state)
+{
+    if (state.program)
+        glDeleteProgram(state.program);
+    if (state.vertex_buffer)
+        glDeleteBuffers(1, &state.vertex_buffer);
+    if (state.vertex_array)
+        glDeleteVertexArrays(1, &state.vertex_array);
+
+    if (xray::render::render_gl::HW.m_context)
+        xray::render::render_gl::HW.DestroyDevice();
+    if (state.window)
+        SDL_DestroyWindow(state.window);
+}
+#endif
+
 CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array<RendererModule*, 2>& modules)
 {
     m_headless_smoke = commandLine && strstr(commandLine, "-headless-smoke");
+    m_renderer_smoke = commandLine && strstr(commandLine, "-renderer-smoke");
 
     TracySetProgramName("OpenXRay");
     Threading::SetCurrentThreadName("Primary thread");
@@ -253,6 +445,17 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
         FS.update_path(marker_path, "$target_folder$", "openxray_headless_smoke.marker", false);
         return;
     }
+
+#if defined(XR_PLATFORM_ANDROID)
+    if (m_renderer_smoke)
+    {
+        auto* state = new renderer_smoke_state;
+        m_renderer_smoke_state = state;
+        if (!initialize_renderer_smoke(*state))
+            Log("! [renderer-smoke] initialization failed");
+        return;
+    }
+#endif
 
 #ifdef XR_PLATFORM_WINDOWS
     AccessibilityShortcuts shortcuts;
@@ -358,6 +561,23 @@ CApplication::~CApplication()
         return;
     }
 
+#if defined(XR_PLATFORM_ANDROID)
+    if (m_renderer_smoke)
+    {
+        auto* state = static_cast<renderer_smoke_state*>(m_renderer_smoke_state);
+        if (state)
+        {
+            destroy_renderer_smoke(*state);
+            delete state;
+            m_renderer_smoke_state = nullptr;
+        }
+        SDL_Quit();
+        xrDebug::Finalize();
+        FrameMarkEnd(FRAME_MARK_APPLICATION_SHUTDOWN);
+        return;
+    }
+#endif
+
     if (g_pGamePersistent)
         g_pGamePersistent->OnAppEnd();
 
@@ -410,6 +630,26 @@ CApplication::~CApplication()
 
 int CApplication::Run()
 {
+#if defined(XR_PLATFORM_ANDROID)
+    if (m_renderer_smoke)
+    {
+        auto* state = static_cast<renderer_smoke_state*>(m_renderer_smoke_state);
+        if (!state || !state->program)
+            return EXIT_FAILURE;
+
+        while (!SDL_QuitRequested())
+        {
+            SDL_Event event;
+            while (SDL_PollEvent(&event))
+            {
+                if (event.type == SDL_QUIT)
+                    return state->passed ? EXIT_SUCCESS : EXIT_FAILURE;
+            }
+            render_renderer_smoke(*state);
+        }
+        return state->passed ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+#endif
     if (m_headless_smoke)
     {
         Log("[headless-smoke] SDL/Core bootstrap completed");
