@@ -1,0 +1,475 @@
+diff --git a/android/apk/README.md b/android/apk/README.md
+index 600d610..e3e4bc5 100644
+--- a/android/apk/README.md
++++ b/android/apk/README.md
+@@ -31,14 +31,21 @@ The APK build disables LTO by default so the ARMv7 shared-library link stays
+ bounded on ordinary build hosts. Set `XRAY_ANDROID_ENABLE_LTO=ON` when a long
+ LTO link is desired.
+ 
+-The APK also carries the OpenXRay engine `res/gamedata` tree. On the first
+-normal game launch the launcher merges any missing engine configs, scripts and
+-GLES shaders into the selected game root without overwriting user files. The
+-original Call of Pripyat resource directories (`levels`, `localization`, `mp`,
+-`patches` and `resources`) must already exist and contain files; an empty or
+-arbitrary folder is rejected before the native engine is started.
+-
+-The resulting debug APK is `build/openxray-armv7-launcher-v0.5.0-debug.apk`. It is a
++The APK also carries the OpenXRay engine `res/gamedata` tree. The launcher
++extracts this engine-only data into its private app storage and exposes it to
++the native virtual file system as a read-only fallback overlay. It never copies,
++rewrites or creates files in the selected game directory. The selected path is
++passed directly to the native engine, together with the user's own
++`fsgame.ltx`; the engine performs the same resource discovery and validation as
++on desktop.
++
++Put the original Call of Pripyat installation in a user-accessible directory
++without restructuring or editing it. Its normal top-level resource
++directories include `levels`, `localization`, `mp`, `patches` and `resources`.
++The launcher does not reject an incomplete folder: missing `fsgame.ltx` or
++resources are reported by the engine in the log.
++
++The resulting debug APK is `build/openxray-armv7-launcher-v0.5.1-debug.apk`. It is a
+ bring-up artifact, not a playable release: proprietary game data and touch
+ controls are not bundled. This test proves the Android window/context and
+ shader path; it does not claim that every original desktop shader or every
+@@ -46,13 +53,13 @@ game-data render feature is already GLES-compatible.
+ 
+ ## Launcher and diagnostics on a phone
+ 
+-1. Remove the previous bring-up APK once before installing version 0.5.0. The
++1. Remove the previous bring-up APK once before installing version 0.5.1. The
+    old package registered `XRayActivity` itself as the launcher, so a pinned
+    old icon can bypass the launcher entirely:
+ 
+    ```sh
+    adb uninstall org.openxray.stalker
+-   adb install -r build/openxray-armv7-launcher-v0.5.0-debug.apk
++   adb install -r build/openxray-armv7-launcher-v0.5.1-debug.apk
+    adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
+    ```
+ 
+@@ -63,13 +70,12 @@ game-data render feature is already GLES-compatible.
+    On Android 6–10 it requests both `READ_EXTERNAL_STORAGE` and
+    `WRITE_EXTERNAL_STORAGE` through the normal system permission dialog.
+ 3. Press **Выбрать** and select the STALKER installation directory, or enter
+-   its direct path manually (for example `/storage/emulated/0/STALKER`). The
+-   directory must contain the original Call of Pripyat resource directories:
+-   `levels`, `localization`, `mp`, `patches` and `resources`.
++   its direct path manually (for example `/storage/emulated/0/STALKER`). Keep
++   the original Call of Pripyat directory layout and files unchanged.
+ 4. Press **Проверить GLES** to test the Android renderer without game files.
+    Press **Запустить движок** after placing the original game resources in the
+-   selected directory. The launcher prepares the OpenXRay engine `gamedata`
+-   automatically and logs every missing or unreadable resource.
++   selected directory. The launcher passes that directory to OpenXRay as-is;
++   all missing or unreadable resources are logged by the engine.
+ 
+ The launcher continuously displays the tail of the engine and activity logs.
+ It reports a successful engine load or a process failure in the status line and
+diff --git a/android/apk/app/build.gradle b/android/apk/app/build.gradle
+index f9cec1f..d46baf5 100644
+--- a/android/apk/app/build.gradle
++++ b/android/apk/app/build.gradle
+@@ -10,8 +10,8 @@ android {
+         applicationId 'org.openxray.stalker'
+         minSdk 26
+         targetSdk 36
+-        versionCode 5
+-        versionName '0.5.0'
++        versionCode 6
++        versionName '0.5.1'
+ 
+         ndk {
+             abiFilters 'armeabi-v7a'
+diff --git a/android/apk/app/src/main/AndroidManifest.xml b/android/apk/app/src/main/AndroidManifest.xml
+index d7d1011..844716b 100644
+--- a/android/apk/app/src/main/AndroidManifest.xml
++++ b/android/apk/app/src/main/AndroidManifest.xml
+@@ -1,7 +1,7 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+-    android:versionCode="5"
+-    android:versionName="0.5.0"
++    android:versionCode="6"
++    android:versionName="0.5.1"
+     android:installLocation="auto">
+ 
+     <uses-feature android:glEsVersion="0x00030000" />
+diff --git a/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java b/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java
+index d5766a3..d30fa41 100644
+--- a/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java
++++ b/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java
+@@ -53,9 +53,6 @@ public final class LauncherActivity extends Activity {
+     private static final int REQUEST_GAME_TREE = 1001;
+     private static final int REQUEST_STORAGE_PERMISSIONS = 1002;
+     private static final int MAX_LOG_BYTES = 180 * 1024;
+-    private static final String[] COP_RESOURCE_DIRECTORIES = {
+-            "levels", "localization", "mp", "patches", "resources"
+-    };
+ 
+     private final Handler handler = new Handler(Looper.getMainLooper());
+     private EditText gamePath;
+@@ -313,7 +310,7 @@ public final class LauncherActivity extends Activity {
+     private void launchEngine(boolean rendererSmoke) {
+         clearLogs();
+ 
+-        if (!rendererSmoke && !prepareGameRoot())
++        if (!rendererSmoke && !prepareEngineLaunch())
+             return;
+ 
+         String selectedPath = gamePath.getText().toString().trim();
+@@ -338,9 +335,9 @@ public final class LauncherActivity extends Activity {
+         }
+     }
+ 
+-    private boolean prepareGameRoot() {
++    private boolean prepareEngineLaunch() {
+         if (!hasStorageAccess()) {
+-            writeLauncherLog("[launcher] storage access is missing; STALKER folder check was not allowed");
++            writeLauncherLog("[launcher] storage access is missing; game root was not passed to the engine");
+             setStatus("Сначала нажмите «Доступ к памяти» и включите «Разрешить управление всеми файлами»."
+                     + " Обычного разрешения при установке Android не показывает.");
+             return false;
+@@ -349,103 +346,54 @@ public final class LauncherActivity extends Activity {
+         try {
+             String selectedPath = gamePath.getText().toString().trim();
+             if (selectedPath.isEmpty()) {
+-                writeLauncherLog("[launcher] STALKER folder not selected");
++                writeLauncherLog("[launcher] game root was not selected; engine was not started");
+                 setStatus("Папка STALKER не выбрана.");
+                 return false;
+             }
+ 
+-            File root = new File(selectedPath);
+-            if (!root.isDirectory()) {
+-                writeLauncherLog("[launcher] STALKER folder not found: " + root.getAbsolutePath());
+-                setStatus("Папка игры не найдена: " + root);
+-                return false;
+-            }
+-
+-            if (!validateCallOfPripyatResources(root))
+-                return false;
+-
+-            File fsgame = new File(root, "fsgame.ltx");
+-            if (!fsgame.exists() && !copyBundledFsgame(fsgame)) {
+-                writeLauncherLog("[launcher] fsgame.ltx is missing and could not be created: " + fsgame);
+-                setStatus("В папке нет fsgame.ltx и не удалось создать его: " + fsgame);
++            if (!prepareBundledEngineData()) {
++                writeLauncherLog("[launcher] bundled OpenXRay engine data is unavailable");
++                setStatus("Не удалось подготовить встроенные данные движка. Смотрите лог.");
+                 return false;
+             }
+ 
+-            if (!installBundledEngineGamedata(root)) {
+-                writeLauncherLog("[launcher] OpenXRay engine gamedata could not be installed under "
+-                        + root.getAbsolutePath());
+-                setStatus("Не удалось подготовить gamedata OpenXRay. Проверьте доступ к папке игры.");
+-                return false;
+-            }
+-            writeLauncherLog("[launcher] STALKER folder validated: " + root.getAbsolutePath());
++            writeLauncherLog("[launcher] passing game root to engine without modifying it: " + selectedPath);
+             return true;
+         } catch (SecurityException error) {
+-            writeLauncherLog("[launcher] Android denied access to STALKER folder: "
++            writeLauncherLog("[launcher] Android denied access to engine data: "
+                     + error.getClass().getSimpleName() + ": " + error.getMessage());
+-            setStatus("Android запретил доступ к папке игры: " + error.getMessage());
++            setStatus("Android запретил доступ к данным движка: " + error.getMessage());
+             return false;
+         }
+     }
+ 
+-    private boolean copyBundledFsgame(File destination) {
+-        try (InputStream input = getAssets().open("fsgame.ltx");
+-             OutputStream output = new FileOutputStream(destination)) {
+-            byte[] buffer = new byte[8192];
+-            int count;
+-            while ((count = input.read(buffer)) != -1)
+-                output.write(buffer, 0, count);
+-            return true;
+-        } catch (IOException | SecurityException error) {
+-            return false;
+-        }
+-    }
+-
+-    private boolean validateCallOfPripyatResources(File root) {
+-        for (String directoryName : COP_RESOURCE_DIRECTORIES) {
+-            File directory = new File(root, directoryName);
+-            if (!directory.isDirectory()) {
+-                writeLauncherLog("[launcher] required CoP resource directory is missing: "
+-                        + directory.getAbsolutePath());
+-                setStatus("Не найдена папка ресурсов CoP: " + directoryName
+-                        + ". Нужны levels, localization, mp, patches и resources.");
+-                return false;
+-            }
+-            if (!hasDirectoryEntries(directory)) {
+-                writeLauncherLog("[launcher] required CoP resource directory is empty: "
+-                        + directory.getAbsolutePath());
+-                setStatus("Папка ресурсов CoP пустая: " + directoryName + ".");
+-                return false;
+-            }
+-        }
+-        return true;
+-    }
+-
+-    private boolean hasDirectoryEntries(File directory) {
+-        File[] entries = directory.listFiles();
+-        return entries != null && entries.length != 0;
+-    }
+-
+-    private boolean installBundledEngineGamedata(File gameRoot) {
++    private boolean prepareBundledEngineData() {
++        File destination = new File(getFilesDir(), "openxray/engine-gamedata");
+         try {
+-            copyBundledAssetTree("gamedata", new File(gameRoot, "gamedata"));
+-            File configs = new File(gameRoot, "gamedata/configs");
+-            File shaders = new File(gameRoot, "gamedata/shaders");
++            copyBundledAssetTree("gamedata", destination);
++            File configs = new File(destination, "configs");
++            File shaders = new File(destination, "shaders");
+             if (!configs.isDirectory() || !shaders.isDirectory()
+                     || !hasDirectoryEntries(configs) || !hasDirectoryEntries(shaders)) {
+-                writeLauncherLog("[launcher] engine gamedata is incomplete after installation: "
+-                        + gameRoot.getAbsolutePath());
++                writeLauncherLog("[launcher] bundled engine gamedata is incomplete: "
++                        + destination.getAbsolutePath());
+                 return false;
+             }
+-            writeLauncherLog("[launcher] OpenXRay engine gamedata is ready: "
+-                    + new File(gameRoot, "gamedata").getAbsolutePath());
++            writeLauncherLog("[launcher] OpenXRay engine gamedata is ready in app storage: "
++                        + destination.getAbsolutePath());
+             return true;
+         } catch (IOException | SecurityException error) {
+-            writeLauncherLog("[launcher] cannot install engine gamedata: "
++            writeLauncherLog("[launcher] cannot prepare bundled engine gamedata: "
+                     + error.getClass().getSimpleName() + ": " + error.getMessage());
+             return false;
+         }
+     }
+ 
++    private boolean hasDirectoryEntries(File directory) {
++        File[] entries = directory.listFiles();
++        return entries != null && entries.length != 0;
++    }
++
+     private void copyBundledAssetTree(String assetPath, File destination) throws IOException {
+         String[] children = getAssets().list(assetPath);
+         if (children == null || children.length == 0) {
+diff --git a/android/apk/app/src/main/res/values/strings.xml b/android/apk/app/src/main/res/values/strings.xml
+index 077ab81..57343f7 100644
+--- a/android/apk/app/src/main/res/values/strings.xml
++++ b/android/apk/app/src/main/res/values/strings.xml
+@@ -1,3 +1,3 @@
+ <resources>
+-    <string name="app_name">OpenXRay Launcher 0.5.0</string>
++    <string name="app_name">OpenXRay Launcher 0.5.1</string>
+ </resources>
+diff --git a/android/apply-patches.sh b/android/apply-patches.sh
+index 06d1672..9be9674 100755
+--- a/android/apply-patches.sh
++++ b/android/apply-patches.sh
+@@ -6,17 +6,20 @@ repo_dir=${1:-$(CDPATH= cd -- "$script_dir/.." && pwd)}
+ patch_dir="$repo_dir/android/patches"
+ 
+ if grep -Fq 'pw->pw_gecos && pw->pw_gecos[0]' "$repo_dir/src/xrCore/xrCore.cpp" \
+-    && grep -Fq 'STALKER folder not found' "$repo_dir/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java" \
+     && grep -Fq 'android_native_crash_handler' "$repo_dir/src/xrEngine/x_ray.cpp" \
+     && grep -Fq 'LUAJIT_HOST_EXTRA_LDFLAGS' "$repo_dir/Externals/LuaJIT-proj/CMakeLists.txt" \
+     && grep -Fq "SDL's Android GLES window owns framebuffer 0" "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
+-    && grep -Fq 'required CoP resource directory is missing' \
++    && grep -Fq 'prepareBundledEngineData' \
++        "$repo_dir/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java" \
++    && grep -Fq 'without modifying it' \
+         "$repo_dir/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java" \
+     && grep -Fq 'res/gamedata' "$repo_dir/android/build-apk-armv7.sh" \
+     && grep -Fq 'glDrawElementsBaseVertex)' \
+         "$repo_dir/src/Layers/xrRenderGL/glR_Backend_Runtime.h" \
+     && grep -Fq 'glBindFramebuffer(GL_READ_FRAMEBUFFER, pFB)' \
+-        "$repo_dir/src/Layers/xrRenderGL/glHW.cpp"; then
++        "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
++    && grep -Fq 'm_Overlay' "$repo_dir/src/xrCore/LocatorAPI_defs.h" \
++    && grep -Fq 'SDL_AndroidGetInternalStoragePath' "$repo_dir/src/xrCore/LocatorAPI.cpp"; then
+     echo "Android patchset: already present"
+     exit 0
+ fi
+diff --git a/android/build-apk-armv7.sh b/android/build-apk-armv7.sh
+index c813188..07570b9 100755
+--- a/android/build-apk-armv7.sh
++++ b/android/build-apk-armv7.sh
+@@ -101,6 +101,6 @@ chmod +x "$project_dir/gradlew"
+ 
+ apk="$project_dir/app/build/outputs/apk/debug/app-debug.apk"
+ mkdir -p "$repo_dir/build"
+-output_apk="$repo_dir/build/openxray-armv7-launcher-v0.5.0-debug.apk"
++output_apk="$repo_dir/build/openxray-armv7-launcher-v0.5.1-debug.apk"
+ cp "$apk" "$output_apk"
+ printf '%s\n' "$output_apk"
+diff --git a/src/xrCore/LocatorAPI.cpp b/src/xrCore/LocatorAPI.cpp
+index b531789..94d4319 100644
+--- a/src/xrCore/LocatorAPI.cpp
++++ b/src/xrCore/LocatorAPI.cpp
+@@ -11,7 +11,11 @@
+ #include <sys/utime.h>
+ #elif defined(XR_PLATFORM_POSIX)
+ #include <SDL.h>
++#if defined(XR_PLATFORM_ANDROID)
++#include <SDL_system.h>
++#endif
+ #include <glob.h>
++#include <sys/stat.h>
+ #endif
+ 
+ #include "FS_internal.h"
+@@ -937,6 +941,19 @@ IReader* CLocatorAPI::setup_fs_ltx(pcstr fs_name)
+     return result;
+ }
+ 
++#if defined(XR_PLATFORM_ANDROID)
++static xr_string android_engine_data_root()
++{
++    const char* internal_path = SDL_AndroidGetInternalStoragePath();
++    if (!internal_path || !internal_path[0])
++        return {};
++
++    string_path result;
++    strconcat(sizeof(result), result, internal_path, "/openxray/engine-gamedata");
++    return result;
++}
++#endif
++
+ void CLocatorAPI::_initialize(u32 flags, pcstr target_folder, pcstr fs_name)
+ {
+     ZoneScoped;
+@@ -1013,11 +1030,36 @@ void CLocatorAPI::_initialize(u32 flags, pcstr target_folder, pcstr fs_name)
+             lp_def = cnt >= 5 ? def : 0;
+             lp_capt = cnt >= 6 ? capt : 0;
+ 
++#if defined(XR_PLATFORM_ANDROID)
++            const bool is_game_data = 0 == xr_strcmp(id, "$game_data$");
++#endif
++
+             auto p_it = m_paths.find(root);
+ 
+             FS_Path* P = xr_new<FS_Path>(p_it != m_paths.end() ? p_it->second->m_Path : root, lp_add, lp_def, lp_capt, fl);
++#if defined(XR_PLATFORM_ANDROID)
++            if (is_game_data)
++            {
++                const xr_string overlay_root = android_engine_data_root();
++                struct stat overlay_info;
++                if (!overlay_root.empty() && ::stat(overlay_root.c_str(), &overlay_info) == 0
++                    && S_ISDIR(overlay_info.st_mode))
++                {
++                    P->_set_overlay(overlay_root.c_str());
++                    Msg("* Android engine data overlay: %s", overlay_root.c_str());
++                }
++            }
++            else if (p_it != m_paths.end() && p_it->second->m_Overlay)
++            {
++                P->_set_overlay(p_it->second->m_Overlay, lp_add);
++            }
++#endif
+             bNoRecurse = !(fl & FS_Path::flRecurse);
+             Recurse(P->m_Path);
++#if defined(XR_PLATFORM_ANDROID)
++            if (is_game_data && P->m_Overlay)
++                Recurse(P->m_Overlay);
++#endif
+             auto I = m_paths.emplace(xr_strdup(id), P);
+ #ifndef DEBUG
+             m_Flags.set(flCacheFiles, false);
+diff --git a/src/xrCore/LocatorAPI_defs.cpp b/src/xrCore/LocatorAPI_defs.cpp
+index eeee687..bd3b817 100644
+--- a/src/xrCore/LocatorAPI_defs.cpp
++++ b/src/xrCore/LocatorAPI_defs.cpp
+@@ -48,6 +48,7 @@ FS_Path::FS_Path(pcstr _Root, pcstr _Add, pcstr _DefExt, pcstr _FilterCaption, u
+     m_FilterCaption = _FilterCaption ? xr_fs_strlwr(xr_strdup(_FilterCaption)) : 0;
+     m_Add = _Add ? xr_fs_strlwr(xr_strdup(_Add)) : 0;
+     m_Root = _Root ? xr_fs_strlwr(xr_strdup(_Root)) : 0;
++    m_Overlay = nullptr;
+     m_Flags.assign(flags);
+ #ifdef _EDITOR
+     // Editor(s)/User(s) wants pathes already created in "real" file system :)
+@@ -62,6 +63,7 @@ FS_Path::~FS_Path()
+     xr_free(m_Add);
+     xr_free(m_DefExt);
+     xr_free(m_FilterCaption);
++    xr_free(m_Overlay);
+ }
+ 
+ void FS_Path::_set(pcstr add)
+@@ -97,6 +99,21 @@ void FS_Path::_set_root(pcstr root)
+     m_Path = xr_fs_strlwr(xr_strdup(temp));
+ }
+ 
++void FS_Path::_set_overlay(pcstr root, pcstr add)
++{
++    xr_free(m_Overlay);
++    m_Overlay = nullptr;
++    if (!root || !root[0])
++        return;
++
++    string_path temp;
++    strconcat(sizeof(temp), temp, root, add ? add : "");
++    if (temp[0] && temp[xr_strlen(temp) - 1] != _DELIMITER && temp[xr_strlen(temp) - 1] != '/')
++        xr_strcat(temp, DELIMITER);
++    restore_path_separators(temp);
++    m_Overlay = xr_fs_strlwr(xr_strdup(temp));
++}
++
+ pcstr FS_Path::_update(string_path& dest, pcstr src) const
+ {
+     R_ASSERT(dest);
+@@ -112,10 +129,32 @@ pcstr FS_Path::_update(string_path& dest, pcstr src) const
+         xr_strcpy(dest, fullPath);
+         return dest;
+     }
++
++    if (m_Overlay)
++    {
++        strconcat(fullPath, m_Overlay, temp);
++        if (FS.exist(fullPath, FSType::External) || FS.exist(fullPath, FSType::Virtual))
++        {
++            xr_strcpy(dest, fullPath);
++            return dest;
++        }
++    }
+ #endif
+ 
+     xr_strlwr(temp);
+     strconcat(sizeof(dest), dest, m_Path, temp);
++
++    if (m_Overlay)
++    {
++        string_path overlayPath;
++        strconcat(sizeof(overlayPath), overlayPath, m_Overlay, temp);
++        if (FS.exist(overlayPath, FSType::External) || FS.exist(overlayPath, FSType::Virtual))
++        {
++            xr_strcpy(dest, overlayPath);
++            return dest;
++        }
++    }
++
+     return xr_fs_strlwr(dest);
+ }
+ /*
+diff --git a/src/xrCore/LocatorAPI_defs.h b/src/xrCore/LocatorAPI_defs.h
+index df0572e..adec0d2 100644
+--- a/src/xrCore/LocatorAPI_defs.h
++++ b/src/xrCore/LocatorAPI_defs.h
+@@ -27,6 +27,7 @@ public:
+     pstr m_Add;
+     pstr m_DefExt;
+     pstr m_FilterCaption;
++    pstr m_Overlay;
+     Flags32 m_Flags;
+ 
+ public:
+@@ -35,6 +36,7 @@ public:
+     pcstr _update(string_path& dest, pcstr src) const;
+     void _set(pcstr add);
+     void _set_root(pcstr root);
++    void _set_overlay(pcstr root, pcstr add = nullptr);
+ 
+     void rescan_path_cb();
+ };
