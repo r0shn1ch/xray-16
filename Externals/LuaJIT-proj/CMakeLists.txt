@@ -35,6 +35,8 @@ option(LUAJIT_USE_GDBJIT "This is the client for the GDB JIT API. GDB 7.0 or hig
 
 set(LUAJIT_HOST_C_COMPILER "" CACHE FILEPATH
     "C compiler for LuaJIT's build-time host tools")
+set(LUAJIT_HOST_EXTRA_LDFLAGS "" CACHE STRING
+    "Extra linker flags for LuaJIT's build-time host tools")
 
 option(LUA_USE_APICHECK "Turn on assertions for the Lua/C API to debug problems with lua_* calls. This is rather slow, use only while developing C libraries/embeddings" OFF)
 option(LUA_USE_ASSERT "Turn on assertions for the whole LuaJIT VM. This significantly slows down everything. Use only if you suspect a problem with LuaJIT itself" OFF)
@@ -363,6 +365,9 @@ set(LUAJIT_HOST_CMAKE_ARGS)
 if (LUAJIT_HOST_C_COMPILER)
     string(JOIN " " LUAJIT_HOST_C_FLAGS_STRING ${HOST_ACFLAGS})
     string(JOIN " " LUAJIT_HOST_LD_FLAGS_STRING ${HOST_ALDFLAGS})
+    if (LUAJIT_HOST_EXTRA_LDFLAGS)
+        string(APPEND LUAJIT_HOST_LD_FLAGS_STRING " ${LUAJIT_HOST_EXTRA_LDFLAGS}")
+    endif()
     list(APPEND LUAJIT_HOST_CMAKE_ARGS
         "-DCMAKE_C_COMPILER=${LUAJIT_HOST_C_COMPILER}"
         "-DCMAKE_C_FLAGS=-static ${LUAJIT_HOST_C_FLAGS_STRING}"

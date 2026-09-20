@@ -11,6 +11,20 @@ against API 36 (Android 16).
 
 ## Configure and build
 
+The recommended entry point is `build-harness.sh`. It applies the Android
+patchset automatically (and skips it when the source already contains the
+patches), loads a prepared build kit when `XRAY_ANDROID_KIT_ROOT` is set, and
+then builds either the APK or the native target:
+
+```sh
+XRAY_ANDROID_KIT_ROOT=/path/to/openxray-android-build-kit-v0.5.0 \
+./android/build-harness.sh --apk
+```
+
+For a checkout that already has the Android toolchain exported, the same
+command works without `XRAY_ANDROID_KIT_ROOT`. Use `--native` for the
+headless/native target. No patch command is needed before either build.
+
 ```sh
 ANDROID_NDK_HOME=/path/to/android-ndk \
 ANDROID_DEPS_PREFIX=/path/to/android-deps \
@@ -19,22 +33,44 @@ SDL2_DIR=/path/to/android-sdl2/lib/cmake/SDL2 \
 ```
 
 The script forwards `CMAKE_PREFIX_PATH` from `ANDROID_DEPS_PREFIX` and builds
-the regular `xr_3da` target. The prefix must contain Android/armeabi-v7a
-builds of SDL2, OpenAL Soft, Ogg, Vorbis, Theora, LZO and JPEG. The script does
-not download dependencies implicitly.
+the Android `libmain.so` engine target used by the APK. The prefix must contain
+Android/armeabi-v7a builds of SDL2, OpenAL Soft, Ogg, Vorbis, Theora, LZO and
+JPEG. The script does not download dependencies implicitly.
+
+`apply-patches.sh` is idempotent. It verifies the null-safe Android core
+bootstrap, crash logging, launcher game-root diagnostics and LuaJIT host linker
+support before building; on an older clean checkout it applies the numbered
+patches in `android/patches/` automatically.
+
+To preserve the installed NDK, SDK, native dependencies, SDL2 Android project
+and pinned Gradle distribution for later builds, create the build kit once:
+
+```sh
+ANDROID_NDK_HOME=/path/to/android-ndk-r30 \
+ANDROID_SDK_ROOT=/path/to/android-sdk \
+ANDROID_DEPS_PREFIX=/path/to/android-deps-armv7 \
+SDL2_ANDROID_HOME=/path/to/SDL \
+GRADLE_BIN=/path/to/gradle-8.1.1/bin/gradle \
+./android/create-build-kit.sh
+```
+
+The resulting `.tar.zst` contains the harness, patchset and complete pinned
+toolchain. Extract it once, point `XRAY_ANDROID_KIT_ROOT` at the extracted
+directory, and reuse `build-harness.sh` for subsequent builds.
 
 LuaJIT also generates ARM32 code with host-side `minilua` and `buildvm`. On a
 64-bit Linux build host install the 32-bit compiler runtime (for example
 `gcc-multilib` and `libc6-dev-i386`). If the host kernel cannot execute i386
 ELF files, the CMake integration uses `qemu-i386` when it is available.
-For a sandbox without a native i386 runtime, pass
-`-DLUAJIT_HOST_C_COMPILER=/path/to/i686-linux-android-clang` and
-`-DLUAJIT_HOST_EXECUTABLE_PREFIX=/path/to/qemu-i386-static`; the host compiler
-must produce a statically linked 32-bit helper.
+The Android build scripts now select the NDK's `i686-linux-android26-clang`
+and the build kit's `qemu-i386-static` automatically. Explicit
+`LUAJIT_HOST_C_COMPILER` and `LUAJIT_HOST_EXECUTABLE_PREFIX` values still
+override those defaults; the host compiler must produce a statically linked
+32-bit helper.
 
 ## First validation without game data
 
-After the native target is built, run the executable with:
+For a separately built host executable, run the headless smoke check with:
 
 ```sh
 ./android/run-headless-smoke.sh path/to/xr_3da
