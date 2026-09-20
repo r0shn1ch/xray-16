@@ -228,6 +228,19 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
     // The Android bring-up renderer is OpenGL ES 3.0.  Desktop GLSL 4.10
     // and ARB program pipelines are not legal in an ES shader compiler.
     options.add("#version 300 es");
+    // The game's GLSL sources redeclare gl_PerVertex.  In GLES this is
+    // provided by an extension rather than desktop GLSL's core language.
+    // The driver reports the exact failure as "gl_PerVertex requires
+    // extension GL_EXT_shader_io_blocks to be enabled" when the directive
+    // is omitted.
+    if (GLAD_GL_EXT_shader_io_blocks)
+        options.add("#extension GL_EXT_shader_io_blocks : enable");
+    else if (GLAD_GL_OES_shader_io_blocks)
+        options.add("#extension GL_OES_shader_io_blocks : enable");
+
+    // v_volumetric.h redeclares gl_ClipDistance in the same built-in block.
+    if (GLAD_GL_EXT_clip_cull_distance)
+        options.add("#extension GL_EXT_clip_cull_distance : enable");
     options.add("precision highp float;");
     options.add("precision highp int;");
 #else

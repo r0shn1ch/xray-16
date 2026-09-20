@@ -155,6 +155,10 @@ void CHW::CreateDevice(SDL_Window* hWnd)
     Msg("* GPU OpenGL version: %s", OpenGLVersionString);
     Msg("* GPU OpenGL shading language version: %s", ShadingVersion);
     Msg("* GPU OpenGL VTF units: [%d] CTI units: [%d]", iMaxVTFUnits, iMaxCTIUnits);
+#if defined(XR_PLATFORM_ANDROID)
+    Msg("* GLES shader extensions: io_blocks=[%d/%d] clip_cull_distance=[%d]", GLAD_GL_EXT_shader_io_blocks,
+        GLAD_GL_OES_shader_io_blocks, GLAD_GL_EXT_clip_cull_distance);
+#endif
 
     ComputeShadersSupported = false; // XXX: Implement compute shaders support
 
