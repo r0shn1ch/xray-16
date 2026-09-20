@@ -514,6 +514,7 @@ void shutdown_android_engine_log()
     for (size_t i = 0; i < g_android_crash_log.count; ++i)
         close(g_android_crash_log.fds[i]);
     g_android_crash_log.count = 0;
+    g_android_crash_log.installed = false;
 }
 
 void show_renderer_smoke_status(bool success)
@@ -861,6 +862,10 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
     const auto android_game_root = android_game_root_from_command_line(commandLine);
     if (!android_game_root.empty())
     {
+        std::error_code android_game_root_error;
+        if (!std::filesystem::is_directory(android_game_root, android_game_root_error))
+            Log("! [android] STALKER game root not found: %s", android_game_root.string().c_str());
+
         const auto android_fsgame = android_game_root / "fsgame.ltx";
         if (!std::filesystem::exists(android_fsgame))
             Log("! [android] game root has no fsgame.ltx: %s", android_fsgame.string().c_str());

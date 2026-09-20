@@ -27,11 +27,16 @@ import android.widget.Toast;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 /**
  * Android launcher for selecting the STALKER installation and inspecting the
@@ -303,13 +308,16 @@ public final class LauncherActivity extends Activity {
     }
 
     private void launchEngine(boolean rendererSmoke) {
+        clearLogs();
+
         if (!rendererSmoke && !prepareGameRoot())
             return;
 
         String selectedPath = gamePath.getText().toString().trim();
         preferences.edit().putString(PREF_GAME_PATH, selectedPath).apply();
 
-        clearLogs();
+        writeLauncherLog("[launcher] starting "
+                + (rendererSmoke ? "renderer smoke test" : "OpenXRay; game root=" + selectedPath));
         engineLaunchTime = SystemClock.elapsedRealtime();
         engineFailureToastShown = false;
 
@@ -329,27 +337,42 @@ public final class LauncherActivity extends Activity {
 
     private boolean prepareGameRoot() {
         if (!hasStorageAccess()) {
+            writeLauncherLog("[launcher] storage access is missing; STALKER folder check was not allowed");
             setStatus("Сначала нажмите «Доступ к памяти» и включите «Разрешить управление всеми файлами»."
                     + " Обычного разрешения при установке Android не показывает.");
             return false;
         }
 
         try {
-            File root = new File(gamePath.getText().toString().trim());
+            String selectedPath = gamePath.getText().toString().trim();
+            if (selectedPath.isEmpty()) {
+                writeLauncherLog("[launcher] STALKER folder not selected");
+                setStatus("Папка STALKER не выбрана.");
+                return false;
+            }
+
+            File root = new File(selectedPath);
             if (!root.isDirectory()) {
+                writeLauncherLog("[launcher] STALKER folder not found: " + root.getAbsolutePath());
                 setStatus("Папка игры не найдена: " + root);
                 return false;
             }
 
             File fsgame = new File(root, "fsgame.ltx");
             if (!fsgame.exists() && !copyBundledFsgame(fsgame)) {
+                writeLauncherLog("[launcher] fsgame.ltx is missing and could not be created: " + fsgame);
                 setStatus("В папке нет fsgame.ltx и не удалось создать его: " + fsgame);
                 return false;
             }
-            if (!new File(root, "gamedata").isDirectory())
+            if (!new File(root, "gamedata").isDirectory()) {
+                writeLauncherLog("[launcher] warning: gamedata/ is missing under " + root.getAbsolutePath());
                 setStatus("Предупреждение: в папке нет gamedata/. Запуск всё равно продолжится.");
+            }
+            writeLauncherLog("[launcher] STALKER folder validated: " + root.getAbsolutePath());
             return true;
         } catch (SecurityException error) {
+            writeLauncherLog("[launcher] Android denied access to STALKER folder: "
+                    + error.getClass().getSimpleName() + ": " + error.getMessage());
             setStatus("Android запретил доступ к папке игры: " + error.getMessage());
             return false;
         }
@@ -487,6 +510,31 @@ public final class LauncherActivity extends Activity {
         deleteLog(new File(internal, "android.log"));
         deleteLog(new File(internal, "activity.log"));
         refreshLog();
+    }
+
+    private void writeLauncherLog(String message) {
+        File externalRoot = getExternalFilesDir("openxray");
+        File[] candidates = new File[] {
+                new File(Environment.getExternalStorageDirectory(), "openxray/android.log"),
+                externalRoot == null ? null : new File(externalRoot, "android.log"),
+                new File(getFilesDir(), "openxray/android.log")
+        };
+
+        String timestamp = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+                .format(new Date());
+        for (File file : candidates) {
+            if (file == null)
+                continue;
+            File parent = file.getParentFile();
+            if (parent == null || (!parent.exists() && !parent.mkdirs()))
+                continue;
+            try (PrintWriter writer = new PrintWriter(new FileWriter(file, true))) {
+                writer.println(timestamp + " " + message);
+                return;
+            } catch (IOException | SecurityException ignored) {
+                // Try the app-specific fallback when shared storage is unavailable.
+            }
+        }
     }
 
     private void deleteLog(File file) {
