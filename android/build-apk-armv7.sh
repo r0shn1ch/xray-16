@@ -101,6 +101,6 @@ chmod +x "$project_dir/gradlew"
 
 apk="$project_dir/app/build/outputs/apk/debug/app-debug.apk"
 mkdir -p "$repo_dir/build"
-output_apk="$repo_dir/build/openxray-armv7-launcher-v0.5.1-debug.apk"
+output_apk="$repo_dir/build/openxray-armv7-launcher-v0.5.2-debug.apk"
 cp "$apk" "$output_apk"
 printf '%s\n' "$output_apk"

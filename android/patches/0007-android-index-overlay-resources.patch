@@ -1,0 +1,103 @@
+diff --git a/android/apk/README.md b/android/apk/README.md
+index e3e4bc58b..df0e31d26 100644
+--- a/android/apk/README.md
++++ b/android/apk/README.md
+@@ -45,7 +45,7 @@ directories include `levels`, `localization`, `mp`, `patches` and `resources`.
+ The launcher does not reject an incomplete folder: missing `fsgame.ltx` or
+ resources are reported by the engine in the log.
+ 
+-The resulting debug APK is `build/openxray-armv7-launcher-v0.5.1-debug.apk`. It is a
++The resulting debug APK is `build/openxray-armv7-launcher-v0.5.2-debug.apk`. It is a
+ bring-up artifact, not a playable release: proprietary game data and touch
+ controls are not bundled. This test proves the Android window/context and
+ shader path; it does not claim that every original desktop shader or every
+@@ -53,13 +53,13 @@ game-data render feature is already GLES-compatible.
+ 
+ ## Launcher and diagnostics on a phone
+ 
+-1. Remove the previous bring-up APK once before installing version 0.5.1. The
++1. Remove the previous bring-up APK once before installing version 0.5.2. The
+    old package registered `XRayActivity` itself as the launcher, so a pinned
+    old icon can bypass the launcher entirely:
+ 
+    ```sh
+    adb uninstall org.openxray.stalker
+-   adb install -r build/openxray-armv7-launcher-v0.5.1-debug.apk
++   adb install -r build/openxray-armv7-launcher-v0.5.2-debug.apk
+    adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
+    ```
+ 
+diff --git a/android/apk/app/build.gradle b/android/apk/app/build.gradle
+index d46baf5ba..b530b3d69 100644
+--- a/android/apk/app/build.gradle
++++ b/android/apk/app/build.gradle
+@@ -10,8 +10,8 @@ android {
+         applicationId 'org.openxray.stalker'
+         minSdk 26
+         targetSdk 36
+-        versionCode 6
+-        versionName '0.5.1'
++        versionCode 7
++        versionName '0.5.2'
+ 
+         ndk {
+             abiFilters 'armeabi-v7a'
+diff --git a/android/apk/app/src/main/AndroidManifest.xml b/android/apk/app/src/main/AndroidManifest.xml
+index 844716b1e..3e99f422b 100644
+--- a/android/apk/app/src/main/AndroidManifest.xml
++++ b/android/apk/app/src/main/AndroidManifest.xml
+@@ -1,7 +1,7 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+-    android:versionCode="6"
+-    android:versionName="0.5.1"
++    android:versionCode="7"
++    android:versionName="0.5.2"
+     android:installLocation="auto">
+ 
+     <uses-feature android:glEsVersion="0x00030000" />
+diff --git a/android/apk/app/src/main/res/values/strings.xml b/android/apk/app/src/main/res/values/strings.xml
+index 57343f7c5..e8962e011 100644
+--- a/android/apk/app/src/main/res/values/strings.xml
++++ b/android/apk/app/src/main/res/values/strings.xml
+@@ -1,3 +1,3 @@
+ <resources>
+-    <string name="app_name">OpenXRay Launcher 0.5.1</string>
++    <string name="app_name">OpenXRay Launcher 0.5.2</string>
+ </resources>
+diff --git a/android/apply-patches.sh b/android/apply-patches.sh
+old mode 100644
+new mode 100755
+diff --git a/android/build-apk-armv7.sh b/android/build-apk-armv7.sh
+old mode 100644
+new mode 100755
+index 07570b9bf..0cc4bf073
+--- a/android/build-apk-armv7.sh
++++ b/android/build-apk-armv7.sh
+@@ -101,6 +101,6 @@ chmod +x "$project_dir/gradlew"
+ 
+ apk="$project_dir/app/build/outputs/apk/debug/app-debug.apk"
+ mkdir -p "$repo_dir/build"
+-output_apk="$repo_dir/build/openxray-armv7-launcher-v0.5.1-debug.apk"
++output_apk="$repo_dir/build/openxray-armv7-launcher-v0.5.2-debug.apk"
+ cp "$apk" "$output_apk"
+ printf '%s\n' "$output_apk"
+diff --git a/src/xrCore/LocatorAPI.cpp b/src/xrCore/LocatorAPI.cpp
+index 94d4319c1..64421ad1f 100644
+--- a/src/xrCore/LocatorAPI.cpp
++++ b/src/xrCore/LocatorAPI.cpp
+@@ -1057,8 +1057,12 @@ void CLocatorAPI::_initialize(u32 flags, pcstr target_folder, pcstr fs_name)
+             bNoRecurse = !(fl & FS_Path::flRecurse);
+             Recurse(P->m_Path);
+ #if defined(XR_PLATFORM_ANDROID)
+-            if (is_game_data && P->m_Overlay)
++            if (P->m_Overlay)
++            {
+                 Recurse(P->m_Overlay);
++                if (0 == xr_strcmp(id, "$game_shaders$"))
++                    Msg("* Android shader overlay indexed: %s", P->m_Overlay);
++            }
+ #endif
+             auto I = m_paths.emplace(xr_strdup(id), P);
+ #ifndef DEBUG
+

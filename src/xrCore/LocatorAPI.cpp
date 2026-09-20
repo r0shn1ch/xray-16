@@ -1057,8 +1057,12 @@ void CLocatorAPI::_initialize(u32 flags, pcstr target_folder, pcstr fs_name)
             bNoRecurse = !(fl & FS_Path::flRecurse);
             Recurse(P->m_Path);
 #if defined(XR_PLATFORM_ANDROID)
-            if (is_game_data && P->m_Overlay)
+            if (P->m_Overlay)
+            {
                 Recurse(P->m_Overlay);
+                if (0 == xr_strcmp(id, "$game_shaders$"))
+                    Msg("* Android shader overlay indexed: %s", P->m_Overlay);
+            }
 #endif
             auto I = m_paths.emplace(xr_strdup(id), P);
 #ifndef DEBUG
