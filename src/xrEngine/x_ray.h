@@ -15,6 +15,13 @@ namespace discord
 class Core;
 }
 
+#if defined(XR_PLATFORM_ANDROID)
+// Installed before the native engine starts so a crash in SDL, GLES setup, or
+// the first renderer call leaves a small async-signal-safe record on disk.
+void android_install_crash_handler();
+void android_engine_log_early(pcstr message);
+#endif
+
 // definition
 class ENGINE_API CApplication final
 {

@@ -201,17 +201,22 @@ void CHW::SetPrimaryAttributes(u32& windowFlags)
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 
+#if defined(XR_PLATFORM_ANDROID)
+    // Android's SDL GLES backend owns the context profile.  Do not inspect
+    // Core.Params here: the renderer smoke path intentionally reaches this
+    // function before the full engine command-line state is guaranteed to be
+    // valid.  The previous strstr(Core.Params, ...) call turned that state
+    // into a SIGSEGV on ARMv7 (fault address 0x0 inside libc strstr/strchr).
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#else
     const pcstr commandLine = Core.Params ? Core.Params : "";
     if (!strstr(commandLine, "-no_gl_context"))
     {
-#if defined(XR_PLATFORM_ANDROID)
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-#else
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-#endif
     }
+#endif
 }
 
 IRender::RenderContext CHW::GetCurrentContext() const

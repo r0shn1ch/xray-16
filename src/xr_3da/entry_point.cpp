@@ -51,6 +51,10 @@ int entry_point(pcstr commandLine)
 {
     tracy_raii raii;
     commandLine = commandLine ? commandLine : "";
+#if defined(XR_PLATFORM_ANDROID)
+    android_install_crash_handler();
+    android_engine_log_early("[android] native entry point entered");
+#endif
     // Renderer smoke is deliberately independent from proprietary game data:
     // it exercises the Android window/context/shader path only.
     auto* game = strstr(commandLine, "-nogame") || strstr(commandLine, "-renderer-smoke") ? nullptr : &xrGame;

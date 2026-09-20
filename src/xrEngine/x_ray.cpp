@@ -46,6 +46,14 @@
 #include "xrCore/Text/StringConversion.hpp"
 #endif
 
+#if defined(XR_PLATFORM_ANDROID)
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/ucontext.h>
+#include <unistd.h>
+#endif
+
 // global variables
 constexpr size_t MAX_WINDOW_EVENTS = 32;
 
@@ -215,6 +223,231 @@ constexpr pcstr FRAME_MARK_APPLICATION_SHUTDOWN = "Application shutdown";
 constexpr pcstr FRAME_MARK_APPLICATION_RUN = "Application run";
 
 #if defined(XR_PLATFORM_ANDROID)
+constexpr size_t ANDROID_CRASH_LOG_LIMIT = 8;
+constexpr size_t ANDROID_SIGNAL_STACK_SIZE = 64 * 1024;
+
+struct android_crash_log_state
+{
+    int fds[ANDROID_CRASH_LOG_LIMIT]{ -1, -1, -1, -1, -1, -1, -1, -1 };
+    size_t count{};
+    bool installed{};
+};
+
+android_crash_log_state g_android_crash_log;
+alignas(16) unsigned char g_android_signal_stack[ANDROID_SIGNAL_STACK_SIZE];
+volatile sig_atomic_t g_android_crash_in_progress = 0;
+
+void android_write_raw(int fd, const char* data, size_t size)
+{
+    while (size != 0)
+    {
+        const ssize_t written = write(fd, data, size);
+        if (written <= 0)
+            return;
+        data += written;
+        size -= static_cast<size_t>(written);
+    }
+}
+
+void android_write_early_to_logs(const char* message)
+{
+    if (!message)
+        return;
+
+    const size_t size = strlen(message);
+    for (size_t i = 0; i < g_android_crash_log.count; ++i)
+    {
+        android_write_raw(g_android_crash_log.fds[i], message, size);
+        android_write_raw(g_android_crash_log.fds[i], "\n", 1);
+    }
+}
+
+void android_add_crash_log_fd(pcstr path)
+{
+    if (!path || g_android_crash_log.count >= ANDROID_CRASH_LOG_LIMIT)
+        return;
+
+    const int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0664);
+    if (fd < 0)
+        return;
+
+    struct stat candidate_stat{};
+    const bool candidate_has_stat = fstat(fd, &candidate_stat) == 0;
+    for (size_t i = 0; i < g_android_crash_log.count; ++i)
+    {
+        struct stat existing_stat{};
+        if (candidate_has_stat && fstat(g_android_crash_log.fds[i], &existing_stat) == 0 &&
+            candidate_stat.st_dev == existing_stat.st_dev && candidate_stat.st_ino == existing_stat.st_ino)
+        {
+            close(fd);
+            return;
+        }
+    }
+
+    g_android_crash_log.fds[g_android_crash_log.count++] = fd;
+}
+
+const char* android_signal_name(int signal)
+{
+    switch (signal)
+    {
+    case SIGABRT: return "SIGABRT";
+    case SIGBUS:  return "SIGBUS";
+    case SIGFPE:  return "SIGFPE";
+    case SIGILL:  return "SIGILL";
+    case SIGSEGV: return "SIGSEGV";
+    case SIGTRAP: return "SIGTRAP";
+    case SIGSYS:  return "SIGSYS";
+    default:      return "SIGNAL";
+    }
+}
+
+char* android_append_text(char* destination, char* end, const char* text)
+{
+    while (destination < end && text && *text)
+        *destination++ = *text++;
+    return destination;
+}
+
+char* android_append_decimal(char* destination, char* end, int value)
+{
+    if (value < 0)
+    {
+        if (destination < end)
+            *destination++ = '-';
+        value = -value;
+    }
+
+    char digits[16];
+    size_t count = 0;
+    do
+    {
+        digits[count++] = static_cast<char>('0' + value % 10);
+        value /= 10;
+    } while (value != 0 && count < sizeof(digits));
+
+    while (count != 0 && destination < end)
+        *destination++ = digits[--count];
+    return destination;
+}
+
+char* android_append_hex(char* destination, char* end, uintptr_t value)
+{
+    destination = android_append_text(destination, end, "0x");
+    constexpr char digits[] = "0123456789abcdef";
+    for (int shift = static_cast<int>(sizeof(value) * 8) - 4; shift >= 0 && destination < end; shift -= 4)
+        *destination++ = digits[(value >> shift) & 0xf];
+    return destination;
+}
+
+void android_native_crash_handler(int signal, siginfo_t* info, void* raw_context)
+{
+    if (g_android_crash_in_progress != 0)
+        _exit(128 + signal);
+    g_android_crash_in_progress = 1;
+
+    uintptr_t program_counter = 0;
+    uintptr_t stack_pointer = 0;
+    uintptr_t link_register = 0;
+    if (raw_context)
+    {
+        const auto* context = static_cast<const ucontext_t*>(raw_context);
+#if defined(__arm__)
+        program_counter = context->uc_mcontext.arm_pc;
+        stack_pointer = context->uc_mcontext.arm_sp;
+        link_register = context->uc_mcontext.arm_lr;
+#elif defined(__aarch64__)
+        program_counter = context->uc_mcontext.pc;
+        stack_pointer = context->uc_mcontext.sp;
+        link_register = context->uc_mcontext.regs[30];
+#endif
+    }
+
+    char message[512];
+    char* destination = message;
+    char* const end = message + sizeof(message) - 1;
+    destination = android_append_text(destination, end, "[android-crash] native ");
+    destination = android_append_text(destination, end, android_signal_name(signal));
+    destination = android_append_text(destination, end, "(");
+    destination = android_append_decimal(destination, end, signal);
+    destination = android_append_text(destination, end, ") code=");
+    destination = android_append_decimal(destination, end, info ? info->si_code : 0);
+    destination = android_append_text(destination, end, " fault=");
+    destination = android_append_hex(destination, end,
+        info ? reinterpret_cast<uintptr_t>(info->si_addr) : 0);
+    destination = android_append_text(destination, end, " pc=");
+    destination = android_append_hex(destination, end, program_counter);
+    destination = android_append_text(destination, end, " sp=");
+    destination = android_append_hex(destination, end, stack_pointer);
+    destination = android_append_text(destination, end, " lr=");
+    destination = android_append_hex(destination, end, link_register);
+    destination = android_append_text(destination, end,
+        "; full Android tombstone/backtrace is in logcat\n");
+    *destination = '\0';
+
+    for (size_t i = 0; i < g_android_crash_log.count; ++i)
+        android_write_raw(g_android_crash_log.fds[i], message, static_cast<size_t>(destination - message));
+
+    struct sigaction default_action{};
+    sigemptyset(&default_action.sa_mask);
+    default_action.sa_handler = SIG_DFL;
+    sigaction(signal, &default_action, nullptr);
+    kill(getpid(), signal);
+    _exit(128 + signal);
+}
+
+void android_open_early_crash_logs()
+{
+    static constexpr pcstr paths[] =
+    {
+        "/storage/emulated/0/openxray/android.log",
+        "/storage/emulated/0/Android/data/org.openxray.stalker/files/openxray/android.log",
+        "/data/user/0/org.openxray.stalker/files/openxray/android.log",
+        "/data/data/org.openxray.stalker/files/openxray/android.log",
+    };
+
+    // The public path needs the user-granted all-files access.  The app-scoped
+    // paths remain useful when the permission is not available yet.
+    mkdir("/storage/emulated/0/openxray", 0775);
+    mkdir("/storage/emulated/0/Android/data/org.openxray.stalker/files/openxray", 0775);
+    mkdir("/data/user/0/org.openxray.stalker/files/openxray", 0775);
+    mkdir("/data/data/org.openxray.stalker/files/openxray", 0775);
+
+    for (pcstr path : paths)
+        android_add_crash_log_fd(path);
+}
+
+void android_install_crash_handler()
+{
+    if (!g_android_crash_log.installed)
+    {
+        android_open_early_crash_logs();
+
+        stack_t alternate_stack{};
+        alternate_stack.ss_sp = g_android_signal_stack;
+        alternate_stack.ss_size = sizeof(g_android_signal_stack);
+        sigaltstack(&alternate_stack, nullptr);
+
+        g_android_crash_log.installed = true;
+        android_write_early_to_logs("[android] native crash handler installed");
+    }
+
+    static constexpr int signals[] = { SIGABRT, SIGBUS, SIGFPE, SIGILL, SIGSEGV, SIGTRAP, SIGSYS };
+    for (int signal : signals)
+    {
+        struct sigaction action{};
+        sigemptyset(&action.sa_mask);
+        action.sa_sigaction = android_native_crash_handler;
+        action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+        sigaction(signal, &action, nullptr);
+    }
+}
+
+void android_engine_log_early(pcstr message)
+{
+    android_write_early_to_logs(message);
+}
+
 struct android_engine_log_state
 {
     std::ofstream stream;
@@ -257,9 +490,11 @@ bool initialize_android_engine_log()
             continue;
 
         g_android_engine_log.path = candidate;
+        android_add_crash_log_fd(candidate.string().c_str());
         g_android_engine_log.previous_callback = SetLogCB({ android_engine_log_callback, nullptr });
         g_android_engine_log.callback_installed = true;
         Msg("[android] engine log: %s", g_android_engine_log.path.string().c_str());
+        android_write_early_to_logs("[android] engine log opened");
         return true;
     }
 
@@ -275,6 +510,10 @@ void shutdown_android_engine_log()
     g_android_engine_log.stream.close();
     g_android_engine_log.path.clear();
     g_android_engine_log.callback_installed = false;
+
+    for (size_t i = 0; i < g_android_crash_log.count; ++i)
+        close(g_android_crash_log.fds[i]);
+    g_android_crash_log.count = 0;
 }
 
 void show_renderer_smoke_status(bool success)
@@ -517,6 +756,12 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
         GEnv.isDedicatedServer = true;
 
     xrDebug::Initialize(commandLine);
+#if defined(XR_PLATFORM_ANDROID)
+    // xrDebug installs its legacy signal hooks.  Reinstall the Android
+    // handler afterwards so the crash record remains async-signal-safe.
+    android_install_crash_handler();
+    android_engine_log_early("[android] CApplication entered");
+#endif
     {
         ZoneScopedN("SDL_Init");
         // The smoke path intentionally exercises the native core without
@@ -528,6 +773,7 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
     }
 
 #if defined(XR_PLATFORM_ANDROID)
+    android_engine_log_early("[android] SDL initialized");
     if (!initialize_android_engine_log())
         Log("! [android] unable to open engine log in shared storage or app-specific storage");
 #endif
@@ -562,8 +808,9 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
 #if defined(XR_PLATFORM_ANDROID)
     if (m_renderer_smoke)
     {
-        // CHW::SetPrimaryAttributes reads Core.Params. Initialize xrCore before
-        // creating the Android GLES context, even in the no-game smoke mode.
+        android_engine_log_early("[android] renderer smoke bootstrap before Core.Initialize");
+        // Initialize xrCore before creating the Android GLES context, even in
+        // the no-game smoke mode, so the engine log and build state are ready.
         Core.Initialize("OpenXRay", commandLine, false);
 
         auto* state = new renderer_smoke_state;
