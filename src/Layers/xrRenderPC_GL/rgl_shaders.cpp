@@ -243,6 +243,13 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
         options.add("#extension GL_EXT_clip_cull_distance : enable");
     options.add("precision highp float;");
     options.add("precision highp int;");
+    // GLSL ES 3.10 has no implicit precision for the sampler types that
+    // OpenXRay's deferred and MSAA shader headers use.  Desktop GLSL accepts
+    // these declarations without a precision qualifier, while Adreno rejects
+    // them and the engine later reports the misleading video-card message.
+    options.add("precision lowp sampler3D;");
+    options.add("precision lowp sampler2DMS;");
+    options.add("precision lowp sampler2DShadow;");
 #else
     options.add("#version 410");
     options.add("#extension GL_ARB_separate_shader_objects : enable");

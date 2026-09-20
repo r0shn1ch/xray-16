@@ -625,7 +625,7 @@ bool initialize_renderer_smoke(renderer_smoke_state& state)
     Msg("[renderer-smoke] GL_RENDERER=%s", renderer ? renderer : "<null>");
     Msg("[renderer-smoke] GLSL=%s", shading ? shading : "<null>");
 
-    constexpr pcstr vertex_source = R"glsl(#version 300 es
+    constexpr pcstr vertex_source = R"glsl(#version 310 es
 precision highp float;
 layout(location = 0) in vec2 a_position;
 layout(location = 1) in vec3 a_color;
@@ -637,7 +637,7 @@ void main()
 }
 )glsl";
 
-    constexpr pcstr fragment_source = R"glsl(#version 300 es
+    constexpr pcstr fragment_source = R"glsl(#version 310 es
 precision mediump float;
 in vec3 v_color;
 layout(location = 0) out vec4 out_color;
@@ -698,7 +698,7 @@ void main()
     glBindVertexArray(0);
 
     state.initialized = true;
-    Log("[renderer-smoke] OpenXRay CHW and GLES 3.0 shader pipeline initialized");
+    Log("[renderer-smoke] OpenXRay CHW and GLES 3.1 shader pipeline initialized");
     return true;
 }
 
