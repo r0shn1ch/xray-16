@@ -108,8 +108,17 @@ void CHW::CreateDevice(SDL_Window* hWnd)
 
     int version;
     {
+#if defined(XR_PLATFORM_ANDROID)
+        // Android creates an OpenGL ES context.  Loading it through the
+        // desktop GL loader marks ES 3.x as desktop GL 3.x, leaving ES 3.0
+        // entry points such as glTexStorage2D unresolved.  The first render
+        // target then calls a null function pointer during device creation.
+        ZoneScopedN("gladLoadGLES2");
+        version = gladLoadGLES2(reinterpret_cast<GLADloadfunc>(SDL_GL_GetProcAddress));
+#else
         ZoneScopedN("gladLoadGL");
         version = gladLoadGL(reinterpret_cast<GLADloadfunc>(SDL_GL_GetProcAddress));
+#endif
     }
     if (version == 0)
     {

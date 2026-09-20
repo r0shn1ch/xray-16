@@ -16,6 +16,8 @@ if grep -Fq 'pw->pw_gecos && pw->pw_gecos[0]' "$repo_dir/src/xrCore/xrCore.cpp" 
     && grep -Fq 'res/gamedata' "$repo_dir/android/build-apk-armv7.sh" \
     && grep -Fq 'glDrawElementsBaseVertex)' \
         "$repo_dir/src/Layers/xrRenderGL/glR_Backend_Runtime.h" \
+    && grep -Fq 'version = gladLoadGLES2' \
+        "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
     && grep -Fq 'glBindFramebuffer(GL_READ_FRAMEBUFFER, pFB)' \
         "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
     && grep -Fq 'm_Overlay' "$repo_dir/src/xrCore/LocatorAPI_defs.h" \
