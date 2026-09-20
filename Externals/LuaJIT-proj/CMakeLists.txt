@@ -33,6 +33,9 @@ option(LUAJIT_USE_SYSMALLOC "Use the system provided memory allocator (realloc) 
 option(LUAJIT_USE_VALGRIND "This option is required to run LuaJIT under Valgrind. The Valgrind header files must be installed. You should enable debug information, too." OFF)
 option(LUAJIT_USE_GDBJIT "This is the client for the GDB JIT API. GDB 7.0 or higher is required to make use of it. See lj_gdbjit.c for details. Enabling this causes a non-negligible overhead, even when not running under GDB" OFF)
 
+set(LUAJIT_HOST_C_COMPILER "" CACHE FILEPATH
+    "C compiler for LuaJIT's build-time host tools")
+
 option(LUA_USE_APICHECK "Turn on assertions for the Lua/C API to debug problems with lua_* calls. This is rather slow, use only while developing C libraries/embeddings" OFF)
 option(LUA_USE_ASSERT "Turn on assertions for the whole LuaJIT VM. This significantly slows down everything. Use only if you suspect a problem with LuaJIT itself" OFF)
 
@@ -331,6 +334,9 @@ if (ANDROID AND CMAKE_SIZEOF_VOID_P EQUAL 4 AND CMAKE_HOST_SYSTEM_NAME STREQUAL 
     # natively even when multilib compilation is available. Use qemu-i386
     # when present; on regular Linux hosts the prefix remains empty.
     find_program(LUAJIT_HOST_EXECUTABLE_PREFIX qemu-i386)
+    if (LUAJIT_HOST_EXECUTABLE_PREFIX MATCHES "-NOTFOUND$")
+        set(LUAJIT_HOST_EXECUTABLE_PREFIX "")
+    endif()
 endif()
 
 string(APPEND TARGET_XCFLAGS " -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -U_FORTIFY_SOURCE")
@@ -353,6 +359,16 @@ set(BUILDVM_ARCH "${CMAKE_CURRENT_BINARY_DIR}/buildvm_arch.h")
 set(MINILUA_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/HostBuildTools/minilua")
 set(MINILUA_FILE "${MINILUA_BINARY_DIR}/minilua")
 
+set(LUAJIT_HOST_CMAKE_ARGS)
+if (LUAJIT_HOST_C_COMPILER)
+    string(JOIN " " LUAJIT_HOST_C_FLAGS_STRING ${HOST_ACFLAGS})
+    string(JOIN " " LUAJIT_HOST_LD_FLAGS_STRING ${HOST_ALDFLAGS})
+    list(APPEND LUAJIT_HOST_CMAKE_ARGS
+        "-DCMAKE_C_COMPILER=${LUAJIT_HOST_C_COMPILER}"
+        "-DCMAKE_C_FLAGS=-static ${LUAJIT_HOST_C_FLAGS_STRING}"
+        "-DCMAKE_EXE_LINKER_FLAGS=-static ${LUAJIT_HOST_LD_FLAGS_STRING}")
+endif()
+
 add_custom_command(
     OUTPUT "${MINILUA_FILE}"
     COMMAND ${CMAKE_COMMAND}
@@ -366,6 +382,7 @@ add_custom_command(
         -DLUA_USE_POSIX=${LUA_USE_POSIX}
         -DHOST_ACFLAGS="${HOST_ACFLAGS}"
         -DHOST_ALDFLAGS="${HOST_ALDFLAGS}"
+        ${LUAJIT_HOST_CMAKE_ARGS}
     COMMAND ${CMAKE_COMMAND} --build ${MINILUA_BINARY_DIR} --config Release --verbose
 )
 
@@ -398,6 +415,7 @@ add_custom_command(
         -DBUILDVM_ARCH=${BUILDVM_ARCH}
         -DHOST_ACFLAGS="${HOST_ACFLAGS}"
         -DHOST_ALDFLAGS="${HOST_ALDFLAGS}"
+        ${LUAJIT_HOST_CMAKE_ARGS}
     COMMAND ${CMAKE_COMMAND} --build ${BUILDVM_BINARY_DIR} --config Release --verbose
 )
 

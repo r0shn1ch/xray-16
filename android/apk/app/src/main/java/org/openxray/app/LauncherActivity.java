@@ -30,6 +30,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayList;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -45,6 +46,7 @@ public final class LauncherActivity extends Activity {
     private static final String PREF_GAME_PATH = "game_path";
     private static final String PREF_GAME_URI = "game_uri";
     private static final int REQUEST_GAME_TREE = 1001;
+    private static final int REQUEST_STORAGE_PERMISSIONS = 1002;
     private static final int MAX_LOG_BYTES = 180 * 1024;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -119,6 +121,19 @@ public final class LauncherActivity extends Activity {
         refreshAccessStatus();
     }
 
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQUEST_STORAGE_PERMISSIONS)
+            return;
+
+        refreshAccessStatus();
+        if (hasStorageAccess())
+            setStatus("Доступ к файлам выдан.");
+        else
+            setStatus("Доступ к файлам не выдан. Его можно включить в настройках приложения.");
+    }
+
     private void buildInterface() {
         final int padding = dp(16);
         LinearLayout root = new LinearLayout(this);
@@ -126,7 +141,7 @@ public final class LauncherActivity extends Activity {
         root.setPadding(padding, padding, padding, padding);
 
         TextView title = new TextView(this);
-        title.setText("OpenXRay Launcher");
+        title.setText("OpenXRay Launcher " + BuildConfig.VERSION_NAME);
         title.setTextSize(24);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         root.addView(title, matchWrap());
@@ -213,9 +228,7 @@ public final class LauncherActivity extends Activity {
     private void requestAllFilesAccess() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
                 && Build.VERSION.SDK_INT < Build.VERSION_CODES.R
-                && checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[] { android.Manifest.permission.WRITE_EXTERNAL_STORAGE }, 1002);
+                && requestLegacyStoragePermissions()) {
             return;
         }
 
@@ -243,6 +256,21 @@ public final class LauncherActivity extends Activity {
         }
     }
 
+    private boolean requestLegacyStoragePermissions() {
+        ArrayList<String> missing = new ArrayList<>();
+        if (checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED)
+            missing.add(android.Manifest.permission.READ_EXTERNAL_STORAGE);
+        if (checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED)
+            missing.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE);
+        if (missing.isEmpty())
+            return false;
+
+        requestPermissions(missing.toArray(new String[0]), REQUEST_STORAGE_PERMISSIONS);
+        return true;
+    }
+
     private void showStorageAccessPromptIfNeeded() {
         if (hasStorageAccess())
             return;
@@ -267,8 +295,10 @@ public final class LauncherActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
             return Environment.isExternalStorageManager();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-            return checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                    == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            return checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    && checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                        == android.content.pm.PackageManager.PERMISSION_GRANTED;
         return true;
     }
 

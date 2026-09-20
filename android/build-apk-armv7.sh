@@ -65,6 +65,14 @@ cp "$deps_prefix/lib/libopenal.so" "$native_lib_dir/libopenal.so"
 cp "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so" \
     "$native_lib_dir/libc++_shared.so"
 
+strip_bin="$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+if [ -x "$strip_bin" ]; then
+    "$strip_bin" --strip-unneeded \
+        "$native_lib_dir/libmain.so" \
+        "$native_lib_dir/libopenal.so" \
+        "$native_lib_dir/libc++_shared.so"
+fi
+
 chmod +x "$project_dir/gradlew"
 (
     cd "$project_dir"
@@ -77,5 +85,6 @@ chmod +x "$project_dir/gradlew"
 
 apk="$project_dir/app/build/outputs/apk/debug/app-debug.apk"
 mkdir -p "$repo_dir/build"
-cp "$apk" "$repo_dir/build/openxray-armv7-debug.apk"
-printf '%s\n' "$repo_dir/build/openxray-armv7-debug.apk"
+output_apk="$repo_dir/build/openxray-armv7-launcher-v0.3.0-debug.apk"
+cp "$apk" "$output_apk"
+printf '%s\n' "$output_apk"

@@ -27,6 +27,10 @@ LuaJIT also generates ARM32 code with host-side `minilua` and `buildvm`. On a
 64-bit Linux build host install the 32-bit compiler runtime (for example
 `gcc-multilib` and `libc6-dev-i386`). If the host kernel cannot execute i386
 ELF files, the CMake integration uses `qemu-i386` when it is available.
+For a sandbox without a native i386 runtime, pass
+`-DLUAJIT_HOST_C_COMPILER=/path/to/i686-linux-android-clang` and
+`-DLUAJIT_HOST_EXECUTABLE_PREFIX=/path/to/qemu-i386-static`; the host compiler
+must produce a statically linked 32-bit helper.
 
 ## First validation without game data
 
