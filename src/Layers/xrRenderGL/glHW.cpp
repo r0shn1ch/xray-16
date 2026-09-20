@@ -245,11 +245,21 @@ int CHW::MakeContextCurrent(IRender::RenderContext context) const
 
 void CHW::UpdateViews()
 {
+#if defined(XR_PLATFORM_ANDROID)
+    // SDL's Android GLES window owns the EGL back buffer.  Creating the
+    // desktop-style empty FBO here leaves an incomplete framebuffer bound,
+    // so every draw/readback is discarded with GL_INVALID_FRAMEBUFFER_OPERATION.
+    // Keep the system-provided default framebuffer active on Android.
+    pFB = 0;
+    BackBufferCount = 1;
+    CHK_GL(glBindFramebuffer(GL_FRAMEBUFFER, 0));
+#else
     // Create the default framebuffer
     glGenFramebuffers(1, &pFB);
     CHK_GL(glBindFramebuffer(GL_FRAMEBUFFER, pFB));
 
     BackBufferCount = 1;
+#endif
 }
 
 void CHW::BeginScene() { }
@@ -257,6 +267,11 @@ void CHW::EndScene() { }
 
 void CHW::Present()
 {
+#if defined(XR_PLATFORM_ANDROID)
+    // The Android SDL/EGL surface is the swapchain.  There is no desktop
+    // intermediate FBO to blit before handing the frame back to SDL.
+    SDL_GL_SwapWindow(m_window);
+#else
 #if 0 // kept for historical reasons
     RImplementation.Target->phase_flip();
 #else
@@ -267,8 +282,8 @@ void CHW::Present()
         0, 0, Device.dwWidth, Device.dwHeight,
         GL_COLOR_BUFFER_BIT, GL_NEAREST);
 #endif
-
     SDL_GL_SwapWindow(m_window);
+#endif
     CurrentBackBuffer = (CurrentBackBuffer + 1) % BackBufferCount;
 }
 

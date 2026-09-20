@@ -611,6 +611,13 @@ bool initialize_renderer_smoke(renderer_smoke_state& state)
         return false;
     }
 
+    // CHW owns a desktop render target on desktop platforms.  Android SDL
+    // supplies the actual EGL back buffer, so make the smoke test explicit
+    // about drawing to that window framebuffer.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    for (GLenum error = glGetError(); error != GL_NO_ERROR; error = glGetError())
+        {}
+
     const char* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
     const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
     const char* shading = reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION));
@@ -710,6 +717,10 @@ void render_renderer_smoke(renderer_smoke_state& state)
     glBindVertexArray(state.vertex_array);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
+
+    const GLenum draw_error = glGetError();
+    if (draw_error != GL_NO_ERROR)
+        Msg("! [renderer-smoke] GLES draw failed: 0x%04x", draw_error);
 
     if (!state.pixel_readback_done)
     {

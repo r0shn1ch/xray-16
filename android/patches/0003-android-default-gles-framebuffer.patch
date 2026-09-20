@@ -1,0 +1,77 @@
+diff --git a/src/Layers/xrRenderGL/glHW.cpp b/src/Layers/xrRenderGL/glHW.cpp
+index d046951..ae19e37 100644
+--- a/src/Layers/xrRenderGL/glHW.cpp
++++ b/src/Layers/xrRenderGL/glHW.cpp
+@@ -245,11 +245,21 @@ int CHW::MakeContextCurrent(IRender::RenderContext context) const
+ 
+ void CHW::UpdateViews()
+ {
++#if defined(XR_PLATFORM_ANDROID)
++    // SDL's Android GLES window owns the EGL back buffer.  Creating the
++    // desktop-style empty FBO here leaves an incomplete framebuffer bound,
++    // so every draw/readback is discarded with GL_INVALID_FRAMEBUFFER_OPERATION.
++    // Keep the system-provided default framebuffer active on Android.
++    pFB = 0;
++    BackBufferCount = 1;
++    CHK_GL(glBindFramebuffer(GL_FRAMEBUFFER, 0));
++#else
+     // Create the default framebuffer
+     glGenFramebuffers(1, &pFB);
+     CHK_GL(glBindFramebuffer(GL_FRAMEBUFFER, pFB));
+ 
+     BackBufferCount = 1;
++#endif
+ }
+ 
+ void CHW::BeginScene() { }
+@@ -257,6 +267,11 @@ void CHW::EndScene() { }
+ 
+ void CHW::Present()
+ {
++#if defined(XR_PLATFORM_ANDROID)
++    // The Android SDL/EGL surface is the swapchain.  There is no desktop
++    // intermediate FBO to blit before handing the frame back to SDL.
++    SDL_GL_SwapWindow(m_window);
++#else
+ #if 0 // kept for historical reasons
+     RImplementation.Target->phase_flip();
+ #else
+@@ -267,8 +282,8 @@ void CHW::Present()
+         0, 0, Device.dwWidth, Device.dwHeight,
+         GL_COLOR_BUFFER_BIT, GL_NEAREST);
+ #endif
+-
+     SDL_GL_SwapWindow(m_window);
++#endif
+     CurrentBackBuffer = (CurrentBackBuffer + 1) % BackBufferCount;
+ }
+ 
+diff --git a/src/xrEngine/x_ray.cpp b/src/xrEngine/x_ray.cpp
+index 7e4aec4..8d2b980 100644
+--- a/src/xrEngine/x_ray.cpp
++++ b/src/xrEngine/x_ray.cpp
+@@ -611,6 +611,13 @@ bool initialize_renderer_smoke(renderer_smoke_state& state)
+         return false;
+     }
+ 
++    // CHW owns a desktop render target on desktop platforms.  Android SDL
++    // supplies the actual EGL back buffer, so make the smoke test explicit
++    // about drawing to that window framebuffer.
++    glBindFramebuffer(GL_FRAMEBUFFER, 0);
++    for (GLenum error = glGetError(); error != GL_NO_ERROR; error = glGetError())
++        {}
++
+     const char* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+     const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+     const char* shading = reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION));
+@@ -711,6 +718,10 @@ void render_renderer_smoke(renderer_smoke_state& state)
+     glDrawArrays(GL_TRIANGLES, 0, 3);
+     glBindVertexArray(0);
+ 
++    const GLenum draw_error = glGetError();
++    if (draw_error != GL_NO_ERROR)
++        Msg("! [renderer-smoke] GLES draw failed: 0x%04x", draw_error);
++
+     if (!state.pixel_readback_done)
+     {
+         glFinish();
