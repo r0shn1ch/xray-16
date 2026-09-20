@@ -28,7 +28,7 @@ if grep -Fq 'pw->pw_gecos && pw->pw_gecos[0]' "$repo_dir/src/xrCore/xrCore.cpp" 
         "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
     && grep -Fq 'precision lowp sampler2DMS' \
         "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
-    && grep -Fq "versionName '0.5.4'" \
+    && grep -Fq "versionName '0.5.5'" \
         "$repo_dir/android/apk/app/build.gradle" \
     && grep -Fq 'glBindFramebuffer(GL_READ_FRAMEBUFFER, pFB)' \
         "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \

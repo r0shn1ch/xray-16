@@ -1,0 +1,217 @@
+diff --git a/android/apk/README.md b/android/apk/README.md
+index b78c6f336..5ad81ab23 100644
+--- a/android/apk/README.md
++++ b/android/apk/README.md
+@@ -45,7 +45,7 @@ directories include `levels`, `localization`, `mp`, `patches` and `resources`.
+ The launcher does not reject an incomplete folder: missing `fsgame.ltx` or
+ resources are reported by the engine in the log.
+ 
+-The resulting debug APK is `build/openxray-armv7-launcher-v0.5.4-debug.apk`. It is a
++The resulting debug APK is `build/openxray-armv7-launcher-v0.5.5-debug.apk`. It is a
+ bring-up artifact, not a playable release: proprietary game data and touch
+ controls are not bundled. This test proves the Android window/context and
+ shader path; it does not claim that every original desktop shader or every
+@@ -53,13 +53,13 @@ game-data render feature is already GLES-compatible.
+ 
+ ## Launcher and diagnostics on a phone
+ 
+-1. Remove the previous bring-up APK once before installing version 0.5.4. The
++1. Remove the previous bring-up APK once before installing version 0.5.5. The
+    old package registered `XRayActivity` itself as the launcher, so a pinned
+    old icon can bypass the launcher entirely:
+ 
+    ```sh
+    adb uninstall org.openxray.stalker
+-   adb install -r build/openxray-armv7-launcher-v0.5.4-debug.apk
++   adb install -r build/openxray-armv7-launcher-v0.5.5-debug.apk
+    adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
+    ```
+ 
+diff --git a/android/apk/app/build.gradle b/android/apk/app/build.gradle
+index 40f108ddb..39c8fb8ce 100644
+--- a/android/apk/app/build.gradle
++++ b/android/apk/app/build.gradle
+@@ -10,8 +10,8 @@ android {
+         applicationId 'org.openxray.stalker'
+         minSdk 26
+         targetSdk 36
+-        versionCode 9
+-        versionName '0.5.4'
++        versionCode 10
++        versionName '0.5.5'
+ 
+         ndk {
+             abiFilters 'armeabi-v7a'
+diff --git a/android/apk/app/src/main/AndroidManifest.xml b/android/apk/app/src/main/AndroidManifest.xml
+index 05874c264..82a6e6262 100644
+--- a/android/apk/app/src/main/AndroidManifest.xml
++++ b/android/apk/app/src/main/AndroidManifest.xml
+@@ -1,7 +1,7 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+-    android:versionCode="9"
+-    android:versionName="0.5.4"
++    android:versionCode="10"
++    android:versionName="0.5.5"
+     android:installLocation="auto">
+ 
+     <uses-feature android:glEsVersion="0x00030001" />
+diff --git a/android/apk/app/src/main/res/values/strings.xml b/android/apk/app/src/main/res/values/strings.xml
+index 999b494d6..28e5f1eb8 100644
+--- a/android/apk/app/src/main/res/values/strings.xml
++++ b/android/apk/app/src/main/res/values/strings.xml
+@@ -1,3 +1,3 @@
+ <resources>
+-    <string name="app_name">OpenXRay Launcher 0.5.4</string>
++    <string name="app_name">OpenXRay Launcher 0.5.5</string>
+ </resources>
+diff --git a/android/apply-patches.sh b/android/apply-patches.sh
+index ca61b26ca..2f8e59532 100755
+--- a/android/apply-patches.sh
++++ b/android/apply-patches.sh
+@@ -28,7 +28,7 @@ if grep -Fq 'pw->pw_gecos && pw->pw_gecos[0]' "$repo_dir/src/xrCore/xrCore.cpp"
+         "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
+     && grep -Fq 'precision lowp sampler2DMS' \
+         "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
+-    && grep -Fq "versionName '0.5.4'" \
++    && grep -Fq "versionName '0.5.5'" \
+         "$repo_dir/android/apk/app/build.gradle" \
+     && grep -Fq 'glBindFramebuffer(GL_READ_FRAMEBUFFER, pFB)' \
+         "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
+diff --git a/android/build-apk-armv7.sh b/android/build-apk-armv7.sh
+index 670f60583..28e224fbc 100755
+--- a/android/build-apk-armv7.sh
++++ b/android/build-apk-armv7.sh
+@@ -101,6 +101,6 @@ chmod +x "$project_dir/gradlew"
+ 
+ apk="$project_dir/app/build/outputs/apk/debug/app-debug.apk"
+ mkdir -p "$repo_dir/build"
+-output_apk="$repo_dir/build/openxray-armv7-launcher-v0.5.4-debug.apk"
++output_apk="$repo_dir/build/openxray-armv7-launcher-v0.5.5-debug.apk"
+ cp "$apk" "$output_apk"
+ printf '%s\n' "$output_apk"
+diff --git a/res/gamedata/shaders/gl/shared/common.h b/res/gamedata/shaders/gl/shared/common.h
+index 4c6a60a16..f377f5bcd 100644
+--- a/res/gamedata/shaders/gl/shared/common.h
++++ b/res/gamedata/shaders/gl/shared/common.h
+@@ -41,7 +41,7 @@ void	sincos(float x, out float s, out float c) { s = sin(x); c = cos(x); }
+ #define lerp        mix
+ #define frac        fract
+ #define saturate(a) clamp(a, 0.0, 1.0)
+-#define clip(x)		if (x < 0) discard
++#define clip(x)		if ((x) < 0.0) discard
+ #define tex2D		texture
+ #define tex2Dproj	textureProj
+ #define tex2Dlod(s,t)	textureLod(s,t.xy,t.w)
+diff --git a/src/Layers/xrRender/ShaderResourceTraits.h b/src/Layers/xrRender/ShaderResourceTraits.h
+index e4425ea6b..acd300f21 100644
+--- a/src/Layers/xrRender/ShaderResourceTraits.h
++++ b/src/Layers/xrRender/ShaderResourceTraits.h
+@@ -30,6 +30,8 @@ static void show_compile_errors(cpcstr filename, GLuint program, GLuint shader)
+     Log("! shader compilation failed:", filename);
+     if (errors)
+         Log("! error: ", errors);
++    else
++        Log("! driver returned an empty shader error log");
+ 
+     if (sources)
+     {
+@@ -706,7 +708,13 @@ T* CResourceManager::CreateShader(cpcstr name, pcstr filename /*= nullptr*/, u32
+         if (FAILED(_hr) && fallback)
+             goto fallback;
+ 
++#if defined(XR_PLATFORM_ANDROID)
++        if (FAILED(_hr))
++            Log("! Android GLES shader resource failed: ", name);
++        CHECK_OR_EXIT(!FAILED(_hr), "OpenXRay GLES shader compilation/linking failed.\n\nSee android.log for the shader name and driver diagnostics.");
++#else
+         CHECK_OR_EXIT(!FAILED(_hr), "Your video card doesn't meet game requirements.\n\nTry to lower game settings.");
++#endif
+ 
+         return sh;
+     }
+diff --git a/src/Layers/xrRenderGL/glHW.cpp b/src/Layers/xrRenderGL/glHW.cpp
+index b6da31c18..0eff0a549 100644
+--- a/src/Layers/xrRenderGL/glHW.cpp
++++ b/src/Layers/xrRenderGL/glHW.cpp
+@@ -156,9 +156,10 @@ void CHW::CreateDevice(SDL_Window* hWnd)
+     Msg("* GPU OpenGL shading language version: %s", ShadingVersion);
+     Msg("* GPU OpenGL VTF units: [%d] CTI units: [%d]", iMaxVTFUnits, iMaxCTIUnits);
+ #if defined(XR_PLATFORM_ANDROID)
+-    Msg("* GLES runtime: ES3.1=[%d] ES3.2=[%d] io_blocks=[%d/%d] clip_cull_distance=[%d]",
++    Msg("* GLES runtime: ES3.1=[%d] ES3.2=[%d] io_blocks=[%d/%d] clip_cull_distance=[%d] shader5=[%d/%d] implicit_conversions=[%d]",
+         GLAD_GL_ES_VERSION_3_1, GLAD_GL_ES_VERSION_3_2, GLAD_GL_EXT_shader_io_blocks, GLAD_GL_OES_shader_io_blocks,
+-        GLAD_GL_EXT_clip_cull_distance);
++        GLAD_GL_EXT_clip_cull_distance, GLAD_GL_EXT_gpu_shader5, GLAD_GL_OES_gpu_shader5,
++        GLAD_GL_EXT_shader_implicit_conversions);
+ #endif
+ 
+     ComputeShadersSupported = false; // XXX: Implement compute shaders support
+diff --git a/src/Layers/xrRenderPC_GL/rgl_shaders.cpp b/src/Layers/xrRenderPC_GL/rgl_shaders.cpp
+index 5f5a8b58d..1458eeda4 100644
+--- a/src/Layers/xrRenderPC_GL/rgl_shaders.cpp
++++ b/src/Layers/xrRenderPC_GL/rgl_shaders.cpp
+@@ -6,6 +6,39 @@
+ 
+ namespace xray::render::RENDER_NAMESPACE
+ {
++#if defined(XR_PLATFORM_ANDROID)
++static void sanitize_android_glsl_source(pstr data)
++{
++    // Desktop GLSL permits these declarations in the generated shader
++    // headers.  In GLSL ES 3.10 they redeclare fragment-stage built-ins and
++    // Adreno rejects the whole shader with "reserved built-in name".
++    for (pstr line = data; line && *line;)
++    {
++        pstr end = strchr(line, '\n');
++        if (end)
++            *end = '\0';
++
++        pstr trimmed = line;
++        while (*trimmed == ' ' || *trimmed == '\t')
++            ++trimmed;
++
++        if (!strcmp(trimmed, "in vec4 gl_FragCoord;") || !strcmp(trimmed, "in int gl_SampleID;"))
++        {
++            // Keep the line and its newline intact: shader source is passed
++            // to OpenGL as a list of strings without explicit lengths.
++            for (pstr character = line; *character; ++character)
++                *character = ' ';
++        }
++
++        if (!end)
++            break;
++
++        *end = '\n';
++        line = end + 1;
++    }
++}
++#endif
++
+ void CRender::addShaderOption(const char* name, const char* value)
+ {
+     m_ShaderOptions += "#define ";
+@@ -148,6 +181,9 @@ private:
+         CopyMemory(data, sourceData, dataLength);
+         data[dataLength] = '\n';
+         data[dataLength + 1] = '\0';
++#if defined(XR_PLATFORM_ANDROID)
++        sanitize_android_glsl_source(data);
++#endif
+         m_includes.push_back(data);
+         m_source.push_back(data);
+ 
+@@ -241,6 +277,12 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
+     // v_volumetric.h redeclares gl_ClipDistance in the same built-in block.
+     if (GLAD_GL_EXT_clip_cull_distance)
+         options.add("#extension GL_EXT_clip_cull_distance : enable");
++    if (GLAD_GL_EXT_gpu_shader5)
++        options.add("#extension GL_EXT_gpu_shader5 : enable");
++    else if (GLAD_GL_OES_gpu_shader5)
++        options.add("#extension GL_OES_gpu_shader5 : enable");
++    if (GLAD_GL_EXT_shader_implicit_conversions)
++        options.add("#extension GL_EXT_shader_implicit_conversions : enable");
+     options.add("precision highp float;");
+     options.add("precision highp int;");
+     // GLSL ES 3.10 has no implicit precision for the sampler types that
+

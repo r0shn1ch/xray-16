@@ -6,6 +6,39 @@
 
 namespace xray::render::RENDER_NAMESPACE
 {
+#if defined(XR_PLATFORM_ANDROID)
+static void sanitize_android_glsl_source(pstr data)
+{
+    // Desktop GLSL permits these declarations in the generated shader
+    // headers.  In GLSL ES 3.10 they redeclare fragment-stage built-ins and
+    // Adreno rejects the whole shader with "reserved built-in name".
+    for (pstr line = data; line && *line;)
+    {
+        pstr end = strchr(line, '\n');
+        if (end)
+            *end = '\0';
+
+        pstr trimmed = line;
+        while (*trimmed == ' ' || *trimmed == '\t')
+            ++trimmed;
+
+        if (!strcmp(trimmed, "in vec4 gl_FragCoord;") || !strcmp(trimmed, "in int gl_SampleID;"))
+        {
+            // Keep the line and its newline intact: shader source is passed
+            // to OpenGL as a list of strings without explicit lengths.
+            for (pstr character = line; *character; ++character)
+                *character = ' ';
+        }
+
+        if (!end)
+            break;
+
+        *end = '\n';
+        line = end + 1;
+    }
+}
+#endif
+
 void CRender::addShaderOption(const char* name, const char* value)
 {
     m_ShaderOptions += "#define ";
@@ -148,6 +181,9 @@ private:
         CopyMemory(data, sourceData, dataLength);
         data[dataLength] = '\n';
         data[dataLength + 1] = '\0';
+#if defined(XR_PLATFORM_ANDROID)
+        sanitize_android_glsl_source(data);
+#endif
         m_includes.push_back(data);
         m_source.push_back(data);
 
@@ -241,6 +277,12 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
     // v_volumetric.h redeclares gl_ClipDistance in the same built-in block.
     if (GLAD_GL_EXT_clip_cull_distance)
         options.add("#extension GL_EXT_clip_cull_distance : enable");
+    if (GLAD_GL_EXT_gpu_shader5)
+        options.add("#extension GL_EXT_gpu_shader5 : enable");
+    else if (GLAD_GL_OES_gpu_shader5)
+        options.add("#extension GL_OES_gpu_shader5 : enable");
+    if (GLAD_GL_EXT_shader_implicit_conversions)
+        options.add("#extension GL_EXT_shader_implicit_conversions : enable");
     options.add("precision highp float;");
     options.add("precision highp int;");
     // GLSL ES 3.10 has no implicit precision for the sampler types that

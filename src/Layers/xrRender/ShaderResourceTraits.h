@@ -30,6 +30,8 @@ static void show_compile_errors(cpcstr filename, GLuint program, GLuint shader)
     Log("! shader compilation failed:", filename);
     if (errors)
         Log("! error: ", errors);
+    else
+        Log("! driver returned an empty shader error log");
 
     if (sources)
     {
@@ -706,7 +708,13 @@ T* CResourceManager::CreateShader(cpcstr name, pcstr filename /*= nullptr*/, u32
         if (FAILED(_hr) && fallback)
             goto fallback;
 
+#if defined(XR_PLATFORM_ANDROID)
+        if (FAILED(_hr))
+            Log("! Android GLES shader resource failed: ", name);
+        CHECK_OR_EXIT(!FAILED(_hr), "OpenXRay GLES shader compilation/linking failed.\n\nSee android.log for the shader name and driver diagnostics.");
+#else
         CHECK_OR_EXIT(!FAILED(_hr), "Your video card doesn't meet game requirements.\n\nTry to lower game settings.");
+#endif
 
         return sh;
     }
