@@ -20,6 +20,12 @@ if grep -Fq 'pw->pw_gecos && pw->pw_gecos[0]' "$repo_dir/src/xrCore/xrCore.cpp" 
         "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
     && grep -Fq 'GLAD_GL_EXT_shader_io_blocks' \
         "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
+    && grep -Fq '#version 310 es' \
+        "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
+    && grep -Fq 'SDL_GL_CONTEXT_MINOR_VERSION, 1' \
+        "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
+    && grep -Fq "versionName '0.5.3'" \
+        "$repo_dir/android/apk/app/build.gradle" \
     && grep -Fq 'glBindFramebuffer(GL_READ_FRAMEBUFFER, pFB)' \
         "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
     && grep -Fq 'm_Overlay' "$repo_dir/src/xrCore/LocatorAPI_defs.h" \

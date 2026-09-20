@@ -20,7 +20,7 @@ import org.libsdl.app.SDLActivity;
 /**
  * SDL entry point for the Android renderer bring-up APK.
  *
- * The default mode creates a real GLES 3.0 context and runs a native shader
+ * The default mode creates a real GLES 3.1 context and runs a native shader
  * smoke test without bundling proprietary game data. Java-side lifecycle and
  * uncaught-exception records are written to app-specific external storage so
  * a phone test remains diagnosable without root access.

@@ -156,8 +156,9 @@ void CHW::CreateDevice(SDL_Window* hWnd)
     Msg("* GPU OpenGL shading language version: %s", ShadingVersion);
     Msg("* GPU OpenGL VTF units: [%d] CTI units: [%d]", iMaxVTFUnits, iMaxCTIUnits);
 #if defined(XR_PLATFORM_ANDROID)
-    Msg("* GLES shader extensions: io_blocks=[%d/%d] clip_cull_distance=[%d]", GLAD_GL_EXT_shader_io_blocks,
-        GLAD_GL_OES_shader_io_blocks, GLAD_GL_EXT_clip_cull_distance);
+    Msg("* GLES runtime: ES3.1=[%d] ES3.2=[%d] io_blocks=[%d/%d] clip_cull_distance=[%d]",
+        GLAD_GL_ES_VERSION_3_1, GLAD_GL_ES_VERSION_3_2, GLAD_GL_EXT_shader_io_blocks, GLAD_GL_OES_shader_io_blocks,
+        GLAD_GL_EXT_clip_cull_distance);
 #endif
 
     ComputeShadersSupported = false; // XXX: Implement compute shaders support
@@ -220,8 +221,12 @@ void CHW::SetPrimaryAttributes(u32& windowFlags)
     // function before the full engine command-line state is guaranteed to be
     // valid.  The previous strstr(Core.Params, ...) call turned that state
     // into a SIGSEGV on ARMv7 (fault address 0x0 inside libc strstr/strchr).
+    // The shipped game shaders redeclare gl_PerVertex, which requires the
+    // GLES 3.1 / GLSL ES 3.10 interface-block model.  Requesting GLES 3.0
+    // here makes the Adreno compiler reject the first shader and the engine
+    // later reports the misleading generic video-card message.
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
 #else
     const pcstr commandLine = Core.Params ? Core.Params : "";
     if (!strstr(commandLine, "-no_gl_context"))

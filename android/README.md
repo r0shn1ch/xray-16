@@ -91,7 +91,7 @@ process, so the launcher can remain visible after a native crash.
 
 ## Android renderer status
 
-The Android path requests an OpenGL ES 3.0 context, disables MSAA texture
+The Android path requests an OpenGL ES 3.1 context, disables MSAA texture
 allocation, keeps SDL's default EGL framebuffer active and ignores desktop
 polygon modes. The smoke mode is built and
 statically validated in the ARMv7 APK; its runtime device result is deliberately

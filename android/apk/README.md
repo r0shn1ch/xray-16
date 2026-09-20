@@ -7,8 +7,8 @@ game data. The launcher can run a renderer smoke test, choose a game root and
 start the native engine in a separate process so a native crash does not take
 the launcher or its visible log with it.
 
-The renderer smoke path creates a real OpenXRay `CHW` GLES 3.0 context,
-compiles an ES 3.0 vertex/fragment shader pair, draws a triangle and validates
+The renderer smoke path creates a real OpenXRay `CHW` GLES 3.1 context,
+compiles an ES 3.1 vertex/fragment shader pair, draws a triangle and validates
 a framebuffer readback. A successful or failed load is shown in a toast and in
 the launcher's status line.
 
@@ -45,7 +45,7 @@ directories include `levels`, `localization`, `mp`, `patches` and `resources`.
 The launcher does not reject an incomplete folder: missing `fsgame.ltx` or
 resources are reported by the engine in the log.
 
-The resulting debug APK is `build/openxray-armv7-launcher-v0.5.2-debug.apk`. It is a
+The resulting debug APK is `build/openxray-armv7-launcher-v0.5.3-debug.apk`. It is a
 bring-up artifact, not a playable release: proprietary game data and touch
 controls are not bundled. This test proves the Android window/context and
 shader path; it does not claim that every original desktop shader or every
@@ -53,13 +53,13 @@ game-data render feature is already GLES-compatible.
 
 ## Launcher and diagnostics on a phone
 
-1. Remove the previous bring-up APK once before installing version 0.5.2. The
+1. Remove the previous bring-up APK once before installing version 0.5.3. The
    old package registered `XRayActivity` itself as the launcher, so a pinned
    old icon can bypass the launcher entirely:
 
    ```sh
    adb uninstall org.openxray.stalker
-   adb install -r build/openxray-armv7-launcher-v0.5.2-debug.apk
+   adb install -r build/openxray-armv7-launcher-v0.5.3-debug.apk
    adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
    ```
 

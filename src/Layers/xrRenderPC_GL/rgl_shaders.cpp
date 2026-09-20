@@ -225,14 +225,14 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
     };
 
 #if defined(XR_PLATFORM_ANDROID)
-    // The Android bring-up renderer is OpenGL ES 3.0.  Desktop GLSL 4.10
-    // and ARB program pipelines are not legal in an ES shader compiler.
-    options.add("#version 300 es");
-    // The game's GLSL sources redeclare gl_PerVertex.  In GLES this is
-    // provided by an extension rather than desktop GLSL's core language.
-    // The driver reports the exact failure as "gl_PerVertex requires
-    // extension GL_EXT_shader_io_blocks to be enabled" when the directive
-    // is omitted.
+    // The game's GLSL sources redeclare gl_PerVertex.  That interface block
+    // is part of GLSL ES 3.10 (and is exposed by the corresponding shader I/O
+    // extensions).  A GLES 3.0 context cannot compile these sources even if
+    // the device itself supports a newer GLES version.
+    options.add("#version 310 es");
+
+    // Some GLES 3.1 drivers expose the shader I/O blocks as an extension even
+    // though the feature is also available in the 3.10 language version.
     if (GLAD_GL_EXT_shader_io_blocks)
         options.add("#extension GL_EXT_shader_io_blocks : enable");
     else if (GLAD_GL_OES_shader_io_blocks)

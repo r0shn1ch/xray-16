@@ -93,14 +93,14 @@ chmod +x "$project_dir/gradlew"
 (
     cd "$project_dir"
     if [ -n "$gradle_bin" ]; then
-        "$gradle_bin" --no-daemon assembleDebug
+        "$gradle_bin" --no-daemon --no-build-cache assembleDebug
     else
-        ./gradlew --no-daemon assembleDebug
+        ./gradlew --no-daemon --no-build-cache assembleDebug
     fi
 )
 
 apk="$project_dir/app/build/outputs/apk/debug/app-debug.apk"
 mkdir -p "$repo_dir/build"
-output_apk="$repo_dir/build/openxray-armv7-launcher-v0.5.2-debug.apk"
+output_apk="$repo_dir/build/openxray-armv7-launcher-v0.5.3-debug.apk"
 cp "$apk" "$output_apk"
 printf '%s\n' "$output_apk"
