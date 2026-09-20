@@ -31,6 +31,13 @@ The APK build disables LTO by default so the ARMv7 shared-library link stays
 bounded on ordinary build hosts. Set `XRAY_ANDROID_ENABLE_LTO=ON` when a long
 LTO link is desired.
 
+The APK also carries the OpenXRay engine `res/gamedata` tree. On the first
+normal game launch the launcher merges any missing engine configs, scripts and
+GLES shaders into the selected game root without overwriting user files. The
+original Call of Pripyat resource directories (`levels`, `localization`, `mp`,
+`patches` and `resources`) must already exist and contain files; an empty or
+arbitrary folder is rejected before the native engine is started.
+
 The resulting debug APK is `build/openxray-armv7-launcher-v0.5.0-debug.apk`. It is a
 bring-up artifact, not a playable release: proprietary game data and touch
 controls are not bundled. This test proves the Android window/context and
@@ -56,10 +63,13 @@ game-data render feature is already GLES-compatible.
    On Android 6–10 it requests both `READ_EXTERNAL_STORAGE` and
    `WRITE_EXTERNAL_STORAGE` through the normal system permission dialog.
 3. Press **Выбрать** and select the STALKER installation directory, or enter
-   its direct path manually (for example `/storage/emulated/0/STALKER`).
+   its direct path manually (for example `/storage/emulated/0/STALKER`). The
+   directory must contain the original Call of Pripyat resource directories:
+   `levels`, `localization`, `mp`, `patches` and `resources`.
 4. Press **Проверить GLES** to test the Android renderer without game files.
-   Press **Запустить движок** only after placing the original game files in the
-   selected directory.
+   Press **Запустить движок** after placing the original game resources in the
+   selected directory. The launcher prepares the OpenXRay engine `gamedata`
+   automatically and logs every missing or unreadable resource.
 
 The launcher continuously displays the tail of the engine and activity logs.
 It reports a successful engine load or a process failure in the status line and

@@ -246,13 +246,12 @@ int CHW::MakeContextCurrent(IRender::RenderContext context) const
 void CHW::UpdateViews()
 {
 #if defined(XR_PLATFORM_ANDROID)
-    // SDL's Android GLES window owns the EGL back buffer.  Creating the
-    // desktop-style empty FBO here leaves an incomplete framebuffer bound,
-    // so every draw/readback is discarded with GL_INVALID_FRAMEBUFFER_OPERATION.
-    // Keep the system-provided default framebuffer active on Android.
-    pFB = 0;
+    // SDL's Android GLES window owns framebuffer 0.  OpenXRay renders the
+    // deferred scene into its own FBO and presents it to framebuffer 0 in
+    // Present(), so keep a real engine FBO here just like the desktop path.
+    glGenFramebuffers(1, &pFB);
+    CHK_GL(glBindFramebuffer(GL_FRAMEBUFFER, pFB));
     BackBufferCount = 1;
-    CHK_GL(glBindFramebuffer(GL_FRAMEBUFFER, 0));
 #else
     // Create the default framebuffer
     glGenFramebuffers(1, &pFB);
@@ -268,8 +267,16 @@ void CHW::EndScene() { }
 void CHW::Present()
 {
 #if defined(XR_PLATFORM_ANDROID)
-    // The Android SDL/EGL surface is the swapchain.  There is no desktop
-    // intermediate FBO to blit before handing the frame back to SDL.
+    // Resolve the engine FBO into SDL's Android EGL back buffer before the
+    // swap.  GLES 3.0 provides glBlitFramebuffer, so this does not require a
+    // desktop-only context or a second renderer path.
+    CHK_GL(glBindFramebuffer(GL_READ_FRAMEBUFFER, pFB));
+    CHK_GL(glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0));
+    CHK_GL(glBlitFramebuffer(
+        0, 0, Device.dwWidth, Device.dwHeight,
+        0, 0, Device.dwWidth, Device.dwHeight,
+        GL_COLOR_BUFFER_BIT, GL_NEAREST));
+    CHK_GL(glBindFramebuffer(GL_FRAMEBUFFER, pFB));
     SDL_GL_SwapWindow(m_window);
 #else
 #if 0 // kept for historical reasons

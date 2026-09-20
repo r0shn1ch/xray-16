@@ -65,7 +65,7 @@ void CRT::create(LPCSTR Name, u32 w, u32 h, D3DFORMAT f, u32 SampleCount /*= 1*/
         CHK_GL(glTexStorage2D(GL_TEXTURE_2D, 1, glTextureUtils::ConvertTextureFormat(fmt), w, h));
 
     pTexture = RImplementation.Resources->_CreateTexture(Name);
-    pTexture->surface_set(target, pRT);
+    pTexture->surface_set(target, pRT, static_cast<GLint>(w), static_cast<GLint>(h));
 
     // OpenGL doesn't differentiate between color and depth targets
     pZRT = pRT;
@@ -93,6 +93,13 @@ void CRT::reset_end()
 
 void CRT::resolve_into(CRT& destination) const
 {
+#if defined(XR_PLATFORM_ANDROID)
+    // Android currently runs the renderer without multisampled render
+    // targets.  Keeping this operation inert prevents desktop-only resolve
+    // entry points from being called if an old resource requests a resolve.
+    UNUSED(destination);
+    return;
+#else
     glReadBuffer(GL_COLOR_ATTACHMENT0);
     glDrawBuffer(GL_COLOR_ATTACHMENT1);
 
@@ -106,6 +113,7 @@ void CRT::resolve_into(CRT& destination) const
 
     CHK_GL(glBlitFramebuffer(0, 0, dwWidth, dwHeight, 0, 0, destination.dwWidth, destination.dwHeight,
         GL_COLOR_BUFFER_BIT, GL_NEAREST));
+#endif
 }
 
 void resptrcode_crt::create(LPCSTR Name, u32 w, u32 h, D3DFORMAT f, u32 SampleCount /*= 1*/, u32 slices_num /*=1*/, Flags32 flags /*= {}*/)

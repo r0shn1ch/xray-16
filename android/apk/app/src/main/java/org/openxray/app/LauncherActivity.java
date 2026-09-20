@@ -53,6 +53,9 @@ public final class LauncherActivity extends Activity {
     private static final int REQUEST_GAME_TREE = 1001;
     private static final int REQUEST_STORAGE_PERMISSIONS = 1002;
     private static final int MAX_LOG_BYTES = 180 * 1024;
+    private static final String[] COP_RESOURCE_DIRECTORIES = {
+            "levels", "localization", "mp", "patches", "resources"
+    };
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private EditText gamePath;
@@ -358,15 +361,21 @@ public final class LauncherActivity extends Activity {
                 return false;
             }
 
+            if (!validateCallOfPripyatResources(root))
+                return false;
+
             File fsgame = new File(root, "fsgame.ltx");
             if (!fsgame.exists() && !copyBundledFsgame(fsgame)) {
                 writeLauncherLog("[launcher] fsgame.ltx is missing and could not be created: " + fsgame);
                 setStatus("В папке нет fsgame.ltx и не удалось создать его: " + fsgame);
                 return false;
             }
-            if (!new File(root, "gamedata").isDirectory()) {
-                writeLauncherLog("[launcher] warning: gamedata/ is missing under " + root.getAbsolutePath());
-                setStatus("Предупреждение: в папке нет gamedata/. Запуск всё равно продолжится.");
+
+            if (!installBundledEngineGamedata(root)) {
+                writeLauncherLog("[launcher] OpenXRay engine gamedata could not be installed under "
+                        + root.getAbsolutePath());
+                setStatus("Не удалось подготовить gamedata OpenXRay. Проверьте доступ к папке игры.");
+                return false;
             }
             writeLauncherLog("[launcher] STALKER folder validated: " + root.getAbsolutePath());
             return true;
@@ -389,6 +398,76 @@ public final class LauncherActivity extends Activity {
         } catch (IOException | SecurityException error) {
             return false;
         }
+    }
+
+    private boolean validateCallOfPripyatResources(File root) {
+        for (String directoryName : COP_RESOURCE_DIRECTORIES) {
+            File directory = new File(root, directoryName);
+            if (!directory.isDirectory()) {
+                writeLauncherLog("[launcher] required CoP resource directory is missing: "
+                        + directory.getAbsolutePath());
+                setStatus("Не найдена папка ресурсов CoP: " + directoryName
+                        + ". Нужны levels, localization, mp, patches и resources.");
+                return false;
+            }
+            if (!hasDirectoryEntries(directory)) {
+                writeLauncherLog("[launcher] required CoP resource directory is empty: "
+                        + directory.getAbsolutePath());
+                setStatus("Папка ресурсов CoP пустая: " + directoryName + ".");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean hasDirectoryEntries(File directory) {
+        File[] entries = directory.listFiles();
+        return entries != null && entries.length != 0;
+    }
+
+    private boolean installBundledEngineGamedata(File gameRoot) {
+        try {
+            copyBundledAssetTree("gamedata", new File(gameRoot, "gamedata"));
+            File configs = new File(gameRoot, "gamedata/configs");
+            File shaders = new File(gameRoot, "gamedata/shaders");
+            if (!configs.isDirectory() || !shaders.isDirectory()
+                    || !hasDirectoryEntries(configs) || !hasDirectoryEntries(shaders)) {
+                writeLauncherLog("[launcher] engine gamedata is incomplete after installation: "
+                        + gameRoot.getAbsolutePath());
+                return false;
+            }
+            writeLauncherLog("[launcher] OpenXRay engine gamedata is ready: "
+                    + new File(gameRoot, "gamedata").getAbsolutePath());
+            return true;
+        } catch (IOException | SecurityException error) {
+            writeLauncherLog("[launcher] cannot install engine gamedata: "
+                    + error.getClass().getSimpleName() + ": " + error.getMessage());
+            return false;
+        }
+    }
+
+    private void copyBundledAssetTree(String assetPath, File destination) throws IOException {
+        String[] children = getAssets().list(assetPath);
+        if (children == null || children.length == 0) {
+            if (destination.isFile())
+                return;
+            File parent = destination.getParentFile();
+            if (parent != null && !parent.exists() && !parent.mkdirs())
+                throw new IOException("cannot create " + parent);
+            try (InputStream input = getAssets().open(assetPath);
+                 OutputStream output = new FileOutputStream(destination)) {
+                byte[] buffer = new byte[8192];
+                int count;
+                while ((count = input.read(buffer)) != -1)
+                    output.write(buffer, 0, count);
+            }
+            return;
+        }
+
+        if (!destination.exists() && !destination.mkdirs())
+            throw new IOException("cannot create " + destination);
+        for (String child : children)
+            copyBundledAssetTree(assetPath + "/" + child, new File(destination, child));
     }
 
     private String resolvePrimaryStoragePath(Uri treeUri) {

@@ -9,7 +9,14 @@ if grep -Fq 'pw->pw_gecos && pw->pw_gecos[0]' "$repo_dir/src/xrCore/xrCore.cpp" 
     && grep -Fq 'STALKER folder not found' "$repo_dir/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java" \
     && grep -Fq 'android_native_crash_handler' "$repo_dir/src/xrEngine/x_ray.cpp" \
     && grep -Fq 'LUAJIT_HOST_EXTRA_LDFLAGS' "$repo_dir/Externals/LuaJIT-proj/CMakeLists.txt" \
-    && grep -Fq "SDL's Android GLES window owns the EGL back buffer" "$repo_dir/src/Layers/xrRenderGL/glHW.cpp"; then
+    && grep -Fq "SDL's Android GLES window owns framebuffer 0" "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
+    && grep -Fq 'required CoP resource directory is missing' \
+        "$repo_dir/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java" \
+    && grep -Fq 'res/gamedata' "$repo_dir/android/build-apk-armv7.sh" \
+    && grep -Fq 'glDrawElementsBaseVertex)' \
+        "$repo_dir/src/Layers/xrRenderGL/glR_Backend_Runtime.h" \
+    && grep -Fq 'glBindFramebuffer(GL_READ_FRAMEBUFFER, pFB)' \
+        "$repo_dir/src/Layers/xrRenderGL/glHW.cpp"; then
     echo "Android patchset: already present"
     exit 0
 fi

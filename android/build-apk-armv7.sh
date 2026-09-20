@@ -72,6 +72,7 @@ cp "$repo_dir/android/apk/app/src/main/res/values/strings.xml" "$project_dir/app
 cp "$repo_dir/android/apk/app/src/main/res/values/styles.xml" "$project_dir/app/src/main/res/values/styles.xml"
 mkdir -p "$project_dir/app/src/main/assets"
 cp "$repo_dir/res/fsgame.ltx" "$project_dir/app/src/main/assets/fsgame.ltx"
+cp -R "$repo_dir/res/gamedata" "$project_dir/app/src/main/assets/gamedata"
 
 native_lib_dir="$project_dir/app/src/main/jniLibs/armeabi-v7a"
 mkdir -p "$native_lib_dir"

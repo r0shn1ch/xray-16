@@ -58,7 +58,47 @@ u32 calc_texture_size(int lod, u32 mip_cnt, size_t orig_size)
     return iFloor(res);
 }
 
-GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc)
+#if defined(XR_PLATFORM_ANDROID)
+bool decode_compressed_texture(gli::texture& texture)
+{
+    if (!gli::is_compressed(texture.format()))
+        return true;
+
+    if (!gli::has_decoder(texture.format()))
+        return false;
+
+    constexpr gli::format decoded_format = gli::FORMAT_RGBA8_UNORM_PACK8;
+    switch (texture.target())
+    {
+    case gli::TARGET_1D:
+        texture = gli::convert(gli::texture1d(texture), decoded_format);
+        return true;
+    case gli::TARGET_1D_ARRAY:
+        texture = gli::convert(gli::texture1d_array(texture), decoded_format);
+        return true;
+    case gli::TARGET_2D:
+        texture = gli::convert(gli::texture2d(texture), decoded_format);
+        return true;
+    case gli::TARGET_2D_ARRAY:
+        texture = gli::convert(gli::texture2d_array(texture), decoded_format);
+        return true;
+    case gli::TARGET_3D:
+        texture = gli::convert(gli::texture3d(texture), decoded_format);
+        return true;
+    case gli::TARGET_CUBE:
+        texture = gli::convert(gli::texture_cube(texture), decoded_format);
+        return true;
+    case gli::TARGET_CUBE_ARRAY:
+        texture = gli::convert(gli::texture_cube_array(texture), decoded_format);
+        return true;
+    default:
+        return false;
+    }
+}
+#endif
+
+GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc,
+    GLint* ret_width, GLint* ret_height)
 {
     ret_msize = 0;
     R_ASSERT1_CURE(fRName && fRName[0], { return 0; });
@@ -111,9 +151,29 @@ GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc)
     gli::texture texture = gli::load((char*)S->pointer(), img_size);
     R_ASSERT2(!texture.empty(), fn);
 
+#if defined(XR_PLATFORM_ANDROID)
+    // GLES 3.0 does not require desktop S3TC/BC texture formats.  CoP ships
+    // many DDS files in DXT form, so decode formats for which GLI has a
+    // decoder to RGBA8 on the CPU instead of creating an unusable texture.
+    if (gli::is_compressed(texture.format()))
+    {
+        if (!decode_compressed_texture(texture))
+        {
+            Msg("! Android GLES: no decoder for compressed texture '%s'", fn);
+            FS.r_close(S);
+            return 0;
+        }
+        Msg("* Android GLES: decoded compressed texture '%s' to RGBA8", fn);
+    }
+#endif
+
     u32 mip_cnt = u32(-1); // XXX: write to it when reading with GLI!
 
+#if defined(XR_PLATFORM_ANDROID)
+    gli::gl GL(gli::gl::PROFILE_ES30);
+#else
     gli::gl GL(gli::gl::PROFILE_GL33);
+#endif
 
     gli::gl::format const format = GL.translate(texture.format(), texture.swizzles());
     GLenum target = GL.translate(texture.target());
@@ -128,6 +188,10 @@ GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc)
         glTexParameteriv(target, GL_TEXTURE_SWIZZLE_RGBA, &format.Swizzles[gli::SWIZZLE_RED]);
 
     glm::tvec3<GLsizei> const tex_extent(texture.extent());
+    if (ret_width)
+        *ret_width = tex_extent.x;
+    if (ret_height)
+        *ret_height = tex_extent.y;
 
     GLenum err;
     switch (texture.target())

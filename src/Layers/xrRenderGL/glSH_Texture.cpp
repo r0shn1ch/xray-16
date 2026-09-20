@@ -36,6 +36,8 @@ CTexture::CTexture()
     flags.bUser = false;
     flags.seqCycles = FALSE;
     m_material = 1.0f;
+    m_width = 0;
+    m_height = 0;
     bind = fastdelegate::FastDelegate2<CBackend&,u32>(this, &CTexture::apply_load);
 }
 
@@ -50,6 +52,13 @@ void CTexture::surface_set(GLenum target, GLuint surf)
 {
     desc = target;
     pSurface = surf;
+}
+
+void CTexture::surface_set(GLenum target, GLuint surf, GLint width, GLint height)
+{
+    surface_set(target, surf);
+    m_width = width;
+    m_height = height;
 }
 
 GLuint CTexture::surface_get() const
@@ -87,13 +96,30 @@ void CTexture::apply_theora(CBackend& cmd_list, u32 dwStage)
         // Clear and map buffer for writing
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pBuffer);
         CHK_GL(glBufferData(GL_PIXEL_UNPACK_BUFFER, _w * _h * 4, nullptr, GL_STREAM_DRAW)); // Invalidate buffer
+#if defined(XR_PLATFORM_ANDROID)
+        CHK_GL(pBits = (u32*)glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, _w * _h * 4,
+            GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT));
+#else
         CHK_GL(pBits = (u32*)glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY));
+#endif
 
         // Write to the buffer and copy it to the texture
         int _pos = 0;
         pTheora->DecompressFrame(pBits, 0, _pos);
+#if defined(XR_PLATFORM_ANDROID)
+        // color_rgba is stored as BGRA bytes on little-endian ARM.  GLES 3.0
+        // does not guarantee the desktop GL_BGRA upload format, so swizzle
+        // the mapped frame to the core GL_RGBA upload format.
+        u8* pixels = reinterpret_cast<u8*>(pBits);
+        for (u32 pixel = 0, count = _w * _h; pixel < count; ++pixel)
+            std::swap(pixels[pixel * 4], pixels[pixel * 4 + 2]);
+#endif
         CHK_GL(glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER));
+#if defined(XR_PLATFORM_ANDROID)
+        CHK_GL(glTexSubImage2D(desc, 0, 0, 0, _w, _h, GL_RGBA, GL_UNSIGNED_BYTE, nullptr));
+#else
         CHK_GL(glTexSubImage2D(desc, 0, 0, 0, _w, _h, GL_BGRA, GL_UNSIGNED_BYTE, nullptr));
+#endif
 
         // Unmap the buffer to restore normal texture functionality
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
@@ -277,7 +303,7 @@ void CTexture::Load()
             {
                 // Load another texture
                 u32 mem = 0;
-                pSurface = RImplementation.texture_load(buffer, mem, desc);
+                pSurface = RImplementation.texture_load(buffer, mem, desc, &m_width, &m_height);
                 if (pSurface)
                 {
                     // pSurface->SetPriority	(PRIORITY_LOW);
@@ -293,7 +319,7 @@ void CTexture::Load()
     {
         // Normal texture
         u32 mem = 0;
-        pSurface = RImplementation.texture_load(cName.c_str(), mem, desc);
+        pSurface = RImplementation.texture_load(cName.c_str(), mem, desc, &m_width, &m_height);
 
         // Calc memory usage and preload into vid-mem
         if (pSurface)
@@ -341,8 +367,10 @@ void CTexture::desc_update()
     if (pSurface && (GL_TEXTURE_2D == desc || GL_TEXTURE_2D_MULTISAMPLE == desc))
     {
         glBindTexture(desc, pSurface);
+#if !defined(XR_PLATFORM_ANDROID)
         CHK_GL(glGetTexLevelParameteriv(desc, 0, GL_TEXTURE_WIDTH, &m_width));
         CHK_GL(glGetTexLevelParameteriv(desc, 0, GL_TEXTURE_HEIGHT, &m_height));
+#endif
     }
 }
 
