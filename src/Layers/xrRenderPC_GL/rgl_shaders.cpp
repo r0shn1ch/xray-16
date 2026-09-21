@@ -11,6 +11,20 @@ namespace
 {
 constexpr cpcstr AndroidVaryingPrefix = "_xray_gles_varying_";
 
+struct AndroidGlslLineRewrite
+{
+    cpcstr path;
+    cpcstr source;
+    cpcstr replacement;
+};
+
+constexpr AndroidGlslLineRewrite AndroidGlslLineRewrites[] =
+{
+#define XR_GLES_LINE_REWRITE(path, source, replacement) { path, source, replacement },
+#include "AndroidGlslCompatRules.inl"
+#undef XR_GLES_LINE_REWRITE
+};
+
 bool is_glsl_space(char value)
 {
     return value == ' ' || value == '\t' || value == '\r';
@@ -50,6 +64,67 @@ bool is_glsl_qualifier(const xr_string& token)
 {
     return token == "flat" || token == "smooth" || token == "noperspective" || token == "centroid" ||
         token == "sample" || token == "invariant" || token == "precise";
+}
+
+bool glsl_line_matches_ignoring_space(const xr_string& line, size_t first, size_t last, cpcstr source)
+{
+    size_t linePosition = first;
+    size_t sourcePosition = 0;
+    while (true)
+    {
+        while (linePosition < last && is_glsl_space(line[linePosition]))
+            ++linePosition;
+        while (source[sourcePosition] && is_glsl_space(source[sourcePosition]))
+            ++sourcePosition;
+
+        if (linePosition == last || !source[sourcePosition])
+            return linePosition == last && !source[sourcePosition];
+        if (line[linePosition++] != source[sourcePosition++])
+            return false;
+    }
+}
+
+xr_string normalize_android_shader_path(cpcstr sourcePath)
+{
+    xr_string normalized = sourcePath ? sourcePath : "";
+    for (char& character : normalized)
+    {
+        if (character == '\\')
+            character = '/';
+        else if (character >= 'A' && character <= 'Z')
+            character = static_cast<char>(character - 'A' + 'a');
+    }
+    return normalized;
+}
+
+bool android_shader_path_matches(const xr_string& sourcePath, cpcstr rulePath)
+{
+    const size_t ruleLength = xr_strlen(rulePath);
+    if (sourcePath.size() < ruleLength ||
+        sourcePath.compare(sourcePath.size() - ruleLength, ruleLength, rulePath) != 0)
+        return false;
+
+    return sourcePath.size() == ruleLength || sourcePath[sourcePath.size() - ruleLength - 1] == '/';
+}
+
+bool apply_android_line_rewrite(
+    xr_string& line, size_t first, size_t last, const xr_string& sourcePath)
+{
+    const size_t length = last - first;
+    for (const auto& rewrite : AndroidGlslLineRewrites)
+    {
+        if (!android_shader_path_matches(sourcePath, rewrite.path))
+            continue;
+
+        const bool exact = xr_strlen(rewrite.source) == length &&
+            line.compare(first, length, rewrite.source) == 0;
+        if (exact || glsl_line_matches_ignoring_space(line, first, last, rewrite.source))
+        {
+            line.replace(first, length, rewrite.replacement);
+            return true;
+        }
+    }
+    return false;
 }
 
 bool get_android_varying_type(const xr_string& type, xr_string& physicalType, pcstr& swizzle)
@@ -224,10 +299,11 @@ bool normalize_android_stage_varying(xr_string& line, char stage)
     return true;
 }
 
-xr_string transform_android_glsl_source(cpcstr source, size_t length, char stage)
+xr_string transform_android_glsl_source(cpcstr source, size_t length, char stage, cpcstr sourceName)
 {
     xr_string transformed;
     transformed.reserve(length + 256);
+    const xr_string sourcePath = normalize_android_shader_path(sourceName);
 
     size_t offset = 0;
     while (offset < length)
@@ -241,6 +317,12 @@ xr_string transform_android_glsl_source(cpcstr source, size_t length, char stage
         while (last > first && is_glsl_space(line[last - 1]))
             --last;
         const xr_string trimmed = line.substr(first, last - first);
+
+        // The PC renderer's HLSL-like GLSL accepts a handful of implicit
+        // conversions that strict GLSL ES drivers reject. Keep the original
+        // resource tree byte-for-byte intact and normalize only the source
+        // copy passed to the Android compiler.
+        apply_android_line_rewrite(line, first, last, sourcePath);
 
         // These are built-ins in GLSL ES.  Redeclaring them is accepted by
         // desktop GLSL but rejected by Adreno as a reserved-name violation.
@@ -387,22 +469,22 @@ public:
     [[nodiscard]] auto get() const { return m_sources; }
     [[nodiscard]] auto length() const { return m_sources_lines; }
 
-    void compile(IReader* file, shader_options_holder& options, cpcstr target)
+    void compile(IReader* file, shader_options_holder& options, cpcstr target, cpcstr sourceName)
     {
-        load_includes(file, target[0]);
+        load_includes(file, target[0], sourceName);
         apply_options(options);
     }
 
 private:
     // TODO: OGL: make ignore commented includes
-    void load_includes(IReader* file, char stage)
+    void load_includes(IReader* file, char stage, cpcstr sourceName)
     {
         cpcstr sourceData = static_cast<cpcstr>(file->pointer());
         const size_t dataLength = file->length();
 
         // Copy source file data into a null-terminated buffer
 #if defined(XR_PLATFORM_ANDROID)
-        const xr_string transformed = transform_android_glsl_source(sourceData, dataLength, stage);
+        const xr_string transformed = transform_android_glsl_source(sourceData, dataLength, stage, sourceName);
         cpstr data = xr_alloc<char>(transformed.size() + 1);
         CopyMemory(data, transformed.c_str(), transformed.size() + 1);
 #else
@@ -434,7 +516,7 @@ private:
             // Open and read file, recursively load includes
             IReader* R = FS.r_open(path);
             R_ASSERT2(R, path);
-            load_includes(R, stage);
+            load_includes(R, stage, fn);
             FS.r_close(R);
 
             // Add next source, skip quotation
@@ -488,10 +570,9 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
     };
 
 #if defined(XR_PLATFORM_ANDROID)
-    // Prefer GLSL ES 3.20 when the context exposes it.  Besides the shader I/O
-    // features used below, 3.20 includes the numeric implicit conversions that
-    // the original desktop-oriented shader sources rely on.  Keep 3.10 as the
-    // fallback for GLES 3.1 devices and enable the extension there when present.
+    // Prefer GLSL ES 3.20 when the context exposes it and retain 3.10 for
+    // GLES 3.1 devices. The source compatibility layer below is still needed:
+    // mixed integer/float operators remain stricter than desktop GLSL.
     options.add(GLAD_GL_ES_VERSION_3_2 ? "#version 320 es" : "#version 310 es");
 
     // Some GLES 3.1 drivers expose the shader I/O blocks as an extension even
@@ -784,6 +865,29 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
         sh_name.append(static_cast<u32>(0)); // DX10_1_NATIVE off
     }
 
+#if defined(XR_PLATFORM_ANDROID)
+    // Vertex declarations use different physical widths for the same logical
+    // attributes in the skinning variants. The original resources rely on
+    // desktop GLSL's permissive vector narrowing; make it explicit after the
+    // SKIN_* option has been selected, without changing game or mod files.
+    options.add(
+        "#if defined(SKIN_NONE) || defined(SKIN_0)\n"
+        "#define skin_input_normal(value) value.xyz\n"
+        "#else\n"
+        "#define skin_input_normal(value) value\n"
+        "#endif\n"
+        "#if defined(SKIN_NONE) || defined(SKIN_0) || defined(SKIN_1) || defined(SKIN_2)\n"
+        "#define skin_input_tangent(value) value.xyz\n"
+        "#else\n"
+        "#define skin_input_tangent(value) value\n"
+        "#endif\n"
+        "#if defined(SKIN_2) || defined(SKIN_3)\n"
+        "#define skin_input_tc(value) value\n"
+        "#else\n"
+        "#define skin_input_tc(value) value.xy\n"
+        "#endif");
+#endif
+
     // finish
     options.finish();
     sh_name.finish();
@@ -850,7 +954,9 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
 #endif
         // Compile sources list
         shader_sources_manager sources;
-        sources.compile(fs, options, pTarget);
+        string_path sourceFileName;
+        strconcat(sizeof(sourceFileName), sourceFileName, name, ".", extension);
+        sources.compile(fs, options, pTarget, sourceFileName);
 
         // Compile the shader from sources
         program = create_shader(pTarget, sources.get(), sources.length(), filename, result, nullptr);

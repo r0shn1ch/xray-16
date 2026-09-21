@@ -8,6 +8,10 @@ export ANDROID_SDK_ROOT="$kit_root/toolchain/android-sdk"
 export ANDROID_DEPS_PREFIX="$kit_root/toolchain/android-deps-armv7"
 export SDL2_ANDROID_HOME="$kit_root/toolchain/SDL"
 export GRADLE_BIN="$kit_root/toolchain/gradle-8.1.1/bin/gradle"
+if [ -d "$kit_root/toolchain/gradle-user-home/caches/modules-2" ]; then
+    export GRADLE_USER_HOME="$kit_root/toolchain/gradle-user-home"
+    export XRAY_ANDROID_GRADLE_OFFLINE=ON
+fi
 if [ -x "$kit_root/toolchain/qemu-i386-static" ]; then
     export XRAY_QEMU_I386_STATIC="$kit_root/toolchain/qemu-i386-static"
 fi
@@ -30,6 +34,11 @@ if [ ! -f "$SDL2_ANDROID_HOME/android-project/gradlew" ]; then
 fi
 if [ ! -x "$GRADLE_BIN" ]; then
     echo "OpenXRay Android kit is incomplete: Gradle is missing" >&2
+    exit 2
+fi
+if [ "${XRAY_ANDROID_GRADLE_OFFLINE:-OFF}" = "ON" ] \
+    && [ ! -d "${GRADLE_USER_HOME:-}/caches/modules-2" ]; then
+    echo "OpenXRay Android kit is incomplete: offline Gradle cache is missing" >&2
     exit 2
 fi
 

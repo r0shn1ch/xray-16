@@ -11,6 +11,7 @@ would miss.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import re
@@ -45,6 +46,10 @@ EXPLICIT_OUTPUT_RE = re.compile(
     r"out\s+(?:lowp\s+|mediump\s+|highp\s+)?(?:vec4|float4)\s+"
     r"SV_Target(\d*)\s*;"
 )
+REWRITE_RE = re.compile(
+    r'^XR_GLES_LINE_REWRITE\(("(?:\\.|[^"\\])*"), ("(?:\\.|[^"\\])*"), '
+    r'("(?:\\.|[^"\\])*")\)$'
+)
 
 STAGES = {".vs": "vert", ".ps": "frag", ".gs": "geom", ".cs": "comp"}
 DEFAULT_PROGRAMS = (
@@ -53,6 +58,7 @@ DEFAULT_PROGRAMS = (
     ("combine_1.vs", "combine_1_nomsaa.ps"),
     ("combine_1.vs", "combine_volumetric.ps"),
     ("deffer_particle.vs", "deffer_particle.ps"),
+    ("model_def_lq.vs", "model_def_lq.ps"),
     ("sky2.vs", "sky2.ps"),
 )
 EXTRA_STARTUP_SHADERS = ("accum_sun_mask_nomsaa.ps", "yuv2rgb.ps")
@@ -89,6 +95,37 @@ RUNTIME_DEFINES = (
 )
 
 
+def load_line_rewrites() -> dict[tuple[str, str], str]:
+    rules_path = (
+        Path(__file__).resolve().parents[1]
+        / "src/Layers/xrRenderPC_GL/AndroidGlslCompatRules.inl"
+    )
+    rules: dict[tuple[str, str], str] = {}
+    for line_number, line in enumerate(rules_path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.startswith("XR_GLES_LINE_REWRITE"):
+            continue
+        match = REWRITE_RE.fullmatch(line)
+        if not match:
+            raise ValueError(f"malformed GLES rewrite at {rules_path}:{line_number}")
+        source_path, source, replacement = (json.loads(value) for value in match.groups())
+        key = (source_path, source)
+        previous = rules.setdefault(key, replacement)
+        if previous != replacement:
+            raise ValueError(f"conflicting GLES rewrite for {source_path}:{source!r}")
+    if not rules:
+        raise ValueError(f"no GLES rewrite rules found in {rules_path}")
+    return rules
+
+
+LINE_REWRITES = load_line_rewrites()
+NORMALIZED_LINE_REWRITES: dict[tuple[str, str], str] = {}
+for (source_path, source), replacement in LINE_REWRITES.items():
+    normalized = "".join(source.split())
+    previous = NORMALIZED_LINE_REWRITES.setdefault((source_path, normalized), replacement)
+    if "".join(previous.split()) != "".join(replacement.split()):
+        raise ValueError(f"conflicting whitespace-normalized GLES rewrite for {source!r}")
+
+
 def find_ndk_glslc(ndk: Path) -> tuple[Path, Path]:
     glslc = ndk / "shader-tools/linux-x86_64/glslc"
     libcxx = ndk / "toolchains/llvm/prebuilt/linux-x86_64/lib/x86_64-unknown-linux-gnu"
@@ -115,6 +152,26 @@ def resolve_include(shader_root: Path, include_name: str) -> Path:
     return current
 
 
+def validate_rewrite_coverage(shader_root: Path) -> tuple[bool, str]:
+    present: set[tuple[str, str]] = set()
+    for path in shader_root.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            source = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            source = path.read_text(encoding="windows-1251")
+        source_path = path.relative_to(shader_root).as_posix()
+        present.update((source_path, line.strip()) for line in source.splitlines())
+
+    missing = sorted(key for key in LINE_REWRITES if key not in present)
+    if missing:
+        return False, "stale engine rewrite rules:\n" + "\n".join(
+            f"{path}:{source!r}" for path, source in missing
+        )
+    return True, f"{len(LINE_REWRITES)} engine-source rewrite rules match upstream assets"
+
+
 def physical_varying_type(type_name: str) -> tuple[str, str] | None:
     aliases = {
         "float": ("vec4", ".x"),
@@ -139,8 +196,19 @@ def physical_varying_type(type_name: str) -> tuple[str, str] | None:
     return aliases.get(type_name)
 
 
-def transform_line(line: str, stage: str) -> list[str]:
+def transform_line(line: str, stage: str, source_path: str) -> list[str]:
     stripped = line.strip()
+    replacement = LINE_REWRITES.get((source_path, stripped))
+    if replacement is None:
+        replacement = NORMALIZED_LINE_REWRITES.get(
+            (source_path, "".join(stripped.split()))
+        )
+    if replacement is not None:
+        indentation = line[: len(line) - len(line.lstrip(" \t\r"))]
+        trailing = line[len(line.rstrip(" \t\r")) :]
+        line = indentation + replacement + trailing
+        stripped = line.strip()
+
     if stage == "frag" and stripped in {"in vec4 gl_FragCoord;", "in int gl_SampleID;"}:
         return [" " * len(line)]
 
@@ -185,23 +253,24 @@ def expand_shader(path: Path, shader_root: Path, stage: str) -> tuple[str, list[
         except UnicodeDecodeError:
             source = source_path.read_text(encoding="windows-1251")
 
+        virtual_path = source_path.relative_to(shader_root).as_posix()
         for line_number, line in enumerate(source.splitlines(), start=1):
             include = INCLUDE_RE.search(line)
             if include:
                 prefix = line[: include.start()]
                 if prefix:
-                    for transformed in transform_line(prefix, stage):
+                    for transformed in transform_line(prefix, stage, virtual_path):
                         output.append(transformed)
                         locations.append((source_path, line_number))
                 append(resolve_include(shader_root, include.group(1)))
                 suffix = line[include.end() :]
                 if suffix:
-                    for transformed in transform_line(suffix, stage):
+                    for transformed in transform_line(suffix, stage, virtual_path):
                         output.append(transformed)
                         locations.append((source_path, line_number))
                 continue
 
-            for transformed in transform_line(line, stage):
+            for transformed in transform_line(line, stage, virtual_path):
                 output.append(transformed)
                 locations.append((source_path, line_number))
 
@@ -224,6 +293,21 @@ def build_source(shader: Path, shader_root: Path) -> tuple[str, list[tuple[Path,
         "precision lowp sampler2DMS;",
         "precision lowp sampler2DShadow;",
         *(f"#define {name} {value}" for name, value in define_values.items()),
+        "#if defined(SKIN_NONE) || defined(SKIN_0)",
+        "#define skin_input_normal(value) value.xyz",
+        "#else",
+        "#define skin_input_normal(value) value",
+        "#endif",
+        "#if defined(SKIN_NONE) || defined(SKIN_0) || defined(SKIN_1) || defined(SKIN_2)",
+        "#define skin_input_tangent(value) value.xyz",
+        "#else",
+        "#define skin_input_tangent(value) value",
+        "#endif",
+        "#if defined(SKIN_2) || defined(SKIN_3)",
+        "#define skin_input_tc(value) value",
+        "#else",
+        "#define skin_input_tc(value) value.xy",
+        "#endif",
     ]
     return "\n".join(header_lines) + "\n" + expanded, locations, len(header_lines)
 
@@ -291,6 +375,20 @@ def compile_shader(glslc: Path, libcxx: Path, shader_root: Path, shader: Path) -
     return result.returncode == 0, format_diagnostics(result.stdout, locations, header_size, shader_root)
 
 
+def compile_skinning_variant(
+    glslc: Path, libcxx: Path, shader_root: Path, shader: Path, skin: int
+) -> tuple[bool, str]:
+    source, locations, header_size = build_source(shader, shader_root)
+    replacements = source.count("#define SKIN_NONE 1")
+    if replacements != 1:
+        return False, "validator runtime profile has no unique SKIN_NONE definition"
+    source = source.replace("#define SKIN_NONE 1", f"#define SKIN_{skin} 1", 1)
+    result = invoke_glslc(glslc, libcxx, shader, source)
+    return result.returncode == 0, format_diagnostics(
+        result.stdout, locations, header_size, shader_root
+    )
+
+
 def shader_interface(glslc: Path, libcxx: Path, shader_root: Path, shader: Path) -> tuple[dict[int, tuple[str, str]], str]:
     source, _, _ = build_source(shader, shader_root)
     result = invoke_glslc(glslc, libcxx, shader, source, preprocess=True)
@@ -345,6 +443,15 @@ def main() -> int:
         programs = DEFAULT_PROGRAMS
 
     failures = 0
+    default_shader_root = (Path(__file__).resolve().parents[1] / "res/gamedata/shaders/gl").resolve()
+    if not args.shaders and shader_root == default_shader_root:
+        ok, diagnostics = validate_rewrite_coverage(shader_root)
+        if ok:
+            print(f"PASS rules {diagnostics}")
+        else:
+            failures += 1
+            print(f"FAIL rules\n{diagnostics}")
+
     for shader in shaders:
         ok, diagnostics = compile_shader(glslc, libcxx, shader_root, shader)
         if ok:
@@ -366,7 +473,24 @@ def main() -> int:
             failures += 1
             print(f"FAIL link  {label}\n{diagnostics}")
 
-    print(f"Validated {len(shaders)} stages and {len(programs)} interfaces; failures: {failures}")
+    skinning_checks = 0
+    if not args.shaders:
+        skinning_shader = (shader_root / "model_def_lq.vs").resolve()
+        for skin in range(5):
+            skinning_checks += 1
+            ok, diagnostics = compile_skinning_variant(
+                glslc, libcxx, shader_root, skinning_shader, skin
+            )
+            if ok:
+                print(f"PASS skin  model_def_lq.vs SKIN_{skin}")
+            else:
+                failures += 1
+                print(f"FAIL skin  model_def_lq.vs SKIN_{skin}\n{diagnostics}")
+
+    print(
+        f"Validated {len(shaders)} stages, {len(programs)} interfaces and "
+        f"{skinning_checks} skinning variants; failures: {failures}"
+    )
     return 1 if failures else 0
 
 

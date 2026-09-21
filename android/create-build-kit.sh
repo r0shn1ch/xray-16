@@ -3,14 +3,19 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
-kit_version=${XRAY_ANDROID_KIT_VERSION:-0.6.0}
+kit_version=${XRAY_ANDROID_KIT_VERSION:-0.7.0}
 output=${1:-"$repo_dir/build/openxray-android-build-kit-v$kit_version.tar.zst"}
+port_version=$(sed -n '1p' "$script_dir/PORT_VERSION")
 
 ndk_dir=${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}
 sdk_dir=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}
 deps_dir=${ANDROID_DEPS_PREFIX:-}
 sdl_dir=${SDL2_ANDROID_HOME:-}
 gradle_bin=${GRADLE_BIN:-}
+gradle_cache_source=${XRAY_GRADLE_CACHE_SOURCE:-${GRADLE_USER_HOME:-}}
+if [ -z "$gradle_cache_source" ] && [ -n "${HOME:-}" ]; then
+    gradle_cache_source="$HOME/.gradle"
+fi
 qemu_i386=${XRAY_QEMU_I386_STATIC:-${LUAJIT_HOST_EXECUTABLE_PREFIX:-}}
 if [ -z "$qemu_i386" ] && [ -x "$(CDPATH= cd -- "$repo_dir/.." && pwd)/qemu-user-static-root/usr/bin/qemu-i386-static" ]; then
     qemu_i386="$(CDPATH= cd -- "$repo_dir/.." && pwd)/qemu-user-static-root/usr/bin/qemu-i386-static"
@@ -28,6 +33,10 @@ done
 [ -f "$deps_dir/lib/cmake/SDL2/SDL2Config.cmake" ] || { echo "dependency prefix is invalid: $deps_dir" >&2; exit 2; }
 [ -f "$sdl_dir/android-project/gradlew" ] || { echo "SDL2 source is invalid: $sdl_dir" >&2; exit 2; }
 [ -x "$gradle_bin" ] || { echo "Gradle is invalid: $gradle_bin" >&2; exit 2; }
+[ -d "$gradle_cache_source/caches/modules-2" ] || {
+    echo "Gradle dependency cache is missing; set XRAY_GRADLE_CACHE_SOURCE after one successful APK build" >&2
+    exit 2
+}
 
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT HUP INT TERM
@@ -45,6 +54,11 @@ cp -a "$sdl_dir/." "$kit_dir/toolchain/SDL/"
 gradle_dir=$(CDPATH= cd -- "$(dirname -- "$gradle_bin")/.." && pwd)
 mkdir -p "$kit_dir/toolchain/gradle-8.1.1"
 cp -a "$gradle_dir/." "$kit_dir/toolchain/gradle-8.1.1/"
+mkdir -p "$kit_dir/toolchain/gradle-user-home"
+cp -a "$gradle_cache_source/caches" "$kit_dir/toolchain/gradle-user-home/caches"
+if [ -d "$gradle_cache_source/native" ]; then
+    cp -a "$gradle_cache_source/native" "$kit_dir/toolchain/gradle-user-home/native"
+fi
 if [ -n "$qemu_i386" ] && [ -x "$qemu_i386" ]; then
     cp "$qemu_i386" "$kit_dir/toolchain/qemu-i386-static"
 fi
@@ -64,8 +78,9 @@ chmod +x "$kit_dir/build-kit-env.sh" "$kit_dir/harness/"*.sh
     echo "dependencies=$(basename "$deps_dir")"
     echo "sdl=$(basename "$sdl_dir")"
     echo "gradle=$(basename "$gradle_dir")"
-    if [ -f "$repo_dir/build/openxray-armv7-launcher-v0.6.0-debug.apk" ]; then
-        sha256sum "$repo_dir/build/openxray-armv7-launcher-v0.6.0-debug.apk"
+    echo "gradle_dependency_cache=embedded (offline mode enabled)"
+    if [ -f "$repo_dir/build/openxray-armv7-launcher-v$port_version-debug.apk" ]; then
+        sha256sum "$repo_dir/build/openxray-armv7-launcher-v$port_version-debug.apk"
     fi
 } > "$kit_dir/BUILD-MANIFEST.txt"
 

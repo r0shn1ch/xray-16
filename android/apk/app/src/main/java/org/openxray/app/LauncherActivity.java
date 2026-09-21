@@ -20,6 +20,7 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.ArrayAdapter;
+import android.widget.AdapterView;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -65,6 +66,8 @@ public final class LauncherActivity extends Activity {
     private static final String PREFS = "openxray_launcher";
     private static final String PREF_GAME_PATH = "game_path";
     private static final String PREF_GAME_URI = "game_uri";
+    private static final String PREF_GAME_PATH_PREFIX = "game_path_profile_";
+    private static final String PREF_GAME_URI_PREFIX = "game_uri_profile_";
     private static final String PREF_GAME_VARIANT = "game_variant";
     private static final String PREF_CUSTOM_ARGS = "custom_args";
     private static final String PREF_GAMEPAD = "gamepad";
@@ -99,6 +102,8 @@ public final class LauncherActivity extends Activity {
     private SharedPreferences preferences;
     private long engineLaunchTime;
     private boolean engineFailureToastShown;
+    private boolean suppressProfileCallbacks = true;
+    private int activeGameVariant = 3;
     private int activePage = PAGE_GAME;
 
     private final Runnable logPoller = new Runnable() {
@@ -160,10 +165,16 @@ public final class LauncherActivity extends Activity {
         if (resolvedPath != null) {
             gamePath.setText(resolvedPath);
             preferences.edit().putString(PREF_GAME_PATH, resolvedPath)
-                    .putString(PREF_GAME_URI, treeUri.toString()).apply();
+                    .putString(profilePreference(PREF_GAME_PATH_PREFIX, activeGameVariant), resolvedPath)
+                    .putString(PREF_GAME_URI, treeUri.toString())
+                    .putString(profilePreference(PREF_GAME_URI_PREFIX, activeGameVariant), treeUri.toString())
+                    .apply();
             setStatus("Выбрана папка: " + resolvedPath);
         } else {
-            preferences.edit().putString(PREF_GAME_URI, treeUri.toString()).apply();
+            preferences.edit()
+                    .putString(PREF_GAME_URI, treeUri.toString())
+                    .putString(profilePreference(PREF_GAME_URI_PREFIX, activeGameVariant), treeUri.toString())
+                    .apply();
             setStatus("Папка выбрана через системный проводник, но Android не раскрыл прямой путь. "
                     + "Укажите его вручную: native-движок не может читать content:// URI как обычный каталог.");
         }
@@ -228,6 +239,35 @@ public final class LauncherActivity extends Activity {
 
     private View buildGamePage() {
         LinearLayout content = pageContent();
+        addSectionTitle(content, "Профиль игры");
+        content.addView(bodyText(
+                "Для каждой игры сохраняется отдельная папка. Профиль передаётся движку штатным ключом; "
+                        + "файлы установки и конфиги не переписываются."), matchWrap());
+
+        gameVariant = new Spinner(this);
+        String[] variants = {
+                "Автоматически / без ключа",
+                "Shadow of Chernobyl (-soc)",
+                "Clear Sky (-cs)",
+                "Call of Pripyat (-cop)"
+        };
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, variants);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        gameVariant.setAdapter(adapter);
+        gameVariant.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (!suppressProfileCallbacks && gamePath != null)
+                    switchGameProfile(position);
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+        content.addView(gameVariant, matchWrap());
+
         addSectionTitle(content, "Установка игры");
 
         content.addView(bodyText(
@@ -274,24 +314,6 @@ public final class LauncherActivity extends Activity {
 
     private View buildSettingsPage() {
         LinearLayout content = pageContent();
-        addSectionTitle(content, "Профиль игры");
-        content.addView(bodyText(
-                "Профиль задаёт штатный ключ OpenXRay. Для Steam-версии «Зова Припяти» выберите CoP."),
-                matchWrap());
-
-        gameVariant = new Spinner(this);
-        String[] variants = {
-                "Автоматически / без ключа",
-                "Shadow of Chernobyl (-soc)",
-                "Clear Sky (-cs)",
-                "Call of Pripyat (-cop)"
-        };
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, variants);
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        gameVariant.setAdapter(adapter);
-        content.addView(gameVariant, matchWrap());
-
         addSectionTitle(content, "Управление и экран");
         gamepadEnabled = makeCheckBox("Включить поддержку геймпада",
                 "Если выключено, движок получает -no_gamepad.");
@@ -321,6 +343,8 @@ public final class LauncherActivity extends Activity {
             setStatus("Параметры сохранены.");
             showPage(PAGE_GAME);
         }), new LinearLayout.LayoutParams(-1, dp(52)));
+        content.addView(actionButton("Сбросить настройки лаунчера", view -> confirmResetPreferences()),
+                new LinearLayout.LayoutParams(-1, dp(52)));
         return scrollPage(content);
     }
 
@@ -401,9 +425,15 @@ public final class LauncherActivity extends Activity {
     }
 
     private void restorePreferences() {
-        gamePath.setText(preferences.getString(PREF_GAME_PATH, "/storage/emulated/0/STALKER"));
+        int restoredVariant = clampVariant(preferences.getInt(PREF_GAME_VARIANT, 3));
+        activeGameVariant = restoredVariant;
+        suppressProfileCallbacks = true;
+        gameVariant.setSelection(restoredVariant);
+        suppressProfileCallbacks = false;
+        String legacyPath = preferences.getString(PREF_GAME_PATH, "/storage/emulated/0/STALKER");
+        gamePath.setText(preferences.getString(
+                profilePreference(PREF_GAME_PATH_PREFIX, restoredVariant), legacyPath));
         customArgs.setText(preferences.getString(PREF_CUSTOM_ARGS, ""));
-        gameVariant.setSelection(clampVariant(preferences.getInt(PREF_GAME_VARIANT, 3)));
         gamepadEnabled.setChecked(preferences.getBoolean(PREF_GAMEPAD, false));
         splashEnabled.setChecked(preferences.getBoolean(PREF_SPLASH, false));
         keepScreenOn.setChecked(preferences.getBoolean(PREF_KEEP_SCREEN_ON, true));
@@ -416,8 +446,10 @@ public final class LauncherActivity extends Activity {
             return;
         preferences.edit()
                 .putString(PREF_GAME_PATH, gamePath.getText().toString().trim())
+                .putString(profilePreference(PREF_GAME_PATH_PREFIX, activeGameVariant),
+                        gamePath.getText().toString().trim())
                 .putString(PREF_CUSTOM_ARGS, customArgs.getText().toString())
-                .putInt(PREF_GAME_VARIANT, gameVariant.getSelectedItemPosition())
+                .putInt(PREF_GAME_VARIANT, activeGameVariant)
                 .putBoolean(PREF_GAMEPAD, gamepadEnabled.isChecked())
                 .putBoolean(PREF_SPLASH, splashEnabled.isChecked())
                 .putBoolean(PREF_KEEP_SCREEN_ON, keepScreenOn.isChecked())
@@ -428,6 +460,57 @@ public final class LauncherActivity extends Activity {
 
     private int clampVariant(int value) {
         return value >= 0 && value <= 3 ? value : 3;
+    }
+
+    private String profilePreference(String prefix, int variant) {
+        return prefix + clampVariant(variant);
+    }
+
+    private String profileName(int variant) {
+        switch (clampVariant(variant)) {
+        case 1:
+            return "Shadow of Chernobyl";
+        case 2:
+            return "Clear Sky";
+        case 3:
+            return "Call of Pripyat";
+        default:
+            return "автоопределение";
+        }
+    }
+
+    private void switchGameProfile(int requestedVariant) {
+        int nextVariant = clampVariant(requestedVariant);
+        if (nextVariant == activeGameVariant)
+            return;
+
+        preferences.edit()
+                .putString(profilePreference(PREF_GAME_PATH_PREFIX, activeGameVariant),
+                        gamePath.getText().toString().trim())
+                .putInt(PREF_GAME_VARIANT, nextVariant)
+                .apply();
+        activeGameVariant = nextVariant;
+        gamePath.setText(preferences.getString(
+                profilePreference(PREF_GAME_PATH_PREFIX, nextVariant), ""));
+        refreshGameInspection();
+        setStatus("Выбран профиль: " + profileName(nextVariant) + ".");
+    }
+
+    private void confirmResetPreferences() {
+        new AlertDialog.Builder(this)
+                .setTitle("Сбросить настройки лаунчера?")
+                .setMessage("Будут забыты пути и параметры только этого лаунчера. Файлы игр, модов, "
+                        + "fsgame.ltx и user.ltx останутся без изменений.")
+                .setPositiveButton("Сбросить", (dialog, which) -> {
+                    preferences.edit().clear().apply();
+                    restorePreferences();
+                    refreshAccessStatus();
+                    refreshGameInspection();
+                    setStatus("Настройки лаунчера сброшены. Файлы игры не изменялись.");
+                    showPage(PAGE_GAME);
+                })
+                .setNegativeButton("Отмена", null)
+                .show();
     }
 
     private void showPage(int requestedPage) {
@@ -569,7 +652,7 @@ public final class LauncherActivity extends Activity {
         intent.putExtra(EXTRA_ADDITIONAL_ARGS, additionalArgs);
         if (!rendererSmoke) {
             intent.putExtra(EXTRA_GAME_PATH, selectedPath);
-            intent.putExtra(EXTRA_GAME_VARIANT, gameVariant.getSelectedItemPosition());
+            intent.putExtra(EXTRA_GAME_VARIANT, activeGameVariant);
         }
         setStatus(rendererSmoke ? "Запускаю GLES smoke test…" : "Запускаю OpenXRay…");
         Toast.makeText(this, "OpenXRay: запуск движка…", Toast.LENGTH_SHORT).show();
@@ -820,12 +903,16 @@ public final class LauncherActivity extends Activity {
             return;
         String selectedPath = gamePath.getText().toString().trim();
         if (selectedPath.isEmpty()) {
-            gameInspection.setText("Путь не выбран.");
+            gameInspection.setText("Профиль: " + profileName(activeGameVariant)
+                    + ". Путь для этого профиля ещё не выбран.");
+            gameInspection.setTextColor(Color.rgb(150, 95, 25));
             return;
         }
         File root = new File(selectedPath);
         if (!root.isDirectory()) {
-            gameInspection.setText("Папка не найдена или недоступна.");
+            gameInspection.setText("Профиль: " + profileName(activeGameVariant)
+                    + ". Папка не найдена или недоступна.");
+            gameInspection.setTextColor(Color.rgb(190, 70, 35));
             return;
         }
 
@@ -839,10 +926,17 @@ public final class LauncherActivity extends Activity {
         String hint = socExecutable ? "похоже на Shadow of Chernobyl"
                 : laterExecutable ? "обнаружена установка CS/CoP"
                 : "точная игра будет определена выбранным профилем";
-        gameInspection.setText("Папка читается · fsgame.ltx: " + yesNo(fsgame)
+        String mismatch = socExecutable && activeGameVariant > 1
+                ? " · профиль не совпадает с найденным XR_3DA.exe"
+                : laterExecutable && activeGameVariant == 1
+                ? " · профиль SoC не совпадает с найденным xrEngine.exe" : "";
+        gameInspection.setText("Профиль: " + profileName(activeGameVariant)
+                + " · папка читается · fsgame.ltx: " + yesNo(fsgame)
                 + " · gamedata: " + yesNo(gamedata)
                 + " · resources: " + yesNo(resources) + "\n" + hint
-                + ". Проверка информационная и не изменяет файлы.");
+                + mismatch + ". Проверка информационная и не изменяет файлы.");
+        gameInspection.setTextColor(fsgame && mismatch.isEmpty()
+                ? Color.rgb(25, 115, 55) : Color.rgb(150, 95, 25));
     }
 
     private String yesNo(boolean value) {

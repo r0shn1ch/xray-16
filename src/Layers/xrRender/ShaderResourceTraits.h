@@ -716,7 +716,16 @@ T* CResourceManager::CreateShader(cpcstr name, pcstr filename /*= nullptr*/, u32
 #endif
 
         // Compile
-        HRESULT const _hr = RImplementation.shader_compile(name, file, c_entry, c_target, flags, (void*&)sh);
+#if defined(XR_PLATFORM_ANDROID)
+        // The GLES source translator scopes compatibility rewrites to the
+        // physical shader path. Resource names may carry option suffixes,
+        // while shName is the unmodified game/mod file that was opened.
+        const pcstr compileName = shName;
+#else
+        const pcstr compileName = name;
+#endif
+        HRESULT const _hr = RImplementation.shader_compile(
+            compileName, file, c_entry, c_target, flags, (void*&)sh);
 
         FS.r_close(file);
 

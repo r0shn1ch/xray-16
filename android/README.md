@@ -17,7 +17,7 @@ patches), loads a prepared build kit when `XRAY_ANDROID_KIT_ROOT` is set, and
 then builds either the APK or the native target:
 
 ```sh
-XRAY_ANDROID_KIT_ROOT=/path/to/openxray-android-build-kit-v0.6.0 \
+XRAY_ANDROID_KIT_ROOT=/path/to/openxray-android-build-kit-v0.7.0 \
 ./android/build-harness.sh --apk
 ```
 
@@ -37,6 +37,13 @@ the Android `libmain.so` engine target used by the APK. The prefix must contain
 Android/armeabi-v7a builds of SDL2, OpenAL Soft, Ogg, Vorbis, Theora, LZO and
 JPEG. The script does not download dependencies implicitly.
 
+For a normal git checkout the build prepares recursive submodules itself and
+then verifies the LuaJIT, GLI, ImGui, luabind and xrLuaFix source sentinels.
+The complete source archive already contains those trees and can therefore be
+built offline with the kit. An incomplete source export now fails before CMake
+with a direct diagnostic instead of the misleading "unsupported LuaJIT target"
+error.
+
 `apply-patches.sh` is idempotent. It verifies the null-safe Android core
 bootstrap, crash logging, launcher game-root diagnostics and LuaJIT host linker
 support before building; on an older clean checkout it applies the numbered
@@ -47,7 +54,7 @@ being copied into that checkout first. Keep the extracted harness outside the
 source tree and pass the source path explicitly:
 
 ```sh
-/path/to/openxray-android-build-harness-v0.6.0/android/apply-patches.sh \
+/path/to/openxray-android-build-harness-v0.7.0/android/apply-patches.sh \
   /path/to/clean/xray-16
 ```
 
@@ -66,9 +73,24 @@ GRADLE_BIN=/path/to/gradle-8.1.1/bin/gradle \
 ./android/create-build-kit.sh
 ```
 
-The resulting `.tar.zst` contains the harness, patchset and complete pinned
-toolchain. Extract it once, point `XRAY_ANDROID_KIT_ROOT` at the extracted
-directory, and reuse `build-harness.sh` for subsequent builds.
+The resulting `.tar.zst` contains the harness, patchset, complete pinned
+toolchain and the Gradle dependency cache from a successful APK build. Extract
+it once, point `XRAY_ANDROID_KIT_ROOT` at the extracted directory, and reuse
+`build-harness.sh` for subsequent builds. Builds made through this kit enable
+Gradle offline mode, so they do not depend on Maven availability or another
+machine's home-directory cache.
+
+Release archives are created by the same checked-in scripts:
+
+```sh
+./android/create-harness-archive.sh
+./android/create-source-archive.sh
+```
+
+The small harness archive contains the patchset and validator. The source
+archive copies only files tracked by the main repository and every recursive
+submodule, so it is complete for offline builds but excludes `.git`, local
+credentials, caches and build products.
 
 The APK build performs a final 16 KiB `zipalign` pass and then signs the
 aligned package with the standard Gradle debug key. `ANDROID_DEBUG_KEYSTORE`,
@@ -124,10 +146,14 @@ process, so the launcher can remain visible after a native crash.
 The Android path requests an OpenGL ES 3.1 or newer context and keeps the
 deferred renderer on an engine-owned framebuffer. `CHW::Present()` explicitly
 copies its final color attachment into SDL's EGL framebuffer before the swap.
-The GLES source layer assigns MRT output locations and normalizes stage
-varyings at runtime, so the fix also applies to compatible renderer shaders
-provided by a game or mod. Texture upload uses GLES component swizzles and
-decodes unsupported desktop DDS compression without rewriting the source file.
+The GLES source layer assigns MRT output locations, normalizes stage varyings
+and makes the desktop shader expressions explicit at runtime. The tracked
+`res/gamedata/shaders/gl` directory is identical to upstream; neither original
+game files nor mod files are patched on disk. Compatible shader overrides from
+a game or mod pass through the same engine-side translation; line matching is
+insensitive to formatting whitespace. Texture upload
+uses GLES component swizzles and decodes unsupported desktop DDS compression
+in memory without rewriting the source DDS file.
 
 The OpenGL renderer in upstream OpenXRay still disables its unfinished MSAA
 mode globally. The Android code does not add another feature cut: multisample

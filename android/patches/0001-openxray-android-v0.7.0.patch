@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 67b4ca79553d7234998f19999dee33aeaedc3061..1fbc09a0bc081778df0af0387f02b36670dc5d24 100644
+index 67b4ca79..1fbc09a0 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -18,6 +18,14 @@ option(XRAY_USE_LUAJIT   "Use LuaJIT"                 ON)
@@ -18,7 +18,7 @@ index 67b4ca79553d7234998f19999dee33aeaedc3061..1fbc09a0bc081778df0af0387f02b366
  include(XRay.Packaging)
  
 diff --git a/Externals/CMakeLists.txt b/Externals/CMakeLists.txt
-index 4b438f03b6a84176992d26a0f27f0b66e8fcce77..06118b783130a1a21b75e8f8938068478bdf71a6 100644
+index 4b438f03..06118b78 100644
 --- a/Externals/CMakeLists.txt
 +++ b/Externals/CMakeLists.txt
 @@ -13,8 +13,33 @@ add_subdirectory(ode)
@@ -56,7 +56,7 @@ index 4b438f03b6a84176992d26a0f27f0b66e8fcce77..06118b783130a1a21b75e8f893806847
      message(FATAL_ERROR
          "You probably have downloaded OpenXRay sources as ZIP archive, you can't do that. Use git to clone the repository.\n"
 diff --git a/Externals/LuaJIT-proj/CMakeLists.txt b/Externals/LuaJIT-proj/CMakeLists.txt
-index 9b95649219e265a2ce56c4da07268af4b19bcd71..76bfc2ba18c038e4e7d8fb4374f13c24e6d52407 100644
+index 9b956492..76bfc2ba 100644
 --- a/Externals/LuaJIT-proj/CMakeLists.txt
 +++ b/Externals/LuaJIT-proj/CMakeLists.txt
 @@ -33,6 +33,11 @@ option(LUAJIT_USE_SYSMALLOC "Use the system provided memory allocator (realloc)
@@ -173,7 +173,7 @@ index 9b95649219e265a2ce56c4da07268af4b19bcd71..76bfc2ba18c038e4e7d8fb4374f13c24
          DEPENDS buildvm ${ARGN}
      )
 diff --git a/Externals/LuaJIT-proj/HostBuildTools/buildvm/CMakeLists.txt b/Externals/LuaJIT-proj/HostBuildTools/buildvm/CMakeLists.txt
-index f0c2eaaded2527740e24f042957bdbfc2be64be9..33af5124cd5a30298ee52c88ffe8dde34d458ca5 100644
+index f0c2eaad..33af5124 100644
 --- a/Externals/LuaJIT-proj/HostBuildTools/buildvm/CMakeLists.txt
 +++ b/Externals/LuaJIT-proj/HostBuildTools/buildvm/CMakeLists.txt
 @@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.22)
@@ -188,7 +188,7 @@ index f0c2eaaded2527740e24f042957bdbfc2be64be9..33af5124cd5a30298ee52c88ffe8dde3
  
  if (CMAKE_VERBOSE_MAKEFILE)
 diff --git a/Externals/LuaJIT-proj/HostBuildTools/minilua/CMakeLists.txt b/Externals/LuaJIT-proj/HostBuildTools/minilua/CMakeLists.txt
-index 7f1d3e2b8ae9a856223812510a07593a79f6902f..1c3aa3871ab9d30dff2e7878aa4a015256a55d8a 100644
+index 7f1d3e2b..1c3aa387 100644
 --- a/Externals/LuaJIT-proj/HostBuildTools/minilua/CMakeLists.txt
 +++ b/Externals/LuaJIT-proj/HostBuildTools/minilua/CMakeLists.txt
 @@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.22)
@@ -203,7 +203,7 @@ index 7f1d3e2b8ae9a856223812510a07593a79f6902f..1c3aa3871ab9d30dff2e7878aa4a0152
  
  if (CMAKE_VERBOSE_MAKEFILE)
 diff --git a/Externals/imgui-proj/CMakeLists.txt b/Externals/imgui-proj/CMakeLists.txt
-index e1c0883f6a55c6d389820e91766a605a8076586e..423cf9cbdf5be00087f9dbc720349d11ab2baf9e 100644
+index e1c0883f..423cf9cb 100644
 --- a/Externals/imgui-proj/CMakeLists.txt
 +++ b/Externals/imgui-proj/CMakeLists.txt
 @@ -30,6 +30,13 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "OpenBSD" AND NOT CMAKE_SYSTEM_NAME STREQUAL
@@ -220,12 +220,19 @@ index e1c0883f6a55c6d389820e91766a605a8076586e..423cf9cbdf5be00087f9dbc720349d11
  target_compile_definitions(xrImGui
      PUBLIC
      IMGUI_DISABLE_OBSOLETE_KEYIO
+diff --git a/android/PORT_VERSION b/android/PORT_VERSION
+new file mode 100644
+index 00000000..faef31a4
+--- /dev/null
++++ b/android/PORT_VERSION
+@@ -0,0 +1 @@
++0.7.0
 diff --git a/android/README.md b/android/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..e658f963379e1a4b265f889bb3565d1850a78017
+index 00000000..881f6c92
 --- /dev/null
 +++ b/android/README.md
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,174 @@
 +# OpenXRay on Android (armeabi-v7a)
 +
 +This directory contains the Android 16 / ARMv7 build entry point. The engine
@@ -245,7 +252,7 @@ index 0000000000000000000000000000000000000000..e658f963379e1a4b265f889bb3565d18
 +then builds either the APK or the native target:
 +
 +```sh
-+XRAY_ANDROID_KIT_ROOT=/path/to/openxray-android-build-kit-v0.6.0 \
++XRAY_ANDROID_KIT_ROOT=/path/to/openxray-android-build-kit-v0.7.0 \
 +./android/build-harness.sh --apk
 +```
 +
@@ -265,6 +272,13 @@ index 0000000000000000000000000000000000000000..e658f963379e1a4b265f889bb3565d18
 +Android/armeabi-v7a builds of SDL2, OpenAL Soft, Ogg, Vorbis, Theora, LZO and
 +JPEG. The script does not download dependencies implicitly.
 +
++For a normal git checkout the build prepares recursive submodules itself and
++then verifies the LuaJIT, GLI, ImGui, luabind and xrLuaFix source sentinels.
++The complete source archive already contains those trees and can therefore be
++built offline with the kit. An incomplete source export now fails before CMake
++with a direct diagnostic instead of the misleading "unsupported LuaJIT target"
++error.
++
 +`apply-patches.sh` is idempotent. It verifies the null-safe Android core
 +bootstrap, crash logging, launcher game-root diagnostics and LuaJIT host linker
 +support before building; on an older clean checkout it applies the numbered
@@ -275,7 +289,7 @@ index 0000000000000000000000000000000000000000..e658f963379e1a4b265f889bb3565d18
 +source tree and pass the source path explicitly:
 +
 +```sh
-+/path/to/openxray-android-build-harness-v0.6.0/android/apply-patches.sh \
++/path/to/openxray-android-build-harness-v0.7.0/android/apply-patches.sh \
 +  /path/to/clean/xray-16
 +```
 +
@@ -294,9 +308,24 @@ index 0000000000000000000000000000000000000000..e658f963379e1a4b265f889bb3565d18
 +./android/create-build-kit.sh
 +```
 +
-+The resulting `.tar.zst` contains the harness, patchset and complete pinned
-+toolchain. Extract it once, point `XRAY_ANDROID_KIT_ROOT` at the extracted
-+directory, and reuse `build-harness.sh` for subsequent builds.
++The resulting `.tar.zst` contains the harness, patchset, complete pinned
++toolchain and the Gradle dependency cache from a successful APK build. Extract
++it once, point `XRAY_ANDROID_KIT_ROOT` at the extracted directory, and reuse
++`build-harness.sh` for subsequent builds. Builds made through this kit enable
++Gradle offline mode, so they do not depend on Maven availability or another
++machine's home-directory cache.
++
++Release archives are created by the same checked-in scripts:
++
++```sh
++./android/create-harness-archive.sh
++./android/create-source-archive.sh
++```
++
++The small harness archive contains the patchset and validator. The source
++archive copies only files tracked by the main repository and every recursive
++submodule, so it is complete for offline builds but excludes `.git`, local
++credentials, caches and build products.
 +
 +The APK build performs a final 16 KiB `zipalign` pass and then signs the
 +aligned package with the standard Gradle debug key. `ANDROID_DEBUG_KEYSTORE`,
@@ -352,10 +381,14 @@ index 0000000000000000000000000000000000000000..e658f963379e1a4b265f889bb3565d18
 +The Android path requests an OpenGL ES 3.1 or newer context and keeps the
 +deferred renderer on an engine-owned framebuffer. `CHW::Present()` explicitly
 +copies its final color attachment into SDL's EGL framebuffer before the swap.
-+The GLES source layer assigns MRT output locations and normalizes stage
-+varyings at runtime, so the fix also applies to compatible renderer shaders
-+provided by a game or mod. Texture upload uses GLES component swizzles and
-+decodes unsupported desktop DDS compression without rewriting the source file.
++The GLES source layer assigns MRT output locations, normalizes stage varyings
++and makes the desktop shader expressions explicit at runtime. The tracked
++`res/gamedata/shaders/gl` directory is identical to upstream; neither original
++game files nor mod files are patched on disk. Compatible shader overrides from
++a game or mod pass through the same engine-side translation; line matching is
++insensitive to formatting whitespace. Texture upload
++uses GLES component swizzles and decodes unsupported desktop DDS compression
++in memory without rewriting the source DDS file.
 +
 +The OpenGL renderer in upstream OpenXRay still disables its unfinished MSAA
 +mode globally. The Android code does not add another feature cut: multisample
@@ -376,10 +409,10 @@ index 0000000000000000000000000000000000000000..e658f963379e1a4b265f889bb3565d18
 +public path.
 diff --git a/android/apk/README.md b/android/apk/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..743214ba7731000bbdf88ace12d0d7a33d2a9098
+index 00000000..b860c445
 --- /dev/null
 +++ b/android/apk/README.md
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,119 @@
 +# Android ARMv7 APK bring-up
 +
 +`build-apk-armv7.sh` packages the Android shared target as an SDL2 APK for
@@ -428,19 +461,19 @@ index 0000000000000000000000000000000000000000..743214ba7731000bbdf88ace12d0d7a3
 +resources are reported by the engine in the log.
 +
 +The resulting debug APK is
-+`build/openxray-armv7-launcher-v0.6.0-debug.apk`. Proprietary game data is not
++`build/openxray-armv7-launcher-v0.7.0-debug.apk`. Proprietary game data is not
 +bundled. The APK is a device-test candidate: a successful build and offline
 +shader validation do not substitute for running the exact game/mod and GPU.
 +
 +## Launcher and diagnostics on a phone
 +
-+1. Remove the old pre-launcher APK once before installing version 0.6.0. The
++1. Remove the old pre-launcher APK once before installing version 0.7.0. The
 +   old package registered `XRayActivity` itself as the launcher, so a pinned
 +   old icon can bypass the launcher entirely:
 +
 +   ```sh
 +   adb uninstall org.openxray.stalker
-+   adb install -r build/openxray-armv7-launcher-v0.6.0-debug.apk
++   adb install -r build/openxray-armv7-launcher-v0.7.0-debug.apk
 +   adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
 +   ```
 +
@@ -450,13 +483,16 @@ index 0000000000000000000000000000000000000000..743214ba7731000bbdf88ace12d0d7a3
 +   permission dialog. If it was dismissed, press **Доступ к памяти**.
 +   On Android 6–10 it requests both `READ_EXTERNAL_STORAGE` and
 +   `WRITE_EXTERNAL_STORAGE` through the normal system permission dialog.
-+3. On the **Игра** page press **Выбрать папку** and select the STALKER
++3. On the **Игра** page first select Shadow of Chernobyl, Clear Sky, Call of
++   Pripyat or automatic detection, then press **Выбрать папку** and select the STALKER
 +   installation directory, or enter
 +   its direct path manually (for example `/storage/emulated/0/STALKER`). Keep
 +   the original Call of Pripyat directory layout and files unchanged.
-+4. On **Параметры**, select Shadow of Chernobyl, Clear Sky or Call of Pripyat;
-+   Steam Call of Pripyat uses the CoP profile. Optional arguments are tokenized
-+   without a shell and cannot replace the selected root or profile.
++4. Each game profile remembers its own installation path, so switching between
++   all three games does not require retyping folders. On **Параметры**, optional
++   arguments are tokenized without a shell and cannot replace the selected root
++   or profile. The reset action clears launcher preferences only and explicitly
++   leaves game files, mods, `fsgame.ltx` and `user.ltx` untouched.
 +5. Press **Проверить GLES без игровых файлов** to test the Android renderer,
 +   or **Запустить игру** to run the selected installation. The launcher passes
 +   that directory to OpenXRay as-is; all missing or unreadable resources are
@@ -498,7 +534,7 @@ index 0000000000000000000000000000000000000000..743214ba7731000bbdf88ace12d0d7a3
 +and symbolicate it with the unstripped `armeabi-v7a` library using `ndk-stack`.
 diff --git a/android/apk/app/build.gradle b/android/apk/app/build.gradle
 new file mode 100644
-index 0000000000000000000000000000000000000000..7c9008609478ec12bff0be4f3eadf4341a49a3a0
+index 00000000..f52bf0ff
 --- /dev/null
 +++ b/android/apk/app/build.gradle
 @@ -0,0 +1,40 @@
@@ -514,8 +550,8 @@ index 0000000000000000000000000000000000000000..7c9008609478ec12bff0be4f3eadf434
 +        applicationId 'org.openxray.stalker'
 +        minSdk 26
 +        targetSdk 36
-+        versionCode 11
-+        versionName '0.6.0'
++        versionCode 12
++        versionName '0.7.0'
 +
 +        ndk {
 +            abiFilters 'armeabi-v7a'
@@ -544,14 +580,14 @@ index 0000000000000000000000000000000000000000..7c9008609478ec12bff0be4f3eadf434
 +}
 diff --git a/android/apk/app/src/main/AndroidManifest.xml b/android/apk/app/src/main/AndroidManifest.xml
 new file mode 100644
-index 0000000000000000000000000000000000000000..0f1496136635f6f4244b42b6dd02322fe2e99224
+index 00000000..63691ab0
 --- /dev/null
 +++ b/android/apk/app/src/main/AndroidManifest.xml
 @@ -0,0 +1,36 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-+    android:versionCode="11"
-+    android:versionName="0.6.0"
++    android:versionCode="12"
++    android:versionName="0.7.0"
 +    android:installLocation="auto">
 +
 +    <uses-feature android:glEsVersion="0x00030001" />
@@ -586,10 +622,10 @@ index 0000000000000000000000000000000000000000..0f1496136635f6f4244b42b6dd02322f
 +</manifest>
 diff --git a/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java b/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..13366891e01ac66af4296bed8b4622d84cda9601
+index 00000000..6d9521d2
 --- /dev/null
 +++ b/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java
-@@ -0,0 +1,1027 @@
+@@ -0,0 +1,1121 @@
 +package org.openxray.app;
 +
 +import android.app.Activity;
@@ -612,6 +648,7 @@ index 0000000000000000000000000000000000000000..13366891e01ac66af4296bed8b4622d8
 +import android.view.Gravity;
 +import android.view.View;
 +import android.widget.ArrayAdapter;
++import android.widget.AdapterView;
 +import android.widget.Button;
 +import android.widget.CheckBox;
 +import android.widget.EditText;
@@ -657,6 +694,8 @@ index 0000000000000000000000000000000000000000..13366891e01ac66af4296bed8b4622d8
 +    private static final String PREFS = "openxray_launcher";
 +    private static final String PREF_GAME_PATH = "game_path";
 +    private static final String PREF_GAME_URI = "game_uri";
++    private static final String PREF_GAME_PATH_PREFIX = "game_path_profile_";
++    private static final String PREF_GAME_URI_PREFIX = "game_uri_profile_";
 +    private static final String PREF_GAME_VARIANT = "game_variant";
 +    private static final String PREF_CUSTOM_ARGS = "custom_args";
 +    private static final String PREF_GAMEPAD = "gamepad";
@@ -691,6 +730,8 @@ index 0000000000000000000000000000000000000000..13366891e01ac66af4296bed8b4622d8
 +    private SharedPreferences preferences;
 +    private long engineLaunchTime;
 +    private boolean engineFailureToastShown;
++    private boolean suppressProfileCallbacks = true;
++    private int activeGameVariant = 3;
 +    private int activePage = PAGE_GAME;
 +
 +    private final Runnable logPoller = new Runnable() {
@@ -752,10 +793,16 @@ index 0000000000000000000000000000000000000000..13366891e01ac66af4296bed8b4622d8
 +        if (resolvedPath != null) {
 +            gamePath.setText(resolvedPath);
 +            preferences.edit().putString(PREF_GAME_PATH, resolvedPath)
-+                    .putString(PREF_GAME_URI, treeUri.toString()).apply();
++                    .putString(profilePreference(PREF_GAME_PATH_PREFIX, activeGameVariant), resolvedPath)
++                    .putString(PREF_GAME_URI, treeUri.toString())
++                    .putString(profilePreference(PREF_GAME_URI_PREFIX, activeGameVariant), treeUri.toString())
++                    .apply();
 +            setStatus("Выбрана папка: " + resolvedPath);
 +        } else {
-+            preferences.edit().putString(PREF_GAME_URI, treeUri.toString()).apply();
++            preferences.edit()
++                    .putString(PREF_GAME_URI, treeUri.toString())
++                    .putString(profilePreference(PREF_GAME_URI_PREFIX, activeGameVariant), treeUri.toString())
++                    .apply();
 +            setStatus("Папка выбрана через системный проводник, но Android не раскрыл прямой путь. "
 +                    + "Укажите его вручную: native-движок не может читать content:// URI как обычный каталог.");
 +        }
@@ -820,6 +867,35 @@ index 0000000000000000000000000000000000000000..13366891e01ac66af4296bed8b4622d8
 +
 +    private View buildGamePage() {
 +        LinearLayout content = pageContent();
++        addSectionTitle(content, "Профиль игры");
++        content.addView(bodyText(
++                "Для каждой игры сохраняется отдельная папка. Профиль передаётся движку штатным ключом; "
++                        + "файлы установки и конфиги не переписываются."), matchWrap());
++
++        gameVariant = new Spinner(this);
++        String[] variants = {
++                "Автоматически / без ключа",
++                "Shadow of Chernobyl (-soc)",
++                "Clear Sky (-cs)",
++                "Call of Pripyat (-cop)"
++        };
++        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
++                android.R.layout.simple_spinner_item, variants);
++        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
++        gameVariant.setAdapter(adapter);
++        gameVariant.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
++            @Override
++            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
++                if (!suppressProfileCallbacks && gamePath != null)
++                    switchGameProfile(position);
++            }
++
++            @Override
++            public void onNothingSelected(AdapterView<?> parent) {
++            }
++        });
++        content.addView(gameVariant, matchWrap());
++
 +        addSectionTitle(content, "Установка игры");
 +
 +        content.addView(bodyText(
@@ -866,24 +942,6 @@ index 0000000000000000000000000000000000000000..13366891e01ac66af4296bed8b4622d8
 +
 +    private View buildSettingsPage() {
 +        LinearLayout content = pageContent();
-+        addSectionTitle(content, "Профиль игры");
-+        content.addView(bodyText(
-+                "Профиль задаёт штатный ключ OpenXRay. Для Steam-версии «Зова Припяти» выберите CoP."),
-+                matchWrap());
-+
-+        gameVariant = new Spinner(this);
-+        String[] variants = {
-+                "Автоматически / без ключа",
-+                "Shadow of Chernobyl (-soc)",
-+                "Clear Sky (-cs)",
-+                "Call of Pripyat (-cop)"
-+        };
-+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-+                android.R.layout.simple_spinner_item, variants);
-+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-+        gameVariant.setAdapter(adapter);
-+        content.addView(gameVariant, matchWrap());
-+
 +        addSectionTitle(content, "Управление и экран");
 +        gamepadEnabled = makeCheckBox("Включить поддержку геймпада",
 +                "Если выключено, движок получает -no_gamepad.");
@@ -913,6 +971,8 @@ index 0000000000000000000000000000000000000000..13366891e01ac66af4296bed8b4622d8
 +            setStatus("Параметры сохранены.");
 +            showPage(PAGE_GAME);
 +        }), new LinearLayout.LayoutParams(-1, dp(52)));
++        content.addView(actionButton("Сбросить настройки лаунчера", view -> confirmResetPreferences()),
++                new LinearLayout.LayoutParams(-1, dp(52)));
 +        return scrollPage(content);
 +    }
 +
@@ -993,9 +1053,15 @@ index 0000000000000000000000000000000000000000..13366891e01ac66af4296bed8b4622d8
 +    }
 +
 +    private void restorePreferences() {
-+        gamePath.setText(preferences.getString(PREF_GAME_PATH, "/storage/emulated/0/STALKER"));
++        int restoredVariant = clampVariant(preferences.getInt(PREF_GAME_VARIANT, 3));
++        activeGameVariant = restoredVariant;
++        suppressProfileCallbacks = true;
++        gameVariant.setSelection(restoredVariant);
++        suppressProfileCallbacks = false;
++        String legacyPath = preferences.getString(PREF_GAME_PATH, "/storage/emulated/0/STALKER");
++        gamePath.setText(preferences.getString(
++                profilePreference(PREF_GAME_PATH_PREFIX, restoredVariant), legacyPath));
 +        customArgs.setText(preferences.getString(PREF_CUSTOM_ARGS, ""));
-+        gameVariant.setSelection(clampVariant(preferences.getInt(PREF_GAME_VARIANT, 3)));
 +        gamepadEnabled.setChecked(preferences.getBoolean(PREF_GAMEPAD, false));
 +        splashEnabled.setChecked(preferences.getBoolean(PREF_SPLASH, false));
 +        keepScreenOn.setChecked(preferences.getBoolean(PREF_KEEP_SCREEN_ON, true));
@@ -1008,8 +1074,10 @@ index 0000000000000000000000000000000000000000..13366891e01ac66af4296bed8b4622d8
 +            return;
 +        preferences.edit()
 +                .putString(PREF_GAME_PATH, gamePath.getText().toString().trim())
++                .putString(profilePreference(PREF_GAME_PATH_PREFIX, activeGameVariant),
++                        gamePath.getText().toString().trim())
 +                .putString(PREF_CUSTOM_ARGS, customArgs.getText().toString())
-+                .putInt(PREF_GAME_VARIANT, gameVariant.getSelectedItemPosition())
++                .putInt(PREF_GAME_VARIANT, activeGameVariant)
 +                .putBoolean(PREF_GAMEPAD, gamepadEnabled.isChecked())
 +                .putBoolean(PREF_SPLASH, splashEnabled.isChecked())
 +                .putBoolean(PREF_KEEP_SCREEN_ON, keepScreenOn.isChecked())
@@ -1020,6 +1088,57 @@ index 0000000000000000000000000000000000000000..13366891e01ac66af4296bed8b4622d8
 +
 +    private int clampVariant(int value) {
 +        return value >= 0 && value <= 3 ? value : 3;
++    }
++
++    private String profilePreference(String prefix, int variant) {
++        return prefix + clampVariant(variant);
++    }
++
++    private String profileName(int variant) {
++        switch (clampVariant(variant)) {
++        case 1:
++            return "Shadow of Chernobyl";
++        case 2:
++            return "Clear Sky";
++        case 3:
++            return "Call of Pripyat";
++        default:
++            return "автоопределение";
++        }
++    }
++
++    private void switchGameProfile(int requestedVariant) {
++        int nextVariant = clampVariant(requestedVariant);
++        if (nextVariant == activeGameVariant)
++            return;
++
++        preferences.edit()
++                .putString(profilePreference(PREF_GAME_PATH_PREFIX, activeGameVariant),
++                        gamePath.getText().toString().trim())
++                .putInt(PREF_GAME_VARIANT, nextVariant)
++                .apply();
++        activeGameVariant = nextVariant;
++        gamePath.setText(preferences.getString(
++                profilePreference(PREF_GAME_PATH_PREFIX, nextVariant), ""));
++        refreshGameInspection();
++        setStatus("Выбран профиль: " + profileName(nextVariant) + ".");
++    }
++
++    private void confirmResetPreferences() {
++        new AlertDialog.Builder(this)
++                .setTitle("Сбросить настройки лаунчера?")
++                .setMessage("Будут забыты пути и параметры только этого лаунчера. Файлы игр, модов, "
++                        + "fsgame.ltx и user.ltx останутся без изменений.")
++                .setPositiveButton("Сбросить", (dialog, which) -> {
++                    preferences.edit().clear().apply();
++                    restorePreferences();
++                    refreshAccessStatus();
++                    refreshGameInspection();
++                    setStatus("Настройки лаунчера сброшены. Файлы игры не изменялись.");
++                    showPage(PAGE_GAME);
++                })
++                .setNegativeButton("Отмена", null)
++                .show();
 +    }
 +
 +    private void showPage(int requestedPage) {
@@ -1161,7 +1280,7 @@ index 0000000000000000000000000000000000000000..13366891e01ac66af4296bed8b4622d8
 +        intent.putExtra(EXTRA_ADDITIONAL_ARGS, additionalArgs);
 +        if (!rendererSmoke) {
 +            intent.putExtra(EXTRA_GAME_PATH, selectedPath);
-+            intent.putExtra(EXTRA_GAME_VARIANT, gameVariant.getSelectedItemPosition());
++            intent.putExtra(EXTRA_GAME_VARIANT, activeGameVariant);
 +        }
 +        setStatus(rendererSmoke ? "Запускаю GLES smoke test…" : "Запускаю OpenXRay…");
 +        Toast.makeText(this, "OpenXRay: запуск движка…", Toast.LENGTH_SHORT).show();
@@ -1412,12 +1531,16 @@ index 0000000000000000000000000000000000000000..13366891e01ac66af4296bed8b4622d8
 +            return;
 +        String selectedPath = gamePath.getText().toString().trim();
 +        if (selectedPath.isEmpty()) {
-+            gameInspection.setText("Путь не выбран.");
++            gameInspection.setText("Профиль: " + profileName(activeGameVariant)
++                    + ". Путь для этого профиля ещё не выбран.");
++            gameInspection.setTextColor(Color.rgb(150, 95, 25));
 +            return;
 +        }
 +        File root = new File(selectedPath);
 +        if (!root.isDirectory()) {
-+            gameInspection.setText("Папка не найдена или недоступна.");
++            gameInspection.setText("Профиль: " + profileName(activeGameVariant)
++                    + ". Папка не найдена или недоступна.");
++            gameInspection.setTextColor(Color.rgb(190, 70, 35));
 +            return;
 +        }
 +
@@ -1431,10 +1554,17 @@ index 0000000000000000000000000000000000000000..13366891e01ac66af4296bed8b4622d8
 +        String hint = socExecutable ? "похоже на Shadow of Chernobyl"
 +                : laterExecutable ? "обнаружена установка CS/CoP"
 +                : "точная игра будет определена выбранным профилем";
-+        gameInspection.setText("Папка читается · fsgame.ltx: " + yesNo(fsgame)
++        String mismatch = socExecutable && activeGameVariant > 1
++                ? " · профиль не совпадает с найденным XR_3DA.exe"
++                : laterExecutable && activeGameVariant == 1
++                ? " · профиль SoC не совпадает с найденным xrEngine.exe" : "";
++        gameInspection.setText("Профиль: " + profileName(activeGameVariant)
++                + " · папка читается · fsgame.ltx: " + yesNo(fsgame)
 +                + " · gamedata: " + yesNo(gamedata)
 +                + " · resources: " + yesNo(resources) + "\n" + hint
-+                + ". Проверка информационная и не изменяет файлы.");
++                + mismatch + ". Проверка информационная и не изменяет файлы.");
++        gameInspection.setTextColor(fsgame && mismatch.isEmpty()
++                ? Color.rgb(25, 115, 55) : Color.rgb(150, 95, 25));
 +    }
 +
 +    private String yesNo(boolean value) {
@@ -1619,7 +1749,7 @@ index 0000000000000000000000000000000000000000..13366891e01ac66af4296bed8b4622d8
 +}
 diff --git a/android/apk/app/src/main/java/org/openxray/app/XRayActivity.java b/android/apk/app/src/main/java/org/openxray/app/XRayActivity.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..18c09a257a7924be78500b29403eee1d52ce8b13
+index 00000000..18c09a25
 --- /dev/null
 +++ b/android/apk/app/src/main/java/org/openxray/app/XRayActivity.java
 @@ -0,0 +1,215 @@
@@ -1840,7 +1970,7 @@ index 0000000000000000000000000000000000000000..18c09a257a7924be78500b29403eee1d
 +}
 diff --git a/android/apk/app/src/main/res/values/strings.xml b/android/apk/app/src/main/res/values/strings.xml
 new file mode 100644
-index 0000000000000000000000000000000000000000..53cf79887e6e3e53e6a43b4158dc45ee1f7f6759
+index 00000000..53cf7988
 --- /dev/null
 +++ b/android/apk/app/src/main/res/values/strings.xml
 @@ -0,0 +1,3 @@
@@ -1849,7 +1979,7 @@ index 0000000000000000000000000000000000000000..53cf79887e6e3e53e6a43b4158dc45ee
 +</resources>
 diff --git a/android/apk/app/src/main/res/values/styles.xml b/android/apk/app/src/main/res/values/styles.xml
 new file mode 100644
-index 0000000000000000000000000000000000000000..f7d9f753ac0b04a9283e8e741ad51b0f3965c91f
+index 00000000..f7d9f753
 --- /dev/null
 +++ b/android/apk/app/src/main/res/values/styles.xml
 @@ -0,0 +1,12 @@
@@ -1867,10 +1997,10 @@ index 0000000000000000000000000000000000000000..f7d9f753ac0b04a9283e8e741ad51b0f
 +</resources>
 diff --git a/android/apply-patches.sh b/android/apply-patches.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..98587e6c6218727e1afca9256a940d62ff043dbe
+index 00000000..56f2ce44
 --- /dev/null
 +++ b/android/apply-patches.sh
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,71 @@
 +#!/bin/sh
 +set -eu
 +
@@ -1878,41 +2008,32 @@ index 0000000000000000000000000000000000000000..98587e6c6218727e1afca9256a940d62
 +repo_dir=${1:-$(CDPATH= cd -- "$script_dir/.." && pwd)}
 +patch_dir=${XRAY_ANDROID_PATCH_DIR:-"$script_dir/patches"}
 +
-+if grep -Fq 'pw->pw_gecos && pw->pw_gecos[0]' "$repo_dir/src/xrCore/xrCore.cpp" \
-+    && grep -Fq 'android_native_crash_handler' "$repo_dir/src/xrEngine/x_ray.cpp" \
-+    && grep -Fq 'LUAJIT_HOST_EXTRA_LDFLAGS' "$repo_dir/Externals/LuaJIT-proj/CMakeLists.txt" \
-+    && grep -Fq "SDL's Android GLES window owns framebuffer 0" "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
-+    && grep -Fq 'prepareBundledEngineData' \
-+        "$repo_dir/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java" \
-+    && grep -Fq 'without modifying it' \
-+        "$repo_dir/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java" \
-+    && grep -Fq 'res/gamedata' "$repo_dir/android/build-apk-armv7.sh" \
-+    && grep -Fq 'glDrawElementsBaseVertex)' \
-+        "$repo_dir/src/Layers/xrRenderGL/glR_Backend_Runtime.h" \
-+    && grep -Fq 'version = gladLoadGLES2' \
-+        "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
-+    && grep -Fq 'GLAD_GL_EXT_shader_io_blocks' \
-+        "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
-+    && grep -Fq '#version 310 es' \
-+        "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
-+    && grep -Fq 'SDL_GL_CONTEXT_MINOR_VERSION, 1' \
-+        "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
-+    && grep -Fq 'precision lowp sampler3D' \
-+        "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
-+    && grep -Fq 'precision lowp sampler2DMS' \
-+        "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
-+    && grep -Fq "versionName '0.6.0'" \
-+        "$repo_dir/android/apk/app/build.gradle" \
-+    && grep -Fq 'glBindFramebuffer(GL_READ_FRAMEBUFFER, pFB)' \
-+        "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
-+    && grep -Fq 'SDL_MinimizeWindow() deliberately launches the Android HOME intent' \
-+        "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
-+    && grep -Fq 'GL_TEXTURE_SWIZZLE_R' \
-+        "$repo_dir/src/Layers/xrRenderGL/glTexture.cpp" \
-+    && grep -Fq 'transform_android_glsl_source' \
-+        "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
-+    && grep -Fq 'm_Overlay' "$repo_dir/src/xrCore/LocatorAPI_defs.h" \
-+    && grep -Fq 'SDL_AndroidGetInternalStoragePath' "$repo_dir/src/xrCore/LocatorAPI.cpp"; then
++patchset_present()
++{
++    [ "$(sed -n '1p' "$repo_dir/android/PORT_VERSION" 2>/dev/null || true)" = "0.7.0" ] \
++        && [ -x "$repo_dir/android/prepare-source.sh" ] \
++        && [ -s "$repo_dir/src/Layers/xrRenderPC_GL/AndroidGlslCompatRules.inl" ] \
++        && grep -Fq 'AndroidGlslCompatRules.inl' \
++            "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
++        && grep -Fq '#define skin_input_normal(value)' \
++            "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
++        && grep -Fq 'glBindFramebuffer(GL_READ_FRAMEBUFFER, pFB)' \
++            "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
++        && grep -Fq 'GL_TEXTURE_SWIZZLE_R' \
++            "$repo_dir/src/Layers/xrRenderGL/glTexture.cpp" \
++        && grep -Fq 'pw->pw_gecos && pw->pw_gecos[0]' \
++            "$repo_dir/src/xrCore/xrCore.cpp" \
++        && grep -Fq 'android_native_crash_handler' \
++            "$repo_dir/src/xrEngine/x_ray.cpp" \
++        && grep -Fq 'LUAJIT_HOST_EXTRA_LDFLAGS' \
++            "$repo_dir/Externals/LuaJIT-proj/CMakeLists.txt" \
++        && grep -Fq 'm_Overlay' "$repo_dir/src/xrCore/LocatorAPI_defs.h" \
++        && grep -Fq 'profilePreference(PREF_GAME_PATH_PREFIX' \
++            "$repo_dir/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java" \
++        && grep -Fq "versionName '0.7.0'" "$repo_dir/android/apk/app/build.gradle"
++}
++
++if patchset_present; then
 +    echo "Android patchset: already present"
 +    exit 0
 +fi
@@ -1946,12 +2067,17 @@ index 0000000000000000000000000000000000000000..98587e6c6218727e1afca9256a940d62
 +    echo "Android patchset directory is empty: $patch_dir" >&2
 +    exit 2
 +fi
++
++if ! patchset_present; then
++    echo "Android patchset was applied but failed its integrity check" >&2
++    exit 2
++fi
 diff --git a/android/build-apk-armv7.sh b/android/build-apk-armv7.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..229961d6f242da8c111678d1bc68a21c8749c2fd
+index 00000000..8883c98b
 --- /dev/null
 +++ b/android/build-apk-armv7.sh
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,185 @@
 +#!/bin/sh
 +set -eu
 +
@@ -1961,6 +2087,7 @@ index 0000000000000000000000000000000000000000..229961d6f242da8c111678d1bc68a21c
 +kit_root=${XRAY_ANDROID_KIT_ROOT:-}
 +if [ -z "$kit_root" ]; then
 +    for candidate in "$repo_dir/.openxray-android-build-kit" \
++        "$repo_dir/../openxray-android-build-kit-v0.7.0" \
 +        "$repo_dir/../openxray-android-build-kit-v0.6.0" \
 +        "$repo_dir/../openxray-android-build-kit-v0.5.0"; do
 +        if [ -f "$candidate/build-kit-env.sh" ]; then
@@ -2016,6 +2143,21 @@ index 0000000000000000000000000000000000000000..229961d6f242da8c111678d1bc68a21c
 +rm -rf "$project_dir"
 +mkdir -p "$project_dir"
 +cp -R "$sdl_dir/android-project/." "$project_dir/"
++
++# A reusable SDL tree may contain Gradle task history and outputs from an
++# earlier OpenXRay package. Never let those copied files make assembleDebug
++# consider a stale APK up to date after the launcher manifest or native engine
++# changed.
++rm -rf \
++    "$project_dir/.gradle" \
++    "$project_dir/.cxx" \
++    "$project_dir/build" \
++    "$project_dir/app/.cxx" \
++    "$project_dir/app/build" \
++    "$project_dir/app/src/main/java/org/openxray" \
++    "$project_dir/app/src/main/jniLibs" \
++    "$project_dir/app/src/main/assets"
++
 +cp "$repo_dir/android/apk/app/build.gradle" "$project_dir/app/build.gradle"
 +cp "$repo_dir/android/apk/app/src/main/AndroidManifest.xml" "$project_dir/app/src/main/AndroidManifest.xml"
 +mkdir -p "$project_dir/app/src/main/java/org/openxray/app"
@@ -2048,16 +2190,21 @@ index 0000000000000000000000000000000000000000..229961d6f242da8c111678d1bc68a21c
 +chmod +x "$project_dir/gradlew"
 +(
 +    cd "$project_dir"
++    set --
++    if [ "${XRAY_ANDROID_GRADLE_OFFLINE:-OFF}" = "ON" ]; then
++        set -- --offline
++    fi
 +    if [ -n "$gradle_bin" ]; then
-+        "$gradle_bin" --no-daemon --no-build-cache assembleDebug
++        "$gradle_bin" "$@" --no-daemon --no-build-cache clean assembleDebug
 +    else
-+        ./gradlew --no-daemon --no-build-cache assembleDebug
++        ./gradlew "$@" --no-daemon --no-build-cache clean assembleDebug
 +    fi
 +)
 +
 +apk="$project_dir/app/build/outputs/apk/debug/app-debug.apk"
 +mkdir -p "$repo_dir/build"
-+output_apk="$repo_dir/build/openxray-armv7-launcher-v0.6.0-debug.apk"
++port_version=$(sed -n '1p' "$script_dir/PORT_VERSION")
++output_apk="$repo_dir/build/openxray-armv7-launcher-v$port_version-debug.apk"
 +
 +# AGP 8.1 aligns uncompressed native-library ZIP entries to 4 KiB. Re-align
 +# those package entries to 16 KiB before signing. This is package-level
@@ -2067,9 +2214,24 @@ index 0000000000000000000000000000000000000000..229961d6f242da8c111678d1bc68a21c
 +build_tools_dir=$(find "$sdk_dir/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -1)
 +zipalign_bin="$build_tools_dir/zipalign"
 +apksigner_bin="$build_tools_dir/apksigner"
-+if [ ! -x "$zipalign_bin" ] || [ ! -x "$apksigner_bin" ]; then
-+    echo "Android SDK build-tools with zipalign and apksigner are required" >&2
++aapt_bin="$build_tools_dir/aapt"
++if [ ! -x "$zipalign_bin" ] || [ ! -x "$apksigner_bin" ] || [ ! -x "$aapt_bin" ]; then
++    echo "Android SDK build-tools with aapt, zipalign and apksigner are required" >&2
 +    exit 2
++fi
++
++if ! "$aapt_bin" dump badging "$apk" | grep -Fq "versionName='$port_version'"; then
++    echo "Gradle produced an APK with a stale launcher version (expected $port_version)" >&2
++    exit 1
++fi
++if ! unzip -p "$apk" lib/armeabi-v7a/libmain.so | cmp - "$native_lib_dir/libmain.so"; then
++    echo "Gradle produced an APK with a stale native engine" >&2
++    exit 1
++fi
++packaged_abis=$(zipinfo -1 "$apk" | sed -n 's#^lib/\([^/]*\)/.*#\1#p' | sort -u)
++if [ "$packaged_abis" != "armeabi-v7a" ]; then
++    echo "Gradle produced unexpected APK ABIs: $packaged_abis" >&2
++    exit 1
 +fi
 +
 +if [ -n "${ANDROID_DEBUG_KEYSTORE:-}" ]; then
@@ -2103,10 +2265,10 @@ index 0000000000000000000000000000000000000000..229961d6f242da8c111678d1bc68a21c
 +printf '%s\n' "$output_apk"
 diff --git a/android/build-armv7.sh b/android/build-armv7.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..9226b7c4994f9dbffeb92f501ae2ff2bf418a29d
+index 00000000..5f5ec182
 --- /dev/null
 +++ b/android/build-armv7.sh
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,121 @@
 +#!/bin/sh
 +set -eu
 +
@@ -2116,6 +2278,7 @@ index 0000000000000000000000000000000000000000..9226b7c4994f9dbffeb92f501ae2ff2b
 +kit_root=${XRAY_ANDROID_KIT_ROOT:-}
 +if [ -z "$kit_root" ]; then
 +    for candidate in "$repo_dir/.openxray-android-build-kit" \
++        "$repo_dir/../openxray-android-build-kit-v0.7.0" \
 +        "$repo_dir/../openxray-android-build-kit-v0.6.0" \
 +        "$repo_dir/../openxray-android-build-kit-v0.5.0"; do
 +        if [ -f "$candidate/build-kit-env.sh" ]; then
@@ -2130,6 +2293,7 @@ index 0000000000000000000000000000000000000000..9226b7c4994f9dbffeb92f501ae2ff2b
 +fi
 +
 +"$script_dir/apply-patches.sh" "$repo_dir"
++"$script_dir/prepare-source.sh" "$repo_dir"
 +
 +ndk_dir=${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}
 +build_dir=${XRAY_ANDROID_BUILD_DIR:-"$repo_dir/build/android-armv7"}
@@ -2228,10 +2392,10 @@ index 0000000000000000000000000000000000000000..9226b7c4994f9dbffeb92f501ae2ff2b
 +cmake --build "$build_dir" --target xr_3da
 diff --git a/android/build-harness.sh b/android/build-harness.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..010626198b408638a5b399728de6bf17cf18ecfc
+index 00000000..efc4895e
 --- /dev/null
 +++ b/android/build-harness.sh
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,59 @@
 +#!/bin/sh
 +set -eu
 +
@@ -2241,6 +2405,7 @@ index 0000000000000000000000000000000000000000..010626198b408638a5b399728de6bf17
 +
 +if [ -z "$kit_root" ]; then
 +    for candidate in "$repo_dir/.openxray-android-build-kit" \
++        "$repo_dir/../openxray-android-build-kit-v0.7.0" \
 +        "$repo_dir/../openxray-android-build-kit-v0.6.0" \
 +        "$repo_dir/../openxray-android-build-kit-v0.5.0"; do
 +        if [ -f "$candidate/build-kit-env.sh" ]; then
@@ -2292,10 +2457,10 @@ index 0000000000000000000000000000000000000000..010626198b408638a5b399728de6bf17
 +echo "Build manifest: $manifest"
 diff --git a/android/build-kit-env.sh b/android/build-kit-env.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..83f0271aaba9645383107d4653ffbf97dd5b867c
+index 00000000..7ce7ce76
 --- /dev/null
 +++ b/android/build-kit-env.sh
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,52 @@
 +#!/bin/sh
 +set -eu
 +
@@ -2306,6 +2471,10 @@ index 0000000000000000000000000000000000000000..83f0271aaba9645383107d4653ffbf97
 +export ANDROID_DEPS_PREFIX="$kit_root/toolchain/android-deps-armv7"
 +export SDL2_ANDROID_HOME="$kit_root/toolchain/SDL"
 +export GRADLE_BIN="$kit_root/toolchain/gradle-8.1.1/bin/gradle"
++if [ -d "$kit_root/toolchain/gradle-user-home/caches/modules-2" ]; then
++    export GRADLE_USER_HOME="$kit_root/toolchain/gradle-user-home"
++    export XRAY_ANDROID_GRADLE_OFFLINE=ON
++fi
 +if [ -x "$kit_root/toolchain/qemu-i386-static" ]; then
 +    export XRAY_QEMU_I386_STATIC="$kit_root/toolchain/qemu-i386-static"
 +fi
@@ -2330,6 +2499,11 @@ index 0000000000000000000000000000000000000000..83f0271aaba9645383107d4653ffbf97
 +    echo "OpenXRay Android kit is incomplete: Gradle is missing" >&2
 +    exit 2
 +fi
++if [ "${XRAY_ANDROID_GRADLE_OFFLINE:-OFF}" = "ON" ] \
++    && [ ! -d "${GRADLE_USER_HOME:-}/caches/modules-2" ]; then
++    echo "OpenXRay Android kit is incomplete: offline Gradle cache is missing" >&2
++    exit 2
++fi
 +
 +gradle_bin_dir=$(CDPATH= cd -- "$(dirname -- "$GRADLE_BIN")" && pwd)
 +kit_path="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$gradle_bin_dir"
@@ -2341,23 +2515,28 @@ index 0000000000000000000000000000000000000000..83f0271aaba9645383107d4653ffbf97
 +export PATH="$kit_path:$PATH"
 diff --git a/android/create-build-kit.sh b/android/create-build-kit.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..8a9d18d719b324af212139274f147797d886d492
+index 00000000..ad0457ce
 --- /dev/null
 +++ b/android/create-build-kit.sh
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,90 @@
 +#!/bin/sh
 +set -eu
 +
 +script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 +repo_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
-+kit_version=${XRAY_ANDROID_KIT_VERSION:-0.6.0}
++kit_version=${XRAY_ANDROID_KIT_VERSION:-0.7.0}
 +output=${1:-"$repo_dir/build/openxray-android-build-kit-v$kit_version.tar.zst"}
++port_version=$(sed -n '1p' "$script_dir/PORT_VERSION")
 +
 +ndk_dir=${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}
 +sdk_dir=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}
 +deps_dir=${ANDROID_DEPS_PREFIX:-}
 +sdl_dir=${SDL2_ANDROID_HOME:-}
 +gradle_bin=${GRADLE_BIN:-}
++gradle_cache_source=${XRAY_GRADLE_CACHE_SOURCE:-${GRADLE_USER_HOME:-}}
++if [ -z "$gradle_cache_source" ] && [ -n "${HOME:-}" ]; then
++    gradle_cache_source="$HOME/.gradle"
++fi
 +qemu_i386=${XRAY_QEMU_I386_STATIC:-${LUAJIT_HOST_EXECUTABLE_PREFIX:-}}
 +if [ -z "$qemu_i386" ] && [ -x "$(CDPATH= cd -- "$repo_dir/.." && pwd)/qemu-user-static-root/usr/bin/qemu-i386-static" ]; then
 +    qemu_i386="$(CDPATH= cd -- "$repo_dir/.." && pwd)/qemu-user-static-root/usr/bin/qemu-i386-static"
@@ -2375,6 +2554,10 @@ index 0000000000000000000000000000000000000000..8a9d18d719b324af212139274f147797
 +[ -f "$deps_dir/lib/cmake/SDL2/SDL2Config.cmake" ] || { echo "dependency prefix is invalid: $deps_dir" >&2; exit 2; }
 +[ -f "$sdl_dir/android-project/gradlew" ] || { echo "SDL2 source is invalid: $sdl_dir" >&2; exit 2; }
 +[ -x "$gradle_bin" ] || { echo "Gradle is invalid: $gradle_bin" >&2; exit 2; }
++[ -d "$gradle_cache_source/caches/modules-2" ] || {
++    echo "Gradle dependency cache is missing; set XRAY_GRADLE_CACHE_SOURCE after one successful APK build" >&2
++    exit 2
++}
 +
 +stage=$(mktemp -d)
 +trap 'rm -rf "$stage"' EXIT HUP INT TERM
@@ -2392,6 +2575,11 @@ index 0000000000000000000000000000000000000000..8a9d18d719b324af212139274f147797
 +gradle_dir=$(CDPATH= cd -- "$(dirname -- "$gradle_bin")/.." && pwd)
 +mkdir -p "$kit_dir/toolchain/gradle-8.1.1"
 +cp -a "$gradle_dir/." "$kit_dir/toolchain/gradle-8.1.1/"
++mkdir -p "$kit_dir/toolchain/gradle-user-home"
++cp -a "$gradle_cache_source/caches" "$kit_dir/toolchain/gradle-user-home/caches"
++if [ -d "$gradle_cache_source/native" ]; then
++    cp -a "$gradle_cache_source/native" "$kit_dir/toolchain/gradle-user-home/native"
++fi
 +if [ -n "$qemu_i386" ] && [ -x "$qemu_i386" ]; then
 +    cp "$qemu_i386" "$kit_dir/toolchain/qemu-i386-static"
 +fi
@@ -2411,8 +2599,9 @@ index 0000000000000000000000000000000000000000..8a9d18d719b324af212139274f147797
 +    echo "dependencies=$(basename "$deps_dir")"
 +    echo "sdl=$(basename "$sdl_dir")"
 +    echo "gradle=$(basename "$gradle_dir")"
-+    if [ -f "$repo_dir/build/openxray-armv7-launcher-v0.6.0-debug.apk" ]; then
-+        sha256sum "$repo_dir/build/openxray-armv7-launcher-v0.6.0-debug.apk"
++    echo "gradle_dependency_cache=embedded (offline mode enabled)"
++    if [ -f "$repo_dir/build/openxray-armv7-launcher-v$port_version-debug.apk" ]; then
++        sha256sum "$repo_dir/build/openxray-armv7-launcher-v$port_version-debug.apk"
 +    fi
 +} > "$kit_dir/BUILD-MANIFEST.txt"
 +
@@ -2420,9 +2609,138 @@ index 0000000000000000000000000000000000000000..8a9d18d719b324af212139274f147797
 +tar -C "$stage" -I 'zstd -T0 -10' -cf "$output" "openxray-android-build-kit-v$kit_version"
 +sha256sum "$output"
 +echo "$output"
+diff --git a/android/create-harness-archive.sh b/android/create-harness-archive.sh
+new file mode 100755
+index 00000000..0ebaead9
+--- /dev/null
++++ b/android/create-harness-archive.sh
+@@ -0,0 +1,28 @@
++#!/bin/sh
++set -eu
++
++script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
++repo_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
++version=$(sed -n '1p' "$script_dir/PORT_VERSION")
++output=${1:-"$repo_dir/build/openxray-android-build-harness-v$version.tar.zst"}
++
++stage=$(mktemp -d)
++trap 'rm -rf "$stage"' EXIT HUP INT TERM
++archive_name="openxray-android-build-harness-v$version"
++archive_root="$stage/$archive_name"
++mkdir -p "$archive_root/android" "$archive_root/utils"
++cp -a "$repo_dir/android/." "$archive_root/android/"
++cp "$repo_dir/utils/validate-glsl-es.py" "$archive_root/utils/validate-glsl-es.py"
++
++{
++    echo "OpenXRay Android ARMv7 standalone build harness"
++    echo "harness_version=$version"
++    echo "source_commit=$(git -C "$repo_dir" rev-parse HEAD)"
++    echo "source_branch=$(git -C "$repo_dir" rev-parse --abbrev-ref HEAD)"
++    echo "created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
++} > "$archive_root/HARNESS-MANIFEST.txt"
++
++mkdir -p "$(dirname -- "$output")"
++tar -C "$stage" -I 'zstd -T0 -10' -cf "$output" "$archive_name"
++sha256sum "$output"
++echo "$output"
+diff --git a/android/create-source-archive.sh b/android/create-source-archive.sh
+new file mode 100755
+index 00000000..274011e2
+--- /dev/null
++++ b/android/create-source-archive.sh
+@@ -0,0 +1,38 @@
++#!/bin/sh
++set -eu
++
++script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
++repo_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
++version=$(sed -n '1p' "$script_dir/PORT_VERSION")
++output=${1:-"$repo_dir/build/openxray-android-source-v$version.tar.zst"}
++
++"$script_dir/prepare-source.sh" "$repo_dir"
++if [ -n "$(git -C "$repo_dir" status --porcelain --untracked-files=no --ignore-submodules=none)" ]; then
++    echo "Refusing to archive a source tree with tracked or submodule changes" >&2
++    exit 2
++fi
++
++stage=$(mktemp -d)
++trap 'rm -rf "$stage"' EXIT HUP INT TERM
++archive_name="openxray-android-source-v$version"
++archive_root="$stage/$archive_name"
++mkdir -p "$archive_root"
++
++# Copy only files tracked by the main repository and its recursive submodules.
++# Build outputs, local caches, credentials and .git metadata are never included.
++git -C "$repo_dir" ls-files --recurse-submodules -z \
++    | rsync -a --from0 --files-from=- "$repo_dir/" "$archive_root/"
++
++{
++    echo "OpenXRay Android ARMv7 complete source"
++    echo "source_version=$version"
++    echo "source_commit=$(git -C "$repo_dir" rev-parse HEAD)"
++    echo "source_branch=$(git -C "$repo_dir" rev-parse --abbrev-ref HEAD)"
++    echo "source_date=$(git -C "$repo_dir" show -s --format=%cI HEAD)"
++    echo "submodules=recursive tracked contents included"
++} > "$archive_root/SOURCE-MANIFEST.txt"
++
++mkdir -p "$(dirname -- "$output")"
++tar -C "$stage" -I 'zstd -T0 -10' -cf "$output" "$archive_name"
++sha256sum "$output"
++echo "$output"
+diff --git a/android/prepare-source.sh b/android/prepare-source.sh
+new file mode 100755
+index 00000000..ed98e6ce
+--- /dev/null
++++ b/android/prepare-source.sh
+@@ -0,0 +1,45 @@
++#!/bin/sh
++set -eu
++
++script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
++repo_dir=${1:-$(CDPATH= cd -- "$script_dir/.." && pwd)}
++
++source_tree_complete()
++{
++    [ -f "$repo_dir/Externals/LuaJIT/src/lj_arch.h" ] \
++        && [ -f "$repo_dir/Externals/imgui/imgui.cpp" ] \
++        && [ -f "$repo_dir/Externals/luabind/luabind/luabind.hpp" ] \
++        && [ -f "$repo_dir/Externals/gli/gli/gli.hpp" ] \
++        && [ -f "$repo_dir/Externals/xrLuaFix/lfs/src/lfs.c" ]
++}
++
++is_git_checkout=false
++if git -C "$repo_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
++    && [ -f "$repo_dir/.gitmodules" ]; then
++    is_git_checkout=true
++fi
++
++submodules_match_checkout()
++{
++    [ "$is_git_checkout" = false ] \
++        || ! git -C "$repo_dir" submodule status --recursive | grep -Eq '^[+-U]'
++}
++
++if source_tree_complete && submodules_match_checkout; then
++    echo "Android source dependencies: ready"
++    exit 0
++fi
++
++if [ "$is_git_checkout" = true ]; then
++    echo "Android source dependencies: initializing recursive git submodules"
++    git -C "$repo_dir" submodule sync --recursive
++    git -C "$repo_dir" submodule update --init --recursive --depth 1
++fi
++
++if ! source_tree_complete; then
++    echo "OpenXRay source dependencies are incomplete." >&2
++    echo "Use a recursive checkout (git clone --recurse-submodules) or the complete source archive." >&2
++    exit 2
++fi
++
++echo "Android source dependencies: ready"
 diff --git a/android/run-headless-smoke.sh b/android/run-headless-smoke.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..cc884b8c6384edfe26a3f9060221bfd18e20ad15
+index 00000000..cc884b8c
 --- /dev/null
 +++ b/android/run-headless-smoke.sh
 @@ -0,0 +1,15 @@
@@ -2442,7 +2760,7 @@ index 0000000000000000000000000000000000000000..cc884b8c6384edfe26a3f9060221bfd1
 +
 +exec "$engine" -headless-smoke -no_gamepad -nosplash
 diff --git a/cmake/XRay.Build.cmake b/cmake/XRay.Build.cmake
-index ac1ad70f102c0e64a215432fdae0be68aa13a2a0..330f45a20642944f456f30335d5970cc7821edda 100644
+index ac1ad70f..330f45a2 100644
 --- a/cmake/XRay.Build.cmake
 +++ b/cmake/XRay.Build.cmake
 @@ -27,7 +27,8 @@ add_compile_definitions(
@@ -2456,7 +2774,7 @@ index ac1ad70f102c0e64a215432fdae0be68aa13a2a0..330f45a20642944f456f30335d5970cc
      set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASEMASTERGOLD ON)
  endif()
 diff --git a/cmake/XRay.Compiler.GNULike.cmake b/cmake/XRay.Compiler.GNULike.cmake
-index a9f5c0cdfca0d8e9ea5649d1a556d81f54e97301..961e58498651d219aadf9a5c8d02eb34efa0c367 100644
+index a9f5c0cd..961e5849 100644
 --- a/cmake/XRay.Compiler.GNULike.cmake
 +++ b/cmake/XRay.Compiler.GNULike.cmake
 @@ -141,8 +141,18 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -2479,1153 +2797,9 @@ index a9f5c0cdfca0d8e9ea5649d1a556d81f54e97301..961e58498651d219aadf9a5c8d02eb34
      find_package(JPEG)
      find_package(Ogg REQUIRED)
      find_package(Vorbis REQUIRED)
-diff --git a/res/gamedata/shaders/gl/accum_sun_far.ps b/res/gamedata/shaders/gl/accum_sun_far.ps
-index 0cbd77753be5ee5fae1ce6d151ecc96f04e7cb2b..2149cf6104f754ef823ef682950e6a6eb8b17ae4 100644
---- a/res/gamedata/shaders/gl/accum_sun_far.ps
-+++ b/res/gamedata/shaders/gl/accum_sun_far.ps
-@@ -27,7 +27,7 @@ float4 _main ( v2p_volume I  )
- {
- 	//float4 _P = tex2D( s_position, tc );
- 
--	gbuffer_data gbd = gbuffer_load_data( GLD_P(I.tc, I.hpos, ISAMPLE) );
-+	gbuffer_data gbd = gbuffer_load_data( GLD_P(I.tc.xy, I.hpos, ISAMPLE) );
- 
- #ifdef	GBUFFER_OPTIMIZATION
- 	//	Emulate virtual offset
-@@ -40,7 +40,7 @@ float4 _main ( v2p_volume I  )
- 
- 	float s	= shadowtest_sun( PS, I.tcJ ) * sunmask( _P );
- 
--	return s;
-+	return float4(s);
- }
- #else
- #ifdef MSAA_OPTIMIZATION
-@@ -90,7 +90,7 @@ float4 _main ( v2p_volume I )
- 	// Far edge fading code
- 	float2 	tc_f	= (PS.xy/PS.w)-float2(0.5,0.5);
- 			// Fade only fron edges
--			tc_f 	*= step( -dot( tc_f, view_shadow_proj.xy ), 0 );
-+			tc_f 	*= step( -dot( tc_f, view_shadow_proj.xy ), 0.0 );
- 			tc_f	= abs( tc_f );
- 	float 	border 	= 0.4;
- 	float 	fac_x 	= 1.0-saturate( ( tc_f.x - border )/(0.5-border));
-@@ -101,4 +101,4 @@ float4 _main ( v2p_volume I )
- 
- 	return 		blend( Ldynamic_color * light * s/*float4( 1.0, 0.2, 0.2, 1.0)*/, I.tc.xy );
- }
--#endif
-\ No newline at end of file
-+#endif
-diff --git a/res/gamedata/shaders/gl/accum_sun_near.ps b/res/gamedata/shaders/gl/accum_sun_near.ps
-index 7704a685c77b196a4f4d360cd68df95d95795925..f076162121a25a4180a8e2976b7c5aad9367c85d 100644
---- a/res/gamedata/shaders/gl/accum_sun_near.ps
-+++ b/res/gamedata/shaders/gl/accum_sun_near.ps
-@@ -25,7 +25,7 @@ float4 _main ( v2p_volume I  )
- {
- 	//float4 _P = tex2D( s_position, tc );
- 
--	gbuffer_data gbd = gbuffer_load_data( GLD_P(I.tc, I.hpos, ISAMPLE) );
-+	gbuffer_data gbd = gbuffer_load_data( GLD_P(I.tc.xy, I.hpos, ISAMPLE) );
- 
- #ifdef	GBUFFER_OPTIMIZATION
- 	//	Emulate virtual offset
-@@ -38,7 +38,7 @@ float4 _main ( v2p_volume I  )
- 
- 	float s	= shadowtest_sun( PS, I.tcJ ) * sunmask( _P );
- 
--	return s;
-+	return float4(s);
- }
- #else
- #ifdef MSAA_OPTIMIZATION
-@@ -87,4 +87,4 @@ float4 _main ( v2p_volume I )
- 
- 	return 		blend( Ldynamic_color * light * s/*float4( 1.0, 0.2, 0.2, 1.0)*/, I.tc.xy );
- }
--#endif
-\ No newline at end of file
-+#endif
-diff --git a/res/gamedata/shaders/gl/accum_volumetric.ps b/res/gamedata/shaders/gl/accum_volumetric.ps
-index b2e9b0cf8acf9f08054e0e01dcfd18d5c401340e..464406a8c23f02eafc9acd5acf177bbf1536205a 100644
---- a/res/gamedata/shaders/gl/accum_volumetric.ps
-+++ b/res/gamedata/shaders/gl/accum_volumetric.ps
-@@ -46,7 +46,7 @@ float4 _main ( v2p I, uint iSample )
- 
- 	// ----- attenuate
- 	float rsqr	= dot( I.lightToPos, I.lightToPos); // distance 2 light (squared)
--  	float  att 	= saturate( 1 - rsqr * Ldynamic_pos.w ); // q-linear attenuate
-+	float  att 	= saturate( 1.0 - rsqr * Ldynamic_pos.w ); // q-linear attenuate
- 	//float  att 	= saturate( 1 - (rsqr * Ldynamic_pos.w)*(rsqr * Ldynamic_pos.w) ); // q-linear attenuate
-   	//float  att 	= 10.0*(1.0/(1.0+0.1*rsqr));
- 	//float  att 	= 1.0/rsqr;
-@@ -79,5 +79,5 @@ float4 _main ( v2p I, uint iSample )
- 
- //	result = 0.1;
- //	result = 0.0;
--	return  float4( result, 0);
-+		return  float4(result, 0.0);
- }
-diff --git a/res/gamedata/shaders/gl/accum_volumetric.vs b/res/gamedata/shaders/gl/accum_volumetric.vs
-index 8c6f204fdb0ae121ffeef53814123c6c888e945d..262f6fb7dd74a13361aa4cc2821cce84133a3396 100644
---- a/res/gamedata/shaders/gl/accum_volumetric.vs
-+++ b/res/gamedata/shaders/gl/accum_volumetric.vs
-@@ -13,7 +13,7 @@ v2p _main ( float3 P )
- 	v2p 		o;
- 	float4	vPos;
- 	vPos.xyz 	= lerp( vMinBounds, vMaxBounds, P);	//	Position in camera space
--	vPos.w 		= 1;
-+	vPos.w 		= 1.0;
- 	o.hpos 		= mul			(m_P, vPos);		// xform, input in camera coordinates
- 
- 	o.lightToPos = vPos.xyz - Ldynamic_pos.xyz;
-@@ -31,4 +31,4 @@ v2p _main ( float3 P )
- 	}
- 
- 	return o;
--}
-\ No newline at end of file
-+}
-diff --git a/res/gamedata/shaders/gl/accum_volumetric_sun.ps b/res/gamedata/shaders/gl/accum_volumetric_sun.ps
-index 3ceee0fb5e9a1148df50c47030d17b1df9909109..cd3aeebe40587ed3a6f2e8da6ad1e6464b4ccf41 100644
---- a/res/gamedata/shaders/gl/accum_volumetric_sun.ps
-+++ b/res/gamedata/shaders/gl/accum_volumetric_sun.ps
-@@ -70,7 +70,8 @@ float4 	_main (v2p_volume  I)
- //	Variable ray length, variable step dencity, use jittering
- 	//float4	J0 	= tex2D		(jitter0,tcJ);
- 	float4	J0 	= tex2D	( jitter0, tc*screen_res.x*1.0/JITTER_TEXTURE_SIZE );
--	float	coeff = (RAY_SAMPLES - 1.0*J0.x)/(RAY_SAMPLES*RAY_SAMPLES);		
-+		float	coeff = (float(RAY_SAMPLES) - J0.x) /
-+			(float(RAY_SAMPLES) * float(RAY_SAMPLES));
- 	float3	direction = P*coeff;
- //	float3	direction = P/(RAY_SAMPLES+(J0.x*4-2));
- #endif	//	JITTER_SUN_SHAFTS
-diff --git a/res/gamedata/shaders/gl/bloom_filter_f.ps b/res/gamedata/shaders/gl/bloom_filter_f.ps
-index 72138389e053e5e2235803d8e1cf3b4898e6593a..8dbb2999ecc97f1a9939f744cc91d0041e25edfb 100644
---- a/res/gamedata/shaders/gl/bloom_filter_f.ps
-+++ b/res/gamedata/shaders/gl/bloom_filter_f.ps
-@@ -11,5 +11,5 @@ float4 _main( p_build I )
- 	float4        t_3        = tex2D                (s_bloom,I.Tex3);
- 
-         // out
--	return  ( (t_0+t_1) + (t_2+t_3) ) / 2;
-+	return  ( (t_0+t_1) + (t_2+t_3) ) / 2.0;
- }
-diff --git a/res/gamedata/shaders/gl/clouds.vs b/res/gamedata/shaders/gl/clouds.vs
-index bc5c43f3e07e5e2ca77fac1a5a67187e241b4c8f..67be9b7061e88be8c0d2ad248461d2590974f1b3 100644
---- a/res/gamedata/shaders/gl/clouds.vs
-+++ b/res/gamedata/shaders/gl/clouds.vs
-@@ -11,15 +11,15 @@ vf _main (vi v)
- //	if (length(float3(v.p.x,0,v.p.z))>CLOUD_FADE)	o.color.w = 0	;
- 
- 	// generate tcs
--	float2  d0	= v.dir.xy*2-1;
--	float2  d1	= v.dir.wz*2-1;
--	float2 	_0	= v.p.xz * CLOUD_TILE0 + d0*timers.z*CLOUD_SPEED0;
--	float2 	_1	= v.p.xz * CLOUD_TILE1 + d1*timers.z*CLOUD_SPEED1;
-+	float2  d0	= v.dir.xy * 2.0 - 1.0;
-+	float2  d1	= v.dir.wz * 2.0 - 1.0;
-+	float2 	_0	= v.p.xz * CLOUD_TILE0 + d0 * timers.z * float(CLOUD_SPEED0);
-+	float2 	_1	= v.p.xz * CLOUD_TILE1 + d1 * timers.z * float(CLOUD_SPEED1);
- 	o.tc0		= _0;					// copy tc
- 	o.tc1		= _1;					// copy tc
- 
- 	o.color		=	v.color	;			// copy color, low precision, cannot prescale even by 2
--	o.color.w	*= 	pow		(v.p.y,25);
-+	o.color.w	*= 	pow		(v.p.y, 25.0);
- 
- #ifdef USE_VTF
- 	float scale	=	texelFetch(s_tonemap, int2(0,0), 0).x;
-diff --git a/res/gamedata/shaders/gl/combine_1.ps b/res/gamedata/shaders/gl/combine_1.ps
-index 8e44aba38ebaa216754b9bf6f3a2623f42c49e22..3086167f9962ee344e350d92f162325869771732 100644
---- a/res/gamedata/shaders/gl/combine_1.ps
-+++ b/res/gamedata/shaders/gl/combine_1.ps
-@@ -112,7 +112,7 @@ _out _main ( _input I, uint iSample )
- 	float mtl = P.w;
- 
- #ifdef USE_R2_STATIC_SUN
--	float sun_occ = P.w*2;
-+	float sun_occ = P.w * 2.0;
- 
- 	mtl = xmaterial;
- 	L += Ldynamic_color * sun_occ * plight_infinity	(mtl, P.xyz, N.xyz, Ldynamic_dir);
-diff --git a/res/gamedata/shaders/gl/combine_2_aa.ps b/res/gamedata/shaders/gl/combine_2_aa.ps
-index 4d6549c5eed42c504c78823271ab8884ce0c137d..db31ea3bb02647c7e5977f4985ae0f7d0a0446cc 100644
---- a/res/gamedata/shaders/gl/combine_2_aa.ps
-+++ b/res/gamedata/shaders/gl/combine_2_aa.ps
-@@ -43,7 +43,7 @@ float4 _main ( v_aa_AA I )
- 	nd.z 		=  dot 		(nc, float3( gbd3.N ));
- 	nd.w 		=  dot 		(nc, float3( gbd4.N ));
- 	nd 		-= e_barrier.x	;
--	nd 		=  step		(0,nd);	// bw
-+	nd 		=  step		(float4(0.0), nd);	// bw
-   float  ne 		=  saturate	(dot(nd,float4(e_weights.x)));
- 
-   // Opposite coords
-@@ -78,8 +78,8 @@ float4 _main ( v_aa_AA I )
- 				+	gbd5r.P.z;
- 	dd.w 		=  	gbd6.P.z 
- 				+	gbd6r.P.z;
--	dd 		=  abs(2*dc.z-dd)-e_barrier.y;
--	dd 		=  step		(dd,int4(0));		// bw
-+	dd 		=  abs(2.0 * dc.z - dd) - e_barrier.y;
-+	dd 		=  step		(dd, float4(0.0));		// bw
-   float  de 		=  saturate	(dot(dd,float4(e_weights.y)));
- 
-   // weight
-@@ -96,7 +96,7 @@ float4 _main ( v_aa_AA I )
-   // Smoothed color
-   // (a-c)*w + c = a*w + c(1-w)
- 
--	float2	offset 	=  center * (1-w);
-+	float2	offset 	=  center * (1.0 - w);
- 	float4 	s0 	=  tex2D	(s_image, offset + I.Tex1*w);
- 	float4 	s1 	=  tex2D	(s_image, offset + I.Tex2*w);
- 	float4 	s2 	=  tex2D	(s_image, offset + I.Tex3*w);
-@@ -105,4 +105,4 @@ float4 _main ( v_aa_AA I )
- 	float3 	final	=  mblur( center, dc.xyz, (s0+s1+s2+s3).xyz/4.0 );
- 
- 	return combine_bloom(final,tex2D	(s_bloom, I.Tex0));
--}
-\ No newline at end of file
-+}
-diff --git a/res/gamedata/shaders/gl/deffer_base_aref_bump.ps b/res/gamedata/shaders/gl/deffer_base_aref_bump.ps
-index 6d322295306b72dc39019c85ab2a6ad29ababe40..619c9ff932fd78abe318c60c0201e5370b62f5e4 100644
---- a/res/gamedata/shaders/gl/deffer_base_aref_bump.ps
-+++ b/res/gamedata/shaders/gl/deffer_base_aref_bump.ps
-@@ -12,7 +12,7 @@
- float4 	_main	( p_bumped I )
- {
- 	surface_bumped 	S 		= sload 	(I);
--	S.base.w = (S.base.w-def_aref*0.5)/(1-def_aref*0.5);
-+	S.base.w = (S.base.w - def_aref * 0.5) / (1.0 - def_aref * 0.5);
- 	return S.base;
- }
- 
-diff --git a/res/gamedata/shaders/gl/deffer_base_aref_flat.ps b/res/gamedata/shaders/gl/deffer_base_aref_flat.ps
-index a028a3cde3774ed0e8909796ac3756fdf40faabb..a5e58a1d066a0ca00c749e15b427ebc5597029f3 100644
---- a/res/gamedata/shaders/gl/deffer_base_aref_flat.ps
-+++ b/res/gamedata/shaders/gl/deffer_base_aref_flat.ps
-@@ -12,7 +12,7 @@
- float4 	_main	( p_flat I )
- {
- 	float4 D 	= tbase	 	(I.tcdh);
--	D.w = (D.w-def_aref*0.5)/(1-def_aref*0.5);
-+	D.w = (D.w - def_aref * 0.5) / (1.0 - def_aref * 0.5);
- 	return D;
- }
- 
-@@ -68,7 +68,7 @@ f_deffer 	_main	( p_flat I )
- #endif
- 
- #ifdef	USE_TDETAIL
--	D.rgb	= 2*D.rgb*tex2D	(s_detail, I.tcdbump).rgb;
-+	D.rgb	= 2.0 * D.rgb * tex2D(s_detail, I.tcdbump).rgb;
- #endif
- 
- 	// hemi,sun,material
-diff --git a/res/gamedata/shaders/gl/deffer_base_flat.ps b/res/gamedata/shaders/gl/deffer_base_flat.ps
-index 20dfb14adc2882b3b65d28f44c9135d54db85be4..1ed930115bdb862f07b2171e33bd4cb2dca899c3 100644
---- a/res/gamedata/shaders/gl/deffer_base_flat.ps
-+++ b/res/gamedata/shaders/gl/deffer_base_flat.ps
-@@ -10,7 +10,7 @@ f_deffer _main( p_flat I )
-   float3 D	= tbase		(I.tcdh).rgb;	// IN:  rgb.a
- 
- #ifdef	USE_TDETAIL
--	D.rgb	= 2*D.rgb*tex2D	(s_detail, I.tcdbump).rgb;
-+	D.rgb	= 2.0 * D.rgb * tex2D(s_detail, I.tcdbump).rgb;
- #endif
- 
- 	// hemi,sun,material
-diff --git a/res/gamedata/shaders/gl/deffer_detail_s_flat.vs b/res/gamedata/shaders/gl/deffer_detail_s_flat.vs
-index 59adaa0a086703f3e4316321d925ea9cfdde2ade..2d4242be0916bca4cd649debc76788d9c85e546a 100644
---- a/res/gamedata/shaders/gl/deffer_detail_s_flat.vs
-+++ b/res/gamedata/shaders/gl/deffer_detail_s_flat.vs
-@@ -23,7 +23,7 @@ v2p_flat 	_main (v_detail v)
-  	pos.x 		= dot	(m0, v.pos);
-  	pos.y 		= dot	(m1, v.pos);
-  	pos.z 		= dot	(m2, v.pos);
--	pos.w 		= 1;
-+	pos.w 		= 1.0;
- 
- 	// Normal in world coords
- 	float3 	norm;	
-diff --git a/res/gamedata/shaders/gl/deffer_detail_w_flat.vs b/res/gamedata/shaders/gl/deffer_detail_w_flat.vs
-index fab5e99eb8af35bd17f1890ac813a78b008be554..1d45ce1498d0f2596455bf3e688253684bdf5b68 100644
---- a/res/gamedata/shaders/gl/deffer_detail_w_flat.vs
-+++ b/res/gamedata/shaders/gl/deffer_detail_w_flat.vs
-@@ -25,7 +25,7 @@ v2p_flat 	_main (v_detail v)
-  	pos.x 		= dot	(m0, v.pos);
-  	pos.y 		= dot	(m1, v.pos);
-  	pos.z 		= dot	(m2, v.pos);
--	pos.w 		= 1;
-+	pos.w 		= 1.0;
- 
- 	// 
- 	float 	base 	= m1.w;
-diff --git a/res/gamedata/shaders/gl/deffer_impl_flat.ps b/res/gamedata/shaders/gl/deffer_impl_flat.ps
-index 2a87ab5308f847185fcaa8c514a8213a9d724895..ce941a0dcc915419fa9a01296844ebdb9b7acdcf 100644
---- a/res/gamedata/shaders/gl/deffer_impl_flat.ps
-+++ b/res/gamedata/shaders/gl/deffer_impl_flat.ps
-@@ -34,7 +34,7 @@ f_deffer 	_main	( p_flat I 		)
- 	float4	d_B	= tex2D		(s_dt_b, I.tcdbump)*mask_t.b;
- 	float4	d_A	= tex2D		(s_dt_a, I.tcdbump)*mask_t.a;
- 	float4	dt	= d_R+d_G+d_B+d_A;
--		D.rgb	= 2*D.rgb*dt.rgb	 ;
-+		D.rgb	= 2.0 * D.rgb * dt.rgb;
- 
-   # ifdef USE_4_BUMP
- 
-diff --git a/res/gamedata/shaders/gl/depth_downs.ps b/res/gamedata/shaders/gl/depth_downs.ps
-index 3cb386cb92b905501a60c8bf0bbc77cd0b814b5c..c929de80d50a6cf58844ef08b3b16dd5fcf1600d 100644
---- a/res/gamedata/shaders/gl/depth_downs.ps
-+++ b/res/gamedata/shaders/gl/depth_downs.ps
-@@ -30,10 +30,10 @@ void main ()
- 
- 	//	TODO: move it to C++ code to save maths in PS
- 	//	??? Why we move x and y in the same direction???
--	gbuffer_data gbd0 = gbuffer_load_data( GLD_P(I.tc0.xy + 0.5f * pos_decompression_params2.zw, I.pos2d * 2, ISAMPLE) );
--	gbuffer_data gbd1 = gbuffer_load_data( GLD_P(I.tc0.xy - 0.5f * pos_decompression_params2.zw, I.pos2d * 2, ISAMPLE) );
--	gbuffer_data gbd2 = gbuffer_load_data( GLD_P(I.tc0.xy + 0.5f * float2(+pos_decompression_params2.z, -pos_decompression_params2.w), I.pos2d * 2, ISAMPLE) );
--	gbuffer_data gbd3 = gbuffer_load_data( GLD_P(I.tc0.xy + 0.5f * float2(-pos_decompression_params2.z, +pos_decompression_params2.w), I.pos2d * 2, ISAMPLE) );
-+	gbuffer_data gbd0 = gbuffer_load_data( GLD_P(I.tc0.xy + 0.5f * pos_decompression_params2.zw, I.pos2d * 2.0, ISAMPLE) );
-+	gbuffer_data gbd1 = gbuffer_load_data( GLD_P(I.tc0.xy - 0.5f * pos_decompression_params2.zw, I.pos2d * 2.0, ISAMPLE) );
-+	gbuffer_data gbd2 = gbuffer_load_data( GLD_P(I.tc0.xy + 0.5f * float2(+pos_decompression_params2.z, -pos_decompression_params2.w), I.pos2d * 2.0, ISAMPLE) );
-+	gbuffer_data gbd3 = gbuffer_load_data( GLD_P(I.tc0.xy + 0.5f * float2(-pos_decompression_params2.z, +pos_decompression_params2.w), I.pos2d * 2.0, ISAMPLE) );
- 
- 	gbuffer_data gbd = gbd0;
- 	if (gbd1.P.z < gbd.P.z) gbd = gbd1;	
-diff --git a/res/gamedata/shaders/gl/gather.ps b/res/gamedata/shaders/gl/gather.ps
-index ff4f622d4fd37df53da15455a6dae47cc4d0ca76..d83a89dd964ff88444c0dbb5fb154144450ac72d 100644
---- a/res/gamedata/shaders/gl/gather.ps
-+++ b/res/gamedata/shaders/gl/gather.ps
-@@ -11,10 +11,10 @@ float4 sm_gather( float2 tc, int2 offset )
- 	tc -= fc / scale;
- 	
- 	float rcp_scale = 1.0 / scale; // you can use SMAP_size in case compiler fails. though, the texel size is different for sm_minmax_gather
--	float s0 = textureLodOffset( s_dmap, rcp_scale * offset + tc, 0, int2( 0, 1 ) ).x;
--	float s1 = textureLodOffset( s_dmap, rcp_scale * offset + tc, 0, int2( 1, 1 ) ).x;
--	float s2 = textureLodOffset( s_dmap, rcp_scale * offset + tc, 0, int2( 1, 0 ) ).x;
--	float s3 = textureLodOffset( s_dmap, rcp_scale * offset + tc, 0, int2( 0, 0 ) ).x;
-+	float s0 = textureLodOffset( s_dmap, rcp_scale * float2(offset) + tc, 0.0, int2( 0, 1 ) ).x;
-+	float s1 = textureLodOffset( s_dmap, rcp_scale * float2(offset) + tc, 0.0, int2( 1, 1 ) ).x;
-+	float s2 = textureLodOffset( s_dmap, rcp_scale * float2(offset) + tc, 0.0, int2( 1, 0 ) ).x;
-+	float s3 = textureLodOffset( s_dmap, rcp_scale * float2(offset) + tc, 0.0, int2( 0, 0 ) ).x;
- 	
- 	return float4( s0, s1, s2, s3 );
- }
-@@ -31,10 +31,10 @@ float4 sm_minmax_gather( float2 tc, int2 offset )
- 	tc -= fc / scale;
- 		
- 	float rcp_scale = 1.0 / scale;
--	float s0 = textureLodOffset( s_smap_minmax, rcp_scale * offset + tc, 0, int2(0, 1) ).x;
--	float s1 = textureLodOffset( s_smap_minmax, rcp_scale * offset + tc, 0, int2(1, 1) ).x;
--	float s2 = textureLodOffset( s_smap_minmax, rcp_scale * offset + tc, 0, int2(1, 0) ).x;
--	float s3 = textureLodOffset( s_smap_minmax, rcp_scale * offset + tc, 0, int2(0, 0) ).x;
-+	float s0 = textureLodOffset( s_smap_minmax, rcp_scale * float2(offset) + tc, 0.0, int2(0, 1) ).x;
-+	float s1 = textureLodOffset( s_smap_minmax, rcp_scale * float2(offset) + tc, 0.0, int2(1, 1) ).x;
-+	float s2 = textureLodOffset( s_smap_minmax, rcp_scale * float2(offset) + tc, 0.0, int2(1, 0) ).x;
-+	float s3 = textureLodOffset( s_smap_minmax, rcp_scale * float2(offset) + tc, 0.0, int2(0, 0) ).x;
- 	
- 	return float4( s0, s1, s2, s3 );
- }
-diff --git a/res/gamedata/shaders/gl/hmodel.h b/res/gamedata/shaders/gl/hmodel.h
-index 8fb8659930bfe1b707f81a11381c1963b2e867d9..b10a83835e7d792eec6e4294ab89798b05d2bd8a 100644
---- a/res/gamedata/shaders/gl/hmodel.h
-+++ b/res/gamedata/shaders/gl/hmodel.h
-@@ -39,7 +39,7 @@ void hmodel
- 	// material	// sample material
- 	//float4	light	= tex3D( s_material, float3(hscale, hspec, m) );
- //	float4	light	= s_material.Sample( smp_material, float3( hscale, hspec, m ) ).xxxy;
--	float4	light	= textureLod(s_material, float3( hscale, hspec, m ), 0 ).xxxy;
-+	float4	light	= textureLod(s_material, float3( hscale, hspec, m ), 0.0 ).xxxy;
- //	float4	light	= float4(1,1,1,1);
- 
- 	// diffuse color
-@@ -47,20 +47,20 @@ void hmodel
- //	float3	e1d		= texCUBE( env_s1, nw );
- //	float3	e0d		= env_s0.Sample( smp_rtlinear, nw );
- //	float3	e1d		= env_s1.Sample( smp_rtlinear, nw );
--	float3	e0d		= textureLod( env_s0, nw, 0 ).rgb;
--	float3	e1d		= textureLod( env_s1, nw, 0 ).rgb;
-+	float3	e0d		= textureLod( env_s0, nw, 0.0 ).rgb;
-+	float3	e1d		= textureLod( env_s1, nw, 0.0 ).rgb;
- 	float3	env_d	= env_color.xyz * lerp( e0d, e1d, env_color.w );
- 			env_d	*=env_d;	// contrast
- 			hdiffuse= env_d * light.xyz + L_ambient.rgb;
- 
- 	// specular color
--	vreflect.y      = vreflect.y*2-1;	// fake remapping
-+	vreflect.y      = vreflect.y * 2.0 - 1.0;	// fake remapping
- //	float3	e0s		= texCUBE( env_s0, vreflect );
- //	float3	e1s		= texCUBE( env_s1, vreflect );
- //	float3	e0s		= env_s0.Sample( smp_rtlinear, vreflect );
- //	float3	e1s		= env_s1.Sample( smp_rtlinear, vreflect );
--	float3	e0s		= textureLod( env_s0, vreflect, 0 ).rgb;
--	float3	e1s		= textureLod( env_s1, vreflect, 0 ).rgb;
-+	float3	e0s		= textureLod( env_s0, vreflect, 0.0 ).rgb;
-+	float3	e1s		= textureLod( env_s1, vreflect, 0.0 ).rgb;
- 	float3	env_s	= env_color.xyz * lerp( e0s, e1s, env_color.w);
- 			env_s	*=env_s;	// contrast
- 		hspecular	= env_s*light.w*s;                //*h*m*s        ;        //env_s        *light.w         * s;
-@@ -91,4 +91,4 @@ void         hmodel_table        (out float3 hdiffuse, out float3 hspecular, flo
-         hspecular        = env_s        *light.w         * s                ;
- }
- */
--#endif
-\ No newline at end of file
-+#endif
-diff --git a/res/gamedata/shaders/gl/hud3d.vs b/res/gamedata/shaders/gl/hud3d.vs
-index ac2e82db9f3c338ede541f902459d7c1d23c688a..fe5277f80be1f2544532ff4cc5fe902071d85ca3 100644
---- a/res/gamedata/shaders/gl/hud3d.vs
-+++ b/res/gamedata/shaders/gl/hud3d.vs
-@@ -7,7 +7,7 @@ v2p_TL _main (v_TL I)
- 
- 	O.Tex0		= I.Tex0;
- 	O.HPos		= I.P;
--	O.HPos.w	= 1;
-+	O.HPos.w	= 1.0;
- 	O.HPos		= mul( m_WVP, O.HPos );
- 	return 		O;
- }
-diff --git a/res/gamedata/shaders/gl/iostructs/v_model_bump.h b/res/gamedata/shaders/gl/iostructs/v_model_bump.h
-index 206d6f0061fbb107ac7ac58de3325eacf6e81fe5..7d885c38c9e50e82a2bc289d844878559d8537e8 100644
---- a/res/gamedata/shaders/gl/iostructs/v_model_bump.h
-+++ b/res/gamedata/shaders/gl/iostructs/v_model_bump.h
-@@ -64,10 +64,10 @@ void main()
- #endif
- 
- 	I.P = v_model_P;
--	I.N = v_model_N;
--	I.T = v_model_T;
--	I.B = v_model_B;
--	I.tc = v_model_tc;
-+	I.N = skin_input_normal(v_model_N);
-+	I.T = skin_input_tangent(v_model_T);
-+	I.B = skin_input_tangent(v_model_B);
-+	I.tc = skin_input_tc(v_model_tc);
- 
- 	v2p_bumped O;
- #ifdef 	SKIN_NONE
-diff --git a/res/gamedata/shaders/gl/iostructs/v_model_def.h b/res/gamedata/shaders/gl/iostructs/v_model_def.h
-index 3d1eedd0e07fbb2586d8f32794a1db8f51472551..2ce46bdbee40a8c774195abce54a1cc62334325d 100644
---- a/res/gamedata/shaders/gl/iostructs/v_model_def.h
-+++ b/res/gamedata/shaders/gl/iostructs/v_model_def.h
-@@ -60,10 +60,10 @@ void main()
- #endif
- 
- 	I.P = v_model_P;
--	I.N = v_model_N;
--	I.T = v_model_T;
--	I.B = v_model_B;
--	I.tc = v_model_tc;
-+	I.N = skin_input_normal(v_model_N);
-+	I.T = skin_input_tangent(v_model_T);
-+	I.B = skin_input_tangent(v_model_B);
-+	I.tc = skin_input_tc(v_model_tc);
- 
- 	v2p O;
- #ifdef 	SKIN_NONE
-diff --git a/res/gamedata/shaders/gl/iostructs/v_model_def_lplanes.h b/res/gamedata/shaders/gl/iostructs/v_model_def_lplanes.h
-index f557fee768e226d3221757e119b1e8b5e8e30c15..95b5a78402a7b02c43000da72d55ecbdf1f464d1 100644
---- a/res/gamedata/shaders/gl/iostructs/v_model_def_lplanes.h
-+++ b/res/gamedata/shaders/gl/iostructs/v_model_def_lplanes.h
-@@ -59,10 +59,10 @@ void main()
- #endif
- 
- 	I.P		= v_model_P;
--	I.N		= v_model_N;
--	I.T		= v_model_T;
--	I.B		= v_model_B;
--	I.tc		= v_model_tc;
-+	I.N		= skin_input_normal(v_model_N);
-+	I.T		= skin_input_tangent(v_model_T);
-+	I.B		= skin_input_tangent(v_model_B);
-+	I.tc		= skin_input_tc(v_model_tc);
- 
- 	v2p O;
- #ifdef 	SKIN_NONE
-diff --git a/res/gamedata/shaders/gl/iostructs/v_model_distort.h b/res/gamedata/shaders/gl/iostructs/v_model_distort.h
-index 05676bd5a65b96d1372ee5959f2d2d91d53177eb..285d23da18315330cd3ee05eccf88ec44d85cb34 100644
---- a/res/gamedata/shaders/gl/iostructs/v_model_distort.h
-+++ b/res/gamedata/shaders/gl/iostructs/v_model_distort.h
-@@ -58,10 +58,10 @@ void main()
- #endif
- 
- 	I.P = v_model_P;
--	I.N = v_model_N;
--	I.T = v_model_T;
--	I.B = v_model_B;
--	I.tc = v_model_tc;
-+	I.N = skin_input_normal(v_model_N);
-+	I.T = skin_input_tangent(v_model_T);
-+	I.B = skin_input_tangent(v_model_B);
-+	I.tc = skin_input_tc(v_model_tc);
- 
- 	vf O;
- #ifdef 	SKIN_NONE
-diff --git a/res/gamedata/shaders/gl/iostructs/v_model_env_lq.h b/res/gamedata/shaders/gl/iostructs/v_model_env_lq.h
-index 481d53399bd6fe5f5f0c9eb9ed74da19cd21ee95..0d71d072819eaefb2e52d59f5785f3c52c949b38 100644
---- a/res/gamedata/shaders/gl/iostructs/v_model_env_lq.h
-+++ b/res/gamedata/shaders/gl/iostructs/v_model_env_lq.h
-@@ -63,10 +63,10 @@ void main()
- #endif
- 
- 	I.P		= v_model_P;
--	I.N		= v_model_N;
--	I.T		= v_model_T;
--	I.B		= v_model_B;
--	I.tc		= v_model_tc;
-+	I.N		= skin_input_normal(v_model_N);
-+	I.T		= skin_input_tangent(v_model_T);
-+	I.B		= skin_input_tangent(v_model_B);
-+	I.tc		= skin_input_tc(v_model_tc);
- 
- 	v2p O;
- #ifdef 	SKIN_NONE
-diff --git a/res/gamedata/shaders/gl/iostructs/v_model_flat.h b/res/gamedata/shaders/gl/iostructs/v_model_flat.h
-index 70ceedb32d77df3a8b957aa61c5c6e8fc71e0c43..ece5e39b864aa0bfe1692b91f2ac2cdf1efafe4c 100644
---- a/res/gamedata/shaders/gl/iostructs/v_model_flat.h
-+++ b/res/gamedata/shaders/gl/iostructs/v_model_flat.h
-@@ -62,10 +62,10 @@ void main()
- #endif
- 
- 	I.P = v_model_P;
--	I.N = v_model_N;
--	I.T = v_model_T;
--	I.B = v_model_B;
--	I.tc = v_model_tc;
-+	I.N = skin_input_normal(v_model_N);
-+	I.T = skin_input_tangent(v_model_T);
-+	I.B = skin_input_tangent(v_model_B);
-+	I.tc = skin_input_tc(v_model_tc);
- 
- 	v2p_flat O;
- #ifdef 	SKIN_NONE
-diff --git a/res/gamedata/shaders/gl/iostructs/v_model_shadow.h b/res/gamedata/shaders/gl/iostructs/v_model_shadow.h
-index 50e8f20f7d364ec2425c5cfb5690e92695cb357b..cf560a0878d488c2515d606fc5a0da4d4f3b787d 100644
---- a/res/gamedata/shaders/gl/iostructs/v_model_shadow.h
-+++ b/res/gamedata/shaders/gl/iostructs/v_model_shadow.h
-@@ -48,10 +48,10 @@ void main()
- #endif
- 
- 	I.P = v_model_P;
--	I.N = v_model_N;
--	I.T = v_model_T;
--	I.B = v_model_B;
--	I.tc = v_model_tc;
-+	I.N = skin_input_normal(v_model_N);
-+	I.T = skin_input_tangent(v_model_T);
-+	I.B = skin_input_tangent(v_model_B);
-+	I.tc = skin_input_tc(v_model_tc);
- 
- 	v2p_shadow_direct O;
- #ifdef 	SKIN_NONE
-diff --git a/res/gamedata/shaders/gl/iostructs/v_model_shadow_aref.h b/res/gamedata/shaders/gl/iostructs/v_model_shadow_aref.h
-index 65cb2e414b8d982cc081067f1e72a8ce4075f537..bd0e4d12e21f0810671d386883c977ce848f7fb1 100644
---- a/res/gamedata/shaders/gl/iostructs/v_model_shadow_aref.h
-+++ b/res/gamedata/shaders/gl/iostructs/v_model_shadow_aref.h
-@@ -50,10 +50,10 @@ void main()
- #endif
- 
- 	I.P = v_model_P;
--	I.N = v_model_N;
--	I.T = v_model_T;
--	I.B = v_model_B;
--	I.tc = v_model_tc;
-+	I.N = skin_input_normal(v_model_N);
-+	I.T = skin_input_tangent(v_model_T);
-+	I.B = skin_input_tangent(v_model_B);
-+	I.tc = skin_input_tc(v_model_tc);
- 
- 	v2p_shadow_direct_aref O;
- #ifdef 	SKIN_NONE
-diff --git a/res/gamedata/shaders/gl/lmodel.h b/res/gamedata/shaders/gl/lmodel.h
-index 0d896533592f2ac4d7292d609fd78f1505cde6a0..9eb775de85036f772cff1a17fd7833f9a39ee9b5 100644
---- a/res/gamedata/shaders/gl/lmodel.h
-+++ b/res/gamedata/shaders/gl/lmodel.h
-@@ -39,7 +39,7 @@ float4 plight_local( float m, float3 pnt, float3 normal, float3 light_position,
-   	float3 L 	= -normalize	(float3(L2P));					// vector2light
-   	float3 H		= normalize	(L+V);						// float-angle-vector
- 		rsqr	= dot		(L2P,L2P);					// distance 2 light (squared)
--  	float  att 	= saturate	(1 - rsqr*light_range_rsq);			// q-linear attenuate
-+	float  att 	= saturate	(1.0 - rsqr*light_range_rsq);			// q-linear attenuate
- 	float4 light	= tex3D		(s_material, float3( dot(L,N), dot(H,N), m ) ).xxxy; 	// sample material
-   	return att*light;
- }
-@@ -61,4 +61,4 @@ float4 blend( float4 value, float2 tc)
- 	return 	value;
- }
- 
--#endif
-\ No newline at end of file
-+#endif
-diff --git a/res/gamedata/shaders/gl/model_def_lq.ps b/res/gamedata/shaders/gl/model_def_lq.ps
-index de215f97e012565d04c6687e8e9381853bf486b6..7b3ba4bfce7f6b8edb8075b49c46d791a368a338 100644
---- a/res/gamedata/shaders/gl/model_def_lq.ps
-+++ b/res/gamedata/shaders/gl/model_def_lq.ps
-@@ -8,7 +8,7 @@ float4 _main( v2p I )
- 	float4	t_base 	= tex2D	(s_base,I.tc0);
- 
- 	float3	light	= I.c0;
--	float3	final 	= light*t_base.rgb*2;
-+	float3	final 	= light * t_base.rgb * 2.0;
- 
- 	// out
- 	return  float4	(final.r,final.g,final.b,t_base.a);
-diff --git a/res/gamedata/shaders/gl/postprocess.ps b/res/gamedata/shaders/gl/postprocess.ps
-index 8164bd1e4ad99c7b038e49d8ebb30783db6041d8..ef7316fc5b2a28eaca86fa0597226911c94744fa 100644
---- a/res/gamedata/shaders/gl/postprocess.ps
-+++ b/res/gamedata/shaders/gl/postprocess.ps
-@@ -19,7 +19,7 @@ float4 _main( p_postpr I )
- 	float4	t_noise	= tex2D		(s_noise,I.Tex2);
- 	float3 	noised 	= image*t_noise.rgb*2.0;                     		// mul_2x
- 			image	= lerp( noised, image, I.Color.w); 	// lrp ?
--			image	= (image * I.Color.rgb + c_brightness.rgb)*2;		// mad
-+			image	= (image * I.Color.rgb + c_brightness.rgb) * 2.0;		// mad
- //		image	= (image + c_brightness) * I.Color;		// mad ?
- 
- 	// out
-diff --git a/res/gamedata/shaders/gl/postprocess_cm.ps b/res/gamedata/shaders/gl/postprocess_cm.ps
-index 3a73d576e1e118ea681d952f3b63aee1edde638d..52b76b7e620039e9aa59a22609e783af6ba1337a 100644
---- a/res/gamedata/shaders/gl/postprocess_cm.ps
-+++ b/res/gamedata/shaders/gl/postprocess_cm.ps
-@@ -30,7 +30,7 @@ float4 _main( p_postpr I )
- 	float4	t_noise	= tex2D		(s_noise,I.Tex2);
- 	float3 	noised 	= image*t_noise.rgb*2.0;                     		// mul_2x
- 			image	= lerp( noised, image, I.Color.w); 	// lrp ?
--			image	= (image * I.Color.rgb + c_brightness.rgb)*2;		// mad
-+			image	= (image * I.Color.rgb + c_brightness.rgb) * 2.0;		// mad
- //		image	= (image + c_brightness) * I.Color;		// mad ?
- 
- 	// out
-diff --git a/res/gamedata/shaders/gl/rain_layer.ps b/res/gamedata/shaders/gl/rain_layer.ps
-index 33d16b14daaf32b73ffdbdfd8e879b8587056162..d8100ea30ac1b46e77c64e0ca9d7c2f0e1eee9c8 100644
---- a/res/gamedata/shaders/gl/rain_layer.ps
-+++ b/res/gamedata/shaders/gl/rain_layer.ps
-@@ -40,7 +40,7 @@ float4 _main ( float2 tc, float2 tcJ )
- 
- 	tc1 = frac(tc1);
- 
--	float4 water = textureLod( s_water, tc1, 0 );
-+	float4 water = textureLod( s_water, tc1, 0.0 );
- 
- //	water.xy = tc1;
- //	water.z = 0.0;
-diff --git a/res/gamedata/shaders/gl/rain_patch_normal.ps b/res/gamedata/shaders/gl/rain_patch_normal.ps
-index e151a66efe424f1d41f68497951e7a3a20bf119e..ef6d990298f09ecc3aca4224d9cd2c2b64125a46 100644
---- a/res/gamedata/shaders/gl/rain_patch_normal.ps
-+++ b/res/gamedata/shaders/gl/rain_patch_normal.ps
-@@ -27,7 +27,7 @@ float3	GetNVNMap(float2 tc, float time)
- 	water.xyz *= 6.0;
- 
- //	water.y = sqrt(1-water.x*water.x-water.z*water.z);
--	water.y = 0;
-+	water.y = 0.0;
- 
- 	return water.xyz;
- }
-@@ -44,7 +44,7 @@ float3	GetWaterNMap(float2 tc)
- 
- 	water.xyz *= 0.3;
- 
--	water.y = 0;
-+	water.y = 0.0;
- 
- 	return water.xyz;
- }
-@@ -100,15 +100,15 @@ float4 _main ( float2 tc, float2 tcJ )
- 	//	Apply distance falloff
- 	//float	fAtten = 1 - smoothstep( 10, 30, length( _P.xyz ));
- 	// Using fixed fallof factors according to float16 depth coordinate precision.
--	float	fAtten = 1 - smoothstep( 5, 20, _P.z );
-+	float	fAtten = 1.0 - smoothstep( 5.0, 20.0, _P.z );
- 	s	*= fAtten*fAtten;
- 
- 	//	Apply rain density
- 	s	*= RainDensity.x;
- 
- 	float fIsUp = -dot( Ldynamic_dir.xyz, _N.xyz );
--	s *= saturate(fIsUp*10+(10*0.5)+0.5);
--	fIsUp = max(0, fIsUp);
-+	s *= saturate(fIsUp * 10.0 + (10.0 * 0.5) + 0.5);
-+	fIsUp = max(0.0, fIsUp);
- 
- 	float fIsX = WorldN.x;
- 	float fIsZ = WorldN.z;
-@@ -117,11 +117,11 @@ float4 _main ( float2 tc, float2 tcJ )
- //	float3 waterFallX = GetWaterNMap( float2(WorldP.x, WorldP.y-timers.x), 0.5 );
- //	float3 waterFallZ = GetWaterNMap( float2(WorldP.z, WorldP.y-timers.x), 0.5 );
- 
--	float3 tc1 = WorldP / 2;
-+	float3 tc1 = WorldP / 2.0;
- 
--	float fAngleFactor = 1 - fIsUp;
-+	float fAngleFactor = 1.0 - fIsUp;
- 
--	fAngleFactor = 0.1*ceil(10*fAngleFactor);
-+	fAngleFactor = 0.1 * ceil(10.0 * fAngleFactor);
- 
- 	//	Just slow down effect.
- //	fAngleFactor *= 0.25;
-diff --git a/res/gamedata/shaders/gl/shadow.h b/res/gamedata/shaders/gl/shadow.h
-index 036b8662471019845df11052c9a4765fc3751089..c0df4834eb9e56a704fe82a5b926ed8425206f11 100644
---- a/res/gamedata/shaders/gl/shadow.h
-+++ b/res/gamedata/shaders/gl/shadow.h
-@@ -333,10 +333,10 @@ float shadow_extreme_quality_fused( float3 tc )
- #ifndef PS_4            
-             d4 = textureGather( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col, row ) );
- #else
--			d4.w = textureLod( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col, row ), 0 ).x;
--			d4.z = textureLod( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col+1, row ) , 0 ).x;
--			d4.y = textureLod( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col+1, row+1 ), 0 ).x;
--			d4.x = textureLod( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col, row+1 ), 0 ).x;
-+			d4.w = textureLod( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col, row ), 0.0 ).x;
-+			d4.z = textureLod( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col+1, row ) , 0.0 ).x;
-+			d4.y = textureLod( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col+1, row+1 ), 0.0 ).x;
-+			d4.x = textureLod( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col, row+1 ), 0.0 ).x;
- #endif
-             float4 b4  = all( lessThanEqual( tc.zzzz, d4 )) ? float4(0.0) : float4(1.0);   
- 
-@@ -729,11 +729,11 @@ half 	shadow_high 	(float4 tc)			// jittered sampling
- 
- 	const float k1 = 1.3/float(SMAP_size);
- 	half4	r1;
--	r1.x 	= test 	(tc,-J0.xy+half2(-k1,0)).x;
--	r1.y 	= test 	(tc,-J0.wz+half2( 0,-k1)).y;
-+	r1.x 	= test 	(tc,-J0.xy+half2(-k1,0.0)).x;
-+	r1.y 	= test 	(tc,-J0.wz+half2( 0.0,-k1)).y;
- 
--	r1.z	= test	(tc,-2*J0.xy+half2( k1, 0)).z;
--	r1.w	= test	(tc,-2*J0.wz+half2( 0, k1)).x;
-+	r1.z	= test	(tc,-2.0*J0.xy+half2( k1, 0.0)).z;
-+	r1.w	= test	(tc,-2.0*J0.wz+half2( 0.0, k1)).x;
- 
- 	return ( r.x + r.y + r.z + r.w + r1.x + r1.y + r1.z + r1.w )*1.0/8.0;
- }
-@@ -776,8 +776,8 @@ float shadow_dx10_1( float4 tc, float2 tcJ, float2 pos2d )
- float shadow_dx10_1_sunshafts( float4 tc, float2 pos2d ) 
- {
-    float3 t         = tc.xyz / tc.w;
--   float minmax     = textureLod( s_smap_minmax, t.xy, 0 ).x;
--   bool   umbra     = ( ( minmax < 0 ) && ( t.z > -minmax ) );
-+   float minmax     = textureLod( s_smap_minmax, t.xy, 0.0 ).x;
-+   bool   umbra     = ( ( minmax < 0.0 ) && ( t.z > -minmax ) );
- 
-    if( umbra )
-    {
-@@ -853,4 +853,4 @@ float sunmask( float4 P ) { return 1.0; }		//
- //////////////////////////////////////////////////////////////////////////////////////////
- uniform float4x4	m_shadow;
- 
--#endif
-\ No newline at end of file
-+#endif
-diff --git a/res/gamedata/shaders/gl/shadow_direct_tree.vs b/res/gamedata/shaders/gl/shadow_direct_tree.vs
-index 617f1e75f15d7e0a540b36a926e6d9ca77ee3962..6c7109f1e6e72c9ebc6da26dc4eb9826921b767b 100644
---- a/res/gamedata/shaders/gl/shadow_direct_tree.vs
-+++ b/res/gamedata/shaders/gl/shadow_direct_tree.vs
-@@ -36,7 +36,7 @@ v2p_shadow_direct _main ( v_shadow_direct I )
- #ifdef	USE_AREF
- 	float 	frac 	= I.tc.z*consts.x;		// fractional (or rigidity)
- #else	//	USE_AREF
--	float 	frac 	= 0;
-+	float 	frac 	= 0.0;
- #endif	//	USE_AREF
- 			result	= calc_xz_wave	(wind.xz*inten, frac);
- #endif	//	USE_TREEWAVE
-diff --git a/res/gamedata/shaders/gl/shared/cloudconfig.h b/res/gamedata/shaders/gl/shared/cloudconfig.h
-index 22d69e94a48b369302639baf3049c81f1cf4508b..7d76a55d1c37f667074b483de5219846ebd94913 100644
---- a/res/gamedata/shaders/gl/shared/cloudconfig.h
-+++ b/res/gamedata/shaders/gl/shared/cloudconfig.h
-@@ -3,9 +3,9 @@
- 
- // note: timers has resolution (sec), where x=1, y=10, z=1/10,
- #define CLOUD_TILE0		(0.7)
--#define CLOUD_SPEED0		(2*0.05)		//(0.033)
-+#define CLOUD_SPEED0		(2.0*0.05)		//(0.033)
- #define CLOUD_TILE1		(2.8)			//(2.5)
--#define CLOUD_SPEED1		(2*0.025)		//(0.033)
-+#define CLOUD_SPEED1		(2.0*0.025)		//(0.033)
- #define CLOUD_FADE		(0.5)
- 
- #endif
-diff --git a/res/gamedata/shaders/gl/shared/common.h b/res/gamedata/shaders/gl/shared/common.h
-index 4c6a60a161413f6f3d4fb38c67e40ffcf447c1ad..f377f5bcdf94fe6957b5a8b91364cc295109f2e9 100644
---- a/res/gamedata/shaders/gl/shared/common.h
-+++ b/res/gamedata/shaders/gl/shared/common.h
-@@ -41,7 +41,7 @@ void	sincos(float x, out float s, out float c) { s = sin(x); c = cos(x); }
- #define lerp        mix
- #define frac        fract
- #define saturate(a) clamp(a, 0.0, 1.0)
--#define clip(x)		if (x < 0) discard
-+#define clip(x)		if ((x) < 0.0) discard
- #define tex2D		texture
- #define tex2Dproj	textureProj
- #define tex2Dlod(s,t)	textureLod(s,t.xy,t.w)
-diff --git a/res/gamedata/shaders/gl/shared/watermove.h b/res/gamedata/shaders/gl/shared/watermove.h
-index 8ce054db13db5d6b5445ae79c6dace9e6af2e788..a81e9293d1ea86c2b45394410e340649062eec7f 100644
---- a/res/gamedata/shaders/gl/shared/watermove.h
-+++ b/res/gamedata/shaders/gl/shared/watermove.h
-@@ -19,7 +19,7 @@ float3	waterrefl	(out float amount, float3 P, float3 N)	{
- 	float3 	v2point	= normalize	(P-eye_position);
- 	float3	vreflect= reflect	(v2point, N);
- 	float 	fresnel	= (0.5 + 0.5*dot(vreflect,v2point));
--			amount	= 1 - fresnel*fresnel;			// 0=full env, 1=no env
-+			amount	= 1.0 - fresnel * fresnel;			// 0=full env, 1=no env
- 	return	vreflect;
- }
- 
-diff --git a/res/gamedata/shaders/gl/skin.h b/res/gamedata/shaders/gl/skin.h
-index 796a602b2c85f0b34c7497904202bbab96f271d0..78128ef76c7d3c3ec3b1c501f3235ef36b8e4da2 100644
---- a/res/gamedata/shaders/gl/skin.h
-+++ b/res/gamedata/shaders/gl/skin.h
-@@ -58,6 +58,24 @@ float4 	u_position	(float4 v)	{ return float4(v.xyz, 1.0);	}	// -12..+12 //--#SM
- uniform float4 	sbones_array	[256-22];
- //}
- 
-+#if defined(SKIN_NONE) || defined(SKIN_0)
-+#define skin_input_normal(value) value.xyz
-+#else
-+#define skin_input_normal(value) value
-+#endif
-+
-+#if defined(SKIN_NONE) || defined(SKIN_0) || defined(SKIN_1) || defined(SKIN_2)
-+#define skin_input_tangent(value) value.xyz
-+#else
-+#define skin_input_tangent(value) value
-+#endif
-+
-+#if defined(SKIN_2) || defined(SKIN_3)
-+#define skin_input_tc(value) value
-+#else
-+#define skin_input_tc(value) value.xy
-+#endif
-+
- float3 	skinning_dir 	(float3 dir, float4 m0, float4 m1, float4 m2)
- {
- 	float3 	U 	= unpack_normal	(dir);
-@@ -104,7 +122,7 @@ v_model skinning_1 	(v_model_skinned_1	v)
- 	v.B.xyz		= v.B.zyx;
- 
- 	// matrices
--	int 	mid = int(v.N.w * 255 + 0.3);
-+	int 	mid = int(v.N.w * 255.0 + 0.3);
- 	float4  m0 	= sbones_array[mid+0];
- 	float4  m1 	= sbones_array[mid+1];
- 	float4  m2 	= sbones_array[mid+2];
-@@ -166,7 +184,7 @@ v_model skinning_3 	(v_model_skinned_3	v)
- 	float4  m0_1 	= sbones_array[id_1+0];
- 	float4  m1_1 	= sbones_array[id_1+1];
- 	float4  m2_1 	= sbones_array[id_1+2];
--	int 	id_2 	= int(v.B.w*255+0.3);
-+	int 	id_2 	= int(v.B.w * 255.0 + 0.3);
- 	float4  m0_2 	= sbones_array[id_2+0];
- 	float4  m1_2 	= sbones_array[id_2+1];
- 	float4  m2_2 	= sbones_array[id_2+2];
-@@ -174,7 +192,7 @@ v_model skinning_3 	(v_model_skinned_3	v)
- 	// lerp
- 	float 	w0 	= v.N.w;
- 	float 	w1 	= v.T.w;
--	float 	w2 	= 1-w0-w1;
-+	float 	w2 	= 1.0 - w0 - w1;
- 	float4  m0 	= m0_0*w0;
- 	float4  m1 	= m1_0*w0;
- 	float4  m2 	= m2_0*w0;
-@@ -214,7 +232,7 @@ v_model skinning_4 	(v_model_skinned_4	v)
- 
- 	for (int i=0; i<4; ++i)
- 	{		
--		id[i] = int(v.ind[i]*255+0.3);
-+		id[i] = int(v.ind[i] * 255.0 + 0.3);
- 
- 		for (int j=0; j<3; ++j)
- 			m[i][j] = sbones_array[id[i]+j];
-@@ -225,7 +243,7 @@ v_model skinning_4 	(v_model_skinned_4	v)
- 	w[0] 	= v.N.w;
- 	w[1] 	= v.T.w;
- 	w[2] 	= v.B.w;
--	w[3]	= 1-w[0]-w[1]-w[2];
-+	w[3]	= 1.0 - w[0] - w[1] - w[2];
- 
- 	float4  m0 	= m[0][0]*w[0];
- 	float4  m1 	= m[0][1]*w[0];
-diff --git a/res/gamedata/shaders/gl/sload.h b/res/gamedata/shaders/gl/sload.h
-index 53e4b1c5cdf2b9cf8af7475c55837d754ff60e1c..7ae5e20abe534b2df941f8d10110905d936543b3 100644
---- a/res/gamedata/shaders/gl/sload.h
-+++ b/res/gamedata/shaders/gl/sload.h
-@@ -42,8 +42,8 @@ void UpdateTC( inout p_bumped I )
- {
- 	if (I.position.z < fParallaxStopFade)
- 	{
--		const float maxSamples = 25;
--		const float minSamples = 5;
-+		const float maxSamples = 25.0;
-+		const float minSamples = 5.0;
- 		const float fParallaxOffset = -0.013;
- 
- 		float3	 eye = mul (float3x3(I.M1.x, I.M2.x, I.M3.x,
-@@ -60,16 +60,16 @@ void UpdateTC( inout p_bumped I )
- 		float2	vTexOffsetPerStep	= fStepSize * vDelta;
- 
- 		//	Prepare start data for cycle
--		float2	vTexCurrentOffset	= I.tcdh;
-+		float2	vTexCurrentOffset	= I.tcdh.xy;
- 		float	fCurrHeight			= 0.0;
- 		float	fCurrentBound		= 1.0;
- 
--		for( int i=0; i<nNumSteps; ++i )
-+		for( int i=0; float(i) < nNumSteps; ++i )
- 		{
- 			if (fCurrHeight < fCurrentBound)
- 			{	
- 				vTexCurrentOffset += vTexOffsetPerStep;		
--				fCurrHeight = textureLod( s_bumpX, vTexCurrentOffset.xy, 0 ).a; 
-+				fCurrHeight = textureLod( s_bumpX, vTexCurrentOffset.xy, 0.0 ).a;
- 				fCurrentBound -= fStepSize;
- 			}
- 		}
-@@ -84,18 +84,18 @@ void UpdateTC( inout p_bumped I )
- */
- 		//	Reconstruct previouse step's data
- 		vTexCurrentOffset -= vTexOffsetPerStep;
--		float fPrevHeight = textureLod( s_bumpX, vTexCurrentOffset.xy, 0 ).a;
-+		float fPrevHeight = textureLod( s_bumpX, vTexCurrentOffset.xy, 0.0 ).a;
- 
- 		//	Smooth tc position between current and previouse step
- 		float	fDelta2 = ((fCurrentBound + fStepSize) - fPrevHeight);
- 		float	fDelta1 = (fCurrentBound - fCurrHeight);
- 		float	fParallaxAmount = (fCurrentBound * fDelta2 - (fCurrentBound + fStepSize) * fDelta1 ) / ( fDelta2 - fDelta1 );
- 		float	fParallaxFade 	= smoothstep(fParallaxStopFade, fParallaxStartFade, I.position.z);
--		float2	vParallaxOffset = vDelta * ((1- fParallaxAmount )*fParallaxFade);
--		float2	vTexCoord = I.tcdh + vParallaxOffset;
-+		float2	vParallaxOffset = vDelta * ((1.0 - fParallaxAmount) * fParallaxFade);
-+		float2	vTexCoord = I.tcdh.xy + vParallaxOffset;
- 	
- 		//	Output the result
--		I.tcdh = vTexCoord;
-+		I.tcdh.xy = vTexCoord;
- 
- #if defined(USE_TDETAIL) && defined(USE_STEEPPARALLAX)
- 		I.tcdbump = vTexCoord * dt_params.xy;
-@@ -112,14 +112,14 @@ void UpdateTC( inout p_bumped I)
- 								 I.M1.y, I.M2.y, I.M3.y,
- 								 I.M1.z, I.M2.z, I.M3.z), -I.position.xyz);
- 								 
--	float	height	= tex2D( s_bumpX, I.tcdh ).w;	//
-+	float	height	= tex2D( s_bumpX, I.tcdh.xy ).w;	//
- 			//height  /= 2;
- 			//height  *= 0.8;
- 			height	= height*(parallax.x) + (parallax.y);	//
--	float2	new_tc  = I.tcdh + height * normalize(eye).xy;	//
-+	float2	new_tc  = I.tcdh.xy + height * normalize(eye).xy;	//
- 
- 	//	Output the result
--	I.tcdh	= new_tc;
-+	I.tcdh.xy = new_tc;
- }
- 
- #else	//	USE_PARALLAX
-@@ -137,10 +137,10 @@ surface_bumped sload_i( p_bumped I)
-    
- 	UpdateTC(I);	//	All kinds of parallax are applied here.
- 
--	float4 	Nu	= tex2D( s_bump, I.tcdh );		// IN:	normal.gloss
--	float4 	NuE	= tex2D( s_bumpX, I.tcdh);		// IN:	normal_error.height
-+	float4 	Nu	= tex2D( s_bump, I.tcdh.xy );		// IN:	normal.gloss
-+	float4 	NuE	= tex2D( s_bumpX, I.tcdh.xy);		// IN:	normal_error.height
- 
--	S.base		= tbase(I.tcdh);				//	IN:  rgb.a
-+	S.base		= tbase(I.tcdh.xy);				//	IN:  rgb.a
- 	S.normal	= Nu.wzy + (NuE.xyz - 1.0);	//	(Nu.wzyx - 0.5) + (E-0.5)
- 	S.gloss		= Nu.x*Nu.x;					//	S.gloss = Nu.x*Nu.x;
- 	S.height	= NuE.z;
-@@ -155,7 +155,7 @@ surface_bumped sload_i( p_bumped I)
- 	S.normal			+= NDetail.wzy + NDetailX.xyz - 1.0; //	(Nu.wzyx - 0.5) + (E-0.5)
- 
- 	float4 detail		= tex2D( s_detail, I.tcdbump);
--	S.base.rgb			= S.base.rgb * detail.rgb * 2;
-+	S.base.rgb			= S.base.rgb * detail.rgb * 2.0;
- 
- //	S.base.rgb			= float3(1,0,0);
- #else        //	USE_TDETAIL_BUMP
-@@ -179,10 +179,10 @@ surface_bumped sload_i( p_bumped I, float2 pixeloffset )
- 
- 	UpdateTC(I);	//	All kinds of parallax are applied here.
- 
--	float4 	Nu	= tex2D( s_bump, I.tcdh );		// IN:	normal.gloss
--	float4 	NuE	= tex2D( s_bumpX, I.tcdh);	// IN:	normal_error.height
-+	float4 	Nu	= tex2D( s_bump, I.tcdh.xy );		// IN:	normal.gloss
-+	float4 	NuE	= tex2D( s_bumpX, I.tcdh.xy);	// IN:	normal_error.height
- 
--	S.base		= tbase(I.tcdh);				//	IN:  rgb.a
-+	S.base		= tbase(I.tcdh.xy);				//	IN:  rgb.a
- 	S.normal	= Nu.wzy + (NuE.xyz - 1.0);	//	(Nu.wzyx - 0.5) + (E-0.5)
- 	S.gloss		= Nu.x*Nu.x;					//	S.gloss = Nu.x*Nu.x;
- 	S.height	= NuE.z;
-@@ -203,7 +203,7 @@ surface_bumped sload_i( p_bumped I, float2 pixeloffset )
- 	S.normal			+= NDetail.wzy + NDetailX.xyz - 1.0; //	(Nu.wzyx - 0.5) + (E-0.5)
- 
- 	float4 detail		= tex2D( s_detail, I.tcdbump);
--	S.base.rgb			= S.base.rgb * detail.rgb * 2;
-+	S.base.rgb			= S.base.rgb * detail.rgb * 2.0;
- 
- //	S.base.rgb			= float3(1,0,0);
- #else        //	USE_TDETAIL_BUMP
-@@ -225,7 +225,7 @@ surface_bumped sload ( p_bumped I)
- 		S.normal.z			*=	0.5;		//. make bump twice as contrast (fake, remove me if possible)
- 
- #ifdef	GBUFFER_OPTIMIZATION
--	   S.height = 0;
-+	   S.height = 0.0;
- #endif	//	GBUFFER_OPTIMIZATION
-       return              S;
- }
-@@ -235,7 +235,7 @@ surface_bumped sload ( p_bumped I, float2 pixeloffset )
-       surface_bumped      S   = sload_i	(I, pixeloffset );
- 		S.normal.z			*=	0.5;		//. make bump twice as contrast (fake, remove me if possible)
- #ifdef	GBUFFER_OPTIMIZATION
--	   S.height = 0;
-+	   S.height = 0.0;
- #endif	//	GBUFFER_OPTIMIZATION
-       return              S;
- }
-diff --git a/res/gamedata/shaders/gl/ssao.ps b/res/gamedata/shaders/gl/ssao.ps
-index c32fd68a92468d72a0547c7af769684b2140d19b..0270af7005844863f3d2d3f8c5afc44aca3ff9c5 100644
---- a/res/gamedata/shaders/gl/ssao.ps
-+++ b/res/gamedata/shaders/gl/ssao.ps
-@@ -194,7 +194,7 @@ for (int rad=0; rad < RINGS; rad++)
- 		//float3	tap_pos	= s_position.Sample(smp_nofilter,tap);
- 		float3	tap_pos	= gbd.P;
- #else // SSAO_OPT_DATA
--		float	z	= textureLod(s_half_depth,tap,0).r;
-+		float	z	= textureLod(s_half_depth,tap,0.0).r;
- 		float3	tap_pos	= uv_to_eye(tap, z);
- #endif // SSAO_OPT_DATA
- 		float3 	direct 	= tap_pos-P.xyz;
-@@ -205,12 +205,12 @@ for (int rad=0; rad < RINGS; rad++)
- 		float 	infl 	= saturate(dot( direct, N.xyz));
- 		float 	occ_factor = saturate(dist);
- //		float	range_att = 1/(occ_factor+0.1);
--		float	range_att = saturate(1-dist*0.5);
-+		float	range_att = saturate(1.0 - dist * 0.5);
- 		{
- //			occ += lerp( 1, occ_factor, infl);
- //			num_dir += 1;		
- 
--			occ += (infl+0.01)*lerp( 1, occ_factor, infl)*range_att;
-+			occ += (infl + 0.01) * lerp(1.0, occ_factor, infl) * range_att;
- 			num_dir += (infl+0.01)*range_att;
- 
- //			occ += (infl+0.1)*lerp( 1, occ_factor, infl)*range_att;
-@@ -234,16 +234,16 @@ for (int rad=0; rad < RINGS; rad++)
- //	occ = occ*occ;
- //	occ = occ*0.5+0.5;
- #if SSAO_QUALITY==1
--	occ = (occ+0.3)/(1+0.3);
-+	occ = (occ + 0.3) / (1.0 + 0.3);
- #else	//	SSAO_QUALITY==1
--	occ = (occ+0.2)/(1+0.2);
-+	occ = (occ + 0.2) / (1.0 + 0.2);
- #endif	//	SSAO_QUALITY==1
- //	occ = 1;
- 
- 	float WeaponAttenuation = smoothstep( 0.8, 0.9, length( P.xyz ));
--	occ = lerp( 1, occ, WeaponAttenuation );
-+	occ = lerp(1.0, occ, WeaponAttenuation);
- 
- 	return occ;
- }
- 
--#endif	//	SSAO_QUALITY
-\ No newline at end of file
-+#endif	//	SSAO_QUALITY
-diff --git a/res/gamedata/shaders/gl/ssao_blur.ps b/res/gamedata/shaders/gl/ssao_blur.ps
-index 7c29131226add0b15d21b01d4d90233523f5e6da..fcdb01c1260c6283d1cb7be49e521ef3e1a4257a 100644
---- a/res/gamedata/shaders/gl/ssao_blur.ps
-+++ b/res/gamedata/shaders/gl/ssao_blur.ps
-@@ -50,8 +50,8 @@ float ssao_blur_ps(int2 centerTC, int iSample)
- #endif
- 	 
- 		float fDepth  = sampleData.g;
--		float fDiff	  = 8*abs(fDepth-centerDepth)/min(fDepth,centerDepth);
--	 	float fWeight = saturate(1-fDiff);
-+		float fDiff	  = 8.0 * abs(fDepth - centerDepth) / min(fDepth, centerDepth);
-+		float fWeight = saturate(1.0 - fDiff);
- 
- 		fOcclusion += sampleData.r * fWeight;
- 
-diff --git a/res/gamedata/shaders/gl/ssao_calc.ps b/res/gamedata/shaders/gl/ssao_calc.ps
-index 244f37d970d3bbee65faf5f9ef0cacbaa0fa1fec..625264ee7299cdaf8d525e80660b53a3ec9da02f 100644
---- a/res/gamedata/shaders/gl/ssao_calc.ps
-+++ b/res/gamedata/shaders/gl/ssao_calc.ps
-@@ -20,7 +20,7 @@ float4 _main ( _input I )
- float4 _main ( _input I, uint iSample )
- #endif
- {
--	gbuffer_data gbd0 = gbuffer_load_data( GLD_P(I.tc0.xy + 0.5 * pos_decompression_params2.zw, I.pos2d * 2, ISAMPLE) );
-+	gbuffer_data gbd0 = gbuffer_load_data( GLD_P(I.tc0.xy + 0.5 * pos_decompression_params2.zw, I.pos2d * 2.0, ISAMPLE) );
- 
- 	float3	P = gbd0.P.xyz;
- 	float3	N = gbd0.N.xyz;
-diff --git a/res/gamedata/shaders/gl/ssao_hbao.ps b/res/gamedata/shaders/gl/ssao_hbao.ps
-index 4ab52566d00d357e0caa15291626b4cfb3bb6c59..d071c3336cf75f1d4fba91cd647e88bc3a45631f 100644
---- a/res/gamedata/shaders/gl/ssao_hbao.ps
-+++ b/res/gamedata/shaders/gl/ssao_hbao.ps
-@@ -95,7 +95,7 @@ float3 fetch_eye_pos(float2 uv)
- 		//float3	tap_pos	= s_position.Sample(smp_nofilter,tap);
- 		float3	tap_pos	= gbd.P;
- #else // SSAO_OPT_DATA
--    float z = textureLod( s_half_depth, uv, 0 ).z;
-+    float z = textureLod( s_half_depth, uv, 0.0 ).z;
-     return uv_to_eye(uv, z);
- #endif // SSAO_OPT_DATA
- }
-@@ -346,7 +346,7 @@ float4 calc_hbao(float z, float3 N, float2 tc0, float4 pos2d)
-     float3 tc1	= mul( m_v2w, float4(P,1) );
-     tc1 *= ssao_noise_tile_factor;
-     tc1.xz += tc1.y; 
--    float3 rand_Dir = textureLod(jitter4, tc1.xz, 0).xyz; 
-+    float3 rand_Dir = textureLod(jitter4, tc1.xz, 0.0).xyz;
- #endif
- 
- 
-@@ -435,4 +435,4 @@ float4 calc_hbao(float z, float3 N, float2 tc0, float4 pos2d)
-     return float4(1.0 - ao4 / g_NumDir * (g_Contrast * WeaponAttenuation));
- }
- 
--#endif	//	SSAO_QUALITY
-\ No newline at end of file
-+#endif	//	SSAO_QUALITY
-diff --git a/res/gamedata/shaders/gl/water.ps b/res/gamedata/shaders/gl/water.ps
-index 3b29eecac257bd2373de374356933b12e1e64026..9109af10143f3f48903d1d03125fbc4c988c4128 100644
---- a/res/gamedata/shaders/gl/water.ps
-+++ b/res/gamedata/shaders/gl/water.ps
-@@ -56,7 +56,7 @@ float4 _main( v2p I )
- 		env	*= env*2.0;
- 
- 	float	fresnel	= saturate (dot(vreflect,v2point));
--	float	power	= pow(fresnel,9);
-+	float	power	= pow(fresnel, 9.0);
- 	float	amount	= 0.15 + 0.25*power;	// 1=full env, 0=no env
- 
- 	float3	c_reflection	= env*amount;
-diff --git a/res/gamedata/shaders/gl/waterd.vs b/res/gamedata/shaders/gl/waterd.vs
-index 49d8af8ae43e0994ebe72cdffc028b6b816b85a8..d95a33d9d07fd7c54840026af40d06b56b0f26c2 100644
---- a/res/gamedata/shaders/gl/waterd.vs
-+++ b/res/gamedata/shaders/gl/waterd.vs
-@@ -18,7 +18,7 @@ v2p _main (v_vert v)
- 	float3 	N 	= unpack_normal		(v.N);
- 		P 	= watermove		(P);
- 
--	o.tbase		= unpack_tc_base	(v.uv,v.T.w,v.B.w);		// copy tc
-+	o.tbase		= unpack_tc_base	(float2(v.uv), v.T.w, v.B.w);		// copy tc
- 	o.tdist0	= watermove_tc 		(o.tbase*W_DISTORT_BASE_TILE_0, P.xz, W_DISTORT_AMP_0);
- 	o.tdist1	= watermove_tc 		(o.tbase*W_DISTORT_BASE_TILE_1, P.xz, W_DISTORT_AMP_1);
- 	o.hpos 		= mul			(m_VP, P);			// xform, input in world coords
 diff --git a/src/Common/AndroidGameSpyThreadCompat.c b/src/Common/AndroidGameSpyThreadCompat.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..1097f0a872afab024fc9e92204dbff057897117f
+index 00000000..1097f0a8
 --- /dev/null
 +++ b/src/Common/AndroidGameSpyThreadCompat.c
 @@ -0,0 +1,76 @@
@@ -3707,7 +2881,7 @@ index 0000000000000000000000000000000000000000..1097f0a872afab024fc9e92204dbff05
 +#endif
 diff --git a/src/Common/AndroidGameSpyThreadCompat.h b/src/Common/AndroidGameSpyThreadCompat.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..17c79e78bbb979ce73d26ffa51532ed0d327fd90
+index 00000000..17c79e78
 --- /dev/null
 +++ b/src/Common/AndroidGameSpyThreadCompat.h
 @@ -0,0 +1,11 @@
@@ -3723,7 +2897,7 @@ index 0000000000000000000000000000000000000000..17c79e78bbb979ce73d26ffa51532ed0
 +#   define pthread_detach xrGameSpyAndroidDetach
 +#endif
 diff --git a/src/Common/Platform.hpp b/src/Common/Platform.hpp
-index 75887f02012d576cfc300912590d1d55d7091764..724ab4dde66339149c9ba908790b46695cab6ab5 100644
+index 75887f02..724ab4dd 100644
 --- a/src/Common/Platform.hpp
 +++ b/src/Common/Platform.hpp
 @@ -3,6 +3,10 @@
@@ -3748,7 +2922,7 @@ index 75887f02012d576cfc300912590d1d55d7091764..724ab4dde66339149c9ba908790b4669
  #elif defined(XR_PLATFORM_BSD)
 diff --git a/src/Common/PlatformAndroid.inl b/src/Common/PlatformAndroid.inl
 new file mode 100644
-index 0000000000000000000000000000000000000000..d8b2c07546fba2052fa4f642f7b06fc18606ecc0
+index 00000000..d8b2c075
 --- /dev/null
 +++ b/src/Common/PlatformAndroid.inl
 @@ -0,0 +1,7 @@
@@ -3760,7 +2934,7 @@ index 0000000000000000000000000000000000000000..d8b2c07546fba2052fa4f642f7b06fc1
 +// it.  The common ABI glue is intentionally shared for now.
 +#include "Common/PlatformLinux.inl"
 diff --git a/src/Layers/xrRender/BufferUtils.h b/src/Layers/xrRender/BufferUtils.h
-index a00c2eaec000e8bec822a050f855ef577206472d..4b2cfdfb74440525b10b45ce4b8a132c2bacdafd 100644
+index a00c2eae..4b2cfdfb 100644
 --- a/src/Layers/xrRender/BufferUtils.h
 +++ b/src/Layers/xrRender/BufferUtils.h
 @@ -22,7 +22,7 @@ void ConvertVertexDeclaration(const VertexElement* dxdecl, SDeclaration* decl);
@@ -3773,7 +2947,7 @@ index a00c2eaec000e8bec822a050f855ef577206472d..4b2cfdfb74440525b10b45ce4b8a132c
  
  namespace BufferUtils
 diff --git a/src/Layers/xrRender/SH_Texture.h b/src/Layers/xrRender/SH_Texture.h
-index 46df12b878c1aabd778e5049d5229743659b562e..21c8aab294ad3844c6e06b3cc92d3655391432b5 100644
+index 46df12b8..21c8aab2 100644
 --- a/src/Layers/xrRender/SH_Texture.h
 +++ b/src/Layers/xrRender/SH_Texture.h
 @@ -79,6 +79,7 @@ public:
@@ -3785,7 +2959,7 @@ index 46df12b878c1aabd778e5049d5229743659b562e..21c8aab294ad3844c6e06b3cc92d3655
  #else
  #   error No graphics API selected or enabled!
 diff --git a/src/Layers/xrRender/ShaderResourceTraits.h b/src/Layers/xrRender/ShaderResourceTraits.h
-index e4425ea6bab1700ffbb7ab9ecd3382290d2e58ec..24868cb7bbe2bc21cfcb3ef25cd724808105cf7b 100644
+index e4425ea6..63f3d4f1 100644
 --- a/src/Layers/xrRender/ShaderResourceTraits.h
 +++ b/src/Layers/xrRender/ShaderResourceTraits.h
 @@ -2,6 +2,10 @@
@@ -3877,7 +3051,25 @@ index e4425ea6bab1700ffbb7ab9ecd3382290d2e58ec..24868cb7bbe2bc21cfcb3ef25cd72480
      CHK_GL(glLinkProgram(program));
      CHK_GL(glDetachShader(program, ps));
      CHK_GL(glDetachShader(program, vs));
-@@ -706,7 +725,13 @@ T* CResourceManager::CreateShader(cpcstr name, pcstr filename /*= nullptr*/, u32
+@@ -697,7 +716,16 @@ T* CResourceManager::CreateShader(cpcstr name, pcstr filename /*= nullptr*/, u32
+ #endif
+ 
+         // Compile
+-        HRESULT const _hr = RImplementation.shader_compile(name, file, c_entry, c_target, flags, (void*&)sh);
++#if defined(XR_PLATFORM_ANDROID)
++        // The GLES source translator scopes compatibility rewrites to the
++        // physical shader path. Resource names may carry option suffixes,
++        // while shName is the unmodified game/mod file that was opened.
++        const pcstr compileName = shName;
++#else
++        const pcstr compileName = name;
++#endif
++        HRESULT const _hr = RImplementation.shader_compile(
++            compileName, file, c_entry, c_target, flags, (void*&)sh);
+ 
+         FS.r_close(file);
+ 
+@@ -706,7 +734,13 @@ T* CResourceManager::CreateShader(cpcstr name, pcstr filename /*= nullptr*/, u32
          if (FAILED(_hr) && fallback)
              goto fallback;
  
@@ -3892,7 +3084,7 @@ index e4425ea6bab1700ffbb7ab9ecd3382290d2e58ec..24868cb7bbe2bc21cfcb3ef25cd72480
          return sh;
      }
 diff --git a/src/Layers/xrRender/dxUIShader.cpp b/src/Layers/xrRender/dxUIShader.cpp
-index 26d273e29806bd1b2d57721572b455d30a530ae3..d1e2f9694f75499e9575512844d1d6724162fea1 100644
+index 26d273e2..d1e2f969 100644
 --- a/src/Layers/xrRender/dxUIShader.cpp
 +++ b/src/Layers/xrRender/dxUIShader.cpp
 @@ -17,7 +17,11 @@ CTexture* dxUIShader::GetBaseTexture() const
@@ -3946,7 +3138,7 @@ index 26d273e29806bd1b2d57721572b455d30a530ae3..d1e2f9694f75499e9575512844d1d672
  }
  } // namespace xray::render::RENDER_NAMESPACE
 diff --git a/src/Layers/xrRenderGL/glBufferUtils.cpp b/src/Layers/xrRenderGL/glBufferUtils.cpp
-index 0889426e5ae65cc1df9a2efd3724029206bc6aa0..4cfbf42d64dcac503cb0c52c5e13f6404743c5e8 100644
+index 0889426e..4cfbf42d 100644
 --- a/src/Layers/xrRenderGL/glBufferUtils.cpp
 +++ b/src/Layers/xrRenderGL/glBufferUtils.cpp
 @@ -153,14 +153,14 @@ void IterVertexDeclaration(const VertexElement* dxdecl, F&& callback)
@@ -3979,7 +3171,7 @@ index 0889426e5ae65cc1df9a2efd3724029206bc6aa0..4cfbf42d64dcac503cb0c52c5e13f640
  
  //-----------------------------------------------------------------------------
 diff --git a/src/Layers/xrRenderGL/glHW.cpp b/src/Layers/xrRenderGL/glHW.cpp
-index 5e37a01d4e575dad6f06e6a621e429fe94546dec..d7f421d3308cb3da38dd3abe4200d678ff50b347 100644
+index 5e37a01d..d7f421d3 100644
 --- a/src/Layers/xrRenderGL/glHW.cpp
 +++ b/src/Layers/xrRenderGL/glHW.cpp
 @@ -54,19 +54,35 @@ CHW::~CHW()
@@ -4208,7 +3400,7 @@ index 5e37a01d4e575dad6f06e6a621e429fe94546dec..d7f421d3308cb3da38dd3abe4200d678
  }
  
 diff --git a/src/Layers/xrRenderGL/glHWCaps.cpp b/src/Layers/xrRenderGL/glHWCaps.cpp
-index 0fa183f65d4da0e5508a7cb8a429cdbd7ad25efd..73e7a53ff9a7a338c325b7d76f4b4aa1d39175d9 100644
+index 0fa183f6..73e7a53f 100644
 --- a/src/Layers/xrRenderGL/glHWCaps.cpp
 +++ b/src/Layers/xrRenderGL/glHWCaps.cpp
 @@ -28,7 +28,12 @@ void CHWCaps::Update()
@@ -4244,7 +3436,7 @@ index 0fa183f65d4da0e5508a7cb8a429cdbd7ad25efd..73e7a53ff9a7a338c325b7d76f4b4aa1
      raster.b_MRT_mixdepth = TRUE;
      raster.dwInstructions = 256;
 diff --git a/src/Layers/xrRenderGL/glR_Backend_Runtime.h b/src/Layers/xrRenderGL/glR_Backend_Runtime.h
-index fc37884139c8b8b113be9ce91eebf0a079439a18..4f1e72be4538d0fa6124c251dba0796140989505 100644
+index fc378841..4f1e72be 100644
 --- a/src/Layers/xrRenderGL/glR_Backend_Runtime.h
 +++ b/src/Layers/xrRenderGL/glR_Backend_Runtime.h
 @@ -154,6 +154,13 @@ ICF void CBackend::set_Format(SDeclaration* _decl)
@@ -4317,7 +3509,7 @@ index fc37884139c8b8b113be9ce91eebf0a079439a18..4f1e72be4538d0fa6124c251dba07961
  }
  
 diff --git a/src/Layers/xrRenderGL/glResourceManager_Resources.cpp b/src/Layers/xrRenderGL/glResourceManager_Resources.cpp
-index 417c82ed64e8d3a95556993cab69eacbcb0285f9..6ce6af4e24e134e304ab04e551dadeedecf3ace0 100644
+index 417c82ed..6ce6af4e 100644
 --- a/src/Layers/xrRenderGL/glResourceManager_Resources.cpp
 +++ b/src/Layers/xrRenderGL/glResourceManager_Resources.cpp
 @@ -112,6 +112,9 @@ bool CResourceManager::_LinkPP(SPass& pass)
@@ -4331,7 +3523,7 @@ index 417c82ed64e8d3a95556993cab69eacbcb0285f9..6ce6af4e24e134e304ab04e551dadeed
  
          pass.ps = nullptr;
 diff --git a/src/Layers/xrRenderGL/glSH_RT.cpp b/src/Layers/xrRenderGL/glSH_RT.cpp
-index 5d967334bbc6758ebab209ec410068d380e2facf..6b1eb0d4e4238d5874528a2783643b33cdc3524c 100644
+index 5d967334..6b1eb0d4 100644
 --- a/src/Layers/xrRenderGL/glSH_RT.cpp
 +++ b/src/Layers/xrRenderGL/glSH_RT.cpp
 @@ -33,7 +33,7 @@ void CRT::create(LPCSTR Name, u32 w, u32 h, D3DFORMAT f, u32 SampleCount /*= 1*/
@@ -4411,7 +3603,7 @@ index 5d967334bbc6758ebab209ec410068d380e2facf..6b1eb0d4e4238d5874528a2783643b33
  
  void resptrcode_crt::create(LPCSTR Name, u32 w, u32 h, D3DFORMAT f, u32 SampleCount /*= 1*/, u32 slices_num /*=1*/, Flags32 flags /*= {}*/)
 diff --git a/src/Layers/xrRenderGL/glSH_Texture.cpp b/src/Layers/xrRenderGL/glSH_Texture.cpp
-index d7393f78ec77a26a3b867c85bb4fd62222605d03..7060886a9fab5bd87d0de11f96ac9c3557f7eec6 100644
+index d7393f78..7060886a 100644
 --- a/src/Layers/xrRenderGL/glSH_Texture.cpp
 +++ b/src/Layers/xrRenderGL/glSH_Texture.cpp
 @@ -14,6 +14,29 @@
@@ -4603,7 +3795,7 @@ index d7393f78ec77a26a3b867c85bb4fd62222605d03..7060886a9fab5bd87d0de11f96ac9c35
  }
  
 diff --git a/src/Layers/xrRenderGL/glState.cpp b/src/Layers/xrRenderGL/glState.cpp
-index f239634477deb071b2636a43feba03f4720b024a..6fc4af0ca87335aba62c906668a4cbe972ac30d5 100644
+index f2396344..6fc4af0c 100644
 --- a/src/Layers/xrRenderGL/glState.cpp
 +++ b/src/Layers/xrRenderGL/glState.cpp
 @@ -235,8 +235,14 @@ void glState::UpdateSamplerState(u32 stage, u32 name, u32 value)
@@ -4622,7 +3814,7 @@ index f239634477deb071b2636a43feba03f4720b024a..6fc4af0ca87335aba62c906668a4cbe9
          break;
      case D3DSAMP_MAGFILTER: /* D3DTEXTUREFILTER filter to use for magnification */
 diff --git a/src/Layers/xrRenderGL/glStateUtils.cpp b/src/Layers/xrRenderGL/glStateUtils.cpp
-index 96fd3663aa261c9b25e70bed294ab2c096235d6d..61afac48eaa5e730d9a9102980154c43e1a2bd07 100644
+index 96fd3663..61afac48 100644
 --- a/src/Layers/xrRenderGL/glStateUtils.cpp
 +++ b/src/Layers/xrRenderGL/glStateUtils.cpp
 @@ -164,7 +164,13 @@ GLint ConvertTextureAddressMode(u32 Mode)
@@ -4640,7 +3832,7 @@ index 96fd3663aa261c9b25e70bed294ab2c096235d6d..61afac48eaa5e730d9a9102980154c43
          //	return ;
      default:
 diff --git a/src/Layers/xrRenderGL/glTexture.cpp b/src/Layers/xrRenderGL/glTexture.cpp
-index c2ca771c0f714c5e2d8b29e21e6a0fbb7aeb104d..63df22b426f47a6ab31b455598ffc7b0d50c7e5a 100644
+index c2ca771c..63df22b4 100644
 --- a/src/Layers/xrRenderGL/glTexture.cpp
 +++ b/src/Layers/xrRenderGL/glTexture.cpp
 @@ -58,7 +58,65 @@ u32 calc_texture_size(int lod, u32 mip_cnt, size_t orig_size)
@@ -4926,7 +4118,7 @@ index c2ca771c0f714c5e2d8b29e21e6a0fbb7aeb104d..63df22b426f47a6ab31b455598ffc7b0
                      break;
                  }
 diff --git a/src/Layers/xrRenderGL/glr_constants.cpp b/src/Layers/xrRenderGL/glr_constants.cpp
-index 69d52ef671105585cc8b7ab794b6bdffcf819c50..2e90b5273e380a5022a86cabbd4c128d473a0b7d 100644
+index 69d52ef6..2e90b527 100644
 --- a/src/Layers/xrRenderGL/glr_constants.cpp
 +++ b/src/Layers/xrRenderGL/glr_constants.cpp
 @@ -23,14 +23,16 @@ static class cl_sampler : public R_constant_setup
@@ -4948,11 +4140,170 @@ index 69d52ef671105585cc8b7ab794b6bdffcf819c50..2e90b5273e380a5022a86cabbd4c128d
      CHK_GL(glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &uniformCount));
  
      for (GLint i = 0; i < uniformCount; i++)
+diff --git a/src/Layers/xrRenderPC_GL/AndroidGlslCompatRules.inl b/src/Layers/xrRenderPC_GL/AndroidGlslCompatRules.inl
+new file mode 100644
+index 00000000..b1cd2f10
+--- /dev/null
++++ b/src/Layers/xrRenderPC_GL/AndroidGlslCompatRules.inl
+@@ -0,0 +1,145 @@
++// Android-only, line-scoped rewrites for desktop-oriented OpenXRay GLSL.
++//
++// Rules are scoped to their virtual shader path. Game and mod assets remain
++// untouched, while overrides of the same PC shader receive the same fix.
++XR_GLES_LINE_REWRITE("accum_sun_far.ps", "gbuffer_data gbd = gbuffer_load_data( GLD_P(I.tc, I.hpos, ISAMPLE) );", "gbuffer_data gbd = gbuffer_load_data( GLD_P(I.tc.xy, I.hpos, ISAMPLE) );")
++XR_GLES_LINE_REWRITE("accum_sun_far.ps", "return s;", "return float4(s);")
++XR_GLES_LINE_REWRITE("accum_sun_far.ps", "tc_f \t*= step( -dot( tc_f, view_shadow_proj.xy ), 0 );", "tc_f \t*= step( -dot( tc_f, view_shadow_proj.xy ), 0.0 );")
++XR_GLES_LINE_REWRITE("accum_sun_near.ps", "gbuffer_data gbd = gbuffer_load_data( GLD_P(I.tc, I.hpos, ISAMPLE) );", "gbuffer_data gbd = gbuffer_load_data( GLD_P(I.tc.xy, I.hpos, ISAMPLE) );")
++XR_GLES_LINE_REWRITE("accum_sun_near.ps", "return s;", "return float4(s);")
++XR_GLES_LINE_REWRITE("accum_volumetric.ps", "float  att \t= saturate( 1 - rsqr * Ldynamic_pos.w ); // q-linear attenuate", "float  att \t= saturate( 1.0 - rsqr * Ldynamic_pos.w ); // q-linear attenuate")
++XR_GLES_LINE_REWRITE("accum_volumetric.ps", "return  float4( result, 0);", "return  float4(result, 0.0);")
++XR_GLES_LINE_REWRITE("accum_volumetric.vs", "vPos.w \t\t= 1;", "vPos.w \t\t= 1.0;")
++XR_GLES_LINE_REWRITE("accum_volumetric_sun.ps", "float\tcoeff = (RAY_SAMPLES - 1.0*J0.x)/(RAY_SAMPLES*RAY_SAMPLES);", "float\tcoeff = (float(RAY_SAMPLES) - J0.x) / (float(RAY_SAMPLES) * float(RAY_SAMPLES));")
++XR_GLES_LINE_REWRITE("bloom_filter_f.ps", "return  ( (t_0+t_1) + (t_2+t_3) ) / 2;", "return  ( (t_0+t_1) + (t_2+t_3) ) / 2.0;")
++XR_GLES_LINE_REWRITE("clouds.vs", "float2  d0\t= v.dir.xy*2-1;", "float2  d0\t= v.dir.xy * 2.0 - 1.0;")
++XR_GLES_LINE_REWRITE("clouds.vs", "float2  d1\t= v.dir.wz*2-1;", "float2  d1\t= v.dir.wz * 2.0 - 1.0;")
++XR_GLES_LINE_REWRITE("clouds.vs", "float2 \t_0\t= v.p.xz * CLOUD_TILE0 + d0*timers.z*CLOUD_SPEED0;", "float2 \t_0\t= v.p.xz * CLOUD_TILE0 + d0 * timers.z * float(CLOUD_SPEED0);")
++XR_GLES_LINE_REWRITE("clouds.vs", "float2 \t_1\t= v.p.xz * CLOUD_TILE1 + d1*timers.z*CLOUD_SPEED1;", "float2 \t_1\t= v.p.xz * CLOUD_TILE1 + d1 * timers.z * float(CLOUD_SPEED1);")
++XR_GLES_LINE_REWRITE("clouds.vs", "o.color.w\t*= \tpow\t\t(v.p.y,25);", "o.color.w\t*= \tpow\t\t(v.p.y, 25.0);")
++XR_GLES_LINE_REWRITE("combine_1.ps", "float sun_occ = P.w*2;", "float sun_occ = P.w * 2.0;")
++XR_GLES_LINE_REWRITE("combine_2_aa.ps", "nd \t\t=  step\t\t(0,nd);\t// bw", "nd \t\t=  step\t\t(float4(0.0), nd);\t// bw")
++XR_GLES_LINE_REWRITE("combine_2_aa.ps", "dd \t\t=  abs(2*dc.z-dd)-e_barrier.y;", "dd \t\t=  abs(2.0 * dc.z - dd) - e_barrier.y;")
++XR_GLES_LINE_REWRITE("combine_2_aa.ps", "dd \t\t=  step\t\t(dd,int4(0));\t\t// bw", "dd \t\t=  step\t\t(dd, float4(0.0));\t\t// bw")
++XR_GLES_LINE_REWRITE("combine_2_aa.ps", "float2\toffset \t=  center * (1-w);", "float2\toffset \t=  center * (1.0 - w);")
++XR_GLES_LINE_REWRITE("deffer_base_aref_bump.ps", "S.base.w = (S.base.w-def_aref*0.5)/(1-def_aref*0.5);", "S.base.w = (S.base.w - def_aref * 0.5) / (1.0 - def_aref * 0.5);")
++XR_GLES_LINE_REWRITE("deffer_base_aref_flat.ps", "D.w = (D.w-def_aref*0.5)/(1-def_aref*0.5);", "D.w = (D.w - def_aref * 0.5) / (1.0 - def_aref * 0.5);")
++XR_GLES_LINE_REWRITE("deffer_base_aref_flat.ps", "D.rgb\t= 2*D.rgb*tex2D\t(s_detail, I.tcdbump).rgb;", "D.rgb\t= 2.0 * D.rgb * tex2D(s_detail, I.tcdbump).rgb;")
++XR_GLES_LINE_REWRITE("deffer_base_flat.ps", "D.rgb\t= 2*D.rgb*tex2D\t(s_detail, I.tcdbump).rgb;", "D.rgb\t= 2.0 * D.rgb * tex2D(s_detail, I.tcdbump).rgb;")
++XR_GLES_LINE_REWRITE("deffer_detail_s_flat.vs", "pos.w \t\t= 1;", "pos.w \t\t= 1.0;")
++XR_GLES_LINE_REWRITE("deffer_detail_w_flat.vs", "pos.w \t\t= 1;", "pos.w \t\t= 1.0;")
++XR_GLES_LINE_REWRITE("deffer_impl_flat.ps", "D.rgb\t= 2*D.rgb*dt.rgb\t ;", "D.rgb\t= 2.0 * D.rgb * dt.rgb;")
++XR_GLES_LINE_REWRITE("depth_downs.ps", "gbuffer_data gbd0 = gbuffer_load_data( GLD_P(I.tc0.xy + 0.5f * pos_decompression_params2.zw, I.pos2d * 2, ISAMPLE) );", "gbuffer_data gbd0 = gbuffer_load_data( GLD_P(I.tc0.xy + 0.5f * pos_decompression_params2.zw, I.pos2d * 2.0, ISAMPLE) );")
++XR_GLES_LINE_REWRITE("depth_downs.ps", "gbuffer_data gbd1 = gbuffer_load_data( GLD_P(I.tc0.xy - 0.5f * pos_decompression_params2.zw, I.pos2d * 2, ISAMPLE) );", "gbuffer_data gbd1 = gbuffer_load_data( GLD_P(I.tc0.xy - 0.5f * pos_decompression_params2.zw, I.pos2d * 2.0, ISAMPLE) );")
++XR_GLES_LINE_REWRITE("depth_downs.ps", "gbuffer_data gbd2 = gbuffer_load_data( GLD_P(I.tc0.xy + 0.5f * float2(+pos_decompression_params2.z, -pos_decompression_params2.w), I.pos2d * 2, ISAMPLE) );", "gbuffer_data gbd2 = gbuffer_load_data( GLD_P(I.tc0.xy + 0.5f * float2(+pos_decompression_params2.z, -pos_decompression_params2.w), I.pos2d * 2.0, ISAMPLE) );")
++XR_GLES_LINE_REWRITE("depth_downs.ps", "gbuffer_data gbd3 = gbuffer_load_data( GLD_P(I.tc0.xy + 0.5f * float2(-pos_decompression_params2.z, +pos_decompression_params2.w), I.pos2d * 2, ISAMPLE) );", "gbuffer_data gbd3 = gbuffer_load_data( GLD_P(I.tc0.xy + 0.5f * float2(-pos_decompression_params2.z, +pos_decompression_params2.w), I.pos2d * 2.0, ISAMPLE) );")
++XR_GLES_LINE_REWRITE("gather.ps", "float s0 = textureLodOffset( s_dmap, rcp_scale * offset + tc, 0, int2( 0, 1 ) ).x;", "float s0 = textureLodOffset( s_dmap, rcp_scale * float2(offset) + tc, 0.0, int2( 0, 1 ) ).x;")
++XR_GLES_LINE_REWRITE("gather.ps", "float s1 = textureLodOffset( s_dmap, rcp_scale * offset + tc, 0, int2( 1, 1 ) ).x;", "float s1 = textureLodOffset( s_dmap, rcp_scale * float2(offset) + tc, 0.0, int2( 1, 1 ) ).x;")
++XR_GLES_LINE_REWRITE("gather.ps", "float s2 = textureLodOffset( s_dmap, rcp_scale * offset + tc, 0, int2( 1, 0 ) ).x;", "float s2 = textureLodOffset( s_dmap, rcp_scale * float2(offset) + tc, 0.0, int2( 1, 0 ) ).x;")
++XR_GLES_LINE_REWRITE("gather.ps", "float s3 = textureLodOffset( s_dmap, rcp_scale * offset + tc, 0, int2( 0, 0 ) ).x;", "float s3 = textureLodOffset( s_dmap, rcp_scale * float2(offset) + tc, 0.0, int2( 0, 0 ) ).x;")
++XR_GLES_LINE_REWRITE("gather.ps", "float s0 = textureLodOffset( s_smap_minmax, rcp_scale * offset + tc, 0, int2(0, 1) ).x;", "float s0 = textureLodOffset( s_smap_minmax, rcp_scale * float2(offset) + tc, 0.0, int2(0, 1) ).x;")
++XR_GLES_LINE_REWRITE("gather.ps", "float s1 = textureLodOffset( s_smap_minmax, rcp_scale * offset + tc, 0, int2(1, 1) ).x;", "float s1 = textureLodOffset( s_smap_minmax, rcp_scale * float2(offset) + tc, 0.0, int2(1, 1) ).x;")
++XR_GLES_LINE_REWRITE("gather.ps", "float s2 = textureLodOffset( s_smap_minmax, rcp_scale * offset + tc, 0, int2(1, 0) ).x;", "float s2 = textureLodOffset( s_smap_minmax, rcp_scale * float2(offset) + tc, 0.0, int2(1, 0) ).x;")
++XR_GLES_LINE_REWRITE("gather.ps", "float s3 = textureLodOffset( s_smap_minmax, rcp_scale * offset + tc, 0, int2(0, 0) ).x;", "float s3 = textureLodOffset( s_smap_minmax, rcp_scale * float2(offset) + tc, 0.0, int2(0, 0) ).x;")
++XR_GLES_LINE_REWRITE("hmodel.h", "float4\tlight\t= textureLod(s_material, float3( hscale, hspec, m ), 0 ).xxxy;", "float4\tlight\t= textureLod(s_material, float3( hscale, hspec, m ), 0.0 ).xxxy;")
++XR_GLES_LINE_REWRITE("hmodel.h", "float3\te0d\t\t= textureLod( env_s0, nw, 0 ).rgb;", "float3\te0d\t\t= textureLod( env_s0, nw, 0.0 ).rgb;")
++XR_GLES_LINE_REWRITE("hmodel.h", "float3\te1d\t\t= textureLod( env_s1, nw, 0 ).rgb;", "float3\te1d\t\t= textureLod( env_s1, nw, 0.0 ).rgb;")
++XR_GLES_LINE_REWRITE("hmodel.h", "vreflect.y      = vreflect.y*2-1;\t// fake remapping", "vreflect.y      = vreflect.y * 2.0 - 1.0;\t// fake remapping")
++XR_GLES_LINE_REWRITE("hmodel.h", "float3\te0s\t\t= textureLod( env_s0, vreflect, 0 ).rgb;", "float3\te0s\t\t= textureLod( env_s0, vreflect, 0.0 ).rgb;")
++XR_GLES_LINE_REWRITE("hmodel.h", "float3\te1s\t\t= textureLod( env_s1, vreflect, 0 ).rgb;", "float3\te1s\t\t= textureLod( env_s1, vreflect, 0.0 ).rgb;")
++XR_GLES_LINE_REWRITE("hud3d.vs", "O.HPos.w\t= 1;", "O.HPos.w\t= 1.0;")
++XR_GLES_LINE_REWRITE("iostructs/v_model_bump.h", "I.N = v_model_N;", "I.N = skin_input_normal(v_model_N);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_bump.h", "I.T = v_model_T;", "I.T = skin_input_tangent(v_model_T);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_bump.h", "I.B = v_model_B;", "I.B = skin_input_tangent(v_model_B);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_bump.h", "I.tc = v_model_tc;", "I.tc = skin_input_tc(v_model_tc);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_def.h", "I.N = v_model_N;", "I.N = skin_input_normal(v_model_N);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_def.h", "I.T = v_model_T;", "I.T = skin_input_tangent(v_model_T);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_def.h", "I.B = v_model_B;", "I.B = skin_input_tangent(v_model_B);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_def.h", "I.tc = v_model_tc;", "I.tc = skin_input_tc(v_model_tc);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_def_lplanes.h", "I.N\t\t= v_model_N;", "I.N\t\t= skin_input_normal(v_model_N);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_def_lplanes.h", "I.T\t\t= v_model_T;", "I.T\t\t= skin_input_tangent(v_model_T);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_def_lplanes.h", "I.B\t\t= v_model_B;", "I.B\t\t= skin_input_tangent(v_model_B);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_def_lplanes.h", "I.tc\t\t= v_model_tc;", "I.tc\t\t= skin_input_tc(v_model_tc);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_distort.h", "I.N = v_model_N;", "I.N = skin_input_normal(v_model_N);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_distort.h", "I.T = v_model_T;", "I.T = skin_input_tangent(v_model_T);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_distort.h", "I.B = v_model_B;", "I.B = skin_input_tangent(v_model_B);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_distort.h", "I.tc = v_model_tc;", "I.tc = skin_input_tc(v_model_tc);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_env_lq.h", "I.N\t\t= v_model_N;", "I.N\t\t= skin_input_normal(v_model_N);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_env_lq.h", "I.T\t\t= v_model_T;", "I.T\t\t= skin_input_tangent(v_model_T);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_env_lq.h", "I.B\t\t= v_model_B;", "I.B\t\t= skin_input_tangent(v_model_B);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_env_lq.h", "I.tc\t\t= v_model_tc;", "I.tc\t\t= skin_input_tc(v_model_tc);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_flat.h", "I.N = v_model_N;", "I.N = skin_input_normal(v_model_N);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_flat.h", "I.T = v_model_T;", "I.T = skin_input_tangent(v_model_T);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_flat.h", "I.B = v_model_B;", "I.B = skin_input_tangent(v_model_B);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_flat.h", "I.tc = v_model_tc;", "I.tc = skin_input_tc(v_model_tc);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_shadow.h", "I.N = v_model_N;", "I.N = skin_input_normal(v_model_N);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_shadow.h", "I.T = v_model_T;", "I.T = skin_input_tangent(v_model_T);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_shadow.h", "I.B = v_model_B;", "I.B = skin_input_tangent(v_model_B);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_shadow.h", "I.tc = v_model_tc;", "I.tc = skin_input_tc(v_model_tc);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_shadow_aref.h", "I.N = v_model_N;", "I.N = skin_input_normal(v_model_N);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_shadow_aref.h", "I.T = v_model_T;", "I.T = skin_input_tangent(v_model_T);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_shadow_aref.h", "I.B = v_model_B;", "I.B = skin_input_tangent(v_model_B);")
++XR_GLES_LINE_REWRITE("iostructs/v_model_shadow_aref.h", "I.tc = v_model_tc;", "I.tc = skin_input_tc(v_model_tc);")
++XR_GLES_LINE_REWRITE("lmodel.h", "float  att \t= saturate\t(1 - rsqr*light_range_rsq);\t\t\t// q-linear attenuate", "float  att \t= saturate\t(1.0 - rsqr*light_range_rsq);\t\t\t// q-linear attenuate")
++XR_GLES_LINE_REWRITE("model_def_lq.ps", "float3\tfinal \t= light*t_base.rgb*2;", "float3\tfinal \t= light * t_base.rgb * 2.0;")
++XR_GLES_LINE_REWRITE("postprocess.ps", "image\t= (image * I.Color.rgb + c_brightness.rgb)*2;\t\t// mad", "image\t= (image * I.Color.rgb + c_brightness.rgb) * 2.0;\t\t// mad")
++XR_GLES_LINE_REWRITE("postprocess_cm.ps", "image\t= (image * I.Color.rgb + c_brightness.rgb)*2;\t\t// mad", "image\t= (image * I.Color.rgb + c_brightness.rgb) * 2.0;\t\t// mad")
++XR_GLES_LINE_REWRITE("rain_layer.ps", "float4 water = textureLod( s_water, tc1, 0 );", "float4 water = textureLod( s_water, tc1, 0.0 );")
++XR_GLES_LINE_REWRITE("rain_patch_normal.ps", "water.y = 0;", "water.y = 0.0;")
++XR_GLES_LINE_REWRITE("rain_patch_normal.ps", "float\tfAtten = 1 - smoothstep( 5, 20, _P.z );", "float\tfAtten = 1.0 - smoothstep( 5.0, 20.0, _P.z );")
++XR_GLES_LINE_REWRITE("rain_patch_normal.ps", "s *= saturate(fIsUp*10+(10*0.5)+0.5);", "s *= saturate(fIsUp * 10.0 + (10.0 * 0.5) + 0.5);")
++XR_GLES_LINE_REWRITE("rain_patch_normal.ps", "fIsUp = max(0, fIsUp);", "fIsUp = max(0.0, fIsUp);")
++XR_GLES_LINE_REWRITE("rain_patch_normal.ps", "float3 tc1 = WorldP / 2;", "float3 tc1 = WorldP / 2.0;")
++XR_GLES_LINE_REWRITE("rain_patch_normal.ps", "float fAngleFactor = 1 - fIsUp;", "float fAngleFactor = 1.0 - fIsUp;")
++XR_GLES_LINE_REWRITE("rain_patch_normal.ps", "fAngleFactor = 0.1*ceil(10*fAngleFactor);", "fAngleFactor = 0.1 * ceil(10.0 * fAngleFactor);")
++XR_GLES_LINE_REWRITE("shadow.h", "d4.w = textureLod( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col, row ), 0 ).x;", "d4.w = textureLod( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col, row ), 0.0 ).x;")
++XR_GLES_LINE_REWRITE("shadow.h", "d4.z = textureLod( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col+1, row ) , 0 ).x;", "d4.z = textureLod( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col+1, row ) , 0.0 ).x;")
++XR_GLES_LINE_REWRITE("shadow.h", "d4.y = textureLod( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col+1, row+1 ), 0 ).x;", "d4.y = textureLod( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col+1, row+1 ), 0.0 ).x;")
++XR_GLES_LINE_REWRITE("shadow.h", "d4.x = textureLod( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col, row+1 ), 0 ).x;", "d4.x = textureLod( s_dmap, tc.xy + (1.0/float(SMAP_size)) * float2( col, row+1 ), 0.0 ).x;")
++XR_GLES_LINE_REWRITE("shadow.h", "r1.x \t= test \t(tc,-J0.xy+half2(-k1,0)).x;", "r1.x \t= test \t(tc,-J0.xy+half2(-k1,0.0)).x;")
++XR_GLES_LINE_REWRITE("shadow.h", "r1.y \t= test \t(tc,-J0.wz+half2( 0,-k1)).y;", "r1.y \t= test \t(tc,-J0.wz+half2( 0.0,-k1)).y;")
++XR_GLES_LINE_REWRITE("shadow.h", "r1.z\t= test\t(tc,-2*J0.xy+half2( k1, 0)).z;", "r1.z\t= test\t(tc,-2.0*J0.xy+half2( k1, 0.0)).z;")
++XR_GLES_LINE_REWRITE("shadow.h", "r1.w\t= test\t(tc,-2*J0.wz+half2( 0, k1)).x;", "r1.w\t= test\t(tc,-2.0*J0.wz+half2( 0.0, k1)).x;")
++XR_GLES_LINE_REWRITE("shadow.h", "float minmax     = textureLod( s_smap_minmax, t.xy, 0 ).x;", "float minmax     = textureLod( s_smap_minmax, t.xy, 0.0 ).x;")
++XR_GLES_LINE_REWRITE("shadow.h", "bool   umbra     = ( ( minmax < 0 ) && ( t.z > -minmax ) );", "bool   umbra     = ( ( minmax < 0.0 ) && ( t.z > -minmax ) );")
++XR_GLES_LINE_REWRITE("shadow_direct_tree.vs", "float \tfrac \t= 0;", "float \tfrac \t= 0.0;")
++XR_GLES_LINE_REWRITE("shared/cloudconfig.h", "#define CLOUD_SPEED0\t\t(2*0.05)\t\t//(0.033)", "#define CLOUD_SPEED0\t\t(2.0*0.05)\t\t//(0.033)")
++XR_GLES_LINE_REWRITE("shared/cloudconfig.h", "#define CLOUD_SPEED1\t\t(2*0.025)\t\t//(0.033)", "#define CLOUD_SPEED1\t\t(2.0*0.025)\t\t//(0.033)")
++XR_GLES_LINE_REWRITE("shared/common.h", "#define clip(x)\t\tif (x < 0) discard", "#define clip(x)\t\tif ((x) < 0.0) discard")
++XR_GLES_LINE_REWRITE("shared/watermove.h", "amount\t= 1 - fresnel*fresnel;\t\t\t// 0=full env, 1=no env", "amount\t= 1.0 - fresnel * fresnel;\t\t\t// 0=full env, 1=no env")
++XR_GLES_LINE_REWRITE("skin.h", "int \tmid = int(v.N.w * 255 + 0.3);", "int \tmid = int(v.N.w * 255.0 + 0.3);")
++XR_GLES_LINE_REWRITE("skin.h", "int \tid_2 \t= int(v.B.w*255+0.3);", "int \tid_2 \t= int(v.B.w * 255.0 + 0.3);")
++XR_GLES_LINE_REWRITE("skin.h", "float \tw2 \t= 1-w0-w1;", "float \tw2 \t= 1.0 - w0 - w1;")
++XR_GLES_LINE_REWRITE("skin.h", "id[i] = int(v.ind[i]*255+0.3);", "id[i] = int(v.ind[i] * 255.0 + 0.3);")
++XR_GLES_LINE_REWRITE("skin.h", "w[3]\t= 1-w[0]-w[1]-w[2];", "w[3]\t= 1.0 - w[0] - w[1] - w[2];")
++XR_GLES_LINE_REWRITE("sload.h", "const float maxSamples = 25;", "const float maxSamples = 25.0;")
++XR_GLES_LINE_REWRITE("sload.h", "const float minSamples = 5;", "const float minSamples = 5.0;")
++XR_GLES_LINE_REWRITE("sload.h", "float2\tvTexCurrentOffset\t= I.tcdh;", "float2\tvTexCurrentOffset\t= I.tcdh.xy;")
++XR_GLES_LINE_REWRITE("sload.h", "for( int i=0; i<nNumSteps; ++i )", "for( int i=0; float(i) < nNumSteps; ++i )")
++XR_GLES_LINE_REWRITE("sload.h", "fCurrHeight = textureLod( s_bumpX, vTexCurrentOffset.xy, 0 ).a;", "fCurrHeight = textureLod( s_bumpX, vTexCurrentOffset.xy, 0.0 ).a;")
++XR_GLES_LINE_REWRITE("sload.h", "float fPrevHeight = textureLod( s_bumpX, vTexCurrentOffset.xy, 0 ).a;", "float fPrevHeight = textureLod( s_bumpX, vTexCurrentOffset.xy, 0.0 ).a;")
++XR_GLES_LINE_REWRITE("sload.h", "float2\tvParallaxOffset = vDelta * ((1- fParallaxAmount )*fParallaxFade);", "float2\tvParallaxOffset = vDelta * ((1.0 - fParallaxAmount) * fParallaxFade);")
++XR_GLES_LINE_REWRITE("sload.h", "float2\tvTexCoord = I.tcdh + vParallaxOffset;", "float2\tvTexCoord = I.tcdh.xy + vParallaxOffset;")
++XR_GLES_LINE_REWRITE("sload.h", "I.tcdh = vTexCoord;", "I.tcdh.xy = vTexCoord;")
++XR_GLES_LINE_REWRITE("sload.h", "float\theight\t= tex2D( s_bumpX, I.tcdh ).w;\t//", "float\theight\t= tex2D( s_bumpX, I.tcdh.xy ).w;\t//")
++XR_GLES_LINE_REWRITE("sload.h", "float2\tnew_tc  = I.tcdh + height * normalize(eye).xy;\t//", "float2\tnew_tc  = I.tcdh.xy + height * normalize(eye).xy;\t//")
++XR_GLES_LINE_REWRITE("sload.h", "I.tcdh\t= new_tc;", "I.tcdh.xy = new_tc;")
++XR_GLES_LINE_REWRITE("sload.h", "float4 \tNu\t= tex2D( s_bump, I.tcdh );\t\t// IN:\tnormal.gloss", "float4 \tNu\t= tex2D( s_bump, I.tcdh.xy );\t\t// IN:\tnormal.gloss")
++XR_GLES_LINE_REWRITE("sload.h", "float4 \tNuE\t= tex2D( s_bumpX, I.tcdh);\t\t// IN:\tnormal_error.height", "float4 \tNuE\t= tex2D( s_bumpX, I.tcdh.xy);\t\t// IN:\tnormal_error.height")
++XR_GLES_LINE_REWRITE("sload.h", "S.base\t\t= tbase(I.tcdh);\t\t\t\t//\tIN:  rgb.a", "S.base\t\t= tbase(I.tcdh.xy);\t\t\t\t//\tIN:  rgb.a")
++XR_GLES_LINE_REWRITE("sload.h", "S.base.rgb\t\t\t= S.base.rgb * detail.rgb * 2;", "S.base.rgb\t\t\t= S.base.rgb * detail.rgb * 2.0;")
++XR_GLES_LINE_REWRITE("sload.h", "float4 \tNuE\t= tex2D( s_bumpX, I.tcdh);\t// IN:\tnormal_error.height", "float4 \tNuE\t= tex2D( s_bumpX, I.tcdh.xy);\t// IN:\tnormal_error.height")
++XR_GLES_LINE_REWRITE("sload.h", "S.height = 0;", "S.height = 0.0;")
++XR_GLES_LINE_REWRITE("ssao.ps", "float\tz\t= textureLod(s_half_depth,tap,0).r;", "float\tz\t= textureLod(s_half_depth,tap,0.0).r;")
++XR_GLES_LINE_REWRITE("ssao.ps", "float\trange_att = saturate(1-dist*0.5);", "float\trange_att = saturate(1.0 - dist * 0.5);")
++XR_GLES_LINE_REWRITE("ssao.ps", "occ += (infl+0.01)*lerp( 1, occ_factor, infl)*range_att;", "occ += (infl + 0.01) * lerp(1.0, occ_factor, infl) * range_att;")
++XR_GLES_LINE_REWRITE("ssao.ps", "occ = (occ+0.3)/(1+0.3);", "occ = (occ + 0.3) / (1.0 + 0.3);")
++XR_GLES_LINE_REWRITE("ssao.ps", "occ = (occ+0.2)/(1+0.2);", "occ = (occ + 0.2) / (1.0 + 0.2);")
++XR_GLES_LINE_REWRITE("ssao.ps", "occ = lerp( 1, occ, WeaponAttenuation );", "occ = lerp(1.0, occ, WeaponAttenuation);")
++XR_GLES_LINE_REWRITE("ssao_blur.ps", "float fDiff\t  = 8*abs(fDepth-centerDepth)/min(fDepth,centerDepth);", "float fDiff\t  = 8.0 * abs(fDepth - centerDepth) / min(fDepth, centerDepth);")
++XR_GLES_LINE_REWRITE("ssao_blur.ps", "float fWeight = saturate(1-fDiff);", "float fWeight = saturate(1.0 - fDiff);")
++XR_GLES_LINE_REWRITE("ssao_calc.ps", "gbuffer_data gbd0 = gbuffer_load_data( GLD_P(I.tc0.xy + 0.5 * pos_decompression_params2.zw, I.pos2d * 2, ISAMPLE) );", "gbuffer_data gbd0 = gbuffer_load_data( GLD_P(I.tc0.xy + 0.5 * pos_decompression_params2.zw, I.pos2d * 2.0, ISAMPLE) );")
++XR_GLES_LINE_REWRITE("ssao_hbao.ps", "float z = textureLod( s_half_depth, uv, 0 ).z;", "float z = textureLod( s_half_depth, uv, 0.0 ).z;")
++XR_GLES_LINE_REWRITE("ssao_hbao.ps", "float3 rand_Dir = textureLod(jitter4, tc1.xz, 0).xyz;", "float3 rand_Dir = textureLod(jitter4, tc1.xz, 0.0).xyz;")
++XR_GLES_LINE_REWRITE("water.ps", "float\tpower\t= pow(fresnel,9);", "float\tpower\t= pow(fresnel, 9.0);")
++XR_GLES_LINE_REWRITE("waterd.vs", "o.tbase\t\t= unpack_tc_base\t(v.uv,v.T.w,v.B.w);\t\t// copy tc", "o.tbase\t\t= unpack_tc_base\t(float2(v.uv), v.T.w, v.B.w);\t\t// copy tc")
 diff --git a/src/Layers/xrRenderPC_GL/CMakeLists.txt b/src/Layers/xrRenderPC_GL/CMakeLists.txt
-index 2f333dcafcc00a3b4aa02b3876e4eca81c89e88e..a5cb25e77cf855870c582b4d47c19e5b7f00f5c1 100644
+index 2f333dca..7209ed25 100644
 --- a/src/Layers/xrRenderPC_GL/CMakeLists.txt
 +++ b/src/Layers/xrRenderPC_GL/CMakeLists.txt
-@@ -414,6 +414,10 @@ target_link_libraries(xrRender_GL
+@@ -9,6 +9,7 @@ target_sources(xrRender_GL PRIVATE
+     gl_rendertarget_u_set_rt.cpp
+     r2_R_sun.cpp
+     r2_test_hw.cpp
++    AndroidGlslCompatRules.inl
+     rgl_shaders.cpp
+     stdafx.cpp
+     stdafx.h
+@@ -414,6 +415,10 @@ target_link_libraries(xrRender_GL
      xrImGui
  )
  
@@ -4964,10 +4315,10 @@ index 2f333dcafcc00a3b4aa02b3876e4eca81c89e88e..a5cb25e77cf855870c582b4d47c19e5b
      PRIVATE
      XRRENDER_GL_EXPORTS
 diff --git a/src/Layers/xrRenderPC_GL/rgl_shaders.cpp b/src/Layers/xrRenderPC_GL/rgl_shaders.cpp
-index 281c80086507d4497377efb630b12df16b4205da..a65b550bea841b8658c21b5ef99febdb0f4c3311 100644
+index 281c8008..0a0b8fdc 100644
 --- a/src/Layers/xrRenderPC_GL/rgl_shaders.cpp
 +++ b/src/Layers/xrRenderPC_GL/rgl_shaders.cpp
-@@ -6,6 +6,263 @@
+@@ -6,6 +6,345 @@
  
  namespace xray::render::RENDER_NAMESPACE
  {
@@ -4975,6 +4326,20 @@ index 281c80086507d4497377efb630b12df16b4205da..a65b550bea841b8658c21b5ef99febdb
 +namespace
 +{
 +constexpr cpcstr AndroidVaryingPrefix = "_xray_gles_varying_";
++
++struct AndroidGlslLineRewrite
++{
++    cpcstr path;
++    cpcstr source;
++    cpcstr replacement;
++};
++
++constexpr AndroidGlslLineRewrite AndroidGlslLineRewrites[] =
++{
++#define XR_GLES_LINE_REWRITE(path, source, replacement) { path, source, replacement },
++#include "AndroidGlslCompatRules.inl"
++#undef XR_GLES_LINE_REWRITE
++};
 +
 +bool is_glsl_space(char value)
 +{
@@ -5015,6 +4380,67 @@ index 281c80086507d4497377efb630b12df16b4205da..a65b550bea841b8658c21b5ef99febdb
 +{
 +    return token == "flat" || token == "smooth" || token == "noperspective" || token == "centroid" ||
 +        token == "sample" || token == "invariant" || token == "precise";
++}
++
++bool glsl_line_matches_ignoring_space(const xr_string& line, size_t first, size_t last, cpcstr source)
++{
++    size_t linePosition = first;
++    size_t sourcePosition = 0;
++    while (true)
++    {
++        while (linePosition < last && is_glsl_space(line[linePosition]))
++            ++linePosition;
++        while (source[sourcePosition] && is_glsl_space(source[sourcePosition]))
++            ++sourcePosition;
++
++        if (linePosition == last || !source[sourcePosition])
++            return linePosition == last && !source[sourcePosition];
++        if (line[linePosition++] != source[sourcePosition++])
++            return false;
++    }
++}
++
++xr_string normalize_android_shader_path(cpcstr sourcePath)
++{
++    xr_string normalized = sourcePath ? sourcePath : "";
++    for (char& character : normalized)
++    {
++        if (character == '\\')
++            character = '/';
++        else if (character >= 'A' && character <= 'Z')
++            character = static_cast<char>(character - 'A' + 'a');
++    }
++    return normalized;
++}
++
++bool android_shader_path_matches(const xr_string& sourcePath, cpcstr rulePath)
++{
++    const size_t ruleLength = xr_strlen(rulePath);
++    if (sourcePath.size() < ruleLength ||
++        sourcePath.compare(sourcePath.size() - ruleLength, ruleLength, rulePath) != 0)
++        return false;
++
++    return sourcePath.size() == ruleLength || sourcePath[sourcePath.size() - ruleLength - 1] == '/';
++}
++
++bool apply_android_line_rewrite(
++    xr_string& line, size_t first, size_t last, const xr_string& sourcePath)
++{
++    const size_t length = last - first;
++    for (const auto& rewrite : AndroidGlslLineRewrites)
++    {
++        if (!android_shader_path_matches(sourcePath, rewrite.path))
++            continue;
++
++        const bool exact = xr_strlen(rewrite.source) == length &&
++            line.compare(first, length, rewrite.source) == 0;
++        if (exact || glsl_line_matches_ignoring_space(line, first, last, rewrite.source))
++        {
++            line.replace(first, length, rewrite.replacement);
++            return true;
++        }
++    }
++    return false;
 +}
 +
 +bool get_android_varying_type(const xr_string& type, xr_string& physicalType, pcstr& swizzle)
@@ -5189,10 +4615,11 @@ index 281c80086507d4497377efb630b12df16b4205da..a65b550bea841b8658c21b5ef99febdb
 +    return true;
 +}
 +
-+xr_string transform_android_glsl_source(cpcstr source, size_t length, char stage)
++xr_string transform_android_glsl_source(cpcstr source, size_t length, char stage, cpcstr sourceName)
 +{
 +    xr_string transformed;
 +    transformed.reserve(length + 256);
++    const xr_string sourcePath = normalize_android_shader_path(sourceName);
 +
 +    size_t offset = 0;
 +    while (offset < length)
@@ -5206,6 +4633,12 @@ index 281c80086507d4497377efb630b12df16b4205da..a65b550bea841b8658c21b5ef99febdb
 +        while (last > first && is_glsl_space(line[last - 1]))
 +            --last;
 +        const xr_string trimmed = line.substr(first, last - first);
++
++        // The PC renderer's HLSL-like GLSL accepts a handful of implicit
++        // conversions that strict GLSL ES drivers reject. Keep the original
++        // resource tree byte-for-byte intact and normalize only the source
++        // copy passed to the Android compiler.
++        apply_android_line_rewrite(line, first, last, sourcePath);
 +
 +        // These are built-ins in GLSL ES.  Redeclaring them is accepted by
 +        // desktop GLSL but rejected by Adreno as a reserved-name violation.
@@ -5231,29 +4664,29 @@ index 281c80086507d4497377efb630b12df16b4205da..a65b550bea841b8658c21b5ef99febdb
  void CRender::addShaderOption(const char* name, const char* value)
  {
      m_ShaderOptions += "#define ";
-@@ -130,24 +387,30 @@ public:
+@@ -130,24 +469,30 @@ public:
      [[nodiscard]] auto get() const { return m_sources; }
      [[nodiscard]] auto length() const { return m_sources_lines; }
  
 -    void compile(IReader* file, shader_options_holder& options)
-+    void compile(IReader* file, shader_options_holder& options, cpcstr target)
++    void compile(IReader* file, shader_options_holder& options, cpcstr target, cpcstr sourceName)
      {
 -        load_includes(file);
-+        load_includes(file, target[0]);
++        load_includes(file, target[0], sourceName);
          apply_options(options);
      }
  
  private:
      // TODO: OGL: make ignore commented includes
 -    void load_includes(IReader* file)
-+    void load_includes(IReader* file, char stage)
++    void load_includes(IReader* file, char stage, cpcstr sourceName)
      {
          cpcstr sourceData = static_cast<cpcstr>(file->pointer());
          const size_t dataLength = file->length();
  
          // Copy source file data into a null-terminated buffer
 +#if defined(XR_PLATFORM_ANDROID)
-+        const xr_string transformed = transform_android_glsl_source(sourceData, dataLength, stage);
++        const xr_string transformed = transform_android_glsl_source(sourceData, dataLength, stage, sourceName);
 +        cpstr data = xr_alloc<char>(transformed.size() + 1);
 +        CopyMemory(data, transformed.c_str(), transformed.size() + 1);
 +#else
@@ -5265,24 +4698,23 @@ index 281c80086507d4497377efb630b12df16b4205da..a65b550bea841b8658c21b5ef99febdb
          m_includes.push_back(data);
          m_source.push_back(data);
  
-@@ -171,7 +434,7 @@ private:
+@@ -171,7 +516,7 @@ private:
              // Open and read file, recursively load includes
              IReader* R = FS.r_open(path);
              R_ASSERT2(R, path);
 -            load_includes(R);
-+            load_includes(R, stage);
++            load_includes(R, stage, fn);
              FS.r_close(R);
  
              // Add next source, skip quotation
-@@ -224,14 +487,52 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
+@@ -224,14 +569,51 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
          sh_name.append(option);
      };
  
 +#if defined(XR_PLATFORM_ANDROID)
-+    // Prefer GLSL ES 3.20 when the context exposes it.  Besides the shader I/O
-+    // features used below, 3.20 includes the numeric implicit conversions that
-+    // the original desktop-oriented shader sources rely on.  Keep 3.10 as the
-+    // fallback for GLES 3.1 devices and enable the extension there when present.
++    // Prefer GLSL ES 3.20 when the context exposes it and retain 3.10 for
++    // GLES 3.1 devices. The source compatibility layer below is still needed:
++    // mixed integer/float operators remain stricter than desktop GLSL.
 +    options.add(GLAD_GL_ES_VERSION_3_2 ? "#version 320 es" : "#version 310 es");
 +
 +    // Some GLES 3.1 drivers expose the shader I/O blocks as an extension even
@@ -5327,17 +4759,49 @@ index 281c80086507d4497377efb630b12df16b4205da..a65b550bea841b8658c21b5ef99febdb
      sh_name.append(1u);
  #endif
  
-@@ -549,7 +850,7 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
+@@ -483,6 +865,29 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
+         sh_name.append(static_cast<u32>(0)); // DX10_1_NATIVE off
+     }
+ 
++#if defined(XR_PLATFORM_ANDROID)
++    // Vertex declarations use different physical widths for the same logical
++    // attributes in the skinning variants. The original resources rely on
++    // desktop GLSL's permissive vector narrowing; make it explicit after the
++    // SKIN_* option has been selected, without changing game or mod files.
++    options.add(
++        "#if defined(SKIN_NONE) || defined(SKIN_0)\n"
++        "#define skin_input_normal(value) value.xyz\n"
++        "#else\n"
++        "#define skin_input_normal(value) value\n"
++        "#endif\n"
++        "#if defined(SKIN_NONE) || defined(SKIN_0) || defined(SKIN_1) || defined(SKIN_2)\n"
++        "#define skin_input_tangent(value) value.xyz\n"
++        "#else\n"
++        "#define skin_input_tangent(value) value\n"
++        "#endif\n"
++        "#if defined(SKIN_2) || defined(SKIN_3)\n"
++        "#define skin_input_tc(value) value\n"
++        "#else\n"
++        "#define skin_input_tc(value) value.xy\n"
++        "#endif");
++#endif
++
+     // finish
+     options.finish();
+     sh_name.finish();
+@@ -549,7 +954,9 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
  #endif
          // Compile sources list
          shader_sources_manager sources;
 -        sources.compile(fs, options);
-+        sources.compile(fs, options, pTarget);
++        string_path sourceFileName;
++        strconcat(sizeof(sourceFileName), sourceFileName, name, ".", extension);
++        sources.compile(fs, options, pTarget, sourceFileName);
  
          // Compile the shader from sources
          program = create_shader(pTarget, sources.get(), sources.length(), filename, result, nullptr);
 diff --git a/src/Layers/xrRender_R2/r2.h b/src/Layers/xrRender_R2/r2.h
-index 1123af508145bb19be200b37ee97aabcba23c106..747b03f39902441b5ba9990a8a90d426d995f1f3 100644
+index 1123af50..747b03f3 100644
 --- a/src/Layers/xrRender_R2/r2.h
 +++ b/src/Layers/xrRender_R2/r2.h
 @@ -424,7 +424,8 @@ public:
@@ -5351,7 +4815,7 @@ index 1123af508145bb19be200b37ee97aabcba23c106..747b03f39902441b5ba9990a8a90d426
  #   error No graphics API selected or enabled!
  #endif
 diff --git a/src/utils/xrMiscMath/CMakeLists.txt b/src/utils/xrMiscMath/CMakeLists.txt
-index 4e6b9252ade69f9a9240d824bc72750c9477723d..58661240843f04fa56c5fc4a0653af0bcb57cae2 100644
+index 4e6b9252..58661240 100644
 --- a/src/utils/xrMiscMath/CMakeLists.txt
 +++ b/src/utils/xrMiscMath/CMakeLists.txt
 @@ -16,7 +16,7 @@ target_include_directories(xrMiscMath
@@ -5364,7 +4828,7 @@ index 4e6b9252ade69f9a9240d824bc72750c9477723d..58661240843f04fa56c5fc4a0653af0b
  
  target_precompile_headers(xrMiscMath
 diff --git a/src/xrCore/CMakeLists.txt b/src/xrCore/CMakeLists.txt
-index 9a1741bee0485acbd5ba79dc8ea4dc2eb5b66d61..fc8fb75a30d82b83e302d61d105e76bbb5f9c0c5 100644
+index 9a1741be..fc8fb75a 100644
 --- a/src/xrCore/CMakeLists.txt
 +++ b/src/xrCore/CMakeLists.txt
 @@ -454,7 +454,7 @@ target_include_directories(xrCore
@@ -5377,7 +4841,7 @@ index 9a1741bee0485acbd5ba79dc8ea4dc2eb5b66d61..fc8fb75a30d82b83e302d61d105e76bb
      SDL2::SDL2
  
 diff --git a/src/xrCore/LocatorAPI.cpp b/src/xrCore/LocatorAPI.cpp
-index b53178946c0ec4d34bed55e54e01e2a2b1582fb0..ca0e357b60cda476ccef60fccbb660cf463f90aa 100644
+index b5317894..ca0e357b 100644
 --- a/src/xrCore/LocatorAPI.cpp
 +++ b/src/xrCore/LocatorAPI.cpp
 @@ -11,7 +11,11 @@
@@ -5456,7 +4920,7 @@ index b53178946c0ec4d34bed55e54e01e2a2b1582fb0..ca0e357b60cda476ccef60fccbb660cf
              auto I = m_paths.emplace(xr_strdup(id), P);
  #ifndef DEBUG
 diff --git a/src/xrCore/LocatorAPI_defs.cpp b/src/xrCore/LocatorAPI_defs.cpp
-index eeee687f3388e51622a2f6dc3a54eb4583c15e4f..b9198aac4d6dcbc9c77aad7ace0ed0b42799f43c 100644
+index eeee687f..b9198aac 100644
 --- a/src/xrCore/LocatorAPI_defs.cpp
 +++ b/src/xrCore/LocatorAPI_defs.cpp
 @@ -48,6 +48,7 @@ FS_Path::FS_Path(pcstr _Root, pcstr _Add, pcstr _DefExt, pcstr _FilterCaption, u
@@ -5537,7 +5001,7 @@ index eeee687f3388e51622a2f6dc3a54eb4583c15e4f..b9198aac4d6dcbc9c77aad7ace0ed0b4
  }
  /*
 diff --git a/src/xrCore/LocatorAPI_defs.h b/src/xrCore/LocatorAPI_defs.h
-index df0572ee1f5cfaddb87d37cc7b8c32026e3636f9..adec0d2f72f20b84ea3a8be41135e7d5cd2c0896 100644
+index df0572ee..adec0d2f 100644
 --- a/src/xrCore/LocatorAPI_defs.h
 +++ b/src/xrCore/LocatorAPI_defs.h
 @@ -27,6 +27,7 @@ public:
@@ -5557,7 +5021,7 @@ index df0572ee1f5cfaddb87d37cc7b8c32026e3636f9..adec0d2f72f20b84ea3a8be41135e7d5
      void rescan_path_cb();
  };
 diff --git a/src/xrCore/xrCore.cpp b/src/xrCore/xrCore.cpp
-index ae9d57e386be4be12424913d80c76ea8fa957ce8..8ed1e8ad1fb8409cd5b4577606635d6b40f430a1 100644
+index ae9d57e3..8ed1e8ad 100644
 --- a/src/xrCore/xrCore.cpp
 +++ b/src/xrCore/xrCore.cpp
 @@ -179,6 +179,9 @@ void xrCore::Initialize(pcstr _ApplicationName, pcstr commandLine, bool init_fs,
@@ -5697,7 +5161,7 @@ index ae9d57e386be4be12424913d80c76ea8fa957ce8..8ed1e8ad1fb8409cd5b4577606635d6b
      }
      if (init_fs)
 diff --git a/src/xrEngine/CMakeLists.txt b/src/xrEngine/CMakeLists.txt
-index 6ee391fa94c9c0d9752931627425d1d1ab5b6c12..b7bc29a6f58af1a60174a6b0e6eacf499ce29113 100644
+index 6ee391fa..b7bc29a6 100644
 --- a/src/xrEngine/CMakeLists.txt
 +++ b/src/xrEngine/CMakeLists.txt
 @@ -411,6 +411,7 @@ target_include_directories(xrEngine
@@ -5709,7 +5173,7 @@ index 6ee391fa94c9c0d9752931627425d1d1ab5b6c12..b7bc29a6f58af1a60174a6b0e6eacf49
      "${CMAKE_SOURCE_DIR}/Externals/OpenAutomate/inc"
  )
 diff --git a/src/xrEngine/x_ray.cpp b/src/xrEngine/x_ray.cpp
-index 20d2e576e1b13ca2cd881187b75700362e75e4e0..1dd51def96bb590936b06e34d5c744b75360d990 100644
+index 20d2e576..1dd51def 100644
 --- a/src/xrEngine/x_ray.cpp
 +++ b/src/xrEngine/x_ray.cpp
 @@ -14,6 +14,17 @@
@@ -6500,7 +5964,7 @@ index 20d2e576e1b13ca2cd881187b75700362e75e4e0..1dd51def96bb590936b06e34d5c744b7
      Device.Run();
  
 diff --git a/src/xrEngine/x_ray.h b/src/xrEngine/x_ray.h
-index 7f73d00f3db7c355bed909faf76affcc35da4b4d..1bfa76e2523bd1891886b6d2750e497b6a953d8b 100644
+index 7f73d00f..1bfa76e2 100644
 --- a/src/xrEngine/x_ray.h
 +++ b/src/xrEngine/x_ray.h
 @@ -3,6 +3,7 @@
@@ -6537,7 +6001,7 @@ index 7f73d00f3db7c355bed909faf76affcc35da4b4d..1bfa76e2523bd1891886b6d2750e497b
  private:
      std::mutex m_discord_lock;
 diff --git a/src/xrGame/ui/UICDkey.cpp b/src/xrGame/ui/UICDkey.cpp
-index b5e17a12614ab6ad1c9dc9615f5fdd60d132831c..41ab30baae755806b66d54cb81bd3459d6b3b8fc 100644
+index b5e17a12..41ab30ba 100644
 --- a/src/xrGame/ui/UICDkey.cpp
 +++ b/src/xrGame/ui/UICDkey.cpp
 @@ -231,6 +231,16 @@ void GetPlayerName_FromRegistry(char* name, u32 const name_size)
@@ -6584,7 +6048,7 @@ index b5e17a12614ab6ad1c9dc9615f5fdd60d132831c..41ab30baae755806b66d54cb81bd3459
  #else
  #   error Select or add implementation for your platform
 diff --git a/src/xr_3da/CMakeLists.txt b/src/xr_3da/CMakeLists.txt
-index 4ff7d1158a79c1416ce6690442c13a6b6f4e8812..c4c9037a978415ff34753408d7ab3292f8ce2aee 100644
+index 4ff7d115..c4c9037a 100644
 --- a/src/xr_3da/CMakeLists.txt
 +++ b/src/xr_3da/CMakeLists.txt
 @@ -1,4 +1,8 @@
@@ -6632,7 +6096,7 @@ index 4ff7d1158a79c1416ce6690442c13a6b6f4e8812..c4c9037a978415ff34753408d7ab3292
 +    LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
  )
 diff --git a/src/xr_3da/entry_point.cpp b/src/xr_3da/entry_point.cpp
-index 82d7da5d3aafb2ee2962f349c5b1774617af74ac..85a469296d9d13c8bb58e2e80f235c911165ee76 100644
+index 82d7da5d..85a46929 100644
 --- a/src/xr_3da/entry_point.cpp
 +++ b/src/xr_3da/entry_point.cpp
 @@ -1,5 +1,9 @@
@@ -6663,10 +6127,10 @@ index 82d7da5d3aafb2ee2962f349c5b1774617af74ac..85a469296d9d13c8bb58e2e80f235c91
  
 diff --git a/utils/validate-glsl-es.py b/utils/validate-glsl-es.py
 new file mode 100755
-index 0000000000000000000000000000000000000000..2a4b58111188de6da72244727fe215510823ec28
+index 00000000..768e6823
 --- /dev/null
 +++ b/utils/validate-glsl-es.py
-@@ -0,0 +1,374 @@
+@@ -0,0 +1,498 @@
 +#!/usr/bin/env python3
 +"""Validate the Android GLSL compatibility layer with the NDK compiler.
 +
@@ -6680,6 +6144,7 @@ index 0000000000000000000000000000000000000000..2a4b58111188de6da72244727fe21551
 +from __future__ import annotations
 +
 +import argparse
++import json
 +import os
 +from pathlib import Path
 +import re
@@ -6714,6 +6179,10 @@ index 0000000000000000000000000000000000000000..2a4b58111188de6da72244727fe21551
 +    r"out\s+(?:lowp\s+|mediump\s+|highp\s+)?(?:vec4|float4)\s+"
 +    r"SV_Target(\d*)\s*;"
 +)
++REWRITE_RE = re.compile(
++    r'^XR_GLES_LINE_REWRITE\(("(?:\\.|[^"\\])*"), ("(?:\\.|[^"\\])*"), '
++    r'("(?:\\.|[^"\\])*")\)$'
++)
 +
 +STAGES = {".vs": "vert", ".ps": "frag", ".gs": "geom", ".cs": "comp"}
 +DEFAULT_PROGRAMS = (
@@ -6722,6 +6191,7 @@ index 0000000000000000000000000000000000000000..2a4b58111188de6da72244727fe21551
 +    ("combine_1.vs", "combine_1_nomsaa.ps"),
 +    ("combine_1.vs", "combine_volumetric.ps"),
 +    ("deffer_particle.vs", "deffer_particle.ps"),
++    ("model_def_lq.vs", "model_def_lq.ps"),
 +    ("sky2.vs", "sky2.ps"),
 +)
 +EXTRA_STARTUP_SHADERS = ("accum_sun_mask_nomsaa.ps", "yuv2rgb.ps")
@@ -6758,6 +6228,37 @@ index 0000000000000000000000000000000000000000..2a4b58111188de6da72244727fe21551
 +)
 +
 +
++def load_line_rewrites() -> dict[tuple[str, str], str]:
++    rules_path = (
++        Path(__file__).resolve().parents[1]
++        / "src/Layers/xrRenderPC_GL/AndroidGlslCompatRules.inl"
++    )
++    rules: dict[tuple[str, str], str] = {}
++    for line_number, line in enumerate(rules_path.read_text(encoding="utf-8").splitlines(), 1):
++        if not line.startswith("XR_GLES_LINE_REWRITE"):
++            continue
++        match = REWRITE_RE.fullmatch(line)
++        if not match:
++            raise ValueError(f"malformed GLES rewrite at {rules_path}:{line_number}")
++        source_path, source, replacement = (json.loads(value) for value in match.groups())
++        key = (source_path, source)
++        previous = rules.setdefault(key, replacement)
++        if previous != replacement:
++            raise ValueError(f"conflicting GLES rewrite for {source_path}:{source!r}")
++    if not rules:
++        raise ValueError(f"no GLES rewrite rules found in {rules_path}")
++    return rules
++
++
++LINE_REWRITES = load_line_rewrites()
++NORMALIZED_LINE_REWRITES: dict[tuple[str, str], str] = {}
++for (source_path, source), replacement in LINE_REWRITES.items():
++    normalized = "".join(source.split())
++    previous = NORMALIZED_LINE_REWRITES.setdefault((source_path, normalized), replacement)
++    if "".join(previous.split()) != "".join(replacement.split()):
++        raise ValueError(f"conflicting whitespace-normalized GLES rewrite for {source!r}")
++
++
 +def find_ndk_glslc(ndk: Path) -> tuple[Path, Path]:
 +    glslc = ndk / "shader-tools/linux-x86_64/glslc"
 +    libcxx = ndk / "toolchains/llvm/prebuilt/linux-x86_64/lib/x86_64-unknown-linux-gnu"
@@ -6784,6 +6285,26 @@ index 0000000000000000000000000000000000000000..2a4b58111188de6da72244727fe21551
 +    return current
 +
 +
++def validate_rewrite_coverage(shader_root: Path) -> tuple[bool, str]:
++    present: set[tuple[str, str]] = set()
++    for path in shader_root.rglob("*"):
++        if not path.is_file():
++            continue
++        try:
++            source = path.read_text(encoding="utf-8")
++        except UnicodeDecodeError:
++            source = path.read_text(encoding="windows-1251")
++        source_path = path.relative_to(shader_root).as_posix()
++        present.update((source_path, line.strip()) for line in source.splitlines())
++
++    missing = sorted(key for key in LINE_REWRITES if key not in present)
++    if missing:
++        return False, "stale engine rewrite rules:\n" + "\n".join(
++            f"{path}:{source!r}" for path, source in missing
++        )
++    return True, f"{len(LINE_REWRITES)} engine-source rewrite rules match upstream assets"
++
++
 +def physical_varying_type(type_name: str) -> tuple[str, str] | None:
 +    aliases = {
 +        "float": ("vec4", ".x"),
@@ -6808,8 +6329,19 @@ index 0000000000000000000000000000000000000000..2a4b58111188de6da72244727fe21551
 +    return aliases.get(type_name)
 +
 +
-+def transform_line(line: str, stage: str) -> list[str]:
++def transform_line(line: str, stage: str, source_path: str) -> list[str]:
 +    stripped = line.strip()
++    replacement = LINE_REWRITES.get((source_path, stripped))
++    if replacement is None:
++        replacement = NORMALIZED_LINE_REWRITES.get(
++            (source_path, "".join(stripped.split()))
++        )
++    if replacement is not None:
++        indentation = line[: len(line) - len(line.lstrip(" \t\r"))]
++        trailing = line[len(line.rstrip(" \t\r")) :]
++        line = indentation + replacement + trailing
++        stripped = line.strip()
++
 +    if stage == "frag" and stripped in {"in vec4 gl_FragCoord;", "in int gl_SampleID;"}:
 +        return [" " * len(line)]
 +
@@ -6854,23 +6386,24 @@ index 0000000000000000000000000000000000000000..2a4b58111188de6da72244727fe21551
 +        except UnicodeDecodeError:
 +            source = source_path.read_text(encoding="windows-1251")
 +
++        virtual_path = source_path.relative_to(shader_root).as_posix()
 +        for line_number, line in enumerate(source.splitlines(), start=1):
 +            include = INCLUDE_RE.search(line)
 +            if include:
 +                prefix = line[: include.start()]
 +                if prefix:
-+                    for transformed in transform_line(prefix, stage):
++                    for transformed in transform_line(prefix, stage, virtual_path):
 +                        output.append(transformed)
 +                        locations.append((source_path, line_number))
 +                append(resolve_include(shader_root, include.group(1)))
 +                suffix = line[include.end() :]
 +                if suffix:
-+                    for transformed in transform_line(suffix, stage):
++                    for transformed in transform_line(suffix, stage, virtual_path):
 +                        output.append(transformed)
 +                        locations.append((source_path, line_number))
 +                continue
 +
-+            for transformed in transform_line(line, stage):
++            for transformed in transform_line(line, stage, virtual_path):
 +                output.append(transformed)
 +                locations.append((source_path, line_number))
 +
@@ -6893,6 +6426,21 @@ index 0000000000000000000000000000000000000000..2a4b58111188de6da72244727fe21551
 +        "precision lowp sampler2DMS;",
 +        "precision lowp sampler2DShadow;",
 +        *(f"#define {name} {value}" for name, value in define_values.items()),
++        "#if defined(SKIN_NONE) || defined(SKIN_0)",
++        "#define skin_input_normal(value) value.xyz",
++        "#else",
++        "#define skin_input_normal(value) value",
++        "#endif",
++        "#if defined(SKIN_NONE) || defined(SKIN_0) || defined(SKIN_1) || defined(SKIN_2)",
++        "#define skin_input_tangent(value) value.xyz",
++        "#else",
++        "#define skin_input_tangent(value) value",
++        "#endif",
++        "#if defined(SKIN_2) || defined(SKIN_3)",
++        "#define skin_input_tc(value) value",
++        "#else",
++        "#define skin_input_tc(value) value.xy",
++        "#endif",
 +    ]
 +    return "\n".join(header_lines) + "\n" + expanded, locations, len(header_lines)
 +
@@ -6960,6 +6508,20 @@ index 0000000000000000000000000000000000000000..2a4b58111188de6da72244727fe21551
 +    return result.returncode == 0, format_diagnostics(result.stdout, locations, header_size, shader_root)
 +
 +
++def compile_skinning_variant(
++    glslc: Path, libcxx: Path, shader_root: Path, shader: Path, skin: int
++) -> tuple[bool, str]:
++    source, locations, header_size = build_source(shader, shader_root)
++    replacements = source.count("#define SKIN_NONE 1")
++    if replacements != 1:
++        return False, "validator runtime profile has no unique SKIN_NONE definition"
++    source = source.replace("#define SKIN_NONE 1", f"#define SKIN_{skin} 1", 1)
++    result = invoke_glslc(glslc, libcxx, shader, source)
++    return result.returncode == 0, format_diagnostics(
++        result.stdout, locations, header_size, shader_root
++    )
++
++
 +def shader_interface(glslc: Path, libcxx: Path, shader_root: Path, shader: Path) -> tuple[dict[int, tuple[str, str]], str]:
 +    source, _, _ = build_source(shader, shader_root)
 +    result = invoke_glslc(glslc, libcxx, shader, source, preprocess=True)
@@ -7014,6 +6576,15 @@ index 0000000000000000000000000000000000000000..2a4b58111188de6da72244727fe21551
 +        programs = DEFAULT_PROGRAMS
 +
 +    failures = 0
++    default_shader_root = (Path(__file__).resolve().parents[1] / "res/gamedata/shaders/gl").resolve()
++    if not args.shaders and shader_root == default_shader_root:
++        ok, diagnostics = validate_rewrite_coverage(shader_root)
++        if ok:
++            print(f"PASS rules {diagnostics}")
++        else:
++            failures += 1
++            print(f"FAIL rules\n{diagnostics}")
++
 +    for shader in shaders:
 +        ok, diagnostics = compile_shader(glslc, libcxx, shader_root, shader)
 +        if ok:
@@ -7035,7 +6606,24 @@ index 0000000000000000000000000000000000000000..2a4b58111188de6da72244727fe21551
 +            failures += 1
 +            print(f"FAIL link  {label}\n{diagnostics}")
 +
-+    print(f"Validated {len(shaders)} stages and {len(programs)} interfaces; failures: {failures}")
++    skinning_checks = 0
++    if not args.shaders:
++        skinning_shader = (shader_root / "model_def_lq.vs").resolve()
++        for skin in range(5):
++            skinning_checks += 1
++            ok, diagnostics = compile_skinning_variant(
++                glslc, libcxx, shader_root, skinning_shader, skin
++            )
++            if ok:
++                print(f"PASS skin  model_def_lq.vs SKIN_{skin}")
++            else:
++                failures += 1
++                print(f"FAIL skin  model_def_lq.vs SKIN_{skin}\n{diagnostics}")
++
++    print(
++        f"Validated {len(shaders)} stages, {len(programs)} interfaces and "
++        f"{skinning_checks} skinning variants; failures: {failures}"
++    )
 +    return 1 if failures else 0
 +
 +

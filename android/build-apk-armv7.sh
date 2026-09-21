@@ -7,6 +7,7 @@ repo_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 kit_root=${XRAY_ANDROID_KIT_ROOT:-}
 if [ -z "$kit_root" ]; then
     for candidate in "$repo_dir/.openxray-android-build-kit" \
+        "$repo_dir/../openxray-android-build-kit-v0.7.0" \
         "$repo_dir/../openxray-android-build-kit-v0.6.0" \
         "$repo_dir/../openxray-android-build-kit-v0.5.0"; do
         if [ -f "$candidate/build-kit-env.sh" ]; then
@@ -62,6 +63,21 @@ project_dir="$build_dir/gradle-project"
 rm -rf "$project_dir"
 mkdir -p "$project_dir"
 cp -R "$sdl_dir/android-project/." "$project_dir/"
+
+# A reusable SDL tree may contain Gradle task history and outputs from an
+# earlier OpenXRay package. Never let those copied files make assembleDebug
+# consider a stale APK up to date after the launcher manifest or native engine
+# changed.
+rm -rf \
+    "$project_dir/.gradle" \
+    "$project_dir/.cxx" \
+    "$project_dir/build" \
+    "$project_dir/app/.cxx" \
+    "$project_dir/app/build" \
+    "$project_dir/app/src/main/java/org/openxray" \
+    "$project_dir/app/src/main/jniLibs" \
+    "$project_dir/app/src/main/assets"
+
 cp "$repo_dir/android/apk/app/build.gradle" "$project_dir/app/build.gradle"
 cp "$repo_dir/android/apk/app/src/main/AndroidManifest.xml" "$project_dir/app/src/main/AndroidManifest.xml"
 mkdir -p "$project_dir/app/src/main/java/org/openxray/app"
@@ -94,16 +110,21 @@ fi
 chmod +x "$project_dir/gradlew"
 (
     cd "$project_dir"
+    set --
+    if [ "${XRAY_ANDROID_GRADLE_OFFLINE:-OFF}" = "ON" ]; then
+        set -- --offline
+    fi
     if [ -n "$gradle_bin" ]; then
-        "$gradle_bin" --no-daemon --no-build-cache assembleDebug
+        "$gradle_bin" "$@" --no-daemon --no-build-cache clean assembleDebug
     else
-        ./gradlew --no-daemon --no-build-cache assembleDebug
+        ./gradlew "$@" --no-daemon --no-build-cache clean assembleDebug
     fi
 )
 
 apk="$project_dir/app/build/outputs/apk/debug/app-debug.apk"
 mkdir -p "$repo_dir/build"
-output_apk="$repo_dir/build/openxray-armv7-launcher-v0.6.0-debug.apk"
+port_version=$(sed -n '1p' "$script_dir/PORT_VERSION")
+output_apk="$repo_dir/build/openxray-armv7-launcher-v$port_version-debug.apk"
 
 # AGP 8.1 aligns uncompressed native-library ZIP entries to 4 KiB. Re-align
 # those package entries to 16 KiB before signing. This is package-level
@@ -113,9 +134,24 @@ output_apk="$repo_dir/build/openxray-armv7-launcher-v0.6.0-debug.apk"
 build_tools_dir=$(find "$sdk_dir/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -1)
 zipalign_bin="$build_tools_dir/zipalign"
 apksigner_bin="$build_tools_dir/apksigner"
-if [ ! -x "$zipalign_bin" ] || [ ! -x "$apksigner_bin" ]; then
-    echo "Android SDK build-tools with zipalign and apksigner are required" >&2
+aapt_bin="$build_tools_dir/aapt"
+if [ ! -x "$zipalign_bin" ] || [ ! -x "$apksigner_bin" ] || [ ! -x "$aapt_bin" ]; then
+    echo "Android SDK build-tools with aapt, zipalign and apksigner are required" >&2
     exit 2
+fi
+
+if ! "$aapt_bin" dump badging "$apk" | grep -Fq "versionName='$port_version'"; then
+    echo "Gradle produced an APK with a stale launcher version (expected $port_version)" >&2
+    exit 1
+fi
+if ! unzip -p "$apk" lib/armeabi-v7a/libmain.so | cmp - "$native_lib_dir/libmain.so"; then
+    echo "Gradle produced an APK with a stale native engine" >&2
+    exit 1
+fi
+packaged_abis=$(zipinfo -1 "$apk" | sed -n 's#^lib/\([^/]*\)/.*#\1#p' | sort -u)
+if [ "$packaged_abis" != "armeabi-v7a" ]; then
+    echo "Gradle produced unexpected APK ABIs: $packaged_abis" >&2
+    exit 1
 fi
 
 if [ -n "${ANDROID_DEBUG_KEYSTORE:-}" ]; then

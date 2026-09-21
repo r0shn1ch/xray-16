@@ -5,41 +5,32 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_dir=${1:-$(CDPATH= cd -- "$script_dir/.." && pwd)}
 patch_dir=${XRAY_ANDROID_PATCH_DIR:-"$script_dir/patches"}
 
-if grep -Fq 'pw->pw_gecos && pw->pw_gecos[0]' "$repo_dir/src/xrCore/xrCore.cpp" \
-    && grep -Fq 'android_native_crash_handler' "$repo_dir/src/xrEngine/x_ray.cpp" \
-    && grep -Fq 'LUAJIT_HOST_EXTRA_LDFLAGS' "$repo_dir/Externals/LuaJIT-proj/CMakeLists.txt" \
-    && grep -Fq "SDL's Android GLES window owns framebuffer 0" "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
-    && grep -Fq 'prepareBundledEngineData' \
-        "$repo_dir/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java" \
-    && grep -Fq 'without modifying it' \
-        "$repo_dir/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java" \
-    && grep -Fq 'res/gamedata' "$repo_dir/android/build-apk-armv7.sh" \
-    && grep -Fq 'glDrawElementsBaseVertex)' \
-        "$repo_dir/src/Layers/xrRenderGL/glR_Backend_Runtime.h" \
-    && grep -Fq 'version = gladLoadGLES2' \
-        "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
-    && grep -Fq 'GLAD_GL_EXT_shader_io_blocks' \
-        "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
-    && grep -Fq '#version 310 es' \
-        "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
-    && grep -Fq 'SDL_GL_CONTEXT_MINOR_VERSION, 1' \
-        "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
-    && grep -Fq 'precision lowp sampler3D' \
-        "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
-    && grep -Fq 'precision lowp sampler2DMS' \
-        "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
-    && grep -Fq "versionName '0.6.0'" \
-        "$repo_dir/android/apk/app/build.gradle" \
-    && grep -Fq 'glBindFramebuffer(GL_READ_FRAMEBUFFER, pFB)' \
-        "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
-    && grep -Fq 'SDL_MinimizeWindow() deliberately launches the Android HOME intent' \
-        "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
-    && grep -Fq 'GL_TEXTURE_SWIZZLE_R' \
-        "$repo_dir/src/Layers/xrRenderGL/glTexture.cpp" \
-    && grep -Fq 'transform_android_glsl_source' \
-        "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
-    && grep -Fq 'm_Overlay' "$repo_dir/src/xrCore/LocatorAPI_defs.h" \
-    && grep -Fq 'SDL_AndroidGetInternalStoragePath' "$repo_dir/src/xrCore/LocatorAPI.cpp"; then
+patchset_present()
+{
+    [ "$(sed -n '1p' "$repo_dir/android/PORT_VERSION" 2>/dev/null || true)" = "0.7.0" ] \
+        && [ -x "$repo_dir/android/prepare-source.sh" ] \
+        && [ -s "$repo_dir/src/Layers/xrRenderPC_GL/AndroidGlslCompatRules.inl" ] \
+        && grep -Fq 'AndroidGlslCompatRules.inl' \
+            "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
+        && grep -Fq '#define skin_input_normal(value)' \
+            "$repo_dir/src/Layers/xrRenderPC_GL/rgl_shaders.cpp" \
+        && grep -Fq 'glBindFramebuffer(GL_READ_FRAMEBUFFER, pFB)' \
+            "$repo_dir/src/Layers/xrRenderGL/glHW.cpp" \
+        && grep -Fq 'GL_TEXTURE_SWIZZLE_R' \
+            "$repo_dir/src/Layers/xrRenderGL/glTexture.cpp" \
+        && grep -Fq 'pw->pw_gecos && pw->pw_gecos[0]' \
+            "$repo_dir/src/xrCore/xrCore.cpp" \
+        && grep -Fq 'android_native_crash_handler' \
+            "$repo_dir/src/xrEngine/x_ray.cpp" \
+        && grep -Fq 'LUAJIT_HOST_EXTRA_LDFLAGS' \
+            "$repo_dir/Externals/LuaJIT-proj/CMakeLists.txt" \
+        && grep -Fq 'm_Overlay' "$repo_dir/src/xrCore/LocatorAPI_defs.h" \
+        && grep -Fq 'profilePreference(PREF_GAME_PATH_PREFIX' \
+            "$repo_dir/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java" \
+        && grep -Fq "versionName '0.7.0'" "$repo_dir/android/apk/app/build.gradle"
+}
+
+if patchset_present; then
     echo "Android patchset: already present"
     exit 0
 fi
@@ -71,5 +62,10 @@ done
 
 if [ "$found_patch" = false ]; then
     echo "Android patchset directory is empty: $patch_dir" >&2
+    exit 2
+fi
+
+if ! patchset_present; then
+    echo "Android patchset was applied but failed its integrity check" >&2
     exit 2
 fi
