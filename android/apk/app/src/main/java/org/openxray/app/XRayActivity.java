@@ -1,11 +1,13 @@
 package org.openxray.app;
 
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.util.Log;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
 
 import java.io.File;
@@ -33,9 +35,14 @@ public final class XRayActivity extends SDLActivity {
     private static final String TAG = "OpenXRay";
     private File diagnosticsFile;
     private boolean immersiveMode = true;
+    private TouchControlsView touchControls;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // Apply orientation before SDL creates its SurfaceView/EGL surface.
+        // Doing it after super.onCreate leaves the first drawable portrait
+        // and forces a destructive surface recreation during native startup.
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         if (getIntent().getBooleanExtra(LauncherActivity.EXTRA_KEEP_SCREEN_ON, true))
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         immersiveMode = getIntent().getBooleanExtra(LauncherActivity.EXTRA_IMMERSIVE, true);
@@ -50,6 +57,11 @@ public final class XRayActivity extends SDLActivity {
                 + "; abi=" + (Build.SUPPORTED_ABIS.length == 0 ? "unknown" : Build.SUPPORTED_ABIS[0]));
         try {
             super.onCreate(savedInstanceState);
+            if (getIntent().getBooleanExtra(LauncherActivity.EXTRA_TOUCH_CONTROLS, true)) {
+                touchControls = new TouchControlsView(this);
+                addContentView(touchControls, new ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            }
             applyImmersiveMode();
         } catch (RuntimeException error) {
             writeDiagnostic("SDL activity startup failed: " + Log.getStackTraceString(error));
@@ -66,8 +78,21 @@ public final class XRayActivity extends SDLActivity {
 
     @Override
     protected void onPause() {
+        if (touchControls != null)
+            touchControls.releaseAllControls();
         writeDiagnostic("activity onPause");
         super.onPause();
+    }
+
+    @Override
+    public void onBackPressed() {
+        // Keep the SDL Activity and its native surface owner alive underneath
+        // the launcher. A subsequent REORDER_TO_FRONT then reattaches to the
+        // same engine instead of constructing another SDL entry point.
+        Intent launcher = new Intent(this, LauncherActivity.class);
+        launcher.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        startActivity(launcher);
+        writeDiagnostic("engine activity moved behind launcher");
     }
 
     @Override
@@ -77,6 +102,7 @@ public final class XRayActivity extends SDLActivity {
         // Keep the original launch intent so an Activity recreation cannot
         // silently lose the selected game root or profile.
         writeDiagnostic("existing engine activity brought to foreground");
+        applyImmersiveMode();
     }
 
     @Override
@@ -94,7 +120,7 @@ public final class XRayActivity extends SDLActivity {
 
     @Override
     protected String[] getArguments() {
-        boolean rendererSmoke = getIntent().getBooleanExtra(LauncherActivity.EXTRA_RENDERER_SMOKE, true);
+        boolean rendererSmoke = getIntent().getBooleanExtra(LauncherActivity.EXTRA_RENDERER_SMOKE, false);
         String selectedPath = getIntent().getStringExtra(LauncherActivity.EXTRA_GAME_PATH);
         boolean gamepadEnabled = getIntent().getBooleanExtra(LauncherActivity.EXTRA_GAMEPAD_ENABLED, false);
         boolean splashEnabled = getIntent().getBooleanExtra(LauncherActivity.EXTRA_SPLASH_ENABLED, false);
@@ -140,6 +166,22 @@ public final class XRayActivity extends SDLActivity {
         writeDiagnostic("native arguments: " + String.join(" ", result));
         return result;
     }
+
+    static void setTouchControl(int control, boolean pressed) {
+        nativeSetTouchControl(control, pressed);
+    }
+
+    static void moveTouchMouse(float deltaX, float deltaY) {
+        nativeMoveTouchMouse(deltaX, deltaY);
+    }
+
+    static void clickTouchMouse(boolean pressed) {
+        nativeClickTouchMouse(pressed);
+    }
+
+    private static native void nativeSetTouchControl(int control, boolean pressed);
+    private static native void nativeMoveTouchMouse(float deltaX, float deltaY);
+    private static native void nativeClickTouchMouse(boolean pressed);
 
     private void applyImmersiveMode() {
         if (!immersiveMode)

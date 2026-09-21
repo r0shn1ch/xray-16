@@ -11,24 +11,39 @@ namespace xray::render::RENDER_NAMESPACE
 #ifdef USE_OGL
 static void show_compile_errors(cpcstr filename, GLuint program, GLuint shader)
 {
-    GLint length;
+    GLint length = 0;
     GLchar *errors = nullptr, *sources = nullptr;
 
     if (program)
     {
         CHK_GL(glGetProgramiv(program, GL_INFO_LOG_LENGTH, &length));
-        errors = xr_alloc<GLchar>(length);
-        CHK_GL(glGetProgramInfoLog(program, length, nullptr, errors));
+        if (length > 0)
+        {
+            errors = xr_alloc<GLchar>(length + 1);
+            GLsizei written = 0;
+            CHK_GL(glGetProgramInfoLog(program, length, &written, errors));
+            errors[std::min<GLsizei>(written, length)] = '\0';
+        }
     }
     else if (shader)
     {
         CHK_GL(glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &length));
-        errors = xr_alloc<GLchar>(length);
-        CHK_GL(glGetShaderInfoLog(shader, length, nullptr, errors));
+        if (length > 0)
+        {
+            errors = xr_alloc<GLchar>(length + 1);
+            GLsizei written = 0;
+            CHK_GL(glGetShaderInfoLog(shader, length, &written, errors));
+            errors[std::min<GLsizei>(written, length)] = '\0';
+        }
 
         CHK_GL(glGetShaderiv(shader, GL_SHADER_SOURCE_LENGTH, &length));
-        sources = xr_alloc<GLchar>(length);
-        CHK_GL(glGetShaderSource(shader, length, nullptr, sources));
+        if (length > 0)
+        {
+            sources = xr_alloc<GLchar>(length + 1);
+            GLsizei written = 0;
+            CHK_GL(glGetShaderSource(shader, length, &written, sources));
+            sources[std::min<GLsizei>(written, length)] = '\0';
+        }
     }
 
     Log("! shader compilation failed:", filename);

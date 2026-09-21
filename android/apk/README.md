@@ -46,19 +46,19 @@ The launcher does not reject an incomplete folder: missing `fsgame.ltx` or
 resources are reported by the engine in the log.
 
 The resulting debug APK is
-`build/openxray-armv7-launcher-v0.7.0-debug.apk`. Proprietary game data is not
+`build/openxray-armv7-launcher-v0.8.0-debug.apk`. Proprietary game data is not
 bundled. The APK is a device-test candidate: a successful build and offline
 shader validation do not substitute for running the exact game/mod and GPU.
 
 ## Launcher and diagnostics on a phone
 
-1. Remove the old pre-launcher APK once before installing version 0.7.0. The
+1. Remove the old pre-launcher APK once before installing version 0.8.0. The
    old package registered `XRayActivity` itself as the launcher, so a pinned
    old icon can bypass the launcher entirely:
 
    ```sh
    adb uninstall org.openxray.stalker
-   adb install -r build/openxray-armv7-launcher-v0.7.0-debug.apk
+   adb install -r build/openxray-armv7-launcher-v0.8.0-debug.apk
    adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
    ```
 

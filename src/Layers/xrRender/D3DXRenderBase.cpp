@@ -208,6 +208,12 @@ void D3DXRenderBase::Create(SDL_Window* hWnd, u32& dwWidth, u32& dwHeight, float
 
     HW.CreateDevice(hWnd);
 
+#if defined(XR_PLATFORM_ANDROID)
+    CHECK_OR_EXIT(HW.IsReady(),
+        "OpenXRay could not initialize a compatible OpenGL ES device.\n\n"
+        "OpenGL ES 3.1 with at least four draw buffers is required.");
+#endif
+
     std::tie(dwWidth, dwHeight) = HW.GetSurfaceSize();
 
     fWidth_2 = float(dwWidth / 2);

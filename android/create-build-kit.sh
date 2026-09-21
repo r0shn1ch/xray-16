@@ -3,9 +3,9 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
-kit_version=${XRAY_ANDROID_KIT_VERSION:-0.7.0}
-output=${1:-"$repo_dir/build/openxray-android-build-kit-v$kit_version.tar.zst"}
 port_version=$(sed -n '1p' "$script_dir/PORT_VERSION")
+kit_version=${XRAY_ANDROID_KIT_VERSION:-$port_version}
+output=${1:-"$repo_dir/build/openxray-android-build-kit-v$kit_version.tar.zst"}
 
 ndk_dir=${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}
 sdk_dir=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}

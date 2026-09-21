@@ -6,6 +6,10 @@
 #include "GameFont.h"
 #include "XR_IOConsole.h"
 #include "xrCore/Text/StringConversion.hpp"
+#if defined(XR_PLATFORM_ANDROID)
+#include "android_touch_controls.h"
+#include "xr_level_controller.h"
+#endif
 
 #include <locale>
 
@@ -773,11 +777,103 @@ void CInput::OnFrame(void)
         ControllerUpdate();
         KeyUpdate();
         MouseUpdate();
+#if defined(XR_PLATFORM_ANDROID)
+        TouchUpdate();
+#endif
     }
 
     stats.FrameTime.End();
     stats.FrameEnd();
 }
+
+#if defined(XR_PLATFORM_ANDROID)
+void CInput::TouchUpdate()
+{
+    if (cbStack.empty())
+        return;
+
+    struct touch_binding
+    {
+        EGameActions action;
+        int fallback;
+    };
+    static constexpr touch_binding bindings[] =
+    {
+        { kFWD, SDL_SCANCODE_W },
+        { kBACK, SDL_SCANCODE_S },
+        { kL_STRAFE, SDL_SCANCODE_A },
+        { kR_STRAFE, SDL_SCANCODE_D },
+        { kINVENTORY, SDL_SCANCODE_I },
+        { kUSE, SDL_SCANCODE_F },
+        { kWPN_FIRE, MOUSE_1 },
+    };
+
+    const u32 requested = AndroidTouchControlMask();
+    const u32 changed = requested ^ touchControlState;
+    if (requested || changed)
+        SetCurrentInputType(KeyboardMouse);
+
+    auto press = [this](int key)
+    {
+        if (key >= 0 && key < COUNT_KB_BUTTONS)
+        {
+            keyboardState[key] = true;
+            cbStack.back()->IR_OnKeyboardPress(key);
+        }
+        else if (key > MOUSE_INVALID && key < MOUSE_MAX)
+        {
+            mouseState[key - (MOUSE_INVALID + 1)] = true;
+            cbStack.back()->IR_OnMousePress(key);
+        }
+    };
+    auto release = [this](int key)
+    {
+        if (key >= 0 && key < COUNT_KB_BUTTONS)
+        {
+            keyboardState[key] = false;
+            cbStack.back()->IR_OnKeyboardRelease(key);
+        }
+        else if (key > MOUSE_INVALID && key < MOUSE_MAX)
+        {
+            mouseState[key - (MOUSE_INVALID + 1)] = false;
+            cbStack.back()->IR_OnMouseRelease(key);
+        }
+    };
+    auto hold = [this](int key)
+    {
+        if (key >= 0 && key < COUNT_KB_BUTTONS)
+            cbStack.back()->IR_OnKeyboardHold(key);
+        else if (key > MOUSE_INVALID && key < MOUSE_MAX)
+            cbStack.back()->IR_OnMouseHold(key);
+    };
+
+    for (u32 index = 0; index < std::size(bindings); ++index)
+    {
+        const u32 bit = u32(1) << index;
+        int key = GetActionDik(bindings[index].action, 0);
+        if (key == SDL_SCANCODE_UNKNOWN)
+            key = GetActionDik(bindings[index].action, 1);
+        if (key == SDL_SCANCODE_UNKNOWN)
+            key = bindings[index].fallback;
+
+        if (changed & bit)
+        {
+            if (requested & bit)
+            {
+                press(key);
+                // Match SDL's physical-key path, which emits one hold event
+                // in the same frame as the initial press. Subsequent holds
+                // are generated once by KeyUpdate/MouseUpdate from the state
+                // set above.
+                hold(key);
+            }
+            else
+                release(key);
+        }
+    }
+    touchControlState = requested;
+}
+#endif
 
 IInputReceiver* CInput::CurrentIR()
 {

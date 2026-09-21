@@ -224,13 +224,17 @@ void CALifeUpdateManager::new_game(LPCSTR save_name)
     unload();
     reload(m_section);
     spawns().load(save_name);
+    Msg("* New game: spawn registry ready; initializing graph registry...");
     graph().on_load();
+    Msg("* New game: graph registry ready; initializing object IDs...");
     server().PerformIDgen(0x0000);
     time_manager().init(m_section);
     VERIFY(can_register_objects());
 
     can_register_objects(false);
+    Msg("* New game: creating ALife objects...");
     spawn_new_objects();
+    Msg("* New game: ALife objects created; running registration callbacks...");
     can_register_objects(true);
 
     CALifeObjectRegistry::OBJECT_REGISTRY::iterator I = objects().objects().begin();

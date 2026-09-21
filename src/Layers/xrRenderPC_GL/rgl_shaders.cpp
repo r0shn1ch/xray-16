@@ -179,11 +179,11 @@ bool get_android_varying_type(const xr_string& type, xr_string& physicalType, pc
         width = type.back() - '0';
     }
 
-    if (width < 1 || width > 3)
+    if (width < 1 || width > 4)
         return false;
 
     physicalType = family == "float" ? "vec4" : family == "int" ? "ivec4" : "uvec4";
-    static constexpr cpcstr Swizzles[] = { nullptr, ".x", ".xy", ".xyz" };
+    static constexpr cpcstr Swizzles[] = { nullptr, ".x", ".xy", ".xyz", "" };
     swizzle = Swizzles[width];
     return true;
 }
@@ -241,7 +241,24 @@ bool normalize_android_stage_varying(xr_string& line, char stage)
         return false;
     const size_t open = line.find('(', layoutPosition + 6);
     const size_t close = open == xr_string::npos ? xr_string::npos : line.find(')', open + 1);
-    if (close == xr_string::npos || line.find("location", open + 1) > close)
+    const size_t location = line.find("location", open + 1);
+    if (close == xr_string::npos || location > close)
+        return false;
+
+    const size_t equals = line.find('=', location + xr_strlen("location"));
+    if (equals == xr_string::npos || equals > close)
+        return false;
+    xr_string locationKey;
+    for (size_t cursor = equals + 1; cursor < close && line[cursor] != ','; ++cursor)
+    {
+        const char value = line[cursor];
+        if ((value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z') ||
+            (value >= '0' && value <= '9') || value == '_')
+            locationKey += value;
+        else if (!is_glsl_space(value))
+            locationKey += '_';
+    }
+    if (locationKey.empty())
         return false;
 
     size_t position = close + 1;
@@ -288,7 +305,11 @@ bool normalize_android_stage_varying(xr_string& line, char stage)
     if (!get_android_varying_type(type, physicalType, swizzle))
         return false;
 
-    const xr_string physicalName = xr_string(AndroidVaryingPrefix) + name;
+    // Some mobile linkers still require matching varying identifiers even
+    // when both stages use explicit locations. Derive the physical name from
+    // the location expression (for example TEXCOORD1) so independently named
+    // PC shader inputs/outputs link without any per-resource rename rule.
+    const xr_string physicalName = xr_string(AndroidVaryingPrefix) + locationKey;
     line.replace(nameBegin, nameEnd - nameBegin, physicalName);
     line.replace(typeBegin, typeEnd - typeBegin, physicalType);
     line += "\n#define ";

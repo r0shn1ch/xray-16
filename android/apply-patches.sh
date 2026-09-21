@@ -7,7 +7,10 @@ patch_dir=${XRAY_ANDROID_PATCH_DIR:-"$script_dir/patches"}
 
 patchset_present()
 {
-    [ "$(sed -n '1p' "$repo_dir/android/PORT_VERSION" 2>/dev/null || true)" = "0.7.0" ] \
+    expected_version=$(sed -n '1p' "$script_dir/PORT_VERSION" 2>/dev/null || true)
+    target_version=$(sed -n '1p' "$repo_dir/android/PORT_VERSION" 2>/dev/null || true)
+    [ -n "$expected_version" ] \
+        && [ "$target_version" = "$expected_version" ] \
         && [ -x "$repo_dir/android/prepare-source.sh" ] \
         && [ -s "$repo_dir/src/Layers/xrRenderPC_GL/AndroidGlslCompatRules.inl" ] \
         && grep -Fq 'AndroidGlslCompatRules.inl' \
@@ -22,12 +25,23 @@ patchset_present()
             "$repo_dir/src/xrCore/xrCore.cpp" \
         && grep -Fq 'android_native_crash_handler' \
             "$repo_dir/src/xrEngine/x_ray.cpp" \
+        && grep -Fq 'pc-libmain' "$repo_dir/src/xrEngine/x_ray.cpp" \
+        && grep -Fq 'AndroidTouchControlMask' \
+            "$repo_dir/src/xrEngine/android_touch_controls.cpp" \
+        && grep -Fq 'SCREEN_ORIENTATION_SENSOR_LANDSCAPE' \
+            "$repo_dir/android/apk/app/src/main/java/org/openxray/app/XRayActivity.java" \
+        && grep -Fq 'EXTRA_TOUCH_CONTROLS' \
+            "$repo_dir/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java" \
+        && grep -Fq 'CopyMemory(&tableSize, current_cross_table' \
+            "$repo_dir/src/xrAICore/Navigation/game_graph_inline.h" \
         && grep -Fq 'LUAJIT_HOST_EXTRA_LDFLAGS' \
             "$repo_dir/Externals/LuaJIT-proj/CMakeLists.txt" \
         && grep -Fq 'm_Overlay' "$repo_dir/src/xrCore/LocatorAPI_defs.h" \
         && grep -Fq 'profilePreference(PREF_GAME_PATH_PREFIX' \
             "$repo_dir/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java" \
-        && grep -Fq "versionName '0.7.0'" "$repo_dir/android/apk/app/build.gradle"
+        && grep -Fq "versionName '$expected_version'" "$repo_dir/android/apk/app/build.gradle" \
+        && grep -Fq "android:versionName=\"$expected_version\"" \
+            "$repo_dir/android/apk/app/src/main/AndroidManifest.xml"
 }
 
 if patchset_present; then

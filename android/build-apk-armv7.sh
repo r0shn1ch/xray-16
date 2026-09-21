@@ -6,13 +6,10 @@ repo_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 
 kit_root=${XRAY_ANDROID_KIT_ROOT:-}
 if [ -z "$kit_root" ]; then
-    for candidate in "$repo_dir/.openxray-android-build-kit" \
-        "$repo_dir/../openxray-android-build-kit-v0.7.0" \
-        "$repo_dir/../openxray-android-build-kit-v0.6.0" \
-        "$repo_dir/../openxray-android-build-kit-v0.5.0"; do
+    for candidate in "$repo_dir"/../openxray-android-build-kit-v* \
+        "$repo_dir/.openxray-android-build-kit"; do
         if [ -f "$candidate/build-kit-env.sh" ]; then
             kit_root="$candidate"
-            break
         fi
     done
 fi
@@ -94,6 +91,8 @@ cp "$repo_dir/android/apk/app/src/main/java/org/openxray/app/XRayActivity.java" 
     "$project_dir/app/src/main/java/org/openxray/app/XRayActivity.java"
 cp "$repo_dir/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java" \
     "$project_dir/app/src/main/java/org/openxray/app/LauncherActivity.java"
+cp "$repo_dir/android/apk/app/src/main/java/org/openxray/app/TouchControlsView.java" \
+    "$project_dir/app/src/main/java/org/openxray/app/TouchControlsView.java"
 mkdir -p "$project_dir/app/src/main/res/values"
 cp "$repo_dir/android/apk/app/src/main/res/values/strings.xml" "$project_dir/app/src/main/res/values/strings.xml"
 cp "$repo_dir/android/apk/app/src/main/res/values/styles.xml" "$project_dir/app/src/main/res/values/styles.xml"

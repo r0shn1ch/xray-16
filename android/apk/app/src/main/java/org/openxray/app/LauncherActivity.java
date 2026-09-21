@@ -62,6 +62,7 @@ public final class LauncherActivity extends Activity {
     public static final String EXTRA_SPLASH_ENABLED = "org.openxray.extra.SPLASH_ENABLED";
     public static final String EXTRA_KEEP_SCREEN_ON = "org.openxray.extra.KEEP_SCREEN_ON";
     public static final String EXTRA_IMMERSIVE = "org.openxray.extra.IMMERSIVE";
+    public static final String EXTRA_TOUCH_CONTROLS = "org.openxray.extra.TOUCH_CONTROLS";
 
     private static final String PREFS = "openxray_launcher";
     private static final String PREF_GAME_PATH = "game_path";
@@ -74,6 +75,7 @@ public final class LauncherActivity extends Activity {
     private static final String PREF_SPLASH = "splash";
     private static final String PREF_KEEP_SCREEN_ON = "keep_screen_on";
     private static final String PREF_IMMERSIVE = "immersive";
+    private static final String PREF_TOUCH_CONTROLS = "touch_controls";
     private static final String PREF_ACTIVE_PAGE = "active_page";
 
     private static final int PAGE_GAME = 0;
@@ -92,6 +94,7 @@ public final class LauncherActivity extends Activity {
     private CheckBox splashEnabled;
     private CheckBox keepScreenOn;
     private CheckBox immersiveMode;
+    private CheckBox touchControlsEnabled;
     private TextView accessStatus;
     private TextView gameInspection;
     private TextView status;
@@ -317,6 +320,9 @@ public final class LauncherActivity extends Activity {
         addSectionTitle(content, "Управление и экран");
         gamepadEnabled = makeCheckBox("Включить поддержку геймпада",
                 "Если выключено, движок получает -no_gamepad.");
+        touchControlsEnabled = makeCheckBox("Показывать сенсорное управление",
+                "Экранный стик и кнопки движения, огня, взаимодействия и инвентаря. "
+                        + "Свободная область работает как мышь.");
         splashEnabled = makeCheckBox("Показывать заставку OpenXRay",
                 "Не влияет на оригинальные игровые intro-видео.");
         keepScreenOn = makeCheckBox("Не выключать экран во время игры",
@@ -324,6 +330,7 @@ public final class LauncherActivity extends Activity {
         immersiveMode = makeCheckBox("Полноэкранный режим Android",
                 "Скрывает системные панели; жест от края временно возвращает их.");
         content.addView(gamepadEnabled, matchWrap());
+        content.addView(touchControlsEnabled, matchWrap());
         content.addView(splashEnabled, matchWrap());
         content.addView(keepScreenOn, matchWrap());
         content.addView(immersiveMode, matchWrap());
@@ -435,6 +442,7 @@ public final class LauncherActivity extends Activity {
                 profilePreference(PREF_GAME_PATH_PREFIX, restoredVariant), legacyPath));
         customArgs.setText(preferences.getString(PREF_CUSTOM_ARGS, ""));
         gamepadEnabled.setChecked(preferences.getBoolean(PREF_GAMEPAD, false));
+        touchControlsEnabled.setChecked(preferences.getBoolean(PREF_TOUCH_CONTROLS, true));
         splashEnabled.setChecked(preferences.getBoolean(PREF_SPLASH, false));
         keepScreenOn.setChecked(preferences.getBoolean(PREF_KEEP_SCREEN_ON, true));
         immersiveMode.setChecked(preferences.getBoolean(PREF_IMMERSIVE, true));
@@ -451,6 +459,7 @@ public final class LauncherActivity extends Activity {
                 .putString(PREF_CUSTOM_ARGS, customArgs.getText().toString())
                 .putInt(PREF_GAME_VARIANT, activeGameVariant)
                 .putBoolean(PREF_GAMEPAD, gamepadEnabled.isChecked())
+                .putBoolean(PREF_TOUCH_CONTROLS, touchControlsEnabled.isChecked())
                 .putBoolean(PREF_SPLASH, splashEnabled.isChecked())
                 .putBoolean(PREF_KEEP_SCREEN_ON, keepScreenOn.isChecked())
                 .putBoolean(PREF_IMMERSIVE, immersiveMode.isChecked())
@@ -617,7 +626,10 @@ public final class LauncherActivity extends Activity {
 
     private void launchEngine(boolean rendererSmoke) {
         if (!rendererSmoke && isEngineProcessRunning()) {
-            Intent resume = new Intent(this, XRayActivity.class);
+            // Keep the mode explicit. XRayActivity used to interpret an
+            // absent mode as a renderer smoke test, so a reattach could run
+            // the test path instead of bringing the game surface forward.
+            Intent resume = createEngineIntent(false);
             resume.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             setStatus("Возвращаю уже запущенный движок на экран…");
             startActivity(resume);
@@ -643,17 +655,8 @@ public final class LauncherActivity extends Activity {
         engineLaunchTime = SystemClock.elapsedRealtime();
         engineFailureToastShown = false;
 
-        Intent intent = new Intent(this, XRayActivity.class);
-        intent.putExtra(EXTRA_RENDERER_SMOKE, rendererSmoke);
-        intent.putExtra(EXTRA_GAMEPAD_ENABLED, gamepadEnabled.isChecked());
-        intent.putExtra(EXTRA_SPLASH_ENABLED, splashEnabled.isChecked());
-        intent.putExtra(EXTRA_KEEP_SCREEN_ON, keepScreenOn.isChecked());
-        intent.putExtra(EXTRA_IMMERSIVE, immersiveMode.isChecked());
+        Intent intent = createEngineIntent(rendererSmoke);
         intent.putExtra(EXTRA_ADDITIONAL_ARGS, additionalArgs);
-        if (!rendererSmoke) {
-            intent.putExtra(EXTRA_GAME_PATH, selectedPath);
-            intent.putExtra(EXTRA_GAME_VARIANT, activeGameVariant);
-        }
         setStatus(rendererSmoke ? "Запускаю GLES smoke test…" : "Запускаю OpenXRay…");
         Toast.makeText(this, "OpenXRay: запуск движка…", Toast.LENGTH_SHORT).show();
         try {
@@ -662,6 +665,21 @@ public final class LauncherActivity extends Activity {
             setStatus("Не удалось запустить процесс движка: " + error.getMessage());
             Toast.makeText(this, "OpenXRay: не удалось запустить движок", Toast.LENGTH_LONG).show();
         }
+    }
+
+    private Intent createEngineIntent(boolean rendererSmoke) {
+        Intent intent = new Intent(this, XRayActivity.class);
+        intent.putExtra(EXTRA_RENDERER_SMOKE, rendererSmoke);
+        intent.putExtra(EXTRA_GAMEPAD_ENABLED, gamepadEnabled.isChecked());
+        intent.putExtra(EXTRA_TOUCH_CONTROLS, touchControlsEnabled.isChecked());
+        intent.putExtra(EXTRA_SPLASH_ENABLED, splashEnabled.isChecked());
+        intent.putExtra(EXTRA_KEEP_SCREEN_ON, keepScreenOn.isChecked());
+        intent.putExtra(EXTRA_IMMERSIVE, immersiveMode.isChecked());
+        if (!rendererSmoke) {
+            intent.putExtra(EXTRA_GAME_PATH, gamePath.getText().toString().trim());
+            intent.putExtra(EXTRA_GAME_VARIANT, activeGameVariant);
+        }
+        return intent;
     }
 
     private String[] parseAdditionalArguments(String commandLine) {

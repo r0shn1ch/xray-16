@@ -17,7 +17,7 @@ patches), loads a prepared build kit when `XRAY_ANDROID_KIT_ROOT` is set, and
 then builds either the APK or the native target:
 
 ```sh
-XRAY_ANDROID_KIT_ROOT=/path/to/openxray-android-build-kit-v0.7.0 \
+XRAY_ANDROID_KIT_ROOT=/path/to/openxray-android-build-kit-v0.8.0 \
 ./android/build-harness.sh --apk
 ```
 
@@ -54,7 +54,7 @@ being copied into that checkout first. Keep the extracted harness outside the
 source tree and pass the source path explicitly:
 
 ```sh
-/path/to/openxray-android-build-harness-v0.7.0/android/apply-patches.sh \
+/path/to/openxray-android-build-harness-v0.8.0/android/apply-patches.sh \
   /path/to/clean/xray-16
 ```
 
@@ -164,6 +164,10 @@ The ARMv7 build and the startup shaders implicated by the supplied Adreno log
 are statically validated as part of this port. That validation is not a claim
 that a physical device test has passed; use the generated APK and attach the
 new engine/activity logs for any remaining GPU- or data-specific issue.
+
+The audit of prior port changes is in [PORT_AUDIT.md](PORT_AUDIT.md). The
+cross-platform Vulkan requirements, upstream prototypes that were rejected,
+and implementation gates are in [VULKAN_RENDERER_PLAN.md](VULKAN_RENDERER_PLAN.md).
 
 The APK displays a Toast after the renderer readback: successful initialization
 keeps the smoke window open, while failure shows the error, waits briefly and

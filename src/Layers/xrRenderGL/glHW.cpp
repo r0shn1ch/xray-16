@@ -55,9 +55,28 @@ CHW::~CHW()
 void CHW::OnAppActivate()
 {
 #if defined(XR_PLATFORM_ANDROID)
-    // SDLActivity owns the Android activity/window lifecycle. Restoring or
-    // minimizing an SDL window maps to Android task navigation rather than a
-    // desktop window operation, so leave the activity state to SDLActivity.
+    // SDL recreates the EGL window surface when the Activity returns to the
+    // foreground. Rebind the existing context to that new surface before the
+    // first frame; otherwise SwapWindow may keep presenting to the abandoned
+    // surface and the user sees a permanent black screen.
+    if (!m_window || !m_context)
+        return;
+
+    if (SDL_GL_MakeCurrent(m_window, m_context) != 0)
+    {
+        Msg("! Android GLES: cannot restore EGL surface: %s", SDL_GetError());
+        m_surfaceNeedsReset = true;
+        return;
+    }
+
+    int drawableWidth = 0;
+    int drawableHeight = 0;
+    SDL_GL_GetDrawableSize(m_window, &drawableWidth, &drawableHeight);
+    m_surfaceNeedsReset = !glIsFramebuffer(pFB) || drawableWidth <= 0 || drawableHeight <= 0 ||
+        drawableWidth != static_cast<int>(Device.dwWidth) || drawableHeight != static_cast<int>(Device.dwHeight);
+    Msg("* Android GLES: foreground surface [%dx%d], reset=[%d]", drawableWidth, drawableHeight,
+        m_surfaceNeedsReset);
+    UpdateVSync();
     return;
 #else
     if (m_window)
@@ -75,6 +94,7 @@ void CHW::OnAppDeactivate()
     // launcher/home screen while the native engine kept running. Pausing the
     // scheduler and audio is handled by the normal app-deactivate sequence;
     // do not turn that lifecycle event into task navigation.
+    Msg("* Android GLES: window surface moved to background");
     return;
 #else
     if (m_window)
@@ -176,6 +196,28 @@ void CHW::CreateDevice(SDL_Window* hWnd)
         GLAD_GL_ES_VERSION_3_1, GLAD_GL_ES_VERSION_3_2, GLAD_GL_EXT_shader_io_blocks, GLAD_GL_OES_shader_io_blocks,
         GLAD_GL_EXT_clip_cull_distance, GLAD_GL_EXT_gpu_shader5, GLAD_GL_OES_gpu_shader5,
         GLAD_GL_EXT_shader_implicit_conversions, GLAD_GL_EXT_blend_func_extended);
+
+    GLint maxDrawBuffers = 0;
+    GLint maxColorAttachments = 0;
+    glGetIntegerv(GL_MAX_DRAW_BUFFERS, &maxDrawBuffers);
+    glGetIntegerv(GL_MAX_COLOR_ATTACHMENTS, &maxColorAttachments);
+    if (!GLAD_GL_ES_VERSION_3_1 || maxDrawBuffers < 4 || maxColorAttachments < 4)
+    {
+        string512 reason;
+        xr_sprintf(reason,
+            "OpenXRay requires OpenGL ES 3.1 and at least 4 draw buffers/color attachments.\n\n"
+            "Device reports: %s; draw buffers=%d; color attachments=%d.",
+            OpenGLVersionString ? OpenGLVersionString : "unknown OpenGL ES version",
+            maxDrawBuffers, maxColorAttachments);
+        Msg("! Android GLES capability check failed: %s", reason);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
+            "OpenXRay: unsupported graphics device", reason, m_window);
+        SDL_GL_DeleteContext(m_context);
+        m_context = nullptr;
+        return;
+    }
+    Msg("* Android GLES capability check passed: ES 3.1+, draw buffers=[%d], color attachments=[%d]",
+        maxDrawBuffers, maxColorAttachments);
 #endif
 
     ComputeShadersSupported = false; // XXX: Implement compute shaders support
@@ -207,6 +249,10 @@ void CHW::Reset()
     CHK_GL(glDeleteFramebuffers(1, &pFB));
     pFB = 0;
     UpdateViews();
+
+#if defined(XR_PLATFORM_ANDROID)
+    m_surfaceNeedsReset = false;
+#endif
 
     UpdateVSync();
 }
@@ -381,7 +427,11 @@ void CHW::Present()
 
 DeviceState CHW::GetDeviceState() const
 {
-    //  TODO: OGL: Implement GetDeviceState
+#if defined(XR_PLATFORM_ANDROID)
+    if (m_surfaceNeedsReset)
+        return DeviceState::NeedReset;
+#endif
+    // TODO: OGL: Implement desktop context-loss detection.
     return DeviceState::Normal;
 }
 

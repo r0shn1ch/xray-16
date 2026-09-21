@@ -47,6 +47,7 @@
 #endif
 
 #if defined(XR_PLATFORM_ANDROID)
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
@@ -236,6 +237,7 @@ struct android_crash_log_state
 android_crash_log_state g_android_crash_log;
 alignas(16) unsigned char g_android_signal_stack[ANDROID_SIGNAL_STACK_SIZE];
 volatile sig_atomic_t g_android_crash_in_progress = 0;
+uintptr_t g_android_module_base = 0;
 
 void android_write_raw(int fd, const char* data, size_t size)
 {
@@ -381,6 +383,19 @@ void android_native_crash_handler(int signal, siginfo_t* info, void* raw_context
     destination = android_append_hex(destination, end, stack_pointer);
     destination = android_append_text(destination, end, " lr=");
     destination = android_append_hex(destination, end, link_register);
+    if (g_android_module_base != 0)
+    {
+        if (program_counter >= g_android_module_base)
+        {
+            destination = android_append_text(destination, end, " pc-libmain=");
+            destination = android_append_hex(destination, end, program_counter - g_android_module_base);
+        }
+        if (link_register >= g_android_module_base)
+        {
+            destination = android_append_text(destination, end, " lr-libmain=");
+            destination = android_append_hex(destination, end, link_register - g_android_module_base);
+        }
+    }
     destination = android_append_text(destination, end,
         "; full Android tombstone/backtrace is in logcat\n");
     *destination = '\0';
@@ -422,6 +437,16 @@ void android_install_crash_handler()
     if (!g_android_crash_log.installed)
     {
         android_open_early_crash_logs();
+
+        // Resolve ASLR once while normal runtime services are available. The
+        // signal handler can then emit symbolizable libmain-relative offsets
+        // using only async-signal-safe formatting and write calls.
+        Dl_info moduleInfo{};
+        if (dladdr(reinterpret_cast<const void*>(&android_install_crash_handler), &moduleInfo) != 0 &&
+            moduleInfo.dli_fbase)
+        {
+            g_android_module_base = reinterpret_cast<uintptr_t>(moduleInfo.dli_fbase);
+        }
 
         stack_t alternate_stack{};
         alternate_stack.ss_sp = g_android_signal_stack;
@@ -1085,6 +1110,38 @@ int CApplication::Run()
         FrameMarkStart(FRAME_MARK_APPLICATION_RUN);
         bool canCallActivate = false;
         bool shouldActivate = false;
+
+#if defined(XR_PLATFORM_ANDROID)
+        // SDLActivity reports process/task lifecycle with SDL_APP_* events,
+        // not reliably with desktop-style window focus events. Consume them
+        // explicitly so rendering and worker threads stop before EGL loses
+        // its window surface and resume only after it is available again.
+        SDL_Event appEvents[8];
+        const int appEventCount = SDL_PeepEvents(appEvents, std::size(appEvents),
+            SDL_GETEVENT, SDL_APP_TERMINATING, SDL_APP_DIDENTERFOREGROUND);
+        for (int i = 0; i < appEventCount; ++i)
+        {
+            switch (appEvents[i].type)
+            {
+            case SDL_APP_WILLENTERBACKGROUND:
+            case SDL_APP_DIDENTERBACKGROUND:
+                canCallActivate = true;
+                shouldActivate = false;
+                break;
+            case SDL_APP_WILLENTERFOREGROUND:
+            case SDL_APP_DIDENTERFOREGROUND:
+                canCallActivate = true;
+                shouldActivate = true;
+                break;
+            case SDL_APP_TERMINATING:
+                Engine.Event.Defer("KERNEL:disconnect");
+                Engine.Event.Defer("KERNEL:quit");
+                break;
+            default:
+                break;
+            }
+        }
+#endif
 
         SDL_Event events[MAX_WINDOW_EVENTS];
         const int count = SDL_PeepEvents(events, MAX_WINDOW_EVENTS,

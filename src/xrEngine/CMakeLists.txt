@@ -227,6 +227,8 @@ target_sources_grouped(
     defines.cpp
     defines.h
     embedded_resources_management.h
+    android_touch_controls.cpp
+    android_touch_controls.h
     mp_logging.h
     stdafx.cpp
     stdafx.h
