@@ -79,8 +79,9 @@ chmod +x "$kit_dir/build-kit-env.sh" "$kit_dir/harness/"*.sh
     echo "sdl=$(basename "$sdl_dir")"
     echo "gradle=$(basename "$gradle_dir")"
     echo "gradle_dependency_cache=embedded (offline mode enabled)"
-    if [ -f "$repo_dir/build/openxray-armv7-launcher-v$port_version-debug.apk" ]; then
-        sha256sum "$repo_dir/build/openxray-armv7-launcher-v$port_version-debug.apk"
+    apk_name="openxray-armv7-launcher-v$port_version-debug.apk"
+    if [ -f "$repo_dir/build/$apk_name" ]; then
+        (cd "$repo_dir/build" && sha256sum "$apk_name")
     fi
 } > "$kit_dir/BUILD-MANIFEST.txt"
 

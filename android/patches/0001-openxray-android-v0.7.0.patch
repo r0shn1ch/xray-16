@@ -2540,10 +2540,10 @@ index 00000000..7ce7ce76
 +export PATH="$kit_path:$PATH"
 diff --git a/android/create-build-kit.sh b/android/create-build-kit.sh
 new file mode 100755
-index 00000000..ad0457ce
+index 00000000..6ad1f2b0
 --- /dev/null
 +++ b/android/create-build-kit.sh
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,91 @@
 +#!/bin/sh
 +set -eu
 +
@@ -2625,8 +2625,9 @@ index 00000000..ad0457ce
 +    echo "sdl=$(basename "$sdl_dir")"
 +    echo "gradle=$(basename "$gradle_dir")"
 +    echo "gradle_dependency_cache=embedded (offline mode enabled)"
-+    if [ -f "$repo_dir/build/openxray-armv7-launcher-v$port_version-debug.apk" ]; then
-+        sha256sum "$repo_dir/build/openxray-armv7-launcher-v$port_version-debug.apk"
++    apk_name="openxray-armv7-launcher-v$port_version-debug.apk"
++    if [ -f "$repo_dir/build/$apk_name" ]; then
++        (cd "$repo_dir/build" && sha256sum "$apk_name")
 +    fi
 +} > "$kit_dir/BUILD-MANIFEST.txt"
 +
