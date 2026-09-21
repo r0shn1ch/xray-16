@@ -2077,7 +2077,7 @@ new file mode 100755
 index 00000000..8883c98b
 --- /dev/null
 +++ b/android/build-apk-armv7.sh
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,187 @@
 +#!/bin/sh
 +set -eu
 +
@@ -2168,9 +2168,11 @@ index 00000000..8883c98b
 +mkdir -p "$project_dir/app/src/main/res/values"
 +cp "$repo_dir/android/apk/app/src/main/res/values/strings.xml" "$project_dir/app/src/main/res/values/strings.xml"
 +cp "$repo_dir/android/apk/app/src/main/res/values/styles.xml" "$project_dir/app/src/main/res/values/styles.xml"
-+mkdir -p "$project_dir/app/src/main/assets"
-+cp "$repo_dir/res/fsgame.ltx" "$project_dir/app/src/main/assets/fsgame.ltx"
-+cp -R "$repo_dir/res/gamedata" "$project_dir/app/src/main/assets/gamedata"
++asset_root="$project_dir/app/src/main/assets"
++rm -rf "$asset_root"
++mkdir -p "$asset_root/gamedata"
++cp "$repo_dir/res/fsgame.ltx" "$asset_root/fsgame.ltx"
++cp -R "$repo_dir/res/gamedata/." "$asset_root/gamedata/"
 +
 +native_lib_dir="$project_dir/app/src/main/jniLibs/armeabi-v7a"
 +mkdir -p "$native_lib_dir"
