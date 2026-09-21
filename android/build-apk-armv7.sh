@@ -29,6 +29,13 @@ gradle_bin=${GRADLE_BIN:-}
 android_lto=${XRAY_ANDROID_ENABLE_LTO:-OFF}
 build_dir=${XRAY_ANDROID_APK_BUILD_DIR:-"$repo_dir/build/android-apk-armv7"}
 
+remove_path()
+{
+    if [ -e "$1" ] || [ -L "$1" ]; then
+        find "$1" -depth -delete
+    fi
+}
+
 if [ -z "$ndk_dir" ] || [ ! -f "$ndk_dir/build/cmake/android.toolchain.cmake" ]; then
     echo "ANDROID_NDK_HOME must point to an installed Android NDK" >&2
     exit 2
@@ -60,7 +67,7 @@ if [ ! -f "$native_lib" ]; then
 fi
 
 project_dir="$build_dir/gradle-project"
-rm -rf "$project_dir"
+remove_path "$project_dir"
 mkdir -p "$project_dir"
 cp -R "$sdl_dir/android-project/." "$project_dir/"
 
@@ -68,7 +75,7 @@ cp -R "$sdl_dir/android-project/." "$project_dir/"
 # earlier OpenXRay package. Never let those copied files make assembleDebug
 # consider a stale APK up to date after the launcher manifest or native engine
 # changed.
-rm -rf \
+for stale_path in \
     "$project_dir/.gradle" \
     "$project_dir/.cxx" \
     "$project_dir/build" \
@@ -76,7 +83,9 @@ rm -rf \
     "$project_dir/app/build" \
     "$project_dir/app/src/main/java/org/openxray" \
     "$project_dir/app/src/main/jniLibs" \
-    "$project_dir/app/src/main/assets"
+    "$project_dir/app/src/main/assets"; do
+    remove_path "$stale_path"
+done
 
 cp "$repo_dir/android/apk/app/build.gradle" "$project_dir/app/build.gradle"
 cp "$repo_dir/android/apk/app/src/main/AndroidManifest.xml" "$project_dir/app/src/main/AndroidManifest.xml"
@@ -89,10 +98,14 @@ mkdir -p "$project_dir/app/src/main/res/values"
 cp "$repo_dir/android/apk/app/src/main/res/values/strings.xml" "$project_dir/app/src/main/res/values/strings.xml"
 cp "$repo_dir/android/apk/app/src/main/res/values/styles.xml" "$project_dir/app/src/main/res/values/styles.xml"
 asset_root="$project_dir/app/src/main/assets"
-rm -rf "$asset_root"
+remove_path "$asset_root"
 mkdir -p "$asset_root/gamedata"
 cp "$repo_dir/res/fsgame.ltx" "$asset_root/fsgame.ltx"
 cp -R "$repo_dir/res/gamedata/." "$asset_root/gamedata/"
+if [ -d "$asset_root/gamedata/gamedata" ]; then
+    echo "APK asset staging unexpectedly nested gamedata inside itself" >&2
+    exit 1
+fi
 
 native_lib_dir="$project_dir/app/src/main/jniLibs/armeabi-v7a"
 mkdir -p "$native_lib_dir"
@@ -153,6 +166,16 @@ fi
 packaged_abis=$(zipinfo -1 "$apk" | sed -n 's#^lib/\([^/]*\)/.*#\1#p' | sort -u)
 if [ "$packaged_abis" != "armeabi-v7a" ]; then
     echo "Gradle produced unexpected APK ABIs: $packaged_abis" >&2
+    exit 1
+fi
+if zipinfo -1 "$apk" | grep -q '^assets/gamedata/gamedata/'; then
+    echo "Gradle packaged a duplicate nested gamedata tree" >&2
+    exit 1
+fi
+duplicate_entries=$(zipinfo -1 "$apk" | sort | uniq -d)
+if [ -n "$duplicate_entries" ]; then
+    echo "Gradle produced duplicate APK entries:" >&2
+    echo "$duplicate_entries" >&2
     exit 1
 fi
 
