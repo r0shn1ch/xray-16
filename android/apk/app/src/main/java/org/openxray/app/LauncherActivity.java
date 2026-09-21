@@ -58,6 +58,7 @@ public final class LauncherActivity extends Activity {
     public static final String EXTRA_GAME_VARIANT = "org.openxray.extra.GAME_VARIANT";
     public static final String EXTRA_ADDITIONAL_ARGS = "org.openxray.extra.ADDITIONAL_ARGS";
     public static final String EXTRA_RENDERER_SMOKE = "org.openxray.extra.RENDERER_SMOKE";
+    public static final String EXTRA_RENDERER_VULKAN_SMOKE = "org.openxray.extra.RENDERER_VULKAN_SMOKE";
     public static final String EXTRA_GAMEPAD_ENABLED = "org.openxray.extra.GAMEPAD_ENABLED";
     public static final String EXTRA_SPLASH_ENABLED = "org.openxray.extra.SPLASH_ENABLED";
     public static final String EXTRA_KEEP_SCREEN_ON = "org.openxray.extra.KEEP_SCREEN_ON";
@@ -306,6 +307,8 @@ public final class LauncherActivity extends Activity {
         launchButton.setTextSize(17);
         content.addView(launchButton, new LinearLayout.LayoutParams(-1, dp(60)));
         content.addView(actionButton("Проверить GLES без игровых файлов", view -> launchEngine(true)),
+                new LinearLayout.LayoutParams(-1, dp(52)));
+        content.addView(actionButton("Проверить Vulkan + GLES fallback", view -> launchVulkanSmoke()),
                 new LinearLayout.LayoutParams(-1, dp(52)));
 
         status = bodyText("Готово к настройке.");
@@ -625,11 +628,19 @@ public final class LauncherActivity extends Activity {
     }
 
     private void launchEngine(boolean rendererSmoke) {
+        launchEngine(rendererSmoke, false);
+    }
+
+    private void launchVulkanSmoke() {
+        launchEngine(true, true);
+    }
+
+    private void launchEngine(boolean rendererSmoke, boolean vulkanRendererSmoke) {
         if (!rendererSmoke && isEngineProcessRunning()) {
             // Keep the mode explicit. XRayActivity used to interpret an
             // absent mode as a renderer smoke test, so a reattach could run
             // the test path instead of bringing the game surface forward.
-            Intent resume = createEngineIntent(false);
+            Intent resume = createEngineIntent(false, false);
             resume.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             setStatus("Возвращаю уже запущенный движок на экран…");
             startActivity(resume);
@@ -655,9 +666,10 @@ public final class LauncherActivity extends Activity {
         engineLaunchTime = SystemClock.elapsedRealtime();
         engineFailureToastShown = false;
 
-        Intent intent = createEngineIntent(rendererSmoke);
+        Intent intent = createEngineIntent(rendererSmoke, vulkanRendererSmoke);
         intent.putExtra(EXTRA_ADDITIONAL_ARGS, additionalArgs);
-        setStatus(rendererSmoke ? "Запускаю GLES smoke test…" : "Запускаю OpenXRay…");
+        setStatus(vulkanRendererSmoke ? "Запускаю Vulkan probe и GLES fallback…" :
+                (rendererSmoke ? "Запускаю GLES smoke test…" : "Запускаю OpenXRay…"));
         Toast.makeText(this, "OpenXRay: запуск движка…", Toast.LENGTH_SHORT).show();
         try {
             startActivity(intent);
@@ -668,8 +680,13 @@ public final class LauncherActivity extends Activity {
     }
 
     private Intent createEngineIntent(boolean rendererSmoke) {
+        return createEngineIntent(rendererSmoke, false);
+    }
+
+    private Intent createEngineIntent(boolean rendererSmoke, boolean vulkanRendererSmoke) {
         Intent intent = new Intent(this, XRayActivity.class);
         intent.putExtra(EXTRA_RENDERER_SMOKE, rendererSmoke);
+        intent.putExtra(EXTRA_RENDERER_VULKAN_SMOKE, vulkanRendererSmoke);
         intent.putExtra(EXTRA_GAMEPAD_ENABLED, gamepadEnabled.isChecked());
         intent.putExtra(EXTRA_TOUCH_CONTROLS, touchControlsEnabled.isChecked());
         intent.putExtra(EXTRA_SPLASH_ENABLED, splashEnabled.isChecked());
@@ -740,6 +757,7 @@ public final class LauncherActivity extends Activity {
         String normalized = argument.toLowerCase(Locale.US);
         if (normalized.equals("-android-game-root-hex")
                 || normalized.equals("-renderer-smoke")
+                || normalized.equals("-renderer-vulkan-smoke")
                 || normalized.equals("-headless-smoke")
                 || normalized.equals("-nogame")
                 || normalized.equals("-soc")
@@ -971,7 +989,7 @@ public final class LauncherActivity extends Activity {
         if (logView == null)
             return;
         String log = collectLogs();
-        logView.setText(log.isEmpty() ? "Лог пока пуст. Запустите GLES-проверку или игру." : log);
+        logView.setText(log.isEmpty() ? "Лог пока пуст. Запустите GLES/Vulkan-проверку или игру." : log);
         updateEngineStatus(log);
     }
 
@@ -993,6 +1011,11 @@ public final class LauncherActivity extends Activity {
     private void updateEngineStatus(String log) {
         if (engineLaunchTime == 0)
             return;
+        if (log.contains("[renderer-vulkan] PASS") && log.contains("[renderer-smoke] center pixel")
+                && log.contains(": PASS")) {
+            setStatus("Vulkan surface probe + GLES fallback завершены: PASS.");
+            return;
+        }
         if (log.contains("[renderer-smoke] center pixel") && log.contains(": PASS")) {
             setStatus("GLES renderer smoke test завершён: PASS.");
             return;

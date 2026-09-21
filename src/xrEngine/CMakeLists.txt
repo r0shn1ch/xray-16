@@ -229,6 +229,8 @@ target_sources_grouped(
     embedded_resources_management.h
     android_touch_controls.cpp
     android_touch_controls.h
+    android_vulkan_smoke.cpp
+    android_vulkan_smoke.h
     mp_logging.h
     stdafx.cpp
     stdafx.h

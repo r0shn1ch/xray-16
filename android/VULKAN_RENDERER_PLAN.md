@@ -80,6 +80,10 @@ requirement.
   pipeline so barriers are generated centrally rather than patched per GPU.
 - Keep GLES available during development and remove no working backend.
 
-Version 0.8.0 does not claim gates VK0–VK6 are complete. It fixes the current
-Android engine path and records the implementation boundary so a placeholder
-cannot be mistaken for the requested portable renderer.
+Version 0.9.0 adds an Android VK0 bring-up probe. The probe dynamically loads
+`libvulkan.so`, creates the SDL-provided Android surface, selects a graphics
+queue with swapchain support, creates a swapchain, acquires an image and
+presents it through the selected queue. The launcher exposes this as “Vulkan + GLES
+fallback”; gameplay remains on the proven GLES renderer when the device or
+SDL build does not provide Vulkan. Gates VK1–VK6 are intentionally not claimed
+complete until the probe is replaced by the common `xrRenderVK` backend.

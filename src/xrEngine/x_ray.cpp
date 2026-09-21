@@ -23,6 +23,7 @@
 #define RENDER_NAMESPACE render_gl
 #include "Layers/xrRenderGL/glHW.h"
 #undef RENDER_NAMESPACE
+#include "android_vulkan_smoke.h"
 #endif
 
 #include "IGame_Persistent.h"
@@ -542,9 +543,9 @@ void shutdown_android_engine_log()
     g_android_crash_log.installed = false;
 }
 
-void show_renderer_smoke_status(bool success)
+void show_renderer_smoke_status(bool success, bool vulkan_probe)
 {
-    SDL_AndroidShowToast(success ? "OpenXRay: engine loaded" :
+    SDL_AndroidShowToast(success ? (vulkan_probe ? "OpenXRay: Vulkan probe + GLES fallback passed" : "OpenXRay: GLES renderer passed") :
         "OpenXRay: engine load failed; see android.log", 1, -1, 0, 0);
 }
 
@@ -587,6 +588,7 @@ struct renderer_smoke_state
     GLuint vertex_buffer{};
     bool pixel_readback_done{};
     bool passed{};
+    bool vulkan_probe{};
     bool initialized{};
     bool status_reported{};
 };
@@ -754,7 +756,7 @@ void render_renderer_smoke(renderer_smoke_state& state)
         glReadPixels(width / 2, height / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
         state.passed = pixel[3] != 0;
         state.pixel_readback_done = true;
-        show_renderer_smoke_status(state.passed);
+        show_renderer_smoke_status(state.passed, state.vulkan_probe);
         state.status_reported = true;
         Msg("[renderer-smoke] center pixel RGBA=(%u,%u,%u,%u): %s", pixel[0], pixel[1], pixel[2], pixel[3],
             state.passed ? "PASS" : "FAIL");
@@ -783,7 +785,8 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
 {
     commandLine = commandLine ? commandLine : "";
     m_headless_smoke = commandLine && strstr(commandLine, "-headless-smoke");
-    m_renderer_smoke = commandLine && strstr(commandLine, "-renderer-smoke");
+    m_renderer_vulkan_smoke = commandLine && strstr(commandLine, "-renderer-vulkan-smoke");
+    m_renderer_smoke = commandLine && (strstr(commandLine, "-renderer-smoke") || m_renderer_vulkan_smoke);
 
     TracySetProgramName("OpenXRay");
     Threading::SetCurrentThreadName("Primary thread");
@@ -852,10 +855,16 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
 
         auto* state = new renderer_smoke_state;
         m_renderer_smoke_state = state;
+        if (m_renderer_vulkan_smoke)
+        {
+            std::string reason;
+            state->vulkan_probe = AndroidVulkanSmoke::Run(reason);
+            Msg("[renderer-vulkan] %s: %s", state->vulkan_probe ? "PASS" : "fallback to GLES", reason.c_str());
+        }
         if (!initialize_renderer_smoke(*state))
         {
             Log("! [renderer-smoke] initialization failed");
-            show_renderer_smoke_status(false);
+            show_renderer_smoke_status(false, state->vulkan_probe);
             state->status_reported = true;
         }
         return;
@@ -1073,7 +1082,7 @@ int CApplication::Run()
         if (!state || !state->initialized)
         {
             if (!state || !state->status_reported)
-                show_renderer_smoke_status(false);
+                show_renderer_smoke_status(false, state && state->vulkan_probe);
             SDL_Delay(3500);
             return EXIT_FAILURE;
         }

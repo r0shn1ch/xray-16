@@ -121,6 +121,7 @@ public final class XRayActivity extends SDLActivity {
     @Override
     protected String[] getArguments() {
         boolean rendererSmoke = getIntent().getBooleanExtra(LauncherActivity.EXTRA_RENDERER_SMOKE, false);
+        boolean vulkanRendererSmoke = getIntent().getBooleanExtra(LauncherActivity.EXTRA_RENDERER_VULKAN_SMOKE, false);
         String selectedPath = getIntent().getStringExtra(LauncherActivity.EXTRA_GAME_PATH);
         boolean gamepadEnabled = getIntent().getBooleanExtra(LauncherActivity.EXTRA_GAMEPAD_ENABLED, false);
         boolean splashEnabled = getIntent().getBooleanExtra(LauncherActivity.EXTRA_SPLASH_ENABLED, false);
@@ -129,9 +130,14 @@ public final class XRayActivity extends SDLActivity {
         ArrayList<String> args = new ArrayList<>();
 
         if (rendererSmoke) {
-            args.add("-renderer-smoke");
+            args.add(vulkanRendererSmoke ? "-renderer-vulkan-smoke" : "-renderer-smoke");
             args.add("-nogame");
         } else if (selectedPath != null && !selectedPath.isEmpty()) {
+            // The Android data path is slow and fragmented on many devices.
+            // Disabling the desktop prefetch worker keeps a new-game load
+            // single-threaded and avoids the post-loading stall/crash seen
+            // when the cache races the ALife bootstrap.
+            args.add("-noprefetch");
             args.add("-android-game-root-hex");
             args.add(encodeHex(selectedPath));
             switch (gameVariant) {

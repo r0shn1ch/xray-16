@@ -46,19 +46,19 @@ The launcher does not reject an incomplete folder: missing `fsgame.ltx` or
 resources are reported by the engine in the log.
 
 The resulting debug APK is
-`build/openxray-armv7-launcher-v0.8.0-debug.apk`. Proprietary game data is not
+`build/openxray-armv7-launcher-v0.9.0-debug.apk`. Proprietary game data is not
 bundled. The APK is a device-test candidate: a successful build and offline
 shader validation do not substitute for running the exact game/mod and GPU.
 
 ## Launcher and diagnostics on a phone
 
-1. Remove the old pre-launcher APK once before installing version 0.8.0. The
+1. Remove the old pre-launcher APK once before installing version 0.9.0. The
    old package registered `XRayActivity` itself as the launcher, so a pinned
    old icon can bypass the launcher entirely:
 
    ```sh
    adb uninstall org.openxray.stalker
-   adb install -r build/openxray-armv7-launcher-v0.8.0-debug.apk
+   adb install -r build/openxray-armv7-launcher-v0.9.0-debug.apk
    adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
    ```
 
@@ -79,7 +79,9 @@ shader validation do not substitute for running the exact game/mod and GPU.
    or profile. The reset action clears launcher preferences only and explicitly
    leaves game files, mods, `fsgame.ltx` and `user.ltx` untouched.
 5. Press **Проверить GLES без игровых файлов** to test the Android renderer,
-   or **Запустить игру** to run the selected installation. The launcher passes
+   or **Проверить Vulkan + GLES fallback** to validate Vulkan surface/device/
+   swapchain presentation and keep GLES as the gameplay fallback. Press
+   **Запустить игру** to run the selected installation. The launcher passes
    that directory to OpenXRay as-is; all missing or unreadable resources are
    logged by the engine.
 

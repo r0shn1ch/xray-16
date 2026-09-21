@@ -806,6 +806,7 @@ void CInput::TouchUpdate()
         { kINVENTORY, SDL_SCANCODE_I },
         { kUSE, SDL_SCANCODE_F },
         { kWPN_FIRE, MOUSE_1 },
+        { kQUIT, SDL_SCANCODE_ESCAPE },
     };
 
     const u32 requested = AndroidTouchControlMask();

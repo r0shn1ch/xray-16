@@ -1,6 +1,6 @@
 # Android port audit
 
-This audit covers the Android port through version 0.8.0. The comparison base
+This audit covers the Android port through version 0.9.0. The comparison base
 is upstream OpenXRay `dev` at `247d72764`. The Android branch already contains
 the two upstream UI commits that follow the fork's older `origin/dev`, so they
 are not Android-specific replacements.
@@ -53,6 +53,17 @@ The retained changes fall into these categories:
   no longer appear as corrupted binary text.
 - Build scripts derive archive versions from `PORT_VERSION` and discover a
   reusable build kit instead of requiring a hard-coded historical version.
+
+## Findings addressed in 0.9.0
+
+- The touch overlay exposes an `ESC` control and routes it through the same
+  `kQUIT` binding as a physical keyboard Escape key.
+- Android game launches disable object prefetch, compact memory after the
+  previous session is unloaded, and redraw the loading surface during large
+  ALife spawn passes.
+- The launcher exposes an Android Vulkan surface/device/swapchain/present
+  probe with automatic fallback to the existing GLES smoke path. This is a
+  VK0 bring-up check, not yet the complete gameplay renderer.
 
 ## Remaining renderer debt
 

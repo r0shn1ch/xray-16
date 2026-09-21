@@ -24,6 +24,7 @@ final class TouchControlsView extends View {
     static final int CONTROL_INVENTORY = 4;
     static final int CONTROL_USE = 5;
     static final int CONTROL_FIRE = 6;
+    static final int CONTROL_ESCAPE = 7;
 
     private static final int NO_POINTER = -1;
 
@@ -36,6 +37,7 @@ final class TouchControlsView extends View {
     private int firePointer = NO_POINTER;
     private int usePointer = NO_POINTER;
     private int inventoryPointer = NO_POINTER;
+    private int escapePointer = NO_POINTER;
     private int mousePointer = NO_POINTER;
     private float joystickX;
     private float joystickY;
@@ -93,6 +95,8 @@ final class TouchControlsView extends View {
         drawCircle(canvas, use.centerX(), use.centerY(), use.width() / 2, "ВЗЯТЬ");
         RectF inventory = inventoryBounds();
         drawCircle(canvas, inventory.centerX(), inventory.centerY(), inventory.width() / 2, "ИНВ");
+        RectF escape = escapeBounds();
+        drawCircle(canvas, escape.centerX(), escape.centerY(), escape.width() / 2, "ESC");
     }
 
     @Override
@@ -115,16 +119,19 @@ final class TouchControlsView extends View {
     }
 
     void releaseAllControls() {
-        for (int control = CONTROL_FORWARD; control <= CONTROL_FIRE; ++control)
+        for (int control = CONTROL_FORWARD; control <= CONTROL_ESCAPE; ++control)
             setControl(control, false);
         if (mousePointer != NO_POINTER)
             XRayActivity.clickTouchMouse(false);
-        joystickPointer = firePointer = usePointer = inventoryPointer = mousePointer = NO_POINTER;
+        joystickPointer = firePointer = usePointer = inventoryPointer = escapePointer = mousePointer = NO_POINTER;
         invalidate();
     }
 
     private void capturePointer(int pointerId, float x, float y) {
-        if (firePointer == NO_POINTER && fireBounds().contains(x, y)) {
+        if (escapePointer == NO_POINTER && escapeBounds().contains(x, y)) {
+            escapePointer = pointerId;
+            setControl(CONTROL_ESCAPE, true);
+        } else if (firePointer == NO_POINTER && fireBounds().contains(x, y)) {
             firePointer = pointerId;
             setControl(CONTROL_FIRE, true);
         } else if (usePointer == NO_POINTER && useBounds().contains(x, y)) {
@@ -175,6 +182,9 @@ final class TouchControlsView extends View {
         } else if (pointerId == inventoryPointer) {
             inventoryPointer = NO_POINTER;
             setControl(CONTROL_INVENTORY, false);
+        } else if (pointerId == escapePointer) {
+            escapePointer = NO_POINTER;
+            setControl(CONTROL_ESCAPE, false);
         } else if (pointerId == mousePointer) {
             mousePointer = NO_POINTER;
             float travel = (float)Math.hypot(x - mouseDownX, y - mouseDownY);
@@ -220,6 +230,10 @@ final class TouchControlsView extends View {
 
     private RectF inventoryBounds() {
         return circleBounds(getWidth() - dp(207), getHeight() - dp(55), dp(39));
+    }
+
+    private RectF escapeBounds() {
+        return circleBounds(getWidth() - dp(66), dp(66), dp(34));
     }
 
     private RectF circleBounds(float x, float y, float radius) {

@@ -17,7 +17,7 @@ patches), loads a prepared build kit when `XRAY_ANDROID_KIT_ROOT` is set, and
 then builds either the APK or the native target:
 
 ```sh
-XRAY_ANDROID_KIT_ROOT=/path/to/openxray-android-build-kit-v0.8.0 \
+XRAY_ANDROID_KIT_ROOT=/path/to/openxray-android-build-kit-v0.9.0 \
 ./android/build-harness.sh --apk
 ```
 
@@ -54,7 +54,7 @@ being copied into that checkout first. Keep the extracted harness outside the
 source tree and pass the source path explicitly:
 
 ```sh
-/path/to/openxray-android-build-harness-v0.8.0/android/apply-patches.sh \
+/path/to/openxray-android-build-harness-v0.9.0/android/apply-patches.sh \
   /path/to/clean/xray-16
 ```
 
