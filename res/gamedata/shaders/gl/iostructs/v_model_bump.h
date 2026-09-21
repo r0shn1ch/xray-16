@@ -64,10 +64,10 @@ void main()
 #endif
 
 	I.P = v_model_P;
-	I.N = v_model_N;
-	I.T = v_model_T;
-	I.B = v_model_B;
-	I.tc = v_model_tc;
+	I.N = skin_input_normal(v_model_N);
+	I.T = skin_input_tangent(v_model_T);
+	I.B = skin_input_tangent(v_model_B);
+	I.tc = skin_input_tc(v_model_tc);
 
 	v2p_bumped O;
 #ifdef 	SKIN_NONE

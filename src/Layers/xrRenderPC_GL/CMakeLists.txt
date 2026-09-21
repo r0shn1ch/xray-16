@@ -414,6 +414,10 @@ target_link_libraries(xrRender_GL
     xrImGui
 )
 
+if (ANDROID)
+    target_link_libraries(xrRender_GL PRIVATE log)
+endif()
+
 target_compile_definitions(xrRender_GL
     PRIVATE
     XRRENDER_GL_EXPORTS

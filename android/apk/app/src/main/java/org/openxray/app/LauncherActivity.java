@@ -6,6 +6,8 @@ import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Color;
+import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -15,12 +17,15 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
-import android.graphics.Typeface;
+import android.view.Gravity;
 import android.view.View;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -32,42 +37,76 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintWriter;
-import java.util.ArrayList;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 
 /**
- * Android launcher for selecting the STALKER installation and inspecting the
- * native engine log after a run. The engine itself remains in XRayActivity so
- * SDL owns the GLES surface and native main thread.
+ * Configuration and diagnostics front end for the native SDL engine.
+ *
+ * The launcher deliberately never rewrites the selected installation,
+ * fsgame.ltx or user.ltx. It only stages OpenXRay-owned renderer data in the
+ * app's private directory and passes explicit command-line choices to the
+ * engine process.
  */
 public final class LauncherActivity extends Activity {
     public static final String EXTRA_GAME_PATH = "org.openxray.extra.GAME_PATH";
+    public static final String EXTRA_GAME_VARIANT = "org.openxray.extra.GAME_VARIANT";
+    public static final String EXTRA_ADDITIONAL_ARGS = "org.openxray.extra.ADDITIONAL_ARGS";
     public static final String EXTRA_RENDERER_SMOKE = "org.openxray.extra.RENDERER_SMOKE";
+    public static final String EXTRA_GAMEPAD_ENABLED = "org.openxray.extra.GAMEPAD_ENABLED";
+    public static final String EXTRA_SPLASH_ENABLED = "org.openxray.extra.SPLASH_ENABLED";
+    public static final String EXTRA_KEEP_SCREEN_ON = "org.openxray.extra.KEEP_SCREEN_ON";
+    public static final String EXTRA_IMMERSIVE = "org.openxray.extra.IMMERSIVE";
 
     private static final String PREFS = "openxray_launcher";
     private static final String PREF_GAME_PATH = "game_path";
     private static final String PREF_GAME_URI = "game_uri";
+    private static final String PREF_GAME_VARIANT = "game_variant";
+    private static final String PREF_CUSTOM_ARGS = "custom_args";
+    private static final String PREF_GAMEPAD = "gamepad";
+    private static final String PREF_SPLASH = "splash";
+    private static final String PREF_KEEP_SCREEN_ON = "keep_screen_on";
+    private static final String PREF_IMMERSIVE = "immersive";
+    private static final String PREF_ACTIVE_PAGE = "active_page";
+
+    private static final int PAGE_GAME = 0;
+    private static final int PAGE_SETTINGS = 1;
+    private static final int PAGE_DIAGNOSTICS = 2;
     private static final int REQUEST_GAME_TREE = 1001;
     private static final int REQUEST_STORAGE_PERMISSIONS = 1002;
     private static final int MAX_LOG_BYTES = 180 * 1024;
+    private static final int MAX_SHARED_LOG_CHARS = 600 * 1024;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private EditText gamePath;
+    private EditText customArgs;
+    private Spinner gameVariant;
+    private CheckBox gamepadEnabled;
+    private CheckBox splashEnabled;
+    private CheckBox keepScreenOn;
+    private CheckBox immersiveMode;
     private TextView accessStatus;
+    private TextView gameInspection;
     private TextView status;
     private TextView logView;
+    private Button launchButton;
+    private Button[] tabButtons;
+    private View[] pages;
     private SharedPreferences preferences;
     private long engineLaunchTime;
     private boolean engineFailureToastShown;
+    private int activePage = PAGE_GAME;
 
     private final Runnable logPoller = new Runnable() {
         @Override
         public void run() {
             refreshLog();
-            handler.postDelayed(this, 700);
+            refreshRunningState();
+            handler.postDelayed(this, activePage == PAGE_DIAGNOSTICS ? 700 : 1800);
         }
     };
 
@@ -76,9 +115,11 @@ public final class LauncherActivity extends Activity {
         super.onCreate(savedInstanceState);
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
         buildInterface();
-        gamePath.setText(preferences.getString(PREF_GAME_PATH, "/storage/emulated/0/STALKER"));
+        restorePreferences();
         refreshAccessStatus();
+        refreshGameInspection();
         refreshLog();
+        refreshRunningState();
         handler.post(this::showStorageAccessPromptIfNeeded);
     }
 
@@ -86,13 +127,16 @@ public final class LauncherActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refreshAccessStatus();
+        refreshGameInspection();
         refreshLog();
+        refreshRunningState();
         handler.removeCallbacks(logPoller);
         handler.post(logPoller);
     }
 
     @Override
     protected void onPause() {
+        savePreferences();
         handler.removeCallbacks(logPoller);
         super.onPause();
     }
@@ -120,10 +164,11 @@ public final class LauncherActivity extends Activity {
             setStatus("Выбрана папка: " + resolvedPath);
         } else {
             preferences.edit().putString(PREF_GAME_URI, treeUri.toString()).apply();
-            setStatus("Папка выбрана через SAF, но прямой путь не определён. "
-                    + "Для native-движка укажите путь вручную и включите доступ ко всей памяти.");
+            setStatus("Папка выбрана через системный проводник, но Android не раскрыл прямой путь. "
+                    + "Укажите его вручную: native-движок не может читать content:// URI как обычный каталог.");
         }
         refreshAccessStatus();
+        refreshGameInspection();
     }
 
     @Override
@@ -133,88 +178,273 @@ public final class LauncherActivity extends Activity {
             return;
 
         refreshAccessStatus();
-        if (hasStorageAccess())
-            setStatus("Доступ к файлам выдан.");
-        else
-            setStatus("Доступ к файлам не выдан. Его можно включить в настройках приложения.");
+        setStatus(hasStorageAccess()
+                ? "Доступ к файлам выдан."
+                : "Доступ к файлам не выдан. Его можно включить в настройках приложения.");
     }
 
     private void buildInterface() {
         final int padding = dp(16);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(padding, padding, padding, padding);
+        root.setPadding(padding, dp(12), padding, dp(10));
 
         TextView title = new TextView(this);
-        title.setText("OpenXRay Launcher " + BuildConfig.VERSION_NAME);
-        title.setTextSize(24);
+        title.setText("OpenXRay Android");
+        title.setTextSize(25);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         root.addView(title, matchWrap());
 
-        TextView subtitle = new TextView(this);
-        subtitle.setText("Выберите папку установки STALKER, затем запустите движок или renderer smoke test.");
-        subtitle.setPadding(0, dp(6), 0, dp(12));
-        root.addView(subtitle, matchWrap());
+        TextView version = new TextView(this);
+        version.setText("Версия " + BuildConfig.VERSION_NAME + " · ARMv7 · GLES");
+        version.setTextSize(13);
+        version.setPadding(0, 0, 0, dp(10));
+        root.addView(version, matchWrap());
 
-        LinearLayout pathRow = new LinearLayout(this);
-        pathRow.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout tabs = new LinearLayout(this);
+        tabs.setOrientation(LinearLayout.HORIZONTAL);
+        tabButtons = new Button[3];
+        tabButtons[PAGE_GAME] = makeTab("Игра", PAGE_GAME);
+        tabButtons[PAGE_SETTINGS] = makeTab("Параметры", PAGE_SETTINGS);
+        tabButtons[PAGE_DIAGNOSTICS] = makeTab("Диагностика", PAGE_DIAGNOSTICS);
+        for (Button button : tabButtons)
+            tabs.addView(button, new LinearLayout.LayoutParams(0, dp(48), 1));
+        root.addView(tabs, matchWrap());
+
+        pages = new View[] { buildGamePage(), buildSettingsPage(), buildDiagnosticsPage() };
+        for (View page : pages)
+            root.addView(page, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        setContentView(root);
+    }
+
+    private Button makeTab(String label, int page) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setOnClickListener(view -> showPage(page));
+        return button;
+    }
+
+    private View buildGamePage() {
+        LinearLayout content = pageContent();
+        addSectionTitle(content, "Установка игры");
+
+        content.addView(bodyText(
+                "Выберите корневую папку оригинальной ПК-версии. Лаунчер не меняет её содержимое; "
+                        + "OpenXRay читает ресурсы напрямую."), matchWrap());
+
         gamePath = new EditText(this);
         gamePath.setSingleLine(true);
         gamePath.setHint("/storage/emulated/0/STALKER");
-        pathRow.addView(gamePath, new LinearLayout.LayoutParams(0, dp(52), 1));
-        Button choose = new Button(this);
-        choose.setText("Выбрать");
-        choose.setOnClickListener(view -> chooseGameFolder());
-        pathRow.addView(choose, new LinearLayout.LayoutParams(dp(112), dp(52)));
-        root.addView(pathRow, matchWrap());
+        gamePath.setOnFocusChangeListener((view, focused) -> {
+            if (!focused)
+                refreshGameInspection();
+        });
+        content.addView(gamePath, matchWrap());
 
-        accessStatus = new TextView(this);
-        accessStatus.setPadding(0, dp(8), 0, dp(8));
-        root.addView(accessStatus, matchWrap());
+        LinearLayout pathActions = horizontalRow();
+        pathActions.addView(actionButton("Выбрать папку", view -> chooseGameFolder()), weightedButton());
+        pathActions.addView(actionButton("Проверить", view -> refreshGameInspection()), weightedButton());
+        content.addView(pathActions, matchWrap());
 
-        LinearLayout accessRow = new LinearLayout(this);
-        accessRow.setOrientation(LinearLayout.HORIZONTAL);
-        Button storage = new Button(this);
-        storage.setText("Доступ к памяти");
-        storage.setOnClickListener(view -> requestAllFilesAccess());
-        accessRow.addView(storage, new LinearLayout.LayoutParams(0, dp(52), 1));
-        Button clear = new Button(this);
-        clear.setText("Очистить лог");
-        clear.setOnClickListener(view -> clearLogs());
-        accessRow.addView(clear, new LinearLayout.LayoutParams(0, dp(52), 1));
-        root.addView(accessRow, matchWrap());
+        gameInspection = bodyText("");
+        gameInspection.setTextIsSelectable(true);
+        gameInspection.setPadding(dp(2), dp(6), dp(2), dp(10));
+        content.addView(gameInspection, matchWrap());
 
-        LinearLayout launchRow = new LinearLayout(this);
-        launchRow.setOrientation(LinearLayout.HORIZONTAL);
-        Button smoke = new Button(this);
-        smoke.setText("Проверить GLES");
-        smoke.setOnClickListener(view -> launchEngine(true));
-        launchRow.addView(smoke, new LinearLayout.LayoutParams(0, dp(56), 1));
-        Button launch = new Button(this);
-        launch.setText("Запустить движок");
-        launch.setOnClickListener(view -> launchEngine(false));
-        launchRow.addView(launch, new LinearLayout.LayoutParams(0, dp(56), 1));
-        root.addView(launchRow, matchWrap());
+        accessStatus = bodyText("");
+        content.addView(accessStatus, matchWrap());
 
-        status = new TextView(this);
-        status.setPadding(0, dp(8), 0, dp(8));
-        root.addView(status, matchWrap());
+        content.addView(actionButton("Настроить доступ к памяти", view -> requestAllFilesAccess()), matchWrap());
 
-        TextView logTitle = new TextView(this);
-        logTitle.setText("Лог запуска движка");
-        logTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        root.addView(logTitle, matchWrap());
+        addSectionTitle(content, "Запуск");
+        launchButton = actionButton("Запустить игру", view -> launchEngine(false));
+        launchButton.setTextSize(17);
+        content.addView(launchButton, new LinearLayout.LayoutParams(-1, dp(60)));
+        content.addView(actionButton("Проверить GLES без игровых файлов", view -> launchEngine(true)),
+                new LinearLayout.LayoutParams(-1, dp(52)));
+
+        status = bodyText("Готово к настройке.");
+        status.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        status.setPadding(dp(2), dp(10), dp(2), dp(14));
+        content.addView(status, matchWrap());
+        return scrollPage(content);
+    }
+
+    private View buildSettingsPage() {
+        LinearLayout content = pageContent();
+        addSectionTitle(content, "Профиль игры");
+        content.addView(bodyText(
+                "Профиль задаёт штатный ключ OpenXRay. Для Steam-версии «Зова Припяти» выберите CoP."),
+                matchWrap());
+
+        gameVariant = new Spinner(this);
+        String[] variants = {
+                "Автоматически / без ключа",
+                "Shadow of Chernobyl (-soc)",
+                "Clear Sky (-cs)",
+                "Call of Pripyat (-cop)"
+        };
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, variants);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        gameVariant.setAdapter(adapter);
+        content.addView(gameVariant, matchWrap());
+
+        addSectionTitle(content, "Управление и экран");
+        gamepadEnabled = makeCheckBox("Включить поддержку геймпада",
+                "Если выключено, движок получает -no_gamepad.");
+        splashEnabled = makeCheckBox("Показывать заставку OpenXRay",
+                "Не влияет на оригинальные игровые intro-видео.");
+        keepScreenOn = makeCheckBox("Не выключать экран во время игры",
+                "Предотвращает системную блокировку при загрузке.");
+        immersiveMode = makeCheckBox("Полноэкранный режим Android",
+                "Скрывает системные панели; жест от края временно возвращает их.");
+        content.addView(gamepadEnabled, matchWrap());
+        content.addView(splashEnabled, matchWrap());
+        content.addView(keepScreenOn, matchWrap());
+        content.addView(immersiveMode, matchWrap());
+
+        addSectionTitle(content, "Дополнительные аргументы");
+        content.addView(bodyText(
+                "Аргументы разбираются без shell. Кавычки поддерживаются. Путь, профиль игры и smoke-режим "
+                        + "задаются полями выше и не могут быть переопределены здесь."), matchWrap());
+        customArgs = new EditText(this);
+        customArgs.setHint("Например: -novtf");
+        customArgs.setMinLines(2);
+        customArgs.setGravity(Gravity.TOP | Gravity.START);
+        content.addView(customArgs, matchWrap());
+
+        content.addView(actionButton("Сохранить параметры", view -> {
+            savePreferences();
+            setStatus("Параметры сохранены.");
+            showPage(PAGE_GAME);
+        }), new LinearLayout.LayoutParams(-1, dp(52)));
+        return scrollPage(content);
+    }
+
+    private View buildDiagnosticsPage() {
+        LinearLayout content = pageContent();
+        addSectionTitle(content, "Журнал движка");
+        LinearLayout actions = horizontalRow();
+        actions.addView(actionButton("Обновить", view -> refreshLog()), weightedButton());
+        actions.addView(actionButton("Поделиться", view -> shareLogs()), weightedButton());
+        actions.addView(actionButton("Очистить", view -> clearLogs()), weightedButton());
+        content.addView(actions, matchWrap());
+
+        TextView help = bodyText(
+                "Показываются native-лог OpenXRay и события Android Activity. Полный logcat полезен "
+                        + "для ошибок драйвера или системного завершения процесса.");
+        help.setPadding(0, dp(8), 0, dp(8));
+        content.addView(help, matchWrap());
 
         logView = new TextView(this);
         logView.setTextSize(11);
         logView.setTypeface(Typeface.MONOSPACE);
         logView.setTextIsSelectable(true);
-        logView.setPadding(dp(8), dp(8), dp(8), dp(8));
-        ScrollView logScroll = new ScrollView(this);
-        logScroll.addView(logView, new ScrollView.LayoutParams(-1, -2));
-        root.addView(logScroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        logView.setPadding(dp(8), dp(8), dp(8), dp(16));
+        content.addView(logView, matchWrap());
+        return scrollPage(content);
+    }
 
-        setContentView(root);
+    private LinearLayout pageContent() {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(0, dp(8), 0, dp(16));
+        return content;
+    }
+
+    private View scrollPage(LinearLayout content) {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
+        return scroll;
+    }
+
+    private LinearLayout horizontalRow() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        return row;
+    }
+
+    private Button actionButton(String text, View.OnClickListener listener) {
+        Button button = new Button(this);
+        button.setText(text);
+        button.setAllCaps(false);
+        button.setOnClickListener(listener);
+        return button;
+    }
+
+    private CheckBox makeCheckBox(String title, String description) {
+        CheckBox checkBox = new CheckBox(this);
+        checkBox.setText(title + "\n" + description);
+        checkBox.setPadding(0, dp(5), 0, dp(5));
+        return checkBox;
+    }
+
+    private TextView bodyText(String value) {
+        TextView view = new TextView(this);
+        view.setText(value);
+        view.setTextSize(14);
+        view.setLineSpacing(0, 1.08f);
+        return view;
+    }
+
+    private void addSectionTitle(LinearLayout parent, String value) {
+        TextView title = new TextView(this);
+        title.setText(value);
+        title.setTextSize(18);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        title.setPadding(0, dp(14), 0, dp(7));
+        parent.addView(title, matchWrap());
+    }
+
+    private void restorePreferences() {
+        gamePath.setText(preferences.getString(PREF_GAME_PATH, "/storage/emulated/0/STALKER"));
+        customArgs.setText(preferences.getString(PREF_CUSTOM_ARGS, ""));
+        gameVariant.setSelection(clampVariant(preferences.getInt(PREF_GAME_VARIANT, 3)));
+        gamepadEnabled.setChecked(preferences.getBoolean(PREF_GAMEPAD, false));
+        splashEnabled.setChecked(preferences.getBoolean(PREF_SPLASH, false));
+        keepScreenOn.setChecked(preferences.getBoolean(PREF_KEEP_SCREEN_ON, true));
+        immersiveMode.setChecked(preferences.getBoolean(PREF_IMMERSIVE, true));
+        showPage(preferences.getInt(PREF_ACTIVE_PAGE, PAGE_GAME));
+    }
+
+    private void savePreferences() {
+        if (preferences == null || gamePath == null)
+            return;
+        preferences.edit()
+                .putString(PREF_GAME_PATH, gamePath.getText().toString().trim())
+                .putString(PREF_CUSTOM_ARGS, customArgs.getText().toString())
+                .putInt(PREF_GAME_VARIANT, gameVariant.getSelectedItemPosition())
+                .putBoolean(PREF_GAMEPAD, gamepadEnabled.isChecked())
+                .putBoolean(PREF_SPLASH, splashEnabled.isChecked())
+                .putBoolean(PREF_KEEP_SCREEN_ON, keepScreenOn.isChecked())
+                .putBoolean(PREF_IMMERSIVE, immersiveMode.isChecked())
+                .putInt(PREF_ACTIVE_PAGE, activePage)
+                .apply();
+    }
+
+    private int clampVariant(int value) {
+        return value >= 0 && value <= 3 ? value : 3;
+    }
+
+    private void showPage(int requestedPage) {
+        int page = requestedPage >= PAGE_GAME && requestedPage <= PAGE_DIAGNOSTICS
+                ? requestedPage : PAGE_GAME;
+        activePage = page;
+        if (pages == null)
+            return;
+        for (int index = 0; index < pages.length; ++index) {
+            boolean selected = index == page;
+            pages[index].setVisibility(selected ? View.VISIBLE : View.GONE);
+            tabButtons[index].setEnabled(!selected);
+            tabButtons[index].setTypeface(Typeface.DEFAULT,
+                    selected ? Typeface.BOLD : Typeface.NORMAL);
+        }
+        if (page == PAGE_DIAGNOSTICS)
+            refreshLog();
     }
 
     private void chooseGameFolder() {
@@ -241,7 +471,6 @@ public final class LauncherActivity extends Activity {
             setStatus("На этой версии Android отдельный All files access не требуется.");
             return;
         }
-
         if (Environment.isExternalStorageManager()) {
             setStatus("Доступ ко всей памяти уже выдан.");
             return;
@@ -271,7 +500,6 @@ public final class LauncherActivity extends Activity {
             missing.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE);
         if (missing.isEmpty())
             return false;
-
         requestPermissions(missing.toArray(new String[0]), REQUEST_STORAGE_PERMISSIONS);
         return true;
     }
@@ -279,17 +507,14 @@ public final class LauncherActivity extends Activity {
     private void showStorageAccessPromptIfNeeded() {
         if (hasStorageAccess())
             return;
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             new AlertDialog.Builder(this)
                     .setTitle("Нужен доступ к файлам")
-                    .setMessage("OpenXRay должен читать файлы STALKER и писать лог в "
-                            + "/storage/emulated/0/openxray/android.log. Android 11 и новее "
-                            + "не показывают для этого обычное окно разрешения: включите "
-                            + "«Разрешить управление всеми файлами» на системной странице приложения.")
+                    .setMessage("OpenXRay читает оригинальные файлы STALKER непосредственно из выбранной папки. "
+                            + "На Android 11 и новее включите «Разрешить управление всеми файлами» для приложения.")
                     .setPositiveButton("Открыть настройки", (dialog, which) -> requestAllFilesAccess())
                     .setNegativeButton("Позже", (dialog, which) ->
-                            setStatus("Доступ не выдан. Для запуска игры откройте «Доступ к памяти»."))
+                            setStatus("Доступ пока не выдан. Его можно включить на вкладке «Игра»."))
                     .show();
         } else {
             requestAllFilesAccess();
@@ -303,19 +528,33 @@ public final class LauncherActivity extends Activity {
             return checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE)
                     == android.content.pm.PackageManager.PERMISSION_GRANTED
                     && checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                        == android.content.pm.PackageManager.PERMISSION_GRANTED;
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED;
         return true;
     }
 
     private void launchEngine(boolean rendererSmoke) {
-        clearLogs();
-
+        if (!rendererSmoke && isEngineProcessRunning()) {
+            Intent resume = new Intent(this, XRayActivity.class);
+            resume.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            setStatus("Возвращаю уже запущенный движок на экран…");
+            startActivity(resume);
+            return;
+        }
         if (!rendererSmoke && !prepareEngineLaunch())
             return;
 
-        String selectedPath = gamePath.getText().toString().trim();
-        preferences.edit().putString(PREF_GAME_PATH, selectedPath).apply();
+        String[] additionalArgs;
+        try {
+            additionalArgs = parseAdditionalArguments(customArgs.getText().toString());
+        } catch (IllegalArgumentException error) {
+            setStatus("Ошибка в дополнительных аргументах: " + error.getMessage());
+            showPage(PAGE_SETTINGS);
+            return;
+        }
 
+        clearLogs();
+        savePreferences();
+        String selectedPath = gamePath.getText().toString().trim();
         writeLauncherLog("[launcher] starting "
                 + (rendererSmoke ? "renderer smoke test" : "OpenXRay; game root=" + selectedPath));
         engineLaunchTime = SystemClock.elapsedRealtime();
@@ -323,8 +562,15 @@ public final class LauncherActivity extends Activity {
 
         Intent intent = new Intent(this, XRayActivity.class);
         intent.putExtra(EXTRA_RENDERER_SMOKE, rendererSmoke);
-        if (!rendererSmoke)
+        intent.putExtra(EXTRA_GAMEPAD_ENABLED, gamepadEnabled.isChecked());
+        intent.putExtra(EXTRA_SPLASH_ENABLED, splashEnabled.isChecked());
+        intent.putExtra(EXTRA_KEEP_SCREEN_ON, keepScreenOn.isChecked());
+        intent.putExtra(EXTRA_IMMERSIVE, immersiveMode.isChecked());
+        intent.putExtra(EXTRA_ADDITIONAL_ARGS, additionalArgs);
+        if (!rendererSmoke) {
             intent.putExtra(EXTRA_GAME_PATH, selectedPath);
+            intent.putExtra(EXTRA_GAME_VARIANT, gameVariant.getSelectedItemPosition());
+        }
         setStatus(rendererSmoke ? "Запускаю GLES smoke test…" : "Запускаю OpenXRay…");
         Toast.makeText(this, "OpenXRay: запуск движка…", Toast.LENGTH_SHORT).show();
         try {
@@ -335,58 +581,156 @@ public final class LauncherActivity extends Activity {
         }
     }
 
+    private String[] parseAdditionalArguments(String commandLine) {
+        ArrayList<String> result = new ArrayList<>();
+        StringBuilder token = new StringBuilder();
+        char quote = 0;
+        boolean escaped = false;
+        boolean tokenStarted = false;
+
+        for (int index = 0; index < commandLine.length(); ++index) {
+            char current = commandLine.charAt(index);
+            if (escaped) {
+                token.append(current);
+                escaped = false;
+                tokenStarted = true;
+                continue;
+            }
+            if (current == '\\') {
+                escaped = true;
+                tokenStarted = true;
+                continue;
+            }
+            if (quote != 0) {
+                if (current == quote)
+                    quote = 0;
+                else
+                    token.append(current);
+                tokenStarted = true;
+                continue;
+            }
+            if (current == '\'' || current == '"') {
+                quote = current;
+                tokenStarted = true;
+                continue;
+            }
+            if (Character.isWhitespace(current)) {
+                if (tokenStarted) {
+                    addCheckedArgument(result, token.toString());
+                    token.setLength(0);
+                    tokenStarted = false;
+                }
+                continue;
+            }
+            token.append(current);
+            tokenStarted = true;
+        }
+
+        if (escaped)
+            throw new IllegalArgumentException("последний символ '\\' не экранирует аргумент");
+        if (quote != 0)
+            throw new IllegalArgumentException("не закрыта кавычка");
+        if (tokenStarted)
+            addCheckedArgument(result, token.toString());
+        return result.toArray(new String[0]);
+    }
+
+    private void addCheckedArgument(List<String> target, String argument) {
+        String normalized = argument.toLowerCase(Locale.US);
+        if (normalized.equals("-android-game-root-hex")
+                || normalized.equals("-renderer-smoke")
+                || normalized.equals("-headless-smoke")
+                || normalized.equals("-nogame")
+                || normalized.equals("-soc")
+                || normalized.equals("-shoc")
+                || normalized.equals("-cs")
+                || normalized.equals("-cop")) {
+            throw new IllegalArgumentException("зарезервированный аргумент " + argument);
+        }
+        target.add(argument);
+    }
+
     private boolean prepareEngineLaunch() {
         if (!hasStorageAccess()) {
             writeLauncherLog("[launcher] storage access is missing; game root was not passed to the engine");
-            setStatus("Сначала нажмите «Доступ к памяти» и включите «Разрешить управление всеми файлами»."
-                    + " Обычного разрешения при установке Android не показывает.");
+            setStatus("Сначала включите доступ ко всей памяти.");
             return false;
         }
 
         try {
             String selectedPath = gamePath.getText().toString().trim();
             if (selectedPath.isEmpty()) {
-                writeLauncherLog("[launcher] game root was not selected; engine was not started");
                 setStatus("Папка STALKER не выбрана.");
                 return false;
             }
-
-            if (!prepareBundledEngineData()) {
-                writeLauncherLog("[launcher] bundled OpenXRay engine data is unavailable");
-                setStatus("Не удалось подготовить встроенные данные движка. Смотрите лог.");
+            File root = new File(selectedPath);
+            if (!root.isDirectory() || !root.canRead()) {
+                writeLauncherLog("[launcher] selected game root is not a readable directory: " + selectedPath);
+                setStatus("Выбранный путь не является доступной для чтения папкой.");
+                refreshGameInspection();
                 return false;
             }
-
+            if (!prepareBundledEngineData()) {
+                writeLauncherLog("[launcher] bundled OpenXRay engine data is unavailable");
+                setStatus("Не удалось подготовить внутренние данные рендера. Смотрите диагностику.");
+                return false;
+            }
             writeLauncherLog("[launcher] passing game root to engine without modifying it: " + selectedPath);
             return true;
-        } catch (SecurityException error) {
-            writeLauncherLog("[launcher] Android denied access to engine data: "
+        } catch (IOException | SecurityException error) {
+            writeLauncherLog("[launcher] cannot prepare engine data: "
                     + error.getClass().getSimpleName() + ": " + error.getMessage());
-            setStatus("Android запретил доступ к данным движка: " + error.getMessage());
+            setStatus("Не удалось подготовить внутренние данные движка: " + error.getMessage());
             return false;
         }
     }
 
-    private boolean prepareBundledEngineData() {
-        File destination = new File(getFilesDir(), "openxray/engine-gamedata");
-        try {
-            copyBundledAssetTree("gamedata", destination);
-            File configs = new File(destination, "configs");
-            File shaders = new File(destination, "shaders");
-            if (!configs.isDirectory() || !shaders.isDirectory()
-                    || !hasDirectoryEntries(configs) || !hasDirectoryEntries(shaders)) {
-                writeLauncherLog("[launcher] bundled engine gamedata is incomplete: "
-                        + destination.getAbsolutePath());
-                return false;
-            }
-            writeLauncherLog("[launcher] OpenXRay engine gamedata is ready in app storage: "
-                        + destination.getAbsolutePath());
+    private boolean prepareBundledEngineData() throws IOException {
+        File privateRoot = new File(getFilesDir(), "openxray");
+        File destination = new File(privateRoot, "engine-gamedata");
+        File marker = new File(privateRoot, "engine-data.version");
+        String desiredVersion = Integer.toString(BuildConfig.VERSION_CODE);
+
+        if (desiredVersion.equals(readSmallTextFile(marker)) && isCompleteEngineData(destination)) {
+            writeLauncherLog("[launcher] OpenXRay engine data is current: " + destination.getAbsolutePath());
             return true;
-        } catch (IOException | SecurityException error) {
-            writeLauncherLog("[launcher] cannot prepare bundled engine gamedata: "
-                    + error.getClass().getSimpleName() + ": " + error.getMessage());
+        }
+        if (!privateRoot.exists() && !privateRoot.mkdirs())
+            throw new IOException("cannot create " + privateRoot);
+
+        File staging = new File(privateRoot, "engine-gamedata.new");
+        File backup = new File(privateRoot, "engine-gamedata.old");
+        deleteRecursively(staging);
+        deleteRecursively(backup);
+        copyBundledAssetTree("gamedata", staging);
+        if (!isCompleteEngineData(staging)) {
+            deleteRecursively(staging);
+            writeLauncherLog("[launcher] bundled engine gamedata is incomplete");
             return false;
         }
+
+        boolean hadDestination = destination.exists();
+        if (hadDestination && !destination.renameTo(backup)) {
+            deleteRecursively(staging);
+            throw new IOException("cannot replace " + destination);
+        }
+        if (!staging.renameTo(destination)) {
+            if (hadDestination)
+                backup.renameTo(destination);
+            throw new IOException("cannot activate staged engine data");
+        }
+        deleteRecursively(backup);
+        writeSmallTextFileAtomically(marker, desiredVersion);
+        writeLauncherLog("[launcher] OpenXRay engine data updated atomically: "
+                + destination.getAbsolutePath());
+        return true;
+    }
+
+    private boolean isCompleteEngineData(File directory) {
+        File configs = new File(directory, "configs");
+        File shaders = new File(directory, "shaders");
+        return configs.isDirectory() && shaders.isDirectory()
+                && hasDirectoryEntries(configs) && hasDirectoryEntries(shaders);
     }
 
     private boolean hasDirectoryEntries(File directory) {
@@ -397,8 +741,6 @@ public final class LauncherActivity extends Activity {
     private void copyBundledAssetTree(String assetPath, File destination) throws IOException {
         String[] children = getAssets().list(assetPath);
         if (children == null || children.length == 0) {
-            if (destination.isFile())
-                return;
             File parent = destination.getParentFile();
             if (parent != null && !parent.exists() && !parent.mkdirs())
                 throw new IOException("cannot create " + parent);
@@ -411,11 +753,48 @@ public final class LauncherActivity extends Activity {
             }
             return;
         }
-
         if (!destination.exists() && !destination.mkdirs())
             throw new IOException("cannot create " + destination);
         for (String child : children)
             copyBundledAssetTree(assetPath + "/" + child, new File(destination, child));
+    }
+
+    private void deleteRecursively(File target) throws IOException {
+        if (!target.exists())
+            return;
+        if (target.isDirectory()) {
+            File[] children = target.listFiles();
+            if (children == null)
+                throw new IOException("cannot list " + target);
+            for (File child : children)
+                deleteRecursively(child);
+        }
+        if (!target.delete())
+            throw new IOException("cannot delete " + target);
+    }
+
+    private String readSmallTextFile(File file) {
+        if (!file.isFile() || file.length() > 128)
+            return "";
+        try (FileInputStream input = new FileInputStream(file)) {
+            byte[] bytes = new byte[(int) file.length()];
+            int count = input.read(bytes);
+            return count > 0 ? new String(bytes, 0, count, StandardCharsets.UTF_8).trim() : "";
+        } catch (IOException | SecurityException ignored) {
+            return "";
+        }
+    }
+
+    private void writeSmallTextFileAtomically(File file, String value) throws IOException {
+        File temporary = new File(file.getParentFile(), file.getName() + ".new");
+        try (FileOutputStream output = new FileOutputStream(temporary)) {
+            output.write(value.getBytes(StandardCharsets.UTF_8));
+            output.getFD().sync();
+        }
+        if (file.exists() && !file.delete())
+            throw new IOException("cannot replace " + file);
+        if (!temporary.renameTo(file))
+            throw new IOException("cannot activate " + file);
     }
 
     private String resolvePrimaryStoragePath(Uri treeUri) {
@@ -429,14 +808,62 @@ public final class LauncherActivity extends Activity {
     }
 
     private void refreshAccessStatus() {
+        if (accessStatus == null)
+            return;
         boolean granted = hasStorageAccess();
-        accessStatus.setText("Доступ ко всей памяти: " + (granted ? "выдан" : "нужен")
-                + "\nЛоги также читаются из app-specific fallback, если root storage закрыт.");
+        accessStatus.setText("Доступ ко всей памяти: " + (granted ? "выдан" : "требуется"));
+        accessStatus.setTextColor(granted ? Color.rgb(25, 115, 55) : Color.rgb(190, 70, 35));
+    }
+
+    private void refreshGameInspection() {
+        if (gameInspection == null || gamePath == null)
+            return;
+        String selectedPath = gamePath.getText().toString().trim();
+        if (selectedPath.isEmpty()) {
+            gameInspection.setText("Путь не выбран.");
+            return;
+        }
+        File root = new File(selectedPath);
+        if (!root.isDirectory()) {
+            gameInspection.setText("Папка не найдена или недоступна.");
+            return;
+        }
+
+        boolean fsgame = new File(root, "fsgame.ltx").isFile();
+        boolean gamedata = new File(root, "gamedata").isDirectory();
+        boolean resources = new File(root, "resources").isDirectory();
+        boolean socExecutable = new File(root, "bin/XR_3DA.exe").isFile()
+                || new File(root, "bin/xr_3da.exe").isFile();
+        boolean laterExecutable = new File(root, "bin/xrEngine.exe").isFile()
+                || new File(root, "bin/xrengine.exe").isFile();
+        String hint = socExecutable ? "похоже на Shadow of Chernobyl"
+                : laterExecutable ? "обнаружена установка CS/CoP"
+                : "точная игра будет определена выбранным профилем";
+        gameInspection.setText("Папка читается · fsgame.ltx: " + yesNo(fsgame)
+                + " · gamedata: " + yesNo(gamedata)
+                + " · resources: " + yesNo(resources) + "\n" + hint
+                + ". Проверка информационная и не изменяет файлы.");
+    }
+
+    private String yesNo(boolean value) {
+        return value ? "есть" : "нет";
+    }
+
+    private void refreshRunningState() {
+        if (launchButton != null)
+            launchButton.setText(isEngineProcessRunning()
+                    ? "Вернуться в запущенную игру" : "Запустить игру");
     }
 
     private void refreshLog() {
         if (logView == null)
             return;
+        String log = collectLogs();
+        logView.setText(log.isEmpty() ? "Лог пока пуст. Запустите GLES-проверку или игру." : log);
+        updateEngineStatus(log);
+    }
+
+    private String collectLogs() {
         StringBuilder result = new StringBuilder();
         appendLog(result, new File(Environment.getExternalStorageDirectory(), "openxray/android.log"));
         appendLog(result, new File(Environment.getExternalStorageDirectory(), "openxray/activity.log"));
@@ -448,36 +875,31 @@ public final class LauncherActivity extends Activity {
         File internal = new File(getFilesDir(), "openxray");
         appendLog(result, new File(internal, "android.log"));
         appendLog(result, new File(internal, "activity.log"));
-        String log = result.toString();
-        logView.setText(log.length() == 0 ? "Лог пока пуст. Запустите GLES-проверку или движок." : log);
-        updateEngineStatus(log);
+        return result.toString();
     }
 
     private void updateEngineStatus(String log) {
         if (engineLaunchTime == 0)
             return;
-
         if (log.contains("[renderer-smoke] center pixel") && log.contains(": PASS")) {
-            setStatus("Движок загружен: GLES renderer smoke test PASS.");
+            setStatus("GLES renderer smoke test завершён: PASS.");
             return;
         }
         if (log.contains("[android] engine loaded")) {
-            setStatus("Движок загружен успешно.");
+            setStatus("Движок загрузил игру. Если Activity была свёрнута, нажмите «Вернуться в запущенную игру».");
             return;
         }
-        if (log.contains("[renderer-smoke] initialization failed")
-                || log.contains("engine load failed")) {
+        if (log.contains("[renderer-smoke] initialization failed") || log.contains("engine load failed")) {
             showEngineFailureStatus();
             return;
         }
-
         long elapsed = SystemClock.elapsedRealtime() - engineLaunchTime;
         if (elapsed > 4000 && !isEngineProcessRunning())
             showEngineFailureStatus();
     }
 
     private void showEngineFailureStatus() {
-        setStatus("Движок завершился с ошибкой. Откройте полный лог ниже и logcat.");
+        setStatus("Процесс движка завершился до штатной загрузки. Откройте вкладку «Диагностика».");
         if (!engineFailureToastShown) {
             Toast.makeText(this, "OpenXRay: загрузка не удалась; смотрите лог", Toast.LENGTH_LONG).show();
             engineFailureToastShown = true;
@@ -489,7 +911,7 @@ public final class LauncherActivity extends Activity {
         if (manager == null)
             return false;
         String engineProcess = getPackageName() + ":engine";
-        java.util.List<ActivityManager.RunningAppProcessInfo> processes = manager.getRunningAppProcesses();
+        List<ActivityManager.RunningAppProcessInfo> processes = manager.getRunningAppProcesses();
         if (processes == null)
             return false;
         for (ActivityManager.RunningAppProcessInfo process : processes) {
@@ -503,9 +925,8 @@ public final class LauncherActivity extends Activity {
         if (!file.isFile())
             return;
         String text = readTail(file);
-        if (text.isEmpty())
-            return;
-        result.append("\n===== ").append(file.getAbsolutePath()).append(" =====\n").append(text);
+        if (!text.isEmpty())
+            result.append("\n===== ").append(file.getAbsolutePath()).append(" =====\n").append(text);
     }
 
     private String readTail(File file) {
@@ -522,6 +943,25 @@ public final class LauncherActivity extends Activity {
             return size > 0 ? new String(data, 0, size, StandardCharsets.UTF_8) : "";
         } catch (IOException | SecurityException error) {
             return "Не удалось прочитать " + file + ": " + error.getMessage();
+        }
+    }
+
+    private void shareLogs() {
+        String log = collectLogs();
+        if (log.isEmpty()) {
+            Toast.makeText(this, "Лог пока пуст", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (log.length() > MAX_SHARED_LOG_CHARS)
+            log = log.substring(log.length() - MAX_SHARED_LOG_CHARS);
+        Intent share = new Intent(Intent.ACTION_SEND);
+        share.setType("text/plain");
+        share.putExtra(Intent.EXTRA_SUBJECT, "OpenXRay Android " + BuildConfig.VERSION_NAME + " logs");
+        share.putExtra(Intent.EXTRA_TEXT, log);
+        try {
+            startActivity(Intent.createChooser(share, "Поделиться логом OpenXRay"));
+        } catch (ActivityNotFoundException error) {
+            Toast.makeText(this, "Нет приложения для отправки текста", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -546,7 +986,6 @@ public final class LauncherActivity extends Activity {
                 externalRoot == null ? null : new File(externalRoot, "android.log"),
                 new File(getFilesDir(), "openxray/android.log")
         };
-
         String timestamp = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
                 .format(new Date());
         for (File file : candidates) {
@@ -580,5 +1019,9 @@ public final class LauncherActivity extends Activity {
 
     private LinearLayout.LayoutParams matchWrap() {
         return new LinearLayout.LayoutParams(-1, -2);
+    }
+
+    private LinearLayout.LayoutParams weightedButton() {
+        return new LinearLayout.LayoutParams(0, dp(52), 1);
     }
 }

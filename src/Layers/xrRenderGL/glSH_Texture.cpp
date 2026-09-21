@@ -14,6 +14,29 @@
 
 namespace xray::render::RENDER_NAMESPACE
 {
+#if defined(XR_PLATFORM_ANDROID)
+namespace
+{
+void clear_video_texture_errors()
+{
+    while (glGetError() != GL_NO_ERROR)
+    {
+    }
+}
+
+bool check_video_texture_errors(cpcstr operation, cpcstr filename)
+{
+    bool valid = true;
+    for (GLenum error = glGetError(); error != GL_NO_ERROR; error = glGetError())
+    {
+        Msg("! OpenGL ES: 0x%x during %s for video '%s'", error, operation, filename);
+        valid = false;
+    }
+    return valid;
+}
+} // namespace
+#endif
+
 void resptrcode_texture::create(LPCSTR _name)
 {
     _set(RImplementation.Resources->_CreateTexture(_name));
@@ -89,7 +112,7 @@ void CTexture::apply_theora(CBackend& cmd_list, u32 dwStage)
 
     if (pTheora->Update(m_play_time != 0xFFFFFFFF ? m_play_time : Device.dwTimeContinual))
     {
-        u32* pBits;
+        u32* pBits = nullptr;
         u32 _w = pTheora->Width(true);
         u32 _h = pTheora->Height(true);
 
@@ -102,6 +125,12 @@ void CTexture::apply_theora(CBackend& cmd_list, u32 dwStage)
 #else
         CHK_GL(pBits = (u32*)glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY));
 #endif
+        if (!pBits)
+        {
+            Msg("! OpenGL: failed to map the pixel buffer for video texture '%s'", cName.c_str());
+            CHK_GL(glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0));
+            return;
+        }
 
         // Write to the buffer and copy it to the texture
         int _pos = 0;
@@ -222,23 +251,50 @@ void CTexture::Load()
             u32 _w = pTheora->Width(false);
             u32 _h = pTheora->Height(false);
 
+#if defined(XR_PLATFORM_ANDROID)
+            clear_video_texture_errors();
+#endif
             glGenBuffers(1, &pBuffer);
             glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pBuffer);
             CHK_GL(glBufferData(GL_PIXEL_UNPACK_BUFFER, flags.MemoryUsage, nullptr, GL_STREAM_DRAW));
             glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
-            glGenTextures(1, &pTexture);
-            glBindTexture(GL_TEXTURE_2D, pTexture);
-            CHK_GL(glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, _w, _h));
-
-            pSurface = pTexture;
-            desc = GL_TEXTURE_2D;
-            GLenum err = glGetError();
-            if (err != GL_NO_ERROR)
+#if defined(XR_PLATFORM_ANDROID)
+            if (!pBuffer || !check_video_texture_errors("pixel buffer allocation", fn))
             {
-                Msg("Invalid video stream: 0x%x", err);
+                if (pBuffer)
+                    glDeleteBuffers(1, &pBuffer);
+                pBuffer = 0;
                 xr_delete(pTheora);
-                pSurface = 0;
+            }
+            else
+#endif
+            {
+                glGenTextures(1, &pTexture);
+                glBindTexture(GL_TEXTURE_2D, pTexture);
+                CHK_GL(glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, _w, _h));
+
+                pSurface = pTexture;
+                desc = GL_TEXTURE_2D;
+                m_width = static_cast<GLint>(_w);
+                m_height = static_cast<GLint>(_h);
+#if defined(XR_PLATFORM_ANDROID)
+                if (!pTexture || !check_video_texture_errors("video texture allocation", fn))
+#else
+                const GLenum err = glGetError();
+                if (err != GL_NO_ERROR)
+#endif
+                {
+#if !defined(XR_PLATFORM_ANDROID)
+                    Msg("Invalid video stream: 0x%x", err);
+#endif
+                    if (pTexture)
+                        glDeleteTextures(1, &pTexture);
+                    xr_delete(pTheora);
+                    pSurface = 0;
+                    m_width = 0;
+                    m_height = 0;
+                }
             }
         }
     }

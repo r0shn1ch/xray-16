@@ -2,6 +2,10 @@
 
 #include "ResourceManager.h"
 
+#if defined(XR_PLATFORM_ANDROID)
+#include <android/log.h>
+#endif
+
 namespace xray::render::RENDER_NAMESPACE
 {
 #ifdef USE_OGL
@@ -39,8 +43,30 @@ static void show_compile_errors(cpcstr filename, GLuint program, GLuint shader)
         Log(sources);
         Log("Shader source end.");
     }
+#if defined(XR_PLATFORM_ANDROID)
+    __android_log_print(ANDROID_LOG_ERROR, "OpenXRay",
+        "Shader compilation failed: %s\n%s", filename,
+        errors ? errors : "driver returned an empty shader error log");
+#endif
     xr_free(errors);
     xr_free(sources);
+}
+
+static void bind_fragment_outputs(GLuint program)
+{
+#if !defined(XR_PLATFORM_ANDROID)
+    // Desktop GLSL allows the engine to bind named fragment outputs before
+    // linking.  OpenGL ES has no core glBindFragDataLocation entry point;
+    // the similarly named EXT function belongs to dual-source blending and
+    // is not a portable MRT binding path.  Android shaders receive explicit
+    // layout(location=...) qualifiers in the source compatibility layer.
+    CHK_GL(glBindFragDataLocation(program, 0, "SV_Target"));
+    CHK_GL(glBindFragDataLocation(program, 0, "SV_Target0"));
+    CHK_GL(glBindFragDataLocation(program, 1, "SV_Target1"));
+    CHK_GL(glBindFragDataLocation(program, 2, "SV_Target2"));
+#else
+    UNUSED(program);
+#endif
 }
 
 template<GLenum type>
@@ -72,10 +98,7 @@ inline std::pair<char, GLuint> GLCompileShader(pcstr* buffer, size_t size, pcstr
         CHK_GL(glProgramParameteri(program, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, (GLint)GL_TRUE));
 
     CHK_GL(glAttachShader(program, shader));
-    CHK_GL(glBindFragDataLocation(program, 0, "SV_Target"));
-    CHK_GL(glBindFragDataLocation(program, 0, "SV_Target0"));
-    CHK_GL(glBindFragDataLocation(program, 1, "SV_Target1"));
-    CHK_GL(glBindFragDataLocation(program, 2, "SV_Target2"));
+    bind_fragment_outputs(program);
     CHK_GL(glLinkProgram(program));
     CHK_GL(glDetachShader(program, shader));
     CHK_GL(glDeleteShader(shader));
@@ -101,10 +124,7 @@ inline std::pair<char, GLuint> GLUseBinary(pcstr* buffer, size_t size, const GLe
         CHK_GL(glObjectLabel(GL_PROGRAM, program, -1, name));
     CHK_GL(glProgramParameteri(program, GL_PROGRAM_SEPARABLE, (GLint)GL_TRUE));
 
-    CHK_GL(glBindFragDataLocation(program, 0, "SV_Target"));
-    CHK_GL(glBindFragDataLocation(program, 0, "SV_Target0"));
-    CHK_GL(glBindFragDataLocation(program, 1, "SV_Target1"));
-    CHK_GL(glBindFragDataLocation(program, 2, "SV_Target2"));
+    bind_fragment_outputs(program);
 
     CHK_GL(glProgramBinary(program, *format, buffer, size));
     CHK_GL(glGetProgramiv(program, GL_LINK_STATUS, &status));
@@ -132,10 +152,7 @@ static GLuint GLLinkMonolithicProgram(pcstr name, GLuint ps, GLuint vs, GLuint g
     CHK_GL(glAttachShader(program, vs));
     if (gs)
         CHK_GL(glAttachShader(program, gs));
-    CHK_GL(glBindFragDataLocation(program, 0, "SV_Target"));
-    CHK_GL(glBindFragDataLocation(program, 0, "SV_Target0"));
-    CHK_GL(glBindFragDataLocation(program, 1, "SV_Target1"));
-    CHK_GL(glBindFragDataLocation(program, 2, "SV_Target2"));
+    bind_fragment_outputs(program);
     CHK_GL(glLinkProgram(program));
     CHK_GL(glDetachShader(program, ps));
     CHK_GL(glDetachShader(program, vs));

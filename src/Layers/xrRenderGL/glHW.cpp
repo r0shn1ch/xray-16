@@ -54,19 +54,35 @@ CHW::~CHW()
 
 void CHW::OnAppActivate()
 {
+#if defined(XR_PLATFORM_ANDROID)
+    // SDLActivity owns the Android activity/window lifecycle. Restoring or
+    // minimizing an SDL window maps to Android task navigation rather than a
+    // desktop window operation, so leave the activity state to SDLActivity.
+    return;
+#else
     if (m_window)
     {
         SDL_RestoreWindow(m_window);
     }
+#endif
 }
 
 void CHW::OnAppDeactivate()
 {
+#if defined(XR_PLATFORM_ANDROID)
+    // SDL_MinimizeWindow() deliberately launches the Android HOME intent.
+    // A transient focus loss therefore used to eject the user to the
+    // launcher/home screen while the native engine kept running. Pausing the
+    // scheduler and audio is handled by the normal app-deactivate sequence;
+    // do not turn that lifecycle event into task navigation.
+    return;
+#else
     if (m_window)
     {
         if (psDeviceMode.WindowStyle == rsFullscreen || psDeviceMode.WindowStyle == rsFullscreenBorderless)
             SDL_MinimizeWindow(m_window);
     }
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -156,10 +172,10 @@ void CHW::CreateDevice(SDL_Window* hWnd)
     Msg("* GPU OpenGL shading language version: %s", ShadingVersion);
     Msg("* GPU OpenGL VTF units: [%d] CTI units: [%d]", iMaxVTFUnits, iMaxCTIUnits);
 #if defined(XR_PLATFORM_ANDROID)
-    Msg("* GLES runtime: ES3.1=[%d] ES3.2=[%d] io_blocks=[%d/%d] clip_cull_distance=[%d] shader5=[%d/%d] implicit_conversions=[%d]",
+    Msg("* GLES runtime: ES3.1=[%d] ES3.2=[%d] io_blocks=[%d/%d] clip_cull_distance=[%d] shader5=[%d/%d] implicit_conversions=[%d] blend_func_extended=[%d]",
         GLAD_GL_ES_VERSION_3_1, GLAD_GL_ES_VERSION_3_2, GLAD_GL_EXT_shader_io_blocks, GLAD_GL_OES_shader_io_blocks,
         GLAD_GL_EXT_clip_cull_distance, GLAD_GL_EXT_gpu_shader5, GLAD_GL_OES_gpu_shader5,
-        GLAD_GL_EXT_shader_implicit_conversions);
+        GLAD_GL_EXT_shader_implicit_conversions, GLAD_GL_EXT_blend_func_extended);
 #endif
 
     ComputeShadersSupported = false; // XXX: Implement compute shaders support
@@ -286,16 +302,66 @@ void CHW::EndScene() { }
 void CHW::Present()
 {
 #if defined(XR_PLATFORM_ANDROID)
-    // Resolve the engine FBO into SDL's Android EGL back buffer before the
-    // swap.  GLES 3.0 provides glBlitFramebuffer, so this does not require a
-    // desktop-only context or a second renderer path.
-    CHK_GL(glBindFramebuffer(GL_READ_FRAMEBUFFER, pFB));
-    CHK_GL(glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0));
-    CHK_GL(glBlitFramebuffer(
-        0, 0, Device.dwWidth, Device.dwHeight,
-        0, 0, Device.dwWidth, Device.dwHeight,
-        GL_COLOR_BUFFER_BIT, GL_NEAREST));
-    CHK_GL(glBindFramebuffer(GL_FRAMEBUFFER, pFB));
+    // Resolve the engine's final color target into the EGL window surface.
+    // Keep this explicit: framebuffer 0 cannot host the deferred renderer's
+    // MRT attachments, while swapping without this copy presents untouched
+    // black buffers.
+    static u32 reportedPendingErrors = 0;
+    for (GLenum pending = glGetError(); pending != GL_NO_ERROR; pending = glGetError())
+    {
+        if (reportedPendingErrors < 16)
+            Msg("! OpenGL ES: pending error 0x%x before Present", pending);
+        ++reportedPendingErrors;
+    }
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, pFB);
+    const GLenum sourceStatus = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
+    GLint sourceTexture = 0;
+    glGetFramebufferAttachmentParameteriv(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+        GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &sourceTexture);
+
+    int drawableWidth = 0;
+    int drawableHeight = 0;
+    SDL_GL_GetDrawableSize(m_window, &drawableWidth, &drawableHeight);
+
+    static bool presentStateLogged = false;
+    static u32 incompletePresentCount = 0;
+    const bool displayable = sourceStatus == GL_FRAMEBUFFER_COMPLETE && sourceTexture != 0 &&
+        drawableWidth > 0 && drawableHeight > 0;
+    if (!displayable)
+        ++incompletePresentCount;
+    const bool reportIncomplete = !displayable &&
+        (incompletePresentCount <= 8 || incompletePresentCount % 300 == 0);
+    if (!presentStateLogged || reportIncomplete)
+    {
+        Msg("* Android present: FBO=[%u] status=[0x%x] color0=[%d] source=[%ux%u] drawable=[%dx%d]",
+            pFB, sourceStatus, sourceTexture, Device.dwWidth, Device.dwHeight, drawableWidth, drawableHeight);
+        presentStateLogged = true;
+    }
+
+    if (displayable)
+    {
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glBlitFramebuffer(
+            0, 0, Device.dwWidth, Device.dwHeight,
+            0, 0, drawableWidth, drawableHeight,
+            GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+    else if (reportIncomplete)
+    {
+        Msg("! Android present skipped: the final engine framebuffer is not displayable");
+    }
+
+    static u32 reportedPresentErrors = 0;
+    for (GLenum error = glGetError(); error != GL_NO_ERROR; error = glGetError())
+    {
+        if (reportedPresentErrors < 16)
+            Msg("! OpenGL ES: Present failed with 0x%x", error);
+        ++reportedPresentErrors;
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, pFB);
     SDL_GL_SwapWindow(m_window);
 #else
 #if 0 // kept for historical reasons

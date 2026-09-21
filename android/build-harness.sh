@@ -6,7 +6,9 @@ repo_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 kit_root=${XRAY_ANDROID_KIT_ROOT:-}
 
 if [ -z "$kit_root" ]; then
-    for candidate in "$repo_dir/.openxray-android-build-kit" "$repo_dir/../openxray-android-build-kit-v0.5.0"; do
+    for candidate in "$repo_dir/.openxray-android-build-kit" \
+        "$repo_dir/../openxray-android-build-kit-v0.6.0" \
+        "$repo_dir/../openxray-android-build-kit-v0.5.0"; do
         if [ -f "$candidate/build-kit-env.sh" ]; then
             kit_root="$candidate"
             break

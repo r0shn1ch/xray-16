@@ -1055,15 +1055,18 @@ void CLocatorAPI::_initialize(u32 flags, pcstr target_folder, pcstr fs_name)
             }
 #endif
             bNoRecurse = !(fl & FS_Path::flRecurse);
-            Recurse(P->m_Path);
 #if defined(XR_PLATFORM_ANDROID)
             if (P->m_Overlay)
             {
+                // Register the engine fallback first.  Register() replaces an
+                // existing entry, so scanning the game/mod directory second
+                // gives user resources the same precedence they have on PC.
                 Recurse(P->m_Overlay);
                 if (0 == xr_strcmp(id, "$game_shaders$"))
-                    Msg("* Android shader overlay indexed: %s", P->m_Overlay);
+                    Msg("* Android shader fallback indexed: %s", P->m_Overlay);
             }
 #endif
+            Recurse(P->m_Path);
             auto I = m_paths.emplace(xr_strdup(id), P);
 #ifndef DEBUG
             m_Flags.set(flCacheFiles, false);

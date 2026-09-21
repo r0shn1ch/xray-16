@@ -6,7 +6,9 @@ repo_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 
 kit_root=${XRAY_ANDROID_KIT_ROOT:-}
 if [ -z "$kit_root" ]; then
-    for candidate in "$repo_dir/.openxray-android-build-kit" "$repo_dir/../openxray-android-build-kit-v0.5.0"; do
+    for candidate in "$repo_dir/.openxray-android-build-kit" \
+        "$repo_dir/../openxray-android-build-kit-v0.6.0" \
+        "$repo_dir/../openxray-android-build-kit-v0.5.0"; do
         if [ -f "$candidate/build-kit-env.sh" ]; then
             kit_root="$candidate"
             break
@@ -101,6 +103,47 @@ chmod +x "$project_dir/gradlew"
 
 apk="$project_dir/app/build/outputs/apk/debug/app-debug.apk"
 mkdir -p "$repo_dir/build"
-output_apk="$repo_dir/build/openxray-armv7-launcher-v0.5.5-debug.apk"
-cp "$apk" "$output_apk"
+output_apk="$repo_dir/build/openxray-armv7-launcher-v0.6.0-debug.apk"
+
+# AGP 8.1 aligns uncompressed native-library ZIP entries to 4 KiB. Re-align
+# those package entries to 16 KiB before signing. This is package-level
+# alignment; it does not rewrite the ELF segments of the pinned ARMv7
+# dependencies. The Gradle debug build above creates the standard debug
+# keystore when it is not present yet.
+build_tools_dir=$(find "$sdk_dir/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -1)
+zipalign_bin="$build_tools_dir/zipalign"
+apksigner_bin="$build_tools_dir/apksigner"
+if [ ! -x "$zipalign_bin" ] || [ ! -x "$apksigner_bin" ]; then
+    echo "Android SDK build-tools with zipalign and apksigner are required" >&2
+    exit 2
+fi
+
+if [ -n "${ANDROID_DEBUG_KEYSTORE:-}" ]; then
+    debug_keystore=$ANDROID_DEBUG_KEYSTORE
+elif [ -n "${ANDROID_USER_HOME:-}" ]; then
+    debug_keystore="$ANDROID_USER_HOME/debug.keystore"
+elif [ -n "${HOME:-}" ]; then
+    debug_keystore="$HOME/.android/debug.keystore"
+else
+    echo "Set ANDROID_DEBUG_KEYSTORE when HOME and ANDROID_USER_HOME are unavailable" >&2
+    exit 2
+fi
+if [ ! -f "$debug_keystore" ]; then
+    echo "Gradle did not create the debug keystore: $debug_keystore" >&2
+    exit 2
+fi
+
+aligned_apk="$build_dir/app-debug-16k-aligned.apk"
+"$zipalign_bin" -f -P 16 4 "$apk" "$aligned_apk"
+"$apksigner_bin" sign \
+    --ks "$debug_keystore" \
+    --ks-pass "pass:${ANDROID_DEBUG_KEYSTORE_PASS:-android}" \
+    --key-pass "pass:${ANDROID_DEBUG_KEY_PASS:-android}" \
+    --ks-key-alias "${ANDROID_DEBUG_KEY_ALIAS:-androiddebugkey}" \
+    --v4-signing-enabled false \
+    --out "$output_apk" \
+    "$aligned_apk"
+unlink "$aligned_apk"
+"$zipalign_bin" -c -P 16 4 "$output_apk"
+"$apksigner_bin" verify "$output_apk"
 printf '%s\n' "$output_apk"

@@ -59,6 +59,24 @@ u32 calc_texture_size(int lod, u32 mip_cnt, size_t orig_size)
 }
 
 #if defined(XR_PLATFORM_ANDROID)
+void clear_texture_gl_errors()
+{
+    while (glGetError() != GL_NO_ERROR)
+    {
+    }
+}
+
+bool check_texture_gl_error(cpcstr operation, cpcstr filename)
+{
+    bool valid = true;
+    for (GLenum error = glGetError(); error != GL_NO_ERROR; error = glGetError())
+    {
+        Msg("! OpenGL ES: 0x%x during %s for texture '%s'", error, operation, filename);
+        valid = false;
+    }
+    return valid;
+}
+
 bool decode_compressed_texture(gli::texture& texture)
 {
     if (!gli::is_compressed(texture.format()))
@@ -167,7 +185,7 @@ GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc,
     }
 #endif
 
-    u32 mip_cnt = u32(-1); // XXX: write to it when reading with GLI!
+    const u32 mip_cnt = static_cast<u32>(texture.levels());
 
 #if defined(XR_PLATFORM_ANDROID)
     gli::gl GL(gli::gl::PROFILE_ES30);
@@ -178,6 +196,12 @@ GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc,
     gli::gl::format const format = GL.translate(texture.format(), texture.swizzles());
     GLenum target = GL.translate(texture.target());
 
+#if defined(XR_PLATFORM_ANDROID)
+    // Attribute an error to the operation that actually caused it.  Release
+    // builds make CHK_GL a pass-through, so stale driver errors otherwise get
+    // reported later as a bogus glTexStorage2D failure.
+    clear_texture_gl_errors();
+#endif
     glGenTextures(1, &pTexture);
     glBindTexture(target, pTexture);
 
@@ -185,7 +209,34 @@ GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc,
     glTexParameteri(target, GL_TEXTURE_MAX_LEVEL, static_cast<GLint>(texture.levels() - 1));
 
     if (gli::gl::EXTERNAL_RED != format.External) // skip for proper greyscale-alpha font textures
+#if defined(XR_PLATFORM_ANDROID)
+    {
+        // GL_TEXTURE_SWIZZLE_RGBA is a desktop aggregate pname.  GLES 3.x
+        // exposes only the four component pnames and returns GL_INVALID_ENUM
+        // for the aggregate form used by the desktop renderer.
+        static constexpr GLenum SwizzleNames[] =
+        {
+            GL_TEXTURE_SWIZZLE_R,
+            GL_TEXTURE_SWIZZLE_G,
+            GL_TEXTURE_SWIZZLE_B,
+            GL_TEXTURE_SWIZZLE_A
+        };
+        for (size_t component = 0; component < std::size(SwizzleNames); ++component)
+            glTexParameteri(target, SwizzleNames[component], format.Swizzles[component]);
+    }
+#else
         glTexParameteriv(target, GL_TEXTURE_SWIZZLE_RGBA, &format.Swizzles[gli::SWIZZLE_RED]);
+#endif
+
+#if defined(XR_PLATFORM_ANDROID)
+    if (!pTexture || !check_texture_gl_error("texture creation and parameters", fn))
+    {
+        if (pTexture)
+            glDeleteTextures(1, &pTexture);
+        FS.r_close(S);
+        return 0;
+    }
+#endif
 
     glm::tvec3<GLsizei> const tex_extent(texture.extent());
     if (ret_width)
@@ -193,30 +244,50 @@ GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc,
     if (ret_height)
         *ret_height = tex_extent.y;
 
+#if !defined(XR_PLATFORM_ANDROID)
     GLenum err;
+#endif
     switch (texture.target())
     {
     case gli::TARGET_2D:
     case gli::TARGET_CUBE:
         glTexStorage2D(target, static_cast<GLint>(texture.levels()), format.Internal,
                        tex_extent.x, tex_extent.y);
+#if defined(XR_PLATFORM_ANDROID)
+        if (!check_texture_gl_error("2D immutable storage allocation", fn))
+        {
+            glDeleteTextures(1, &pTexture);
+            FS.r_close(S);
+            return 0;
+        }
+#else
         err = glGetError();
         if (err != GL_NO_ERROR)
         {
             VERIFY(err == GL_NO_ERROR);
             Msg("! OpenGL: 0x%x: Invalid 2D texture: '%s'", err, fn);
         }
+#endif
         break;
     case gli::TARGET_3D:
     case gli::TARGET_CUBE_ARRAY:
         glTexStorage3D(target, static_cast<GLint>(texture.levels()), format.Internal,
                        tex_extent.x, tex_extent.y, tex_extent.z);
+#if defined(XR_PLATFORM_ANDROID)
+        if (!check_texture_gl_error("3D immutable storage allocation", fn))
+        {
+            glDeleteTextures(1, &pTexture);
+            FS.r_close(S);
+            return 0;
+        }
+#else
         err = glGetError();
         if (err != GL_NO_ERROR)
         {
             VERIFY(err == GL_NO_ERROR);
             Msg("! OpenGL: 0x%x: Invalid 3D texture: '%s'", err, fn);
         }
+#endif
         break;
     default:
         NODEFAULT;
@@ -245,12 +316,21 @@ GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc,
                                     0, 0, tex_level_extent.x, tex_level_extent.y,
                                     format.Internal, static_cast<GLsizei>(texture.size(level)),
                                     texture.data(layer, face, level));
+#if defined(XR_PLATFORM_ANDROID)
+                        if (!check_texture_gl_error("compressed 2D texture upload", fn))
+                        {
+                            glDeleteTextures(1, &pTexture);
+                            FS.r_close(S);
+                            return 0;
+                        }
+#else
                         err = glGetError();
                         if (err != GL_NO_ERROR)
                         {
                             VERIFY(err == GL_NO_ERROR);
                             Msg("! OpenGL: 0x%x: Invalid 2D compressed subtexture: '%s'", err, fn);
                         }
+#endif
                     }
                     else
                     {
@@ -258,12 +338,21 @@ GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc,
                                     0, 0, tex_level_extent.x, tex_level_extent.y,
                                     format.External, format.Type,
                                     texture.data(layer, face, level));
+#if defined(XR_PLATFORM_ANDROID)
+                        if (!check_texture_gl_error("2D texture upload", fn))
+                        {
+                            glDeleteTextures(1, &pTexture);
+                            FS.r_close(S);
+                            return 0;
+                        }
+#else
                         err = glGetError();
                         if (err != GL_NO_ERROR)
                         {
                             VERIFY(err == GL_NO_ERROR);
                             Msg("! OpenGL: 0x%x: Invalid 2D subtexture: '%s'", err, fn);
                         }
+#endif
 
                     }
                     break;
@@ -277,12 +366,21 @@ GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc,
                                     0, 0, 0, tex_level_extent.x, tex_level_extent.y, tex_level_extent.z,
                                     format.Internal, static_cast<GLsizei>(texture.size(level)),
                                     texture.data(layer, face, level));
+#if defined(XR_PLATFORM_ANDROID)
+                        if (!check_texture_gl_error("compressed 3D texture upload", fn))
+                        {
+                            glDeleteTextures(1, &pTexture);
+                            FS.r_close(S);
+                            return 0;
+                        }
+#else
                         err = glGetError();
                         if (err != GL_NO_ERROR)
                         {
                             VERIFY(err == GL_NO_ERROR);
                             Msg("! OpenGL: 0x%x: Invalid compressed 3D subtexture: '%s'", err, fn);
                         }
+#endif
                     }
                     else
                     {
@@ -290,12 +388,21 @@ GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc,
                                     0, 0, 0, tex_level_extent.x, tex_level_extent.y, tex_level_extent.z,
                                     format.External, format.Type,
                                     texture.data(layer, face, level));
+#if defined(XR_PLATFORM_ANDROID)
+                        if (!check_texture_gl_error("3D texture upload", fn))
+                        {
+                            glDeleteTextures(1, &pTexture);
+                            FS.r_close(S);
+                            return 0;
+                        }
+#else
                         err = glGetError();
                         if (err != GL_NO_ERROR)
                         {
                             VERIFY(err == GL_NO_ERROR);
                             Msg("! OpenGL: 0x%x: Invalid 3D subtexture: '%s'", err, fn);
                         }
+#endif
                     }
                     break;
                 }

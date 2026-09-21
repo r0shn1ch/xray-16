@@ -25,7 +25,7 @@ float4 _main ( v2p_volume I  )
 {
 	//float4 _P = tex2D( s_position, tc );
 
-	gbuffer_data gbd = gbuffer_load_data( GLD_P(I.tc, I.hpos, ISAMPLE) );
+	gbuffer_data gbd = gbuffer_load_data( GLD_P(I.tc.xy, I.hpos, ISAMPLE) );
 
 #ifdef	GBUFFER_OPTIMIZATION
 	//	Emulate virtual offset
@@ -38,7 +38,7 @@ float4 _main ( v2p_volume I  )
 
 	float s	= shadowtest_sun( PS, I.tcJ ) * sunmask( _P );
 
-	return s;
+	return float4(s);
 }
 #else
 #ifdef MSAA_OPTIMIZATION

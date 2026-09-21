@@ -144,6 +144,12 @@ pcstr FS_Path::_update(string_path& dest, pcstr src) const
     xr_strlwr(temp);
     strconcat(sizeof(dest), dest, m_Path, temp);
 
+    // The Android engine-data tree is a fallback for renderer-owned files,
+    // not a replacement for the selected game's gamedata.  Preserve PC and
+    // mod overrides even when their on-disk spelling differs in case.
+    if (FS.exist(dest, FSType::External) || FS.exist(dest, FSType::Virtual))
+        return xr_fs_strlwr(dest);
+
     if (m_Overlay)
     {
         string_path overlayPath;

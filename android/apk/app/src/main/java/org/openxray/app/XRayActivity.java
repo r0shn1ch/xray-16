@@ -1,9 +1,12 @@
 package org.openxray.app;
 
+import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.util.Log;
+import android.view.View;
+import android.view.WindowManager;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -11,6 +14,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.Locale;
 import java.nio.charset.StandardCharsets;
@@ -28,9 +32,13 @@ import org.libsdl.app.SDLActivity;
 public final class XRayActivity extends SDLActivity {
     private static final String TAG = "OpenXRay";
     private File diagnosticsFile;
+    private boolean immersiveMode = true;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        if (getIntent().getBooleanExtra(LauncherActivity.EXTRA_KEEP_SCREEN_ON, true))
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        immersiveMode = getIntent().getBooleanExtra(LauncherActivity.EXTRA_IMMERSIVE, true);
         try {
             diagnosticsFile = createDiagnosticsFile();
         } catch (RuntimeException error) {
@@ -42,6 +50,7 @@ public final class XRayActivity extends SDLActivity {
                 + "; abi=" + (Build.SUPPORTED_ABIS.length == 0 ? "unknown" : Build.SUPPORTED_ABIS[0]));
         try {
             super.onCreate(savedInstanceState);
+            applyImmersiveMode();
         } catch (RuntimeException error) {
             writeDiagnostic("SDL activity startup failed: " + Log.getStackTraceString(error));
             throw error;
@@ -51,6 +60,7 @@ public final class XRayActivity extends SDLActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        applyImmersiveMode();
         writeDiagnostic("activity onResume");
     }
 
@@ -58,6 +68,22 @@ public final class XRayActivity extends SDLActivity {
     protected void onPause() {
         writeDiagnostic("activity onPause");
         super.onPause();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        // A launcher reattach intent intentionally has no engine arguments.
+        // Keep the original launch intent so an Activity recreation cannot
+        // silently lose the selected game root or profile.
+        writeDiagnostic("existing engine activity brought to foreground");
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus)
+            applyImmersiveMode();
     }
 
     @Override
@@ -70,17 +96,61 @@ public final class XRayActivity extends SDLActivity {
     protected String[] getArguments() {
         boolean rendererSmoke = getIntent().getBooleanExtra(LauncherActivity.EXTRA_RENDERER_SMOKE, true);
         String selectedPath = getIntent().getStringExtra(LauncherActivity.EXTRA_GAME_PATH);
-        String[] args;
+        boolean gamepadEnabled = getIntent().getBooleanExtra(LauncherActivity.EXTRA_GAMEPAD_ENABLED, false);
+        boolean splashEnabled = getIntent().getBooleanExtra(LauncherActivity.EXTRA_SPLASH_ENABLED, false);
+        int gameVariant = getIntent().getIntExtra(LauncherActivity.EXTRA_GAME_VARIANT, 3);
+        String[] additionalArgs = getIntent().getStringArrayExtra(LauncherActivity.EXTRA_ADDITIONAL_ARGS);
+        ArrayList<String> args = new ArrayList<>();
+
         if (rendererSmoke) {
-            args = new String[] { "-renderer-smoke", "-nogame", "-no_gamepad", "-nosplash" };
+            args.add("-renderer-smoke");
+            args.add("-nogame");
         } else if (selectedPath != null && !selectedPath.isEmpty()) {
-            args = new String[] { "-android-game-root-hex", encodeHex(selectedPath),
-                    "-no_gamepad", "-nosplash" };
+            args.add("-android-game-root-hex");
+            args.add(encodeHex(selectedPath));
+            switch (gameVariant) {
+            case 1:
+                args.add("-soc");
+                break;
+            case 2:
+                args.add("-cs");
+                break;
+            case 3:
+                args.add("-cop");
+                break;
+            default:
+                break;
+            }
         } else {
-            args = new String[] { "-headless-smoke", "-no_gamepad", "-nosplash" };
+            args.add("-headless-smoke");
         }
-        writeDiagnostic("native arguments: " + String.join(" ", args));
-        return args;
+
+        if (!gamepadEnabled)
+            args.add("-no_gamepad");
+        if (!splashEnabled)
+            args.add("-nosplash");
+        if (additionalArgs != null) {
+            for (String argument : additionalArgs) {
+                if (argument != null && !argument.isEmpty())
+                    args.add(argument);
+            }
+        }
+
+        String[] result = args.toArray(new String[0]);
+        writeDiagnostic("native arguments: " + String.join(" ", result));
+        return result;
+    }
+
+    private void applyImmersiveMode() {
+        if (!immersiveMode)
+            return;
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
     }
 
     private String encodeHex(String value) {

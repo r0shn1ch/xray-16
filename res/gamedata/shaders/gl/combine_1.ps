@@ -112,7 +112,7 @@ _out _main ( _input I, uint iSample )
 	float mtl = P.w;
 
 #ifdef USE_R2_STATIC_SUN
-	float sun_occ = P.w*2;
+	float sun_occ = P.w * 2.0;
 
 	mtl = xmaterial;
 	L += Ldynamic_color * sun_occ * plight_infinity	(mtl, P.xyz, N.xyz, Ldynamic_dir);

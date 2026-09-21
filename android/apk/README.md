@@ -45,21 +45,20 @@ directories include `levels`, `localization`, `mp`, `patches` and `resources`.
 The launcher does not reject an incomplete folder: missing `fsgame.ltx` or
 resources are reported by the engine in the log.
 
-The resulting debug APK is `build/openxray-armv7-launcher-v0.5.5-debug.apk`. It is a
-bring-up artifact, not a playable release: proprietary game data and touch
-controls are not bundled. This test proves the Android window/context and
-shader path; it does not claim that every original desktop shader or every
-game-data render feature is already GLES-compatible.
+The resulting debug APK is
+`build/openxray-armv7-launcher-v0.6.0-debug.apk`. Proprietary game data is not
+bundled. The APK is a device-test candidate: a successful build and offline
+shader validation do not substitute for running the exact game/mod and GPU.
 
 ## Launcher and diagnostics on a phone
 
-1. Remove the previous bring-up APK once before installing version 0.5.5. The
+1. Remove the old pre-launcher APK once before installing version 0.6.0. The
    old package registered `XRayActivity` itself as the launcher, so a pinned
    old icon can bypass the launcher entirely:
 
    ```sh
    adb uninstall org.openxray.stalker
-   adb install -r build/openxray-armv7-launcher-v0.5.5-debug.apk
+   adb install -r build/openxray-armv7-launcher-v0.6.0-debug.apk
    adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
    ```
 
@@ -69,17 +68,23 @@ game-data render feature is already GLES-compatible.
    permission dialog. If it was dismissed, press **Доступ к памяти**.
    On Android 6–10 it requests both `READ_EXTERNAL_STORAGE` and
    `WRITE_EXTERNAL_STORAGE` through the normal system permission dialog.
-3. Press **Выбрать** and select the STALKER installation directory, or enter
+3. On the **Игра** page press **Выбрать папку** and select the STALKER
+   installation directory, or enter
    its direct path manually (for example `/storage/emulated/0/STALKER`). Keep
    the original Call of Pripyat directory layout and files unchanged.
-4. Press **Проверить GLES** to test the Android renderer without game files.
-   Press **Запустить движок** after placing the original game resources in the
-   selected directory. The launcher passes that directory to OpenXRay as-is;
-   all missing or unreadable resources are logged by the engine.
+4. On **Параметры**, select Shadow of Chernobyl, Clear Sky or Call of Pripyat;
+   Steam Call of Pripyat uses the CoP profile. Optional arguments are tokenized
+   without a shell and cannot replace the selected root or profile.
+5. Press **Проверить GLES без игровых файлов** to test the Android renderer,
+   or **Запустить игру** to run the selected installation. The launcher passes
+   that directory to OpenXRay as-is; all missing or unreadable resources are
+   logged by the engine.
 
-The launcher continuously displays the tail of the engine and activity logs.
-It reports a successful engine load or a process failure in the status line and
-also shows a toast. **Очистить лог** starts the next test with an empty log.
+The launcher separates game selection, settings and diagnostics into pages.
+It continuously displays the tail of the engine and activity logs, can share
+them through Android, and changes the launch action to **Вернуться в
+запущенную игру** while the engine process exists. **Очистить** starts the next
+test with an empty log.
 
 The native engine log is written to
 `/storage/emulated/0/openxray/android.log`. Java lifecycle and exception

@@ -17,7 +17,7 @@ patches), loads a prepared build kit when `XRAY_ANDROID_KIT_ROOT` is set, and
 then builds either the APK or the native target:
 
 ```sh
-XRAY_ANDROID_KIT_ROOT=/path/to/openxray-android-build-kit-v0.5.0 \
+XRAY_ANDROID_KIT_ROOT=/path/to/openxray-android-build-kit-v0.6.0 \
 ./android/build-harness.sh --apk
 ```
 
@@ -42,6 +42,18 @@ bootstrap, crash logging, launcher game-root diagnostics and LuaJIT host linker
 support before building; on an older clean checkout it applies the numbered
 patches in `android/patches/` automatically.
 
+The standalone harness can also patch a pristine `origin/dev` checkout without
+being copied into that checkout first. Keep the extracted harness outside the
+source tree and pass the source path explicitly:
+
+```sh
+/path/to/openxray-android-build-harness-v0.6.0/android/apply-patches.sh \
+  /path/to/clean/xray-16
+```
+
+The script reads patches next to itself by default. Set
+`XRAY_ANDROID_PATCH_DIR` only when the patch directory is stored elsewhere.
+
 To preserve the installed NDK, SDK, native dependencies, SDL2 Android project
 and pinned Gradle distribution for later builds, create the build kit once:
 
@@ -57,6 +69,24 @@ GRADLE_BIN=/path/to/gradle-8.1.1/bin/gradle \
 The resulting `.tar.zst` contains the harness, patchset and complete pinned
 toolchain. Extract it once, point `XRAY_ANDROID_KIT_ROOT` at the extracted
 directory, and reuse `build-harness.sh` for subsequent builds.
+
+The APK build performs a final 16 KiB `zipalign` pass and then signs the
+aligned package with the standard Gradle debug key. `ANDROID_DEBUG_KEYSTORE`,
+`ANDROID_DEBUG_KEYSTORE_PASS`, `ANDROID_DEBUG_KEY_PASS` and
+`ANDROID_DEBUG_KEY_ALIAS` can override that key when a build host uses a
+non-default debug setup.
+
+The same kit contains the NDK shader compiler used by the focused GLES
+regression check. From the source root run:
+
+```sh
+python3 utils/validate-glsl-es.py \
+  --ndk "$XRAY_ANDROID_KIT_ROOT/toolchain/android-ndk-r30"
+```
+
+The default manifest compiles the startup shader stages that failed in the
+Adreno log and checks their vertex/fragment interfaces after applying the same
+Android source translation as the engine.
 
 LuaJIT also generates ARM32 code with host-side `minilua` and `buildvm`. On a
 64-bit Linux build host install the 32-bit compiler runtime (for example
@@ -91,14 +121,23 @@ process, so the launcher can remain visible after a native crash.
 
 ## Android renderer status
 
-The Android path requests an OpenGL ES 3.1 context, disables MSAA texture
-allocation, keeps SDL's default EGL framebuffer active and ignores desktop
-polygon modes. The smoke mode is built and
-statically validated in the ARMv7 APK; its runtime device result is deliberately
-reported separately because this sandbox has no ARM Android runtime. Game-data
-rendering still needs a separate GLES compatibility pass for desktop-only
-framebuffer/shader assumptions and a device test with the original game files
-before it can be called complete.
+The Android path requests an OpenGL ES 3.1 or newer context and keeps the
+deferred renderer on an engine-owned framebuffer. `CHW::Present()` explicitly
+copies its final color attachment into SDL's EGL framebuffer before the swap.
+The GLES source layer assigns MRT output locations and normalizes stage
+varyings at runtime, so the fix also applies to compatible renderer shaders
+provided by a game or mod. Texture upload uses GLES component swizzles and
+decodes unsupported desktop DDS compression without rewriting the source file.
+
+The OpenGL renderer in upstream OpenXRay still disables its unfinished MSAA
+mode globally. The Android code does not add another feature cut: multisample
+texture allocation and resolve have real GLES implementations for the point
+where the upstream OpenGL option is enabled.
+
+The ARMv7 build and the startup shaders implicated by the supplied Adreno log
+are statically validated as part of this port. That validation is not a claim
+that a physical device test has passed; use the generated APK and attach the
+new engine/activity logs for any remaining GPU- or data-specific issue.
 
 The APK displays a Toast after the renderer readback: successful initialization
 keeps the smoke window open, while failure shows the error, waits briefly and
