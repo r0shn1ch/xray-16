@@ -87,12 +87,8 @@ done
 cp "$repo_dir/android/apk/app/build.gradle" "$project_dir/app/build.gradle"
 cp "$repo_dir/android/apk/app/src/main/AndroidManifest.xml" "$project_dir/app/src/main/AndroidManifest.xml"
 mkdir -p "$project_dir/app/src/main/java/org/openxray/app"
-cp "$repo_dir/android/apk/app/src/main/java/org/openxray/app/XRayActivity.java" \
-    "$project_dir/app/src/main/java/org/openxray/app/XRayActivity.java"
-cp "$repo_dir/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java" \
-    "$project_dir/app/src/main/java/org/openxray/app/LauncherActivity.java"
-cp "$repo_dir/android/apk/app/src/main/java/org/openxray/app/TouchControlsView.java" \
-    "$project_dir/app/src/main/java/org/openxray/app/TouchControlsView.java"
+cp "$repo_dir/android/apk/app/src/main/java/org/openxray/app/"*.java \
+    "$project_dir/app/src/main/java/org/openxray/app/"
 mkdir -p "$project_dir/app/src/main/res/values"
 cp "$repo_dir/android/apk/app/src/main/res/values/strings.xml" "$project_dir/app/src/main/res/values/strings.xml"
 cp "$repo_dir/android/apk/app/src/main/res/values/styles.xml" "$project_dir/app/src/main/res/values/styles.xml"

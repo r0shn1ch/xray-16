@@ -74,7 +74,11 @@ void CBlender_Compile::r_Pass(LPCSTR _vs, LPCSTR _gs, LPCSTR _ps, bool bFog, BOO
     // shader; color writes remain disabled by the blender.
     LPCSTR effectivePs = _ps;
 #if defined(XR_PLATFORM_ANDROID)
-    if (!GLAD_GL_ARB_separate_shader_objects && 0 == xr_stricmp(_ps, "null"))
+    // Some Adreno drivers report separate-shader support while the engine
+    // still selects its monolithic path for individual cached passes. Do not
+    // key correctness to that runtime flag: GLES always gets a fragment
+    // stage for a legacy depth-only pass.
+    if (0 == xr_stricmp(_ps, "null"))
         effectivePs = "dumb";
 #endif
 

@@ -111,6 +111,7 @@ public final class LauncherActivity extends Activity {
     private TextView status;
     private TextView logView;
     private Button launchButton;
+    private Button stopButton;
     private Button[] tabButtons;
     private View[] pages;
     private SharedPreferences preferences;
@@ -323,9 +324,18 @@ public final class LauncherActivity extends Activity {
         content.addView(actionButton("Настроить доступ к памяти", view -> requestAllFilesAccess()), matchWrap());
 
         addSectionTitle(content, "Запуск");
+        LinearLayout launchActions = horizontalRow();
         launchButton = actionButton("Запустить игру", view -> launchEngine(false));
         launchButton.setTextSize(17);
-        content.addView(launchButton, new LinearLayout.LayoutParams(-1, dp(60)));
+        launchActions.addView(launchButton, new LinearLayout.LayoutParams(0, dp(60), 1));
+        stopButton = actionButton("■", view -> confirmStopEngine());
+        stopButton.setContentDescription("Остановить запущенный движок");
+        stopButton.setTextSize(18);
+        stopButton.setTextColor(Color.rgb(170, 25, 25));
+        LinearLayout.LayoutParams stopParams = new LinearLayout.LayoutParams(dp(58), dp(60));
+        stopParams.setMarginStart(dp(6));
+        launchActions.addView(stopButton, stopParams);
+        content.addView(launchActions, matchWrap());
         content.addView(actionButton("Проверить GLES без игровых файлов", view -> launchEngine(true)),
                 new LinearLayout.LayoutParams(-1, dp(52)));
         content.addView(actionButton("Проверить Vulkan + GLES fallback", view -> launchVulkanSmoke()),
@@ -680,13 +690,23 @@ public final class LauncherActivity extends Activity {
 
     private void launchEngine(boolean rendererSmoke, boolean vulkanRendererSmoke) {
         if (!rendererSmoke && isEngineProcessRunning()) {
-            // Keep the mode explicit. XRayActivity used to interpret an
-            // absent mode as a renderer smoke test, so a reattach could run
-            // the test path instead of bringing the game surface forward.
-            Intent resume = createEngineIntent(false, false);
-            resume.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             setStatus("Возвращаю уже запущенный движок на экран…");
-            startActivity(resume);
+            writeLauncherLog("[launcher] requesting existing engine task foreground");
+            Intent resume = new Intent(this, EngineControlReceiver.class);
+            resume.setAction(EngineControlReceiver.ACTION_RESUME_ENGINE);
+            sendBroadcast(resume);
+
+            // LauncherActivity normally sits immediately above XRayActivity
+            // in the same task. Finishing it uncovers the existing SDL
+            // SurfaceView instead of creating/reordering another SDL entry
+            // point. The engine-process receiver also moves its task to the
+            // foreground for the case where Android split the activities.
+            handler.postDelayed(() -> {
+                if (!isFinishing()) {
+                    finish();
+                    overridePendingTransition(0, 0);
+                }
+            }, 120);
             return;
         }
         if (!rendererSmoke && !prepareEngineLaunch())
@@ -1028,9 +1048,42 @@ public final class LauncherActivity extends Activity {
     }
 
     private void refreshRunningState() {
+        boolean running = isEngineProcessRunning();
         if (launchButton != null)
-            launchButton.setText(isEngineProcessRunning()
-                    ? "Вернуться в запущенную игру" : "Запустить игру");
+            launchButton.setText(running ? "Вернуться в запущенную игру" : "Запустить игру");
+        if (stopButton != null) {
+            stopButton.setEnabled(running);
+            stopButton.setVisibility(running ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    private void confirmStopEngine() {
+        if (!isEngineProcessRunning()) {
+            refreshRunningState();
+            setStatus("Процесс движка уже остановлен.");
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Остановить движок?")
+                .setMessage("Процесс игры будет принудительно завершён. Несохранённый прогресс потеряется.")
+                .setPositiveButton("Остановить", (dialog, which) -> stopEngine())
+                .setNegativeButton("Отмена", null)
+                .show();
+    }
+
+    private void stopEngine() {
+        writeLauncherLog("[launcher] force-stop requested for engine process");
+        Intent stop = new Intent(this, EngineControlReceiver.class);
+        stop.setAction(EngineControlReceiver.ACTION_STOP_ENGINE);
+        sendBroadcast(stop);
+        setStatus("Останавливаю процесс движка…");
+        handler.postDelayed(() -> {
+            refreshRunningState();
+            if (isEngineProcessRunning())
+                setStatus("Процесс ещё завершается; нажмите стоп повторно через секунду.");
+            else
+                setStatus("Процесс движка остановлен.");
+        }, 900);
     }
 
     private void refreshLog() {

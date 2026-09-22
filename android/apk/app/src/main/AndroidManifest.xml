@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    android:versionCode="17"
-    android:versionName="0.9.3"
+    android:versionCode="18"
+    android:versionName="0.9.4"
     android:installLocation="auto">
 
     <uses-feature android:glEsVersion="0x00030001" />
@@ -12,6 +12,7 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.REORDER_TASKS" />
 
     <application
         android:allowBackup="false"
@@ -26,6 +27,10 @@
             android:process=":engine"
             android:screenOrientation="sensorLandscape"
             android:theme="@style/EngineTheme" />
+        <receiver
+            android:name="org.openxray.app.EngineControlReceiver"
+            android:exported="false"
+            android:process=":engine" />
         <activity
             android:name="org.openxray.app.LauncherActivity"
             android:exported="true"

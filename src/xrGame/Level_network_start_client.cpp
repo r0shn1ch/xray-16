@@ -2,6 +2,9 @@
 
 #include "Level.h"
 #include "xrEngine/IGame_Persistent.h"
+#if defined(XR_PLATFORM_ANDROID)
+#include "xrEngine/x_ray.h"
+#endif
 
 #include "ai_space.h"
 #include "game_cl_base.h"
@@ -220,11 +223,26 @@ bool CLevel::net_start_client5()
         {
             g_pGamePersistent->LoadTitle("st_loading_textures");
             GEnv.Render->DeferredLoad(FALSE);
+#if defined(XR_PLATFORM_ANDROID)
+            if (strstr(Core.Params, "-android-lazy-textures"))
+            {
+                // CTexture::apply_load already performs a safe first-bind
+                // load after DeferredLoad(FALSE). Uploading every registered
+                // CoP texture here blocks the SDL thread for minutes and can
+                // exhaust a 32-bit process before the first frame. Mobile
+                // devices instead load only textures actually encountered.
+                Msg("[load-trace] client5 deferred-upload skipped; Android lazy first-bind loading enabled");
+                android_set_load_context("deferred-textures skipped; lazy first-bind enabled");
+            }
+            else
+#endif
+            {
             Msg("[load-trace] client5 deferred-upload begin total=%llu ms",
                 static_cast<unsigned long long>(textureTimer.GetElapsed_ms()));
             GEnv.Render->ResourcesDeferredUpload();
             Msg("[load-trace] client5 deferred-upload end elapsed=%llu ms mem=%uK",
                 static_cast<unsigned long long>(textureTimer.GetElapsed_ms()), Memory.mem_usage() / 1024);
+            }
             LL_CheckTextures();
         }
         sended_request_connection_data = FALSE;

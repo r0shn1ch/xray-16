@@ -1,5 +1,6 @@
 package org.openxray.app;
 
+import android.app.ActivityManager;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.os.Build;
@@ -33,6 +34,7 @@ import org.libsdl.app.SDLActivity;
  */
 public final class XRayActivity extends SDLActivity {
     private static final String TAG = "OpenXRay";
+    private static volatile XRayActivity runningInstance;
     private File diagnosticsFile;
     private boolean immersiveMode = true;
     private TouchControlsView touchControls;
@@ -53,6 +55,7 @@ public final class XRayActivity extends SDLActivity {
             diagnosticsFile = new File(getFilesDir(), "activity.log");
         }
         installCrashHandler();
+        runningInstance = this;
         writeDiagnostic("activity onCreate; sdk=" + Build.VERSION.SDK_INT
                 + "; abi=" + (Build.SUPPORTED_ABIS.length == 0 ? "unknown" : Build.SUPPORTED_ABIS[0]));
         try {
@@ -108,6 +111,37 @@ public final class XRayActivity extends SDLActivity {
     }
 
     @Override
+    protected void onDestroy() {
+        if (runningInstance == this)
+            runningInstance = null;
+        writeDiagnostic("activity onDestroy");
+        super.onDestroy();
+    }
+
+    static boolean returnRunningEngineToForeground() {
+        final XRayActivity activity = runningInstance;
+        if (activity == null || activity.isFinishing() || activity.isDestroyed())
+            return false;
+
+        activity.runOnUiThread(() -> {
+            activity.writeDiagnostic("engine foreground command received; task=" + activity.getTaskId());
+            Intent self = new Intent(activity, XRayActivity.class);
+            self.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            activity.startActivity(self);
+
+            ActivityManager manager = (ActivityManager) activity.getSystemService(ACTIVITY_SERVICE);
+            if (manager != null) {
+                try {
+                    manager.moveTaskToFront(activity.getTaskId(), ActivityManager.MOVE_TASK_WITH_HOME);
+                } catch (RuntimeException error) {
+                    activity.writeDiagnostic("moveTaskToFront failed: " + error);
+                }
+            }
+        });
+        return true;
+    }
+
+    @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus)
@@ -142,6 +176,7 @@ public final class XRayActivity extends SDLActivity {
             // single-threaded and avoids the post-loading stall/crash seen
             // when the cache races the ALife bootstrap.
             args.add("-noprefetch");
+            args.add("-android-lazy-textures");
             args.add("-android-game-root-hex");
             args.add(encodeHex(selectedPath));
             switch (gameVariant) {

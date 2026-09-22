@@ -175,6 +175,10 @@ GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc,
     IReader* S = FS.r_open(fn);
     R_ASSERT2_CURE(S, fn, { return 0; });
     size_t img_size = S->length();
+#if defined(XR_PLATFORM_ANDROID)
+    CTimer androidTextureTimer;
+    androidTextureTimer.Start();
+#endif
 #ifdef DEBUG
     Msg("* Loaded: %s[%d]b", fn, img_size);
 #endif // DEBUG
@@ -192,12 +196,20 @@ GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc,
     {
         const gli::gl compressedGL(gli::gl::PROFILE_ES30);
         const auto compressedFormat = compressedGL.translate(texture.format(), texture.swizzles());
-        if (!supports_compressed_texture_format(compressedFormat.Internal) &&
-            !decode_compressed_texture(texture))
+        if (!supports_compressed_texture_format(compressedFormat.Internal))
         {
-            Msg("! Android GLES: no decoder for compressed texture '%s'", fn);
-            FS.r_close(S);
-            return 0;
+            Msg("[texture-trace] decode-begin name='%s' source=%zu bytes format=0x%x",
+                fRName, img_size, compressedFormat.Internal);
+            CTimer decodeTimer;
+            decodeTimer.Start();
+            if (!decode_compressed_texture(texture))
+            {
+                Msg("! Android GLES: no decoder for compressed texture '%s'", fn);
+                FS.r_close(S);
+                return 0;
+            }
+            Msg("[texture-trace] decode-end name='%s' elapsed=%llu ms",
+                fRName, static_cast<unsigned long long>(decodeTimer.GetElapsed_ms()));
         }
         // DeferredUpload reports bounded progress.  Logging every decoded DDS
         // made a large CoP level produce thousands of lines and also caused
@@ -440,6 +452,13 @@ GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc,
     ret_desc = target;
     int img_loaded_lod = is_target_cube(texture.target()) ? 0 : get_texture_load_lod(fn);
     ret_msize = calc_texture_size(img_loaded_lod, mip_cnt, img_size);
+#if defined(XR_PLATFORM_ANDROID)
+    const u64 textureElapsed = androidTextureTimer.GetElapsed_ms();
+    if (textureElapsed >= 500)
+        Msg("[texture-trace] slow-load name='%s' elapsed=%llu ms source=%zu bytes extent=%dx%d levels=%u compressed=%d",
+            fRName, static_cast<unsigned long long>(textureElapsed), img_size,
+            tex_extent.x, tex_extent.y, mip_cnt, gli::is_compressed(texture.format()) ? 1 : 0);
+#endif
     return pTexture;
 }
 } // namespace xray::render::RENDER_NAMESPACE
