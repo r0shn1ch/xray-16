@@ -39,7 +39,15 @@ void CheckAndSetupRenderer()
 
 #if defined(XR_PLATFORM_ANDROID)
     if (strstr(Core.Params, "-renderer-vulkan"))
-        Console->Execute("renderer renderer_vulkan");
+    {
+        // The Android Vulkan probe validates the device/swapchain only. The
+        // gameplay xrRenderVK path is not complete yet, so selecting it here
+        // would silently fall back to GLES after the renderer list is shown.
+        // Keep the Vulkan choice as an explicit probe/fallback, but make the
+        // actual gameplay backend deterministic and truthful.
+        Msg("[renderer-vulkan] gameplay backend unavailable; selecting renderer_gles as fallback");
+        Console->Execute("renderer renderer_gles");
+    }
     else if (strstr(Core.Params, "-renderer-gles") || strstr(Core.Params, "-renderer-auto"))
         Console->Execute("renderer renderer_gles");
     else

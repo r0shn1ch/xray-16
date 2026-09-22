@@ -950,7 +950,7 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
         const bool vulkanReady = AndroidVulkanSmoke::Run(vulkanReason);
         Msg("[renderer-vulkan] gameplay selection probe: %s; %s",
             vulkanReady ? "PASS" : "FAILED", vulkanReason.c_str());
-        Msg("[renderer-vulkan] xrRenderVK gameplay pipeline is not complete; using GLES for this session");
+        Msg("[renderer-vulkan] xrRenderVK gameplay pipeline is not complete; GLES fallback will be used");
     }
 #endif
 
