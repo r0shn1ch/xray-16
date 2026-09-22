@@ -1072,10 +1072,18 @@ public final class LauncherActivity extends Activity {
     }
 
     private void stopEngine() {
-        writeLauncherLog("[launcher] force-stop requested for engine process");
-        Intent stop = new Intent(this, EngineControlReceiver.class);
-        stop.setAction(EngineControlReceiver.ACTION_STOP_ENGINE);
-        sendBroadcast(stop);
+        int enginePid = findEngineProcessPid();
+        writeLauncherLog("[launcher] force-stop requested for engine process; pid=" + enginePid);
+        if (enginePid > 0) {
+            // Both processes belong to this application UID, so the launcher
+            // can terminate a wedged engine directly. An in-process broadcast
+            // is not reliable when the engine main looper itself is stalled.
+            android.os.Process.killProcess(enginePid);
+        } else {
+            Intent stop = new Intent(this, EngineControlReceiver.class);
+            stop.setAction(EngineControlReceiver.ACTION_STOP_ENGINE);
+            sendBroadcast(stop);
+        }
         setStatus("Останавливаю процесс движка…");
         handler.postDelayed(() -> {
             refreshRunningState();
@@ -1153,18 +1161,22 @@ public final class LauncherActivity extends Activity {
     }
 
     private boolean isEngineProcessRunning() {
+        return findEngineProcessPid() > 0;
+    }
+
+    private int findEngineProcessPid() {
         ActivityManager manager = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
         if (manager == null)
-            return false;
+            return -1;
         String engineProcess = getPackageName() + ":engine";
         List<ActivityManager.RunningAppProcessInfo> processes = manager.getRunningAppProcesses();
         if (processes == null)
-            return false;
+            return -1;
         for (ActivityManager.RunningAppProcessInfo process : processes) {
             if (engineProcess.equals(process.processName))
-                return true;
+                return process.pid;
         }
-        return false;
+        return -1;
     }
 
     private void appendLog(StringBuilder result, File file) {

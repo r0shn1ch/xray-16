@@ -44,7 +44,7 @@ public final class XRayActivity extends SDLActivity {
         // Apply orientation before SDL creates its SurfaceView/EGL surface.
         // Doing it after super.onCreate leaves the first drawable portrait
         // and forces a destructive surface recreation during native startup.
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         if (getIntent().getBooleanExtra(LauncherActivity.EXTRA_KEEP_SCREEN_ON, true))
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         immersiveMode = getIntent().getBooleanExtra(LauncherActivity.EXTRA_IMMERSIVE, true);
@@ -74,7 +74,7 @@ public final class XRayActivity extends SDLActivity {
 
     @Override
     protected void onResume() {
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         super.onResume();
         applyImmersiveMode();
         writeDiagnostic("activity onResume");
@@ -106,8 +106,21 @@ public final class XRayActivity extends SDLActivity {
         // Keep the original launch intent so an Activity recreation cannot
         // silently lose the selected game root or profile.
         writeDiagnostic("existing engine activity brought to foreground");
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         applyImmersiveMode();
+    }
+
+    @Override
+    public void setOrientationBis(int width, int height, boolean resizable, String hint) {
+        // SDL calls this from native startup after Activity.onCreate(). Its
+        // default implementation derives an orientation from the requested
+        // window size and can overwrite the manifest/runtime landscape lock.
+        // On several phones that leaves a landscape Surface containing a
+        // portrait-rotated image. The engine Activity is always landscape;
+        // the launcher remains independently locked to portrait.
+        writeDiagnostic("SDL orientation request ignored; width=" + width
+                + "; height=" + height + "; resizable=" + resizable + "; hint=" + hint);
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
     }
 
     @Override

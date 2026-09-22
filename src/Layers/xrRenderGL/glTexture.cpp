@@ -116,6 +116,35 @@ bool decode_compressed_texture(gli::texture& texture)
 
 bool supports_compressed_texture_format(GLenum internalFormat)
 {
+    // GLES drivers are allowed to advertise S3TC support through extension
+    // strings without listing every accepted enum in
+    // GL_COMPRESSED_TEXTURE_FORMATS. Adreno does exactly that, which made the
+    // old check decode every CoP DXT texture to RGBA on the CPU and inflate
+    // memory fourfold near the end of level loading.
+    const bool fullS3tc = GLAD_GL_EXT_texture_compression_s3tc != 0;
+    const bool dxt1 = fullS3tc || GLAD_GL_EXT_texture_compression_dxt1 != 0;
+    const bool dxt3 = fullS3tc || GLAD_GL_ANGLE_texture_compression_dxt3 != 0;
+    const bool dxt5 = fullS3tc || GLAD_GL_ANGLE_texture_compression_dxt5 != 0;
+
+    switch (internalFormat)
+    {
+    case GL_COMPRESSED_RGB_S3TC_DXT1_EXT:
+    case GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
+        if (dxt1)
+            return true;
+        break;
+    case GL_COMPRESSED_RGBA_S3TC_DXT3_EXT:
+        if (dxt3)
+            return true;
+        break;
+    case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
+        if (dxt5)
+            return true;
+        break;
+    default:
+        break;
+    }
+
     GLint count = 0;
     glGetIntegerv(GL_NUM_COMPRESSED_TEXTURE_FORMATS, &count);
     if (count <= 0)

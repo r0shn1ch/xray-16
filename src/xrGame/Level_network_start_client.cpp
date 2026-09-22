@@ -257,10 +257,21 @@ bool CLevel::net_start_client6()
     if (connected_to_server)
     {
         ZoneScoped;
+        CTimer clientTimer;
+        clientTimer.Start();
+        Msg("[load-trace] client6 begin configured=%d mem=%uK", game_configured ? 1 : 0,
+            Memory.mem_usage() / 1024);
 
         // Sync
+        Msg("[load-trace] client6 synchronize-map begin");
         if (!synchronize_map_data())
+        {
+            Msg("[load-trace] client6 synchronize-map pending elapsed=%llu ms",
+                static_cast<unsigned long long>(clientTimer.GetElapsed_ms()));
             return false;
+        }
+        Msg("[load-trace] client6 synchronize-map end elapsed=%llu ms",
+            static_cast<unsigned long long>(clientTimer.GetElapsed_ms()));
 
         if (!game_configured)
         {
@@ -269,8 +280,13 @@ bool CLevel::net_start_client6()
         }
         if (!GEnv.isDedicatedServer)
         {
+            Msg("[load-trace] client6 hud-load begin");
             pHUD->Load();
+            Msg("[load-trace] client6 hud-load end elapsed=%llu ms",
+                static_cast<unsigned long long>(clientTimer.GetElapsed_ms()));
             pHUD->OnConnected();
+            Msg("[load-trace] client6 hud-connected elapsed=%llu ms",
+                static_cast<unsigned long long>(clientTimer.GetElapsed_ms()));
         }
 
 #ifdef DEBUG
@@ -279,7 +295,10 @@ bool CLevel::net_start_client6()
 
         if (game)
         {
+            Msg("[load-trace] client6 game-connected begin");
             game->OnConnected();
+            Msg("[load-trace] client6 game-connected end elapsed=%llu ms",
+                static_cast<unsigned long long>(clientTimer.GetElapsed_ms()));
             if (game->Type() != eGameIDSingle)
             {
                 m_file_transfer = xr_new<file_transfer::client_site>();
@@ -287,7 +306,10 @@ bool CLevel::net_start_client6()
         }
 
         g_pGamePersistent->LoadTitle("st_client_synchronising");
+        Msg("[load-trace] client6 precache begin frames=60 mem=%uK", Memory.mem_usage() / 1024);
         Device.PreCache(60, true);
+        Msg("[load-trace] client6 precache scheduled elapsed=%llu ms mem=%uK",
+            static_cast<unsigned long long>(clientTimer.GetElapsed_ms()), Memory.mem_usage() / 1024);
         net_start_result_total = TRUE;
     }
     else
@@ -296,5 +318,6 @@ bool CLevel::net_start_client6()
     }
 
     g_pGamePersistent->LoadEnd();
+    Msg("[load-trace] client6 end");
     return true;
 }
