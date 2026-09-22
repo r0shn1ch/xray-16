@@ -386,6 +386,28 @@ void android_native_crash_handler(int signal, siginfo_t* info, void* raw_context
     destination = android_append_hex(destination, end, stack_pointer);
     destination = android_append_text(destination, end, " lr=");
     destination = android_append_hex(destination, end, link_register);
+
+    // Crashes during the first gameplay frame are commonly inside a renderer
+    // shared object rather than the module that installed this handler. Ask
+    // the already-loaded dynamic linker for the actual module so the compact
+    // user log remains symbolizable even when logcat omits the tombstone.
+    Dl_info crashModule{};
+    if (program_counter != 0 &&
+        dladdr(reinterpret_cast<const void*>(program_counter), &crashModule) != 0 &&
+        crashModule.dli_fbase)
+    {
+        destination = android_append_text(destination, end, " module='");
+        const char* moduleName = crashModule.dli_fname;
+        if (moduleName)
+        {
+            if (const char* slash = strrchr(moduleName, '/'))
+                moduleName = slash + 1;
+        }
+        destination = android_append_text(destination, end, moduleName ? moduleName : "unknown");
+        destination = android_append_text(destination, end, "' pc-offset=");
+        destination = android_append_hex(destination, end,
+            program_counter - reinterpret_cast<uintptr_t>(crashModule.dli_fbase));
+    }
     if (g_android_module_base != 0)
     {
         if (program_counter >= g_android_module_base)

@@ -341,18 +341,27 @@ GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc,
         const auto compressedFormat = compressedGL.translate(texture.format(), texture.swizzles());
         compressedInternal = compressedFormat.Internal;
         softwareDecode = !supports_compressed_texture_format(compressedInternal);
+        const auto sourceMaxExtent = std::max(sourceExtent.x, sourceExtent.y);
         if (softwareDecode && !cubeTexture && sourceMipCount > 1 &&
-            std::max(sourceExtent.x, sourceExtent.y) >= 512)
+            sourceMaxExtent >= 512)
         {
             // RGBA fallback is roughly four times larger than BC1/BC3.  Keep
             // at least one lower mip on mobile to control both decode time and
             // the 32-bit process working set, while still honoring a stronger
             // user-selected texture LOD.
             appliedLod = std::max(appliedLod, 1);
+            // A software-decoded BC texture occupies about four times its
+            // compressed size. On a 32-bit Android process, 1K/2K textures
+            // first touched by the initial gameplay frame can push the
+            // working set past the address-space limit. Skipping two source
+            // mips keeps UVs and atlas layout intact while cutting both the
+            // decode work and RGBA allocation by another factor of four.
+            if (sourceMaxExtent >= 1024)
+                appliedLod = std::max(appliedLod, 2);
         }
         if (softwareDecode && !cubeTexture && sourceMipCount == 1 &&
-            std::max(sourceExtent.x, sourceExtent.y) >= 2048 &&
-            strstr(fn, "terrain\\") != nullptr)
+            sourceMaxExtent >= 1024 &&
+            (strstr(fn, "terrain\\") != nullptr || strstr(fn, "wpn\\wpn_crosshair") != nullptr))
         {
             decodeDownscale = 1;
         }

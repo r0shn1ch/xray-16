@@ -1,6 +1,6 @@
 # Android port audit
 
-This audit covers the Android port through version 0.9.9. The comparison base
+This audit covers the Android port through version 0.9.10. The comparison base
 is upstream OpenXRay `dev` at `247d72764`. The Android branch already contains
 the two upstream UI commits that follow the fork's older `origin/dev`, so they
 are not Android-specific replacements.
@@ -91,6 +91,21 @@ The retained changes fall into these categories:
 - Launcher overrides are applied after reading `user.ltx` and before game
   startup; the selected installation and its configuration files stay
   read-only.
+
+## Findings addressed in 0.9.10
+
+- The Android shader-cache key now includes the GLES compatibility-pass
+  revision, preventing program binaries from older APKs from being linked
+  against newly translated shader stages.
+- Minimum-quality shaders explicitly define zero-valued quality macros for
+  strict Adreno preprocessors instead of accidentally entering unsupported
+  ultra-shadow code and falling back to an interface-incompatible stub.
+- Software-decoded 1K and 2K mipmapped textures start two mips lower on
+  32-bit Android. This preserves UV and atlas geometry while reducing the
+  first gameplay frame's decode time and RGBA working set.
+- Compact crash records now include the actual shared-object name and
+  module-relative program-counter offset when the Android linker can resolve
+  them, allowing subsequent native faults to be symbolized from user logs.
 
 ## Remaining renderer debt
 

@@ -784,7 +784,14 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
         sh_name.append(ps_r_sun_shafts);
     }
     else
+    {
+#if defined(XR_PLATFORM_ANDROID)
+        // Adreno's preprocessor rejects an undefined identifier in #if even
+        // though desktop GLSL treats it as zero.
+        options.add("SUN_SHAFTS_QUALITY", "0");
+#endif
         sh_name.append(static_cast<u32>(0));
+    }
 
     if (RImplementation.o.advancedpp && ps_r_ssao)
     {
@@ -793,7 +800,12 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
         sh_name.append(ps_r_ssao);
     }
     else
+    {
+#if defined(XR_PLATFORM_ANDROID)
+        options.add("SSAO_QUALITY", "0");
+#endif
         sh_name.append(static_cast<u32>(0));
+    }
 
     // Sun quality
     if (RImplementation.o.advancedpp && ps_r_sun_quality)
@@ -803,7 +815,12 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
         sh_name.append(ps_r_sun_quality);
     }
     else
+    {
+#if defined(XR_PLATFORM_ANDROID)
+        options.add("SUN_QUALITY", "0");
+#endif
         sh_name.append(static_cast<u32>(0));
+    }
 
     // Steep parallax
     {
@@ -887,6 +904,12 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
     }
 
 #if defined(XR_PLATFORM_ANDROID)
+    // This suffix is part of the on-disk shader cache key. Bump it whenever
+    // the Android source compatibility pass changes: the source-file CRC
+    // alone cannot detect translator changes and would otherwise mix old
+    // program binaries with newly translated stages after an APK update.
+    sh_name.append("glescompat4");
+
     // Vertex declarations use different physical widths for the same logical
     // attributes in the skinning variants. The original resources rely on
     // desktop GLSL's permissive vector narrowing; make it explicit after the
