@@ -28,7 +28,7 @@ patchset_present()
         && grep -Fq 'pc-libmain' "$repo_dir/src/xrEngine/x_ray.cpp" \
         && grep -Fq 'AndroidTouchControlMask' \
             "$repo_dir/src/xrEngine/android_touch_controls.cpp" \
-        && grep -Fq 'SCREEN_ORIENTATION_SENSOR_LANDSCAPE' \
+        && grep -Fq 'SCREEN_ORIENTATION_LANDSCAPE' \
             "$repo_dir/android/apk/app/src/main/java/org/openxray/app/XRayActivity.java" \
         && grep -Fq 'EXTRA_TOUCH_CONTROLS' \
             "$repo_dir/android/apk/app/src/main/java/org/openxray/app/LauncherActivity.java" \
