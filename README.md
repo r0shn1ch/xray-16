@@ -50,11 +50,14 @@ Current Android requirements and limits:
   GLES gameplay fallback while the full `xrRenderVK` pipeline is developed.
 
 The launcher keeps the engine in landscape and itself in portrait, offers
-renderer selection, mobile render-quality profiles, touch controls and an FPS
-overlay. The default performance profile renders at 50% of the physical width
-and height and applies the game's low preset; higher-quality and native modes
-are selectable. See [android/README.md](android/README.md) for build, install,
-launch and diagnostics instructions.
+renderer selection, a concrete internal-resolution list, graphics presets,
+touch controls and an FPS overlay. Android auto mode selects an aspect-correct
+1280-pixel-wide internal resolution (or the native size on a smaller display)
+and the game's minimum preset; every preset from Minimum through Extreme and
+the native display resolution remain selectable. Launcher choices override a
+stale desktop `user.ltx` only for the new engine session; the source game
+installation is not rewritten. See [android/README.md](android/README.md) for
+build, install, launch and diagnostics instructions.
 
 Quick APK build with the pinned build kit:
 

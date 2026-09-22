@@ -147,13 +147,17 @@ process, so the launcher can remain visible after a native crash.
 The Android path requests an OpenGL ES 3.1 or newer context and keeps the
 deferred renderer on an engine-owned framebuffer. `CHW::Present()` explicitly
 copies its final color attachment into SDL's EGL framebuffer before the swap.
-The launcher defaults to a 50% render scale and the game's low quality preset,
-reducing pixel work to one quarter of native resolution. Balance (67%), quality
-(75%) and unmodified native (100%) modes are available. The upscale uses linear
-filtering, and Android mouse/touch coordinates are converted between window and
-internal render sizes. A launcher checkbox enables the engine FPS counter;
-the engine log also records FPS, engine time, render time and both resolutions
-every five seconds as `[frame-trace]`.
+The launcher exposes graphics preset and internal resolution as independent
+settings. Android auto mode applies the minimum game preset after `user.ltx`
+and chooses an aspect-correct 1280-pixel-wide mode (or native on a smaller
+display), preventing an old desktop High/Extreme config from silently driving
+a multi-megapixel mobile framebuffer. Low resolutions through native and all
+five stock presets remain selectable. The Android surface stays at its native
+landscape size while the final image is linearly upscaled; mouse/touch
+coordinates are converted between window and internal render sizes. A launcher
+checkbox enables the engine FPS counter; the engine log also records FPS,
+engine time, render time and both resolutions every five seconds as
+`[frame-trace]`.
 The GLES source layer assigns MRT output locations, normalizes stage varyings
 and makes the desktop shader expressions explicit at runtime. The tracked
 `res/gamedata/shaders/gl` directory is identical to upstream; neither original

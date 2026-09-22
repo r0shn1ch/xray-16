@@ -1,6 +1,6 @@
 # Android port audit
 
-This audit covers the Android port through version 0.9.8. The comparison base
+This audit covers the Android port through version 0.9.9. The comparison base
 is upstream OpenXRay `dev` at `247d72764`. The Android branch already contains
 the two upstream UI commits that follow the fork's older `origin/dev`, so they
 are not Android-specific replacements.
@@ -78,6 +78,19 @@ The retained changes fall into these categories:
 - Vulkan selection now runs the real VK0 probe during a game launch, records
   limits/features/deferred attachment formats, and explicitly identifies the
   subsequent GLES gameplay fallback.
+
+## Findings addressed in 0.9.9
+
+- Graphics preset and internal resolution are independent launcher settings.
+  Auto uses the minimum preset and an aspect-correct 1280-pixel-wide target on
+  larger displays instead of inheriting desktop High/Extreme at native phone
+  resolution.
+- The launcher offers concrete low-through-native resolution choices. The EGL
+  drawable remains native and landscape while the engine-owned 3D targets use
+  the chosen size, preserving SDL lifecycle and orientation behavior.
+- Launcher overrides are applied after reading `user.ltx` and before game
+  startup; the selected installation and its configuration files stay
+  read-only.
 
 ## Remaining renderer debt
 

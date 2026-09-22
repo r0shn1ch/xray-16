@@ -17,6 +17,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
+import android.util.DisplayMetrics;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.ArrayAdapter;
@@ -67,7 +68,9 @@ public final class LauncherActivity extends Activity {
     public static final String EXTRA_IMMERSIVE = "org.openxray.extra.IMMERSIVE";
     public static final String EXTRA_TOUCH_CONTROLS = "org.openxray.extra.TOUCH_CONTROLS";
     public static final String EXTRA_RENDERER_MODE = "org.openxray.extra.RENDERER_MODE";
-    public static final String EXTRA_PERFORMANCE_MODE = "org.openxray.extra.PERFORMANCE_MODE";
+    public static final String EXTRA_GRAPHICS_PRESET = "org.openxray.extra.GRAPHICS_PRESET";
+    public static final String EXTRA_RENDER_WIDTH = "org.openxray.extra.RENDER_WIDTH";
+    public static final String EXTRA_RENDER_HEIGHT = "org.openxray.extra.RENDER_HEIGHT";
     public static final String EXTRA_SHOW_FPS = "org.openxray.extra.SHOW_FPS";
 
     private static final String PREFS = "openxray_launcher";
@@ -84,17 +87,20 @@ public final class LauncherActivity extends Activity {
     private static final String PREF_TOUCH_CONTROLS = "touch_controls";
     private static final String PREF_ACTIVE_PAGE = "active_page";
     private static final String PREF_RENDERER_MODE = "renderer_mode";
-    private static final String PREF_PERFORMANCE_MODE = "performance_mode";
+    private static final String PREF_GRAPHICS_PRESET = "graphics_preset";
+    private static final String PREF_RENDER_RESOLUTION = "render_resolution";
     private static final String PREF_SHOW_FPS = "show_fps";
 
     public static final int RENDERER_AUTO = 0;
     public static final int RENDERER_GLES = 1;
     public static final int RENDERER_VULKAN = 2;
 
-    public static final int PERFORMANCE_FAST = 0;
-    public static final int PERFORMANCE_BALANCED = 1;
-    public static final int PERFORMANCE_QUALITY = 2;
-    public static final int PERFORMANCE_NATIVE = 3;
+    public static final int GRAPHICS_AUTO = 0;
+    public static final int GRAPHICS_MINIMUM = 1;
+    public static final int GRAPHICS_LOW = 2;
+    public static final int GRAPHICS_DEFAULT = 3;
+    public static final int GRAPHICS_HIGH = 4;
+    public static final int GRAPHICS_EXTREME = 5;
 
     private static final int PAGE_GAME = 0;
     private static final int PAGE_SETTINGS = 1;
@@ -110,7 +116,8 @@ public final class LauncherActivity extends Activity {
     private EditText customArgs;
     private Spinner gameVariant;
     private Spinner rendererMode;
-    private Spinner performanceMode;
+    private Spinner graphicsPreset;
+    private Spinner renderResolution;
     private CheckBox gamepadEnabled;
     private CheckBox splashEnabled;
     private CheckBox keepScreenOn;
@@ -133,6 +140,26 @@ public final class LauncherActivity extends Activity {
     private int activePage = PAGE_GAME;
     private boolean logReadPending;
     private String cachedLog = "";
+    private final ArrayList<RenderResolution> renderResolutions = new ArrayList<>();
+
+    private static final class RenderResolution {
+        final String id;
+        final String label;
+        final int width;
+        final int height;
+
+        RenderResolution(String id, String label, int width, int height) {
+            this.id = id;
+            this.label = label;
+            this.width = width;
+            this.height = height;
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
 
     private final Runnable logPoller = new Runnable() {
         @Override
@@ -378,23 +405,38 @@ public final class LauncherActivity extends Activity {
         rendererMode.setAdapter(rendererAdapter);
         content.addView(rendererMode, matchWrap());
 
-        addSectionTitle(content, "Производительность");
+        addSectionTitle(content, "Графика");
         content.addView(bodyText(
-                "Масштаб применяется к 3D-рендеру, затем изображение увеличивается до разрешения экрана. "
-                        + "Это заметно снижает нагрузку на мобильный GPU; интерфейс и касания масштабируются вместе."),
+                "Настройки применяются после user.ltx, но до запуска игры. Авто использует Minimum на Android, "
+                        + "чтобы старый desktop-конфиг High/Extreme не перегружал телефон."),
                 matchWrap());
-        performanceMode = new Spinner(this);
-        String[] performanceModes = {
-                "Производительность — 50% + низкий пресет",
-                "Баланс — 67% + низкий пресет",
-                "Качество — 75% + обычный пресет",
-                "Нативное разрешение — настройки игры"
+        graphicsPreset = new Spinner(this);
+        String[] graphicsPresets = {
+                "Автоматически для Android (Minimum)",
+                "Minimum",
+                "Low",
+                "Default",
+                "High",
+                "Extreme"
         };
-        ArrayAdapter<String> performanceAdapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, performanceModes);
-        performanceAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        performanceMode.setAdapter(performanceAdapter);
-        content.addView(performanceMode, matchWrap());
+        ArrayAdapter<String> graphicsAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, graphicsPresets);
+        graphicsAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        graphicsPreset.setAdapter(graphicsAdapter);
+        content.addView(graphicsPreset, matchWrap());
+
+        addSectionTitle(content, "Разрешение 3D-рендера");
+        content.addView(bodyText(
+                "Экран Android остаётся в нативном ландшафтном режиме, а движок рендерит 3D в выбранном "
+                        + "разрешении и масштабирует кадр. Это сохраняет правильную ориентацию и серьёзно "
+                        + "снижает нагрузку на GPU."), matchWrap());
+        buildRenderResolutionList();
+        renderResolution = new Spinner(this);
+        ArrayAdapter<RenderResolution> resolutionAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, renderResolutions);
+        resolutionAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        renderResolution.setAdapter(resolutionAdapter);
+        content.addView(renderResolution, matchWrap());
 
         addSectionTitle(content, "Управление и экран");
         gamepadEnabled = makeCheckBox("Включить поддержку геймпада",
@@ -529,8 +571,9 @@ public final class LauncherActivity extends Activity {
         keepScreenOn.setChecked(preferences.getBoolean(PREF_KEEP_SCREEN_ON, true));
         immersiveMode.setChecked(preferences.getBoolean(PREF_IMMERSIVE, true));
         rendererMode.setSelection(clampRendererMode(preferences.getInt(PREF_RENDERER_MODE, RENDERER_AUTO)));
-        performanceMode.setSelection(clampPerformanceMode(
-                preferences.getInt(PREF_PERFORMANCE_MODE, PERFORMANCE_FAST)));
+        graphicsPreset.setSelection(clampGraphicsPreset(
+                preferences.getInt(PREF_GRAPHICS_PRESET, GRAPHICS_AUTO)));
+        selectStoredResolution(preferences.getString(PREF_RENDER_RESOLUTION, "auto"));
         showFps.setChecked(preferences.getBoolean(PREF_SHOW_FPS, true));
         showPage(preferences.getInt(PREF_ACTIVE_PAGE, PAGE_GAME));
     }
@@ -550,7 +593,8 @@ public final class LauncherActivity extends Activity {
                 .putBoolean(PREF_KEEP_SCREEN_ON, keepScreenOn.isChecked())
                 .putBoolean(PREF_IMMERSIVE, immersiveMode.isChecked())
                 .putInt(PREF_RENDERER_MODE, rendererMode.getSelectedItemPosition())
-                .putInt(PREF_PERFORMANCE_MODE, performanceMode.getSelectedItemPosition())
+                .putInt(PREF_GRAPHICS_PRESET, graphicsPreset.getSelectedItemPosition())
+                .putString(PREF_RENDER_RESOLUTION, selectedRenderResolution().id)
                 .putBoolean(PREF_SHOW_FPS, showFps.isChecked())
                 .putInt(PREF_ACTIVE_PAGE, activePage)
                 .apply();
@@ -564,8 +608,65 @@ public final class LauncherActivity extends Activity {
         return value >= RENDERER_AUTO && value <= RENDERER_VULKAN ? value : RENDERER_AUTO;
     }
 
-    private int clampPerformanceMode(int value) {
-        return value >= PERFORMANCE_FAST && value <= PERFORMANCE_NATIVE ? value : PERFORMANCE_FAST;
+    private int clampGraphicsPreset(int value) {
+        return value >= GRAPHICS_AUTO && value <= GRAPHICS_EXTREME ? value : GRAPHICS_AUTO;
+    }
+
+    private void buildRenderResolutionList() {
+        renderResolutions.clear();
+        DisplayMetrics metrics = new DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getRealMetrics(metrics);
+        int nativeWidth = Math.max(metrics.widthPixels, metrics.heightPixels);
+        int nativeHeight = Math.min(metrics.widthPixels, metrics.heightPixels);
+        if (nativeWidth <= 0 || nativeHeight <= 0) {
+            nativeWidth = 1280;
+            nativeHeight = 720;
+        }
+
+        int autoWidth = Math.min(nativeWidth, 1280);
+        int autoHeight = aspectHeight(autoWidth, nativeWidth, nativeHeight);
+        renderResolutions.add(new RenderResolution("auto",
+                "Автоматически — " + autoWidth + "×" + autoHeight, autoWidth, autoHeight));
+
+        int[] candidateWidths = { 854, 960, 1280, 1600, 1920, 2240, 2560 };
+        for (int width : candidateWidths) {
+            if (width >= nativeWidth)
+                continue;
+            int height = aspectHeight(width, nativeWidth, nativeHeight);
+            addRenderResolution(width + "x" + height, width + "×" + height, width, height);
+        }
+        addRenderResolution("native", "Нативное — " + nativeWidth + "×" + nativeHeight,
+                nativeWidth, nativeHeight);
+    }
+
+    private int aspectHeight(int width, int nativeWidth, int nativeHeight) {
+        int height = Math.max(320, Math.round((float) width * nativeHeight / nativeWidth));
+        return height & ~1;
+    }
+
+    private void addRenderResolution(String id, String label, int width, int height) {
+        for (RenderResolution item : renderResolutions) {
+            if (item.width == width && item.height == height)
+                return;
+        }
+        renderResolutions.add(new RenderResolution(id, label, width, height));
+    }
+
+    private void selectStoredResolution(String id) {
+        for (int index = 0; index < renderResolutions.size(); ++index) {
+            if (renderResolutions.get(index).id.equals(id)) {
+                renderResolution.setSelection(index);
+                return;
+            }
+        }
+        renderResolution.setSelection(0);
+    }
+
+    private RenderResolution selectedRenderResolution() {
+        int index = renderResolution != null ? renderResolution.getSelectedItemPosition() : 0;
+        if (index < 0 || index >= renderResolutions.size())
+            index = 0;
+        return renderResolutions.get(index);
     }
 
     private String profilePreference(String prefix, int variant) {
@@ -798,8 +899,11 @@ public final class LauncherActivity extends Activity {
         intent.putExtra(EXTRA_IMMERSIVE, immersiveMode.isChecked());
         intent.putExtra(EXTRA_RENDERER_MODE,
                 clampRendererMode(rendererMode.getSelectedItemPosition()));
-        intent.putExtra(EXTRA_PERFORMANCE_MODE,
-                clampPerformanceMode(performanceMode.getSelectedItemPosition()));
+        intent.putExtra(EXTRA_GRAPHICS_PRESET,
+                clampGraphicsPreset(graphicsPreset.getSelectedItemPosition()));
+        RenderResolution resolution = selectedRenderResolution();
+        intent.putExtra(EXTRA_RENDER_WIDTH, resolution.width);
+        intent.putExtra(EXTRA_RENDER_HEIGHT, resolution.height);
         intent.putExtra(EXTRA_SHOW_FPS, showFps.isChecked());
         if (!rendererSmoke) {
             intent.putExtra(EXTRA_GAME_PATH, gamePath.getText().toString().trim());

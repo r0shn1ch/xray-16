@@ -15,13 +15,27 @@ u32 AndroidRenderScalePercent()
     const pcstr params = Core.Params ? Core.Params : "";
     const pcstr argument = strstr(params, option);
     if (!argument)
-        return 50;
+        return 100;
 
-    unsigned int value = 50;
+    unsigned int value = 100;
     if (sscanf(argument + xr_strlen(option), "%u", &value) != 1)
-        value = 50;
+        value = 100;
     clamp(value, 35u, 100u);
     return value;
+}
+
+bool AndroidRenderDimension(pcstr option, u32& result)
+{
+    const pcstr params = Core.Params ? Core.Params : "";
+    const pcstr argument = strstr(params, option);
+    if (!argument)
+        return false;
+
+    unsigned int value = 0;
+    if (sscanf(argument + xr_strlen(option), "%u", &value) != 1 || value < 320)
+        return false;
+    result = value & ~1u;
+    return true;
 }
 
 u32 ScaleAndroidDimension(u32 value, u32 percent)
@@ -266,20 +280,41 @@ void CRenderDevice::SelectResolution(const bool windowed)
     dwWidth = psDeviceMode.Width;
     dwHeight = psDeviceMode.Height;
 #if defined(XR_PLATFORM_ANDROID)
-    const u32 scale = AndroidRenderScalePercent();
-    dwWidth = ScaleAndroidDimension(psDeviceMode.Width, scale);
-    dwHeight = ScaleAndroidDimension(psDeviceMode.Height, scale);
+    u32 requestedWidth = 0;
+    u32 requestedHeight = 0;
+    const bool hasExplicitSize =
+        AndroidRenderDimension("-android-render-width ", requestedWidth) &&
+        AndroidRenderDimension("-android-render-height ", requestedHeight);
+    const u32 scale = hasExplicitSize ? 0 : AndroidRenderScalePercent();
+    if (hasExplicitSize)
+    {
+        dwWidth = _min(requestedWidth, psDeviceMode.Width);
+        dwHeight = _min(requestedHeight, psDeviceMode.Height);
+    }
+    else
+    {
+        dwWidth = ScaleAndroidDimension(psDeviceMode.Width, scale);
+        dwHeight = ScaleAndroidDimension(psDeviceMode.Height, scale);
+    }
 
     static u32 reportedNativeWidth = 0;
     static u32 reportedNativeHeight = 0;
+    static u32 reportedInternalWidth = 0;
+    static u32 reportedInternalHeight = 0;
     static u32 reportedScale = 0;
     if (reportedNativeWidth != psDeviceMode.Width || reportedNativeHeight != psDeviceMode.Height ||
-        reportedScale != scale)
+        reportedInternalWidth != dwWidth || reportedInternalHeight != dwHeight || reportedScale != scale)
     {
-        Msg("* Android render scale: native=[%ux%u] internal=[%ux%u] scale=[%u%%]",
-            psDeviceMode.Width, psDeviceMode.Height, dwWidth, dwHeight, scale);
+        if (hasExplicitSize)
+            Msg("* Android render size: native=[%ux%u] internal=[%ux%u] explicit",
+                psDeviceMode.Width, psDeviceMode.Height, dwWidth, dwHeight);
+        else
+            Msg("* Android render scale: native=[%ux%u] internal=[%ux%u] scale=[%u%%]",
+                psDeviceMode.Width, psDeviceMode.Height, dwWidth, dwHeight, scale);
         reportedNativeWidth = psDeviceMode.Width;
         reportedNativeHeight = psDeviceMode.Height;
+        reportedInternalWidth = dwWidth;
+        reportedInternalHeight = dwHeight;
         reportedScale = scale;
     }
 #endif

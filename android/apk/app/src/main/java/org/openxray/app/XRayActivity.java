@@ -178,8 +178,10 @@ public final class XRayActivity extends SDLActivity {
         String[] additionalArgs = getIntent().getStringArrayExtra(LauncherActivity.EXTRA_ADDITIONAL_ARGS);
         int rendererMode = getIntent().getIntExtra(
                 LauncherActivity.EXTRA_RENDERER_MODE, LauncherActivity.RENDERER_AUTO);
-        int performanceMode = getIntent().getIntExtra(
-                LauncherActivity.EXTRA_PERFORMANCE_MODE, LauncherActivity.PERFORMANCE_FAST);
+        int graphicsPreset = getIntent().getIntExtra(
+                LauncherActivity.EXTRA_GRAPHICS_PRESET, LauncherActivity.GRAPHICS_AUTO);
+        int renderWidth = getIntent().getIntExtra(LauncherActivity.EXTRA_RENDER_WIDTH, 1280);
+        int renderHeight = getIntent().getIntExtra(LauncherActivity.EXTRA_RENDER_HEIGHT, 720);
         boolean showFps = getIntent().getBooleanExtra(LauncherActivity.EXTRA_SHOW_FPS, true);
         ArrayList<String> args = new ArrayList<>();
 
@@ -225,28 +227,26 @@ public final class XRayActivity extends SDLActivity {
                 break;
             }
 
-            switch (performanceMode) {
-            case LauncherActivity.PERFORMANCE_BALANCED:
-                args.add("-android-render-scale");
-                args.add("67");
-                args.add("-android-mobile-preset");
+            args.add("-android-render-width");
+            args.add(Integer.toString(Math.max(320, renderWidth)));
+            args.add("-android-render-height");
+            args.add(Integer.toString(Math.max(320, renderHeight)));
+            args.add("-android-mobile-preset");
+            switch (graphicsPreset) {
+            case LauncherActivity.GRAPHICS_LOW:
                 args.add("Low");
                 break;
-            case LauncherActivity.PERFORMANCE_QUALITY:
-                args.add("-android-render-scale");
-                args.add("75");
-                args.add("-android-mobile-preset");
+            case LauncherActivity.GRAPHICS_DEFAULT:
                 args.add("Default");
                 break;
-            case LauncherActivity.PERFORMANCE_NATIVE:
-                args.add("-android-render-scale");
-                args.add("100");
+            case LauncherActivity.GRAPHICS_HIGH:
+                args.add("High");
+                break;
+            case LauncherActivity.GRAPHICS_EXTREME:
+                args.add("Extreme");
                 break;
             default:
-                args.add("-android-render-scale");
-                args.add("50");
-                args.add("-android-mobile-preset");
-                args.add("Low");
+                args.add("Minimum");
                 break;
             }
             if (showFps)
