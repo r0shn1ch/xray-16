@@ -46,7 +46,7 @@ The launcher does not reject an incomplete folder: missing `fsgame.ltx` or
 resources are reported by the engine in the log.
 
 The resulting debug APK is named from `android/PORT_VERSION`, for example
-`build/openxray-armv7-launcher-v0.9.6-debug.apk`. Proprietary game data is not
+`build/openxray-armv7-launcher-v0.9.7-debug.apk`. Proprietary game data is not
 bundled. The APK is a device-test candidate: a successful build and offline
 shader validation do not substitute for running the exact game/mod and GPU.
 
