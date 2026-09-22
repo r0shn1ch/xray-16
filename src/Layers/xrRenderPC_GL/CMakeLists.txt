@@ -9,6 +9,7 @@ target_sources(xrRender_GL PRIVATE
     gl_rendertarget_u_set_rt.cpp
     r2_R_sun.cpp
     r2_test_hw.cpp
+    AndroidGlslCompatRules.inl
     rgl_shaders.cpp
     stdafx.cpp
     stdafx.h
@@ -413,6 +414,10 @@ target_link_libraries(xrRender_GL
     xrScriptEngine
     xrImGui
 )
+
+if (ANDROID)
+    target_link_libraries(xrRender_GL PRIVATE log)
+endif()
 
 target_compile_definitions(xrRender_GL
     PRIVATE

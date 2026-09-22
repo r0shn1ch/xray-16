@@ -141,8 +141,18 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 if (NOT WIN32)
+    # Android dependencies are expected to be built for the selected NDK ABI
+    # and exposed through CMAKE_PREFIX_PATH.  Do not silently fall back to
+    # host libraries when configuring a cross build.
     find_package(SDL2 2.0.18 REQUIRED)
-    find_package(OpenAL REQUIRED)
+    find_package(OpenAL CONFIG QUIET)
+    if (TARGET OpenAL::OpenAL)
+        # The OpenAL Soft config shipped by some releases uses OPENAL_FOUND
+        # rather than CMake's case-preserved OpenAL_FOUND variable.
+        set(OpenAL_FOUND TRUE)
+    else()
+        find_package(OpenAL REQUIRED)
+    endif()
     find_package(JPEG)
     find_package(Ogg REQUIRED)
     find_package(Vorbis REQUIRED)

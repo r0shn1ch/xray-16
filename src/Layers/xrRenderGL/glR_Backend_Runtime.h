@@ -154,6 +154,13 @@ ICF void CBackend::set_Format(SDeclaration* _decl)
         decl = _decl;
         CHK_GL(glBindVertexArray(_decl->dcl));
 
+        // Attribute pointers are VAO state when the ES3 fallback path is in
+        // use.  Force set_Vertices to rebind the current buffer after every
+        // declaration change; otherwise a cached VB leaves the new VAO with
+        // enabled attributes but no vertex format.
+        vb = 0;
+        vb_stride = 0;
+
         // Clear cached index buffer
         ib = 0;
     }
@@ -326,7 +333,39 @@ ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 baseV, u32 startV, u32 countV,
     stat.render.verts += countV;
     stat.render.polys += PC;
     constants.flush();
-    CHK_GL(glDrawElementsBaseVertex(Topology, iIndexCount, GL_UNSIGNED_SHORT, (void*)(startI * sizeof(GLushort)), baseV));
+    if (glDrawElementsBaseVertex)
+    {
+        CHK_GL(glDrawElementsBaseVertex(Topology, iIndexCount, GL_UNSIGNED_SHORT,
+            (void*)(startI * sizeof(GLushort)), baseV));
+        return;
+    }
+
+    // OpenGL ES 3.0 has indexed drawing but does not require the desktop
+    // glDrawElementsBaseVertex entry point.  Emulate BaseVertex by moving the
+    // vertex stream's attribute pointers for this draw and restore them right
+    // away so subsequent non-indexed draws keep their original base.
+    const size_t vertex_offset = size_t(baseV) * vb_stride;
+    if (GLAD_GL_ARB_vertex_attrib_binding)
+    {
+        CHK_GL(glBindVertexBuffer(0, vb, vertex_offset, vb_stride));
+    }
+    else
+    {
+        CHK_GL(glBindBuffer(GL_ARRAY_BUFFER, vb));
+        SetGLVertexPointer(decl, vertex_offset);
+    }
+
+    CHK_GL(glDrawElements(Topology, iIndexCount, GL_UNSIGNED_SHORT,
+        (void*)(startI * sizeof(GLushort))));
+
+    if (GLAD_GL_ARB_vertex_attrib_binding)
+    {
+        CHK_GL(glBindVertexBuffer(0, vb, 0, vb_stride));
+    }
+    else
+    {
+        SetGLVertexPointer(decl);
+    }
     PGO(Msg("PGO:DIP:%dv/%df", countV, PC));
 }
 
@@ -455,7 +494,13 @@ ICF void CBackend::set_FillMode(u32 _mode)
     if (fill_mode != _mode)
     {
         fill_mode = _mode;
+#if !defined(XR_PLATFORM_ANDROID)
         glPolygonMode(GL_FRONT_AND_BACK, glStateUtils::ConvertFillMode(_mode));
+#else
+        // Polygon rasterization modes are not part of OpenGL ES.  The Android
+        // path always uses filled triangles.
+        (void)_mode;
+#endif
     }
 }
 

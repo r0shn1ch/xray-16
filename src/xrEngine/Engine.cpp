@@ -37,6 +37,13 @@ void CheckAndSetupRenderer()
         return;
     }
 
+#if defined(XR_PLATFORM_ANDROID)
+    if (strstr(Core.Params, "-renderer-vulkan"))
+        Console->Execute("renderer renderer_vulkan");
+    else if (strstr(Core.Params, "-renderer-gles") || strstr(Core.Params, "-renderer-auto"))
+        Console->Execute("renderer renderer_gles");
+    else
+#endif
     if (strstr(Core.Params, "-rgl"))
         Console->Execute("renderer renderer_rgl");
     else if (strstr(Core.Params, "-r4"))

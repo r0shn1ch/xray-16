@@ -153,14 +153,14 @@ void IterVertexDeclaration(const VertexElement* dxdecl, F&& callback)
     }
 }
 
-void SetVertexDeclaration(const VertexElement* dxdecl)
+void SetVertexDeclaration(const VertexElement* dxdecl, size_t vertex_offset)
 {
     auto stride = GetDeclVertexSize(dxdecl, 0);
     IterVertexDeclaration(dxdecl,
     [&](GLuint location, GLint size, GLenum type, GLboolean normalized, intptr_t offset, GLuint /*stream*/)
     {
         CHK_GL(glVertexAttribPointer(
-            location, size, type, normalized, stride, (void*)offset));
+            location, size, type, normalized, stride, (void*)(vertex_offset + offset)));
     });
 }
 
@@ -179,9 +179,9 @@ void ConvertVertexDeclaration(const VertexElement* dxdecl, SDeclaration* decl)
     });
 }
 
-void SetGLVertexPointer(SDeclaration* decl)
+void SetGLVertexPointer(SDeclaration* decl, size_t vertex_offset)
 {
-    SetVertexDeclaration(decl->dcl_code.data());
+    SetVertexDeclaration(decl->dcl_code.data(), vertex_offset);
 }
 
 //-----------------------------------------------------------------------------

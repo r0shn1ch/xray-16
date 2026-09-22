@@ -235,8 +235,14 @@ void glState::UpdateSamplerState(u32 stage, u32 name, u32 value)
         break;
     case D3DSAMP_BORDERCOLOR: /* D3DCOLOR */
     {
+#if !defined(XR_PLATFORM_ANDROID)
         GLuint color[] = {color_get_R(value), color_get_G(value), color_get_B(value), color_get_A(value)};
         CHK_GL(glSamplerParameterIuiv(m_samplerArray[stage], GL_TEXTURE_BORDER_COLOR, color));
+#else
+        // GLES 3.0 does not expose sampler border colors; the address mode
+        // conversion already maps D3DTADDRESS_BORDER to edge clamping.
+        UNUSED(value);
+#endif
     }
         break;
     case D3DSAMP_MAGFILTER: /* D3DTEXTUREFILTER filter to use for magnification */
