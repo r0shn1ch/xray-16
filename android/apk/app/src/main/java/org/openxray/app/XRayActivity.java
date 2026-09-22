@@ -178,6 +178,9 @@ public final class XRayActivity extends SDLActivity {
         String[] additionalArgs = getIntent().getStringArrayExtra(LauncherActivity.EXTRA_ADDITIONAL_ARGS);
         int rendererMode = getIntent().getIntExtra(
                 LauncherActivity.EXTRA_RENDERER_MODE, LauncherActivity.RENDERER_AUTO);
+        int performanceMode = getIntent().getIntExtra(
+                LauncherActivity.EXTRA_PERFORMANCE_MODE, LauncherActivity.PERFORMANCE_FAST);
+        boolean showFps = getIntent().getBooleanExtra(LauncherActivity.EXTRA_SHOW_FPS, true);
         ArrayList<String> args = new ArrayList<>();
 
         if (rendererSmoke) {
@@ -221,6 +224,33 @@ public final class XRayActivity extends SDLActivity {
                 args.add("-renderer-auto");
                 break;
             }
+
+            switch (performanceMode) {
+            case LauncherActivity.PERFORMANCE_BALANCED:
+                args.add("-android-render-scale");
+                args.add("67");
+                args.add("-android-mobile-preset");
+                args.add("Low");
+                break;
+            case LauncherActivity.PERFORMANCE_QUALITY:
+                args.add("-android-render-scale");
+                args.add("75");
+                args.add("-android-mobile-preset");
+                args.add("Default");
+                break;
+            case LauncherActivity.PERFORMANCE_NATIVE:
+                args.add("-android-render-scale");
+                args.add("100");
+                break;
+            default:
+                args.add("-android-render-scale");
+                args.add("50");
+                args.add("-android-mobile-preset");
+                args.add("Low");
+                break;
+            }
+            if (showFps)
+                args.add("-android-show-fps");
         }
 
         if (!gamepadEnabled)

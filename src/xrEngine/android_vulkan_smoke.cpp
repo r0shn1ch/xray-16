@@ -202,6 +202,12 @@ bool Run(std::string& reason)
     VkPhysicalDeviceProperties physical_properties{};
     const auto get_physical_properties = load_instance_proc<PFN_vkGetPhysicalDeviceProperties>(
         instance, get_instance_proc, "vkGetPhysicalDeviceProperties");
+    const auto get_physical_features = load_instance_proc<PFN_vkGetPhysicalDeviceFeatures>(
+        instance, get_instance_proc, "vkGetPhysicalDeviceFeatures");
+    const auto get_memory_properties = load_instance_proc<PFN_vkGetPhysicalDeviceMemoryProperties>(
+        instance, get_instance_proc, "vkGetPhysicalDeviceMemoryProperties");
+    const auto get_format_properties = load_instance_proc<PFN_vkGetPhysicalDeviceFormatProperties>(
+        instance, get_instance_proc, "vkGetPhysicalDeviceFormatProperties");
     for (VkPhysicalDevice candidate : physical_devices)
     {
         uint32_t family_count = 0;
@@ -234,6 +240,55 @@ bool Run(std::string& reason)
     }
     if (!physical_device)
         return fail("no Vulkan graphics queue supports the Android surface and swapchain");
+
+    VkPhysicalDeviceFeatures physical_features{};
+    VkPhysicalDeviceMemoryProperties memory_properties{};
+    if (get_physical_features)
+        get_physical_features(physical_device, &physical_features);
+    if (get_memory_properties)
+        get_memory_properties(physical_device, &memory_properties);
+
+    VkDeviceSize device_local_bytes = 0;
+    for (uint32_t index = 0; index < memory_properties.memoryHeapCount; ++index)
+    {
+        if (memory_properties.memoryHeaps[index].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+            device_local_bytes += memory_properties.memoryHeaps[index].size;
+    }
+
+    const auto format_features = [&](VkFormat format)
+    {
+        VkFormatProperties properties{};
+        if (get_format_properties)
+            get_format_properties(physical_device, format, &properties);
+        return properties.optimalTilingFeatures;
+    };
+    const bool rgba8_attachment = format_features(VK_FORMAT_R8G8B8A8_UNORM) &
+        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+    const bool rgba16f_attachment = format_features(VK_FORMAT_R16G16B16A16_SFLOAT) &
+        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+    const bool r32f_attachment = format_features(VK_FORMAT_R32_SFLOAT) &
+        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+    const bool d24s8_attachment = format_features(VK_FORMAT_D24_UNORM_S8_UINT) &
+        VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    const bool d32s8_attachment = format_features(VK_FORMAT_D32_SFLOAT_S8_UINT) &
+        VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
+
+    Msg("[renderer-vulkan] device='%s' api=%u.%u.%u driver=0x%x vendor=0x%x device=0x%x queue=%u",
+        physical_properties.deviceName,
+        VK_VERSION_MAJOR(physical_properties.apiVersion), VK_VERSION_MINOR(physical_properties.apiVersion),
+        VK_VERSION_PATCH(physical_properties.apiVersion), physical_properties.driverVersion,
+        physical_properties.vendorID, physical_properties.deviceID, queue_family);
+    Msg("[renderer-vulkan] limits: image2D=%u colorAttachments=%u samplers/stage=%u pushConstants=%u localMemory=%lluMiB",
+        physical_properties.limits.maxImageDimension2D, physical_properties.limits.maxColorAttachments,
+        physical_properties.limits.maxPerStageDescriptorSamplers,
+        physical_properties.limits.maxPushConstantsSize,
+        static_cast<unsigned long long>(device_local_bytes / (1024ull * 1024ull)));
+    Msg("[renderer-vulkan] features: anisotropy=%u BC=%u ETC2=%u ASTC_LDR=%u geometry=%u tessellation=%u",
+        physical_features.samplerAnisotropy, physical_features.textureCompressionBC,
+        physical_features.textureCompressionETC2, physical_features.textureCompressionASTC_LDR,
+        physical_features.geometryShader, physical_features.tessellationShader);
+    Msg("[renderer-vulkan] attachment formats: RGBA8=%u RGBA16F=%u R32F=%u D24S8=%u D32S8=%u",
+        rgba8_attachment, rgba16f_attachment, r32f_attachment, d24s8_attachment, d32s8_attachment);
 
     float queue_priority = 1.0f;
     VkDeviceQueueCreateInfo queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};

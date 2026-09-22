@@ -943,6 +943,17 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
 #endif
         Core.Initialize("OpenXRay", commandLine, true, *fsgame ? fsgame : nullptr);
 
+#if defined(XR_PLATFORM_ANDROID)
+    if (strstr(commandLine, "-renderer-vulkan"))
+    {
+        std::string vulkanReason;
+        const bool vulkanReady = AndroidVulkanSmoke::Run(vulkanReason);
+        Msg("[renderer-vulkan] gameplay selection probe: %s; %s",
+            vulkanReady ? "PASS" : "FAILED", vulkanReason.c_str());
+        Msg("[renderer-vulkan] xrRenderVK gameplay pipeline is not complete; using GLES for this session");
+    }
+#endif
+
     InitSettings();
     // Adjust player & computer name for Asian
     if (pSettings->line_exist("string_table", "no_native_input"))
@@ -962,6 +973,25 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
     Console->OnDeviceInitialize();
 
     execUserScript();
+#if defined(XR_PLATFORM_ANDROID)
+    constexpr pcstr mobilePresetOption = "-android-mobile-preset ";
+    if (const pcstr mobilePreset = strstr(Core.Params, mobilePresetOption))
+    {
+        string64 preset{};
+        if (sscanf(mobilePreset + xr_strlen(mobilePresetOption), "%63s", preset) == 1)
+        {
+            string128 command{};
+            xr_sprintf(command, "_preset %s", preset);
+            Msg("[android] applying launcher mobile preset: %s", preset);
+            Console->Execute(command);
+        }
+    }
+    if (strstr(Core.Params, "-android-show-fps"))
+    {
+        Msg("[android] enabling engine FPS overlay from launcher setting");
+        Console->Execute("rs_fps on");
+    }
+#endif
     InitializeDiscord();
 
     TaskScheduler->Wait(createSoundDevicesList);

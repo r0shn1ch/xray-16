@@ -7,7 +7,8 @@ through `CMAKE_PREFIX_PATH`.
 
 The target ABI is `armeabi-v7a`, which is the Android NDK name for 32-bit ARM
 with Thumb-2 and Neon. The APK currently supports API 26 and targets/compiles
-against API 36 (Android 16).
+against API 36 (Android 16). A device still needs to support running 32-bit ARM
+applications; some recent 64-bit-only phones cannot install this APK.
 
 ## Configure and build
 
@@ -146,6 +147,13 @@ process, so the launcher can remain visible after a native crash.
 The Android path requests an OpenGL ES 3.1 or newer context and keeps the
 deferred renderer on an engine-owned framebuffer. `CHW::Present()` explicitly
 copies its final color attachment into SDL's EGL framebuffer before the swap.
+The launcher defaults to a 50% render scale and the game's low quality preset,
+reducing pixel work to one quarter of native resolution. Balance (67%), quality
+(75%) and unmodified native (100%) modes are available. The upscale uses linear
+filtering, and Android mouse/touch coordinates are converted between window and
+internal render sizes. A launcher checkbox enables the engine FPS counter;
+the engine log also records FPS, engine time, render time and both resolutions
+every five seconds as `[frame-trace]`.
 The GLES source layer assigns MRT output locations, normalizes stage varyings
 and makes the desktop shader expressions explicit at runtime. The tracked
 `res/gamedata/shaders/gl` directory is identical to upstream; neither original
@@ -168,6 +176,27 @@ new engine/activity logs for any remaining GPU- or data-specific issue.
 The audit of prior port changes is in [PORT_AUDIT.md](PORT_AUDIT.md). The
 cross-platform Vulkan requirements, upstream prototypes that were rejected,
 and implementation gates are in [VULKAN_RENDERER_PLAN.md](VULKAN_RENDERER_PLAN.md).
+
+Selecting Vulkan for a game now runs the VK0 probe and records device limits,
+texture compression features and the attachment formats needed by the deferred
+renderer. It then explicitly starts the GLES gameplay fallback. This selection
+must not be interpreted as a completed Vulkan gameplay renderer.
+
+## Runtime requirements and practical limits
+
+- OpenGL ES 3.1+, four draw buffers and four color attachments are hard startup
+  requirements. Native-resolution deferred rendering is intentionally not the
+  default on mobile GPUs.
+- 4 GB system RAM is a practical floor and 6 GB or more is recommended. Large
+  mods can still exceed the ARMv7 process address space even when the device has
+  more physical RAM.
+- The source game directory must contain its normal `fsgame.ltx`, archives and
+  resources. The launcher does not download, bundle or repair proprietary data.
+- On Android 11+, grant **All files access** when the installation is stored in
+  shared storage. Read-only or scoped-storage-only locations can prevent saves.
+- Drivers without S3TC/BC texture support require in-memory DDS decompression.
+  This increases first-level load time, texture memory and bandwidth; texture
+  LOD and the mobile preset reduce that cost without modifying source files.
 
 The APK displays a Toast after the renderer readback: successful initialization
 keeps the smoke window open, while failure shows the error, waits briefly and

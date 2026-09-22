@@ -6,6 +6,33 @@
 xr_vector<xr_token> vid_monitor_token;
 xr_map<u32, xr_vector<xr_token>> vid_mode_token;
 
+#if defined(XR_PLATFORM_ANDROID)
+namespace
+{
+u32 AndroidRenderScalePercent()
+{
+    constexpr pcstr option = "-android-render-scale ";
+    const pcstr params = Core.Params ? Core.Params : "";
+    const pcstr argument = strstr(params, option);
+    if (!argument)
+        return 50;
+
+    unsigned int value = 50;
+    if (sscanf(argument + xr_strlen(option), "%u", &value) != 1)
+        value = 50;
+    clamp(value, 35u, 100u);
+    return value;
+}
+
+u32 ScaleAndroidDimension(u32 value, u32 percent)
+{
+    // Even dimensions keep half-resolution effects and block based render
+    // targets valid. The floor is only relevant to unusually small displays.
+    return _max(320u, ((value * percent + 50u) / 100u) & ~1u);
+}
+}
+#endif
+
 void FillResolutionsForMonitor(const int monitorID)
 {
     const int modeCount = SDL_GetNumDisplayModes(monitorID);
@@ -161,8 +188,11 @@ void CRenderDevice::UpdateWindowProps()
 
     ImGuiIO& io = ImGui::GetIO();
 
-    io.DisplaySize = { static_cast<float>(psDeviceMode.Width), static_cast<float>(psDeviceMode.Height) };
-    io.DisplayFramebufferScale = ImVec2{ float(dwWidth / m_rcWindowClient.w), float(dwHeight / m_rcWindowClient.h) };
+    io.DisplaySize = { static_cast<float>(dwWidth), static_cast<float>(dwHeight) };
+    io.DisplayFramebufferScale = ImVec2{
+        m_rcWindowClient.w > 0 ? static_cast<float>(dwWidth) / static_cast<float>(m_rcWindowClient.w) : 1.f,
+        m_rcWindowClient.h > 0 ? static_cast<float>(dwHeight) / static_cast<float>(m_rcWindowClient.h) : 1.f
+    };
 }
 
 void CRenderDevice::UpdateWindowRects()
@@ -235,6 +265,24 @@ void CRenderDevice::SelectResolution(const bool windowed)
 
     dwWidth = psDeviceMode.Width;
     dwHeight = psDeviceMode.Height;
+#if defined(XR_PLATFORM_ANDROID)
+    const u32 scale = AndroidRenderScalePercent();
+    dwWidth = ScaleAndroidDimension(psDeviceMode.Width, scale);
+    dwHeight = ScaleAndroidDimension(psDeviceMode.Height, scale);
+
+    static u32 reportedNativeWidth = 0;
+    static u32 reportedNativeHeight = 0;
+    static u32 reportedScale = 0;
+    if (reportedNativeWidth != psDeviceMode.Width || reportedNativeHeight != psDeviceMode.Height ||
+        reportedScale != scale)
+    {
+        Msg("* Android render scale: native=[%ux%u] internal=[%ux%u] scale=[%u%%]",
+            psDeviceMode.Width, psDeviceMode.Height, dwWidth, dwHeight, scale);
+        reportedNativeWidth = psDeviceMode.Width;
+        reportedNativeHeight = psDeviceMode.Height;
+        reportedScale = scale;
+    }
+#endif
 }
 
 SDL_Window* CRenderDevice::GetApplicationWindow()

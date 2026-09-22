@@ -67,6 +67,8 @@ public final class LauncherActivity extends Activity {
     public static final String EXTRA_IMMERSIVE = "org.openxray.extra.IMMERSIVE";
     public static final String EXTRA_TOUCH_CONTROLS = "org.openxray.extra.TOUCH_CONTROLS";
     public static final String EXTRA_RENDERER_MODE = "org.openxray.extra.RENDERER_MODE";
+    public static final String EXTRA_PERFORMANCE_MODE = "org.openxray.extra.PERFORMANCE_MODE";
+    public static final String EXTRA_SHOW_FPS = "org.openxray.extra.SHOW_FPS";
 
     private static final String PREFS = "openxray_launcher";
     private static final String PREF_GAME_PATH = "game_path";
@@ -82,10 +84,17 @@ public final class LauncherActivity extends Activity {
     private static final String PREF_TOUCH_CONTROLS = "touch_controls";
     private static final String PREF_ACTIVE_PAGE = "active_page";
     private static final String PREF_RENDERER_MODE = "renderer_mode";
+    private static final String PREF_PERFORMANCE_MODE = "performance_mode";
+    private static final String PREF_SHOW_FPS = "show_fps";
 
     public static final int RENDERER_AUTO = 0;
     public static final int RENDERER_GLES = 1;
     public static final int RENDERER_VULKAN = 2;
+
+    public static final int PERFORMANCE_FAST = 0;
+    public static final int PERFORMANCE_BALANCED = 1;
+    public static final int PERFORMANCE_QUALITY = 2;
+    public static final int PERFORMANCE_NATIVE = 3;
 
     private static final int PAGE_GAME = 0;
     private static final int PAGE_SETTINGS = 1;
@@ -101,11 +110,13 @@ public final class LauncherActivity extends Activity {
     private EditText customArgs;
     private Spinner gameVariant;
     private Spinner rendererMode;
+    private Spinner performanceMode;
     private CheckBox gamepadEnabled;
     private CheckBox splashEnabled;
     private CheckBox keepScreenOn;
     private CheckBox immersiveMode;
     private CheckBox touchControlsEnabled;
+    private CheckBox showFps;
     private TextView accessStatus;
     private TextView gameInspection;
     private TextView status;
@@ -232,7 +243,7 @@ public final class LauncherActivity extends Activity {
         root.addView(title, matchWrap());
 
         TextView version = new TextView(this);
-        version.setText("Версия " + BuildConfig.VERSION_NAME + " · ARMv7 · GLES");
+        version.setText("Версия " + BuildConfig.VERSION_NAME + " · ARMv7 · GLES / Vulkan probe");
         version.setTextSize(13);
         version.setPadding(0, 0, 0, dp(10));
         root.addView(version, matchWrap());
@@ -367,6 +378,24 @@ public final class LauncherActivity extends Activity {
         rendererMode.setAdapter(rendererAdapter);
         content.addView(rendererMode, matchWrap());
 
+        addSectionTitle(content, "Производительность");
+        content.addView(bodyText(
+                "Масштаб применяется к 3D-рендеру, затем изображение увеличивается до разрешения экрана. "
+                        + "Это заметно снижает нагрузку на мобильный GPU; интерфейс и касания масштабируются вместе."),
+                matchWrap());
+        performanceMode = new Spinner(this);
+        String[] performanceModes = {
+                "Производительность — 50% + низкий пресет",
+                "Баланс — 67% + низкий пресет",
+                "Качество — 75% + обычный пресет",
+                "Нативное разрешение — настройки игры"
+        };
+        ArrayAdapter<String> performanceAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, performanceModes);
+        performanceAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        performanceMode.setAdapter(performanceAdapter);
+        content.addView(performanceMode, matchWrap());
+
         addSectionTitle(content, "Управление и экран");
         gamepadEnabled = makeCheckBox("Включить поддержку геймпада",
                 "Если выключено, движок получает -no_gamepad.");
@@ -379,11 +408,14 @@ public final class LauncherActivity extends Activity {
                 "Предотвращает системную блокировку при загрузке.");
         immersiveMode = makeCheckBox("Полноэкранный режим Android",
                 "Скрывает системные панели; жест от края временно возвращает их.");
+        showFps = makeCheckBox("Показывать FPS",
+                "Лаунчер включает счётчик кадров самого движка в правом верхнем углу игры.");
         content.addView(gamepadEnabled, matchWrap());
         content.addView(touchControlsEnabled, matchWrap());
         content.addView(splashEnabled, matchWrap());
         content.addView(keepScreenOn, matchWrap());
         content.addView(immersiveMode, matchWrap());
+        content.addView(showFps, matchWrap());
 
         addSectionTitle(content, "Дополнительные аргументы");
         content.addView(bodyText(
@@ -497,6 +529,9 @@ public final class LauncherActivity extends Activity {
         keepScreenOn.setChecked(preferences.getBoolean(PREF_KEEP_SCREEN_ON, true));
         immersiveMode.setChecked(preferences.getBoolean(PREF_IMMERSIVE, true));
         rendererMode.setSelection(clampRendererMode(preferences.getInt(PREF_RENDERER_MODE, RENDERER_AUTO)));
+        performanceMode.setSelection(clampPerformanceMode(
+                preferences.getInt(PREF_PERFORMANCE_MODE, PERFORMANCE_FAST)));
+        showFps.setChecked(preferences.getBoolean(PREF_SHOW_FPS, true));
         showPage(preferences.getInt(PREF_ACTIVE_PAGE, PAGE_GAME));
     }
 
@@ -515,6 +550,8 @@ public final class LauncherActivity extends Activity {
                 .putBoolean(PREF_KEEP_SCREEN_ON, keepScreenOn.isChecked())
                 .putBoolean(PREF_IMMERSIVE, immersiveMode.isChecked())
                 .putInt(PREF_RENDERER_MODE, rendererMode.getSelectedItemPosition())
+                .putInt(PREF_PERFORMANCE_MODE, performanceMode.getSelectedItemPosition())
+                .putBoolean(PREF_SHOW_FPS, showFps.isChecked())
                 .putInt(PREF_ACTIVE_PAGE, activePage)
                 .apply();
     }
@@ -525,6 +562,10 @@ public final class LauncherActivity extends Activity {
 
     private int clampRendererMode(int value) {
         return value >= RENDERER_AUTO && value <= RENDERER_VULKAN ? value : RENDERER_AUTO;
+    }
+
+    private int clampPerformanceMode(int value) {
+        return value >= PERFORMANCE_FAST && value <= PERFORMANCE_NATIVE ? value : PERFORMANCE_FAST;
     }
 
     private String profilePreference(String prefix, int variant) {
@@ -757,6 +798,9 @@ public final class LauncherActivity extends Activity {
         intent.putExtra(EXTRA_IMMERSIVE, immersiveMode.isChecked());
         intent.putExtra(EXTRA_RENDERER_MODE,
                 clampRendererMode(rendererMode.getSelectedItemPosition()));
+        intent.putExtra(EXTRA_PERFORMANCE_MODE,
+                clampPerformanceMode(performanceMode.getSelectedItemPosition()));
+        intent.putExtra(EXTRA_SHOW_FPS, showFps.isChecked());
         if (!rendererSmoke) {
             intent.putExtra(EXTRA_GAME_PATH, gamePath.getText().toString().trim());
             intent.putExtra(EXTRA_GAME_VARIANT, activeGameVariant);
@@ -826,6 +870,9 @@ public final class LauncherActivity extends Activity {
                 || normalized.equals("-renderer-auto")
                 || normalized.equals("-renderer-gles")
                 || normalized.equals("-renderer-vulkan")
+                || normalized.equals("-android-render-scale")
+                || normalized.equals("-android-mobile-preset")
+                || normalized.equals("-android-show-fps")
                 || normalized.equals("-headless-smoke")
                 || normalized.equals("-nogame")
                 || normalized.equals("-soc")

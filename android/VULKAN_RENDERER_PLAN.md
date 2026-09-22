@@ -87,3 +87,10 @@ presents it through the selected queue. The launcher exposes this as “Vulkan +
 fallback”; gameplay remains on the proven GLES renderer when the device or
 SDL build does not provide Vulkan. Gates VK1–VK6 are intentionally not claimed
 complete until the probe is replaced by the common `xrRenderVK` backend.
+
+Version 0.9.8 also runs that probe when Vulkan is selected for gameplay and
+logs the physical device, Vulkan/driver versions, queue, device-local memory,
+descriptor/attachment limits, BC/ETC2/ASTC support and the color/depth formats
+needed by the deferred path. Gameplay still falls back explicitly to GLES;
+these diagnostics narrow VK1/VK2 implementation decisions but do not satisfy
+those gates.

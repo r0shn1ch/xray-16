@@ -205,8 +205,15 @@ void CInput::MouseUpdate()
             mouseMoved = true;
             offs[0] += event.motion.xrel;
             offs[1] += event.motion.yrel;
+#if defined(XR_PLATFORM_ANDROID)
+            mouseAxisState[0] = Device.m_rcWindowClient.w > 0
+                ? event.motion.x * static_cast<int>(Device.dwWidth) / Device.m_rcWindowClient.w : event.motion.x;
+            mouseAxisState[1] = Device.m_rcWindowClient.h > 0
+                ? event.motion.y * static_cast<int>(Device.dwHeight) / Device.m_rcWindowClient.h : event.motion.y;
+#else
             mouseAxisState[0] = event.motion.x;
             mouseAxisState[1] = event.motion.y;
+#endif
             break;
 
         case SDL_MOUSEBUTTONDOWN:
@@ -610,6 +617,15 @@ bool CInput::iGetAsyncMousePos(Ivector2& p, bool global /*= false*/) const
         // but report false
     }
     SDL_GetMouseState(&p.x, &p.y);
+#if defined(XR_PLATFORM_ANDROID)
+    if (!global)
+    {
+        if (Device.m_rcWindowClient.w > 0)
+            p.x = p.x * static_cast<int>(Device.dwWidth) / Device.m_rcWindowClient.w;
+        if (Device.m_rcWindowClient.h > 0)
+            p.y = p.y * static_cast<int>(Device.dwHeight) / Device.m_rcWindowClient.h;
+    }
+#endif
     return !global;
 }
 
@@ -626,7 +642,17 @@ bool CInput::iSetMousePos(const Ivector2& p, bool global /*= false*/) const
         // but report false
     }
 
-    SDL_WarpMouseInWindow(Device.m_sdlWnd, p.x, p.y);
+    Ivector2 windowPoint = p;
+#if defined(XR_PLATFORM_ANDROID)
+    if (!global)
+    {
+        if (Device.dwWidth > 0)
+            windowPoint.x = p.x * Device.m_rcWindowClient.w / static_cast<int>(Device.dwWidth);
+        if (Device.dwHeight > 0)
+            windowPoint.y = p.y * Device.m_rcWindowClient.h / static_cast<int>(Device.dwHeight);
+    }
+#endif
+    SDL_WarpMouseInWindow(Device.m_sdlWnd, windowPoint.x, windowPoint.y);
     return !global;
 }
 

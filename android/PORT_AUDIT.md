@@ -1,6 +1,6 @@
 # Android port audit
 
-This audit covers the Android port through version 0.9.0. The comparison base
+This audit covers the Android port through version 0.9.8. The comparison base
 is upstream OpenXRay `dev` at `247d72764`. The Android branch already contains
 the two upstream UI commits that follow the fork's older `origin/dev`, so they
 are not Android-specific replacements.
@@ -64,6 +64,20 @@ The retained changes fall into these categories:
 - The launcher exposes an Android Vulkan surface/device/swapchain/present
   probe with automatic fallback to the existing GLES smoke path. This is a
   VK0 bring-up check, not yet the complete gameplay renderer.
+
+## Findings addressed in 0.9.8
+
+- Android rendering can use an internal resolution independent from the EGL
+  drawable. The default 50% scale quarters pixel load, presentation uses a
+  filtered upscale, and input coordinates follow the internal size.
+- Launcher-controlled low/default mobile presets are applied after `user.ltx`,
+  making an accidentally retained desktop high preset unable to override the
+  selected mobile performance mode.
+- The FPS toggle uses OpenXRay's frame statistics, while periodic lightweight
+  frame traces make CPU/render bottlenecks visible in device logs.
+- Vulkan selection now runs the real VK0 probe during a game launch, records
+  limits/features/deferred attachment formats, and explicitly identifies the
+  subsequent GLES gameplay fallback.
 
 ## Remaining renderer debt
 

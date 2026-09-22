@@ -73,7 +73,8 @@ void CHW::OnAppActivate()
     int drawableHeight = 0;
     SDL_GL_GetDrawableSize(m_window, &drawableWidth, &drawableHeight);
     m_surfaceNeedsReset = !glIsFramebuffer(pFB) || drawableWidth <= 0 || drawableHeight <= 0 ||
-        drawableWidth != static_cast<int>(Device.dwWidth) || drawableHeight != static_cast<int>(Device.dwHeight);
+        drawableWidth != static_cast<int>(psDeviceMode.Width) ||
+        drawableHeight != static_cast<int>(psDeviceMode.Height);
     Msg("* Android GLES: foreground surface [%dx%d], reset=[%d]", drawableWidth, drawableHeight,
         m_surfaceNeedsReset);
     UpdateVSync();
@@ -389,10 +390,12 @@ void CHW::Present()
     {
         glReadBuffer(GL_COLOR_ATTACHMENT0);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        const GLenum filter = Device.dwWidth == static_cast<u32>(drawableWidth) &&
+            Device.dwHeight == static_cast<u32>(drawableHeight) ? GL_NEAREST : GL_LINEAR;
         glBlitFramebuffer(
             0, 0, Device.dwWidth, Device.dwHeight,
             0, 0, drawableWidth, drawableHeight,
-            GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            GL_COLOR_BUFFER_BIT, filter);
     }
     else if (reportIncomplete)
     {
@@ -409,6 +412,17 @@ void CHW::Present()
 
     glBindFramebuffer(GL_FRAMEBUFFER, pFB);
     SDL_GL_SwapWindow(m_window);
+
+    static u32 lastFrameReport = 0;
+    const u32 now = SDL_GetTicks();
+    if (now - lastFrameReport >= 5000)
+    {
+        const auto& stats = Device.GetStats();
+        Msg("[frame-trace] fps=%.1f engine=%.1fms render=%.1fms internal=%ux%u drawable=%dx%d",
+            stats.fFPS, stats.EngineTotal.result, stats.RenderTotal.result,
+            Device.dwWidth, Device.dwHeight, drawableWidth, drawableHeight);
+        lastFrameReport = now;
+    }
 #else
 #if 0 // kept for historical reasons
     RImplementation.Target->phase_flip();
@@ -437,11 +451,19 @@ DeviceState CHW::GetDeviceState() const
 
 std::pair<u32, u32> CHW::GetSurfaceSize()
 {
+#if defined(XR_PLATFORM_ANDROID)
+    return
+    {
+        Device.dwWidth,
+        Device.dwHeight
+    };
+#else
     return
     {
         psDeviceMode.Width,
         psDeviceMode.Height
     };
+#endif
 }
 
 bool CHW::ThisInstanceIsGlobal() const

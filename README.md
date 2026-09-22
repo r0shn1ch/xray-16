@@ -25,6 +25,44 @@ Installation instructions are on the [How to install and play](https://github.co
 Shadow of Chernobyl is **not supported** yet. (see [#392](https://github.com/OpenXRay/xray-16/issues/392)) <br>
 Legends of the Zone/Enhanced Edition is not supported and won't ever be likely. (see [#1865](https://github.com/OpenXRay/xray-16/issues/1865))
 
+## Experimental Android port
+
+This fork can build and run OpenXRay on Android from an original PC game
+installation. The APK contains the engine and launcher only; copyrighted game
+data is not bundled. Call of Pripyat is the primary tested profile. Clear Sky
+and Shadow of Chernobyl compatibility modes are available but remain less
+tested than the desktop targets.
+
+Current Android requirements and limits:
+
+- Android 8.0 (API 26) or newer and a 32-bit ARM (`armeabi-v7a`) capable device.
+- OpenGL ES 3.1 or newer with at least four draw buffers and four color
+  attachments. Hardware selection is capability-based, not tied to a GPU
+  vendor allowlist.
+- A device with at least 4 GB RAM is the practical minimum; 6 GB or more is
+  recommended for large Call of Pripyat levels and mods. The current ARMv7
+  process remains subject to 32-bit address-space limits.
+- Several gigabytes of free storage for an unmodified PC installation. Android
+  11 and newer require the launcher to receive **All files access** for a game
+  directory on shared storage.
+- OpenGL ES is the gameplay renderer. Vulkan selection currently performs a
+  real instance/device/surface/swapchain and capability probe, then uses the
+  GLES gameplay fallback while the full `xrRenderVK` pipeline is developed.
+
+The launcher keeps the engine in landscape and itself in portrait, offers
+renderer selection, mobile render-quality profiles, touch controls and an FPS
+overlay. The default performance profile renders at 50% of the physical width
+and height and applies the game's low preset; higher-quality and native modes
+are selectable. See [android/README.md](android/README.md) for build, install,
+launch and diagnostics instructions.
+
+Quick APK build with the pinned build kit:
+
+```sh
+export XRAY_ANDROID_KIT_ROOT=/path/to/openxray-android-build-kit
+./android/build-harness.sh --apk
+```
+
 ## Main differences from the original X-Ray
 - Support for 64-bit.
 - Improved performance, better FPS.

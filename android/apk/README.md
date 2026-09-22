@@ -46,7 +46,7 @@ The launcher does not reject an incomplete folder: missing `fsgame.ltx` or
 resources are reported by the engine in the log.
 
 The resulting debug APK is named from `android/PORT_VERSION`, for example
-`build/openxray-armv7-launcher-v0.9.7-debug.apk`. Proprietary game data is not
+`build/openxray-armv7-launcher-v0.9.8-debug.apk`. Proprietary game data is not
 bundled. The APK is a device-test candidate: a successful build and offline
 shader validation do not substitute for running the exact game/mod and GPU.
 
@@ -78,6 +78,10 @@ shader validation do not substitute for running the exact game/mod and GPU.
    arguments are tokenized without a shell and cannot replace the selected root
    or profile. The reset action clears launcher preferences only and explicitly
    leaves game files, mods, `fsgame.ltx` and `user.ltx` untouched.
+   Select a mobile performance mode on the same page. The default 50% mode
+   renders one quarter as many pixels as native and applies `rspec_low.ltx`;
+   67%, 75% and native modes remain available. **Показывать FPS** controls the
+   engine's own FPS overlay rather than estimating Android UI refresh rate.
 5. Press **Проверить GLES без игровых файлов** to test the Android renderer,
    or **Проверить Vulkan + GLES fallback** to validate Vulkan surface/device/
    swapchain presentation and keep GLES as the gameplay fallback. Press
@@ -90,6 +94,12 @@ It continuously displays the tail of the engine and activity logs, can share
 them through Android, and changes the launch action to **Вернуться в
 запущенную игру** while the engine process exists. **Очистить** starts the next
 test with an empty log.
+
+For performance reports, leave the FPS option enabled and include at least
+30 seconds of gameplay in `android.log`. Each `[frame-trace]` line contains the
+smoothed FPS, total engine time, render time, internal resolution and physical
+drawable size. This distinguishes GPU fill-rate pressure from CPU/gameplay
+pressure without enabling the much heavier full `rs_stats` overlay.
 
 The native engine log is written to
 `/storage/emulated/0/openxray/android.log`. Java lifecycle and exception
