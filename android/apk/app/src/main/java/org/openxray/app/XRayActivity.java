@@ -71,6 +71,7 @@ public final class XRayActivity extends SDLActivity {
 
     @Override
     protected void onResume() {
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         super.onResume();
         applyImmersiveMode();
         writeDiagnostic("activity onResume");
@@ -102,6 +103,7 @@ public final class XRayActivity extends SDLActivity {
         // Keep the original launch intent so an Activity recreation cannot
         // silently lose the selected game root or profile.
         writeDiagnostic("existing engine activity brought to foreground");
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         applyImmersiveMode();
     }
 
@@ -127,6 +129,8 @@ public final class XRayActivity extends SDLActivity {
         boolean splashEnabled = getIntent().getBooleanExtra(LauncherActivity.EXTRA_SPLASH_ENABLED, false);
         int gameVariant = getIntent().getIntExtra(LauncherActivity.EXTRA_GAME_VARIANT, 3);
         String[] additionalArgs = getIntent().getStringArrayExtra(LauncherActivity.EXTRA_ADDITIONAL_ARGS);
+        int rendererMode = getIntent().getIntExtra(
+                LauncherActivity.EXTRA_RENDERER_MODE, LauncherActivity.RENDERER_AUTO);
         ArrayList<String> args = new ArrayList<>();
 
         if (rendererSmoke) {
@@ -155,6 +159,20 @@ public final class XRayActivity extends SDLActivity {
             }
         } else {
             args.add("-headless-smoke");
+        }
+
+        if (!rendererSmoke) {
+            switch (rendererMode) {
+            case LauncherActivity.RENDERER_GLES:
+                args.add("-renderer-gles");
+                break;
+            case LauncherActivity.RENDERER_VULKAN:
+                args.add("-renderer-vulkan");
+                break;
+            default:
+                args.add("-renderer-auto");
+                break;
+            }
         }
 
         if (!gamepadEnabled)

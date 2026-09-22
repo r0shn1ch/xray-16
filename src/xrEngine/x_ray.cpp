@@ -239,6 +239,8 @@ android_crash_log_state g_android_crash_log;
 alignas(16) unsigned char g_android_signal_stack[ANDROID_SIGNAL_STACK_SIZE];
 volatile sig_atomic_t g_android_crash_in_progress = 0;
 uintptr_t g_android_module_base = 0;
+char g_android_load_context[2][192]{};
+volatile sig_atomic_t g_android_load_context_slot = 0;
 
 void android_write_raw(int fd, const char* data, size_t size)
 {
@@ -397,6 +399,10 @@ void android_native_crash_handler(int signal, siginfo_t* info, void* raw_context
             destination = android_append_hex(destination, end, link_register - g_android_module_base);
         }
     }
+    destination = android_append_text(destination, end, " context='");
+    destination = android_append_text(destination, end,
+        g_android_load_context[g_android_load_context_slot ? 1 : 0]);
+    destination = android_append_text(destination, end, "'");
     destination = android_append_text(destination, end,
         "; full Android tombstone/backtrace is in logcat\n");
     *destination = '\0';
@@ -472,6 +478,23 @@ void android_install_crash_handler()
 void android_engine_log_early(pcstr message)
 {
     android_write_early_to_logs(message);
+}
+
+void android_set_load_context(pcstr context)
+{
+    const sig_atomic_t nextSlot = g_android_load_context_slot ? 0 : 1;
+    char* destination = g_android_load_context[nextSlot];
+    size_t index = 0;
+    if (context)
+    {
+        while (context[index] && index + 1 < sizeof(g_android_load_context[nextSlot]))
+        {
+            destination[index] = context[index];
+            ++index;
+        }
+    }
+    destination[index] = '\0';
+    g_android_load_context_slot = nextSlot;
 }
 
 struct android_engine_log_state

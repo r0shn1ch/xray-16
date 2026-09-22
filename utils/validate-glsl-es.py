@@ -60,6 +60,16 @@ DEFAULT_PROGRAMS = (
     ("deffer_particle.vs", "deffer_particle.ps"),
     ("model_def_lq.vs", "model_def_lq.ps"),
     ("sky2.vs", "sky2.ps"),
+    # Android maps the GL renderer's depth-only "null" fragment stage to
+    # dumb.ps because the Adreno monolithic GLES path requires both stages.
+    ("shadow_direct_base.vs", "dumb.ps"),
+    ("shadow_direct_model.vs", "dumb.ps"),
+    ("shadow_direct_tree.vs", "dumb.ps"),
+    ("shadow_direct_tree_s.vs", "dumb.ps"),
+    ("shadow_direct_base_aref.vs", "shadow_direct_base_aref.ps"),
+    ("shadow_direct_model_aref.vs", "shadow_direct_base_aref.ps"),
+    ("shadow_direct_tree_aref.vs", "shadow_direct_base_aref.ps"),
+    ("shadow_direct_tree_s_aref.vs", "shadow_direct_base_aref.ps"),
 )
 EXTRA_STARTUP_SHADERS = ("accum_sun_mask_nomsaa.ps", "yuv2rgb.ps")
 

@@ -44,6 +44,8 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Configuration and diagnostics front end for the native SDL engine.
@@ -64,6 +66,7 @@ public final class LauncherActivity extends Activity {
     public static final String EXTRA_KEEP_SCREEN_ON = "org.openxray.extra.KEEP_SCREEN_ON";
     public static final String EXTRA_IMMERSIVE = "org.openxray.extra.IMMERSIVE";
     public static final String EXTRA_TOUCH_CONTROLS = "org.openxray.extra.TOUCH_CONTROLS";
+    public static final String EXTRA_RENDERER_MODE = "org.openxray.extra.RENDERER_MODE";
 
     private static final String PREFS = "openxray_launcher";
     private static final String PREF_GAME_PATH = "game_path";
@@ -78,19 +81,26 @@ public final class LauncherActivity extends Activity {
     private static final String PREF_IMMERSIVE = "immersive";
     private static final String PREF_TOUCH_CONTROLS = "touch_controls";
     private static final String PREF_ACTIVE_PAGE = "active_page";
+    private static final String PREF_RENDERER_MODE = "renderer_mode";
+
+    public static final int RENDERER_AUTO = 0;
+    public static final int RENDERER_GLES = 1;
+    public static final int RENDERER_VULKAN = 2;
 
     private static final int PAGE_GAME = 0;
     private static final int PAGE_SETTINGS = 1;
     private static final int PAGE_DIAGNOSTICS = 2;
     private static final int REQUEST_GAME_TREE = 1001;
     private static final int REQUEST_STORAGE_PERMISSIONS = 1002;
-    private static final int MAX_LOG_BYTES = 180 * 1024;
+    private static final int MAX_LOG_BYTES = 32 * 1024;
     private static final int MAX_SHARED_LOG_CHARS = 600 * 1024;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final ExecutorService logExecutor = Executors.newSingleThreadExecutor();
     private EditText gamePath;
     private EditText customArgs;
     private Spinner gameVariant;
+    private Spinner rendererMode;
     private CheckBox gamepadEnabled;
     private CheckBox splashEnabled;
     private CheckBox keepScreenOn;
@@ -109,13 +119,16 @@ public final class LauncherActivity extends Activity {
     private boolean suppressProfileCallbacks = true;
     private int activeGameVariant = 3;
     private int activePage = PAGE_GAME;
+    private boolean logReadPending;
+    private String cachedLog = "";
 
     private final Runnable logPoller = new Runnable() {
         @Override
         public void run() {
-            refreshLog();
+            if (activePage == PAGE_DIAGNOSTICS)
+                refreshLog();
             refreshRunningState();
-            handler.postDelayed(this, activePage == PAGE_DIAGNOSTICS ? 700 : 1800);
+            handler.postDelayed(this, activePage == PAGE_DIAGNOSTICS ? 1500 : 3000);
         }
     };
 
@@ -127,7 +140,6 @@ public final class LauncherActivity extends Activity {
         restorePreferences();
         refreshAccessStatus();
         refreshGameInspection();
-        refreshLog();
         refreshRunningState();
         handler.post(this::showStorageAccessPromptIfNeeded);
     }
@@ -137,7 +149,8 @@ public final class LauncherActivity extends Activity {
         super.onResume();
         refreshAccessStatus();
         refreshGameInspection();
-        refreshLog();
+        if (activePage == PAGE_DIAGNOSTICS)
+            refreshLog();
         refreshRunningState();
         handler.removeCallbacks(logPoller);
         handler.post(logPoller);
@@ -148,6 +161,13 @@ public final class LauncherActivity extends Activity {
         savePreferences();
         handler.removeCallbacks(logPoller);
         super.onPause();
+    }
+
+    @Override
+    protected void onDestroy() {
+        handler.removeCallbacks(logPoller);
+        logExecutor.shutdownNow();
+        super.onDestroy();
     }
 
     @Override
@@ -320,6 +340,23 @@ public final class LauncherActivity extends Activity {
 
     private View buildSettingsPage() {
         LinearLayout content = pageContent();
+        addSectionTitle(content, "Рендерер");
+        content.addView(bodyText(
+                "Авто сохраняет штатное определение движка и выбирает OpenGL ES на Android. "
+                        + "Vulkan пока является экспериментальным резервным режимом с безопасным GLES fallback."),
+                matchWrap());
+        rendererMode = new Spinner(this);
+        String[] renderers = {
+                "Автоматически (OpenGL ES)",
+                "OpenGL ES",
+                "Vulkan (экспериментальный fallback)"
+        };
+        ArrayAdapter<String> rendererAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, renderers);
+        rendererAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        rendererMode.setAdapter(rendererAdapter);
+        content.addView(rendererMode, matchWrap());
+
         addSectionTitle(content, "Управление и экран");
         gamepadEnabled = makeCheckBox("Включить поддержку геймпада",
                 "Если выключено, движок получает -no_gamepad.");
@@ -449,6 +486,7 @@ public final class LauncherActivity extends Activity {
         splashEnabled.setChecked(preferences.getBoolean(PREF_SPLASH, false));
         keepScreenOn.setChecked(preferences.getBoolean(PREF_KEEP_SCREEN_ON, true));
         immersiveMode.setChecked(preferences.getBoolean(PREF_IMMERSIVE, true));
+        rendererMode.setSelection(clampRendererMode(preferences.getInt(PREF_RENDERER_MODE, RENDERER_AUTO)));
         showPage(preferences.getInt(PREF_ACTIVE_PAGE, PAGE_GAME));
     }
 
@@ -466,12 +504,17 @@ public final class LauncherActivity extends Activity {
                 .putBoolean(PREF_SPLASH, splashEnabled.isChecked())
                 .putBoolean(PREF_KEEP_SCREEN_ON, keepScreenOn.isChecked())
                 .putBoolean(PREF_IMMERSIVE, immersiveMode.isChecked())
+                .putInt(PREF_RENDERER_MODE, rendererMode.getSelectedItemPosition())
                 .putInt(PREF_ACTIVE_PAGE, activePage)
                 .apply();
     }
 
     private int clampVariant(int value) {
         return value >= 0 && value <= 3 ? value : 3;
+    }
+
+    private int clampRendererMode(int value) {
+        return value >= RENDERER_AUTO && value <= RENDERER_VULKAN ? value : RENDERER_AUTO;
     }
 
     private String profilePreference(String prefix, int variant) {
@@ -692,6 +735,8 @@ public final class LauncherActivity extends Activity {
         intent.putExtra(EXTRA_SPLASH_ENABLED, splashEnabled.isChecked());
         intent.putExtra(EXTRA_KEEP_SCREEN_ON, keepScreenOn.isChecked());
         intent.putExtra(EXTRA_IMMERSIVE, immersiveMode.isChecked());
+        intent.putExtra(EXTRA_RENDERER_MODE,
+                clampRendererMode(rendererMode.getSelectedItemPosition()));
         if (!rendererSmoke) {
             intent.putExtra(EXTRA_GAME_PATH, gamePath.getText().toString().trim());
             intent.putExtra(EXTRA_GAME_VARIANT, activeGameVariant);
@@ -758,6 +803,9 @@ public final class LauncherActivity extends Activity {
         if (normalized.equals("-android-game-root-hex")
                 || normalized.equals("-renderer-smoke")
                 || normalized.equals("-renderer-vulkan-smoke")
+                || normalized.equals("-renderer-auto")
+                || normalized.equals("-renderer-gles")
+                || normalized.equals("-renderer-vulkan")
                 || normalized.equals("-headless-smoke")
                 || normalized.equals("-nogame")
                 || normalized.equals("-soc")
@@ -986,11 +1034,21 @@ public final class LauncherActivity extends Activity {
     }
 
     private void refreshLog() {
-        if (logView == null)
+        if (logView == null || logReadPending)
             return;
-        String log = collectLogs();
-        logView.setText(log.isEmpty() ? "Лог пока пуст. Запустите GLES/Vulkan-проверку или игру." : log);
-        updateEngineStatus(log);
+        logReadPending = true;
+        logExecutor.execute(() -> {
+            final String log = collectLogs();
+            handler.post(() -> {
+                logReadPending = false;
+                cachedLog = log;
+                if (isFinishing() || isDestroyed() || logView == null)
+                    return;
+                logView.setText(log.isEmpty()
+                        ? "Лог пока пуст. Запустите GLES/Vulkan-проверку или игру." : log);
+                updateEngineStatus(log);
+            });
+        });
     }
 
     private String collectLogs() {
@@ -1082,22 +1140,28 @@ public final class LauncherActivity extends Activity {
     }
 
     private void shareLogs() {
-        String log = collectLogs();
-        if (log.isEmpty()) {
-            Toast.makeText(this, "Лог пока пуст", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        if (log.length() > MAX_SHARED_LOG_CHARS)
-            log = log.substring(log.length() - MAX_SHARED_LOG_CHARS);
-        Intent share = new Intent(Intent.ACTION_SEND);
-        share.setType("text/plain");
-        share.putExtra(Intent.EXTRA_SUBJECT, "OpenXRay Android " + BuildConfig.VERSION_NAME + " logs");
-        share.putExtra(Intent.EXTRA_TEXT, log);
-        try {
-            startActivity(Intent.createChooser(share, "Поделиться логом OpenXRay"));
-        } catch (ActivityNotFoundException error) {
-            Toast.makeText(this, "Нет приложения для отправки текста", Toast.LENGTH_LONG).show();
-        }
+        logExecutor.execute(() -> {
+            String collected = collectLogs();
+            if (collected.length() > MAX_SHARED_LOG_CHARS)
+                collected = collected.substring(collected.length() - MAX_SHARED_LOG_CHARS);
+            final String log = collected;
+            handler.post(() -> {
+                if (log.isEmpty()) {
+                    Toast.makeText(this, "Лог пока пуст", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                Intent share = new Intent(Intent.ACTION_SEND);
+                share.setType("text/plain");
+                share.putExtra(Intent.EXTRA_SUBJECT,
+                        "OpenXRay Android " + BuildConfig.VERSION_NAME + " logs");
+                share.putExtra(Intent.EXTRA_TEXT, log);
+                try {
+                    startActivity(Intent.createChooser(share, "Поделиться логом OpenXRay"));
+                } catch (ActivityNotFoundException error) {
+                    Toast.makeText(this, "Нет приложения для отправки текста", Toast.LENGTH_LONG).show();
+                }
+            });
+        });
     }
 
     private void clearLogs() {

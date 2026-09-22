@@ -155,6 +155,13 @@ inline std::pair<char, GLuint> GLUseBinary(pcstr* buffer, size_t size, const GLe
 
 static GLuint GLLinkMonolithicProgram(pcstr name, GLuint ps, GLuint vs, GLuint gs)
 {
+    if (!vs || !ps)
+    {
+        Msg("! [shader-trace] refusing incomplete monolithic pass '%s': vs=%u ps=%u gs=%u",
+            name, vs, ps, gs);
+        return 0;
+    }
+
     const GLuint program = glCreateProgram();
     R_ASSERT(program);
     if (glObjectLabel)
@@ -187,6 +194,13 @@ static GLuint GLLinkMonolithicProgram(pcstr name, GLuint ps, GLuint vs, GLuint g
 
 static GLuint GLGeneratePipeline(pcstr name, GLuint ps, GLuint vs, GLuint gs)
 {
+    if (!vs || !ps)
+    {
+        Msg("! [shader-trace] refusing incomplete pipeline '%s': vs=%u ps=%u gs=%u",
+            name, vs, ps, gs);
+        return 0;
+    }
+
     GLuint pp;
     CHK_GL(glGenProgramPipelines(1, &pp));
     R_ASSERT(pp);
@@ -194,6 +208,21 @@ static GLuint GLGeneratePipeline(pcstr name, GLuint ps, GLuint vs, GLuint gs)
     CHK_GL(glUseProgramStages(pp, GL_VERTEX_SHADER_BIT,   vs));
     CHK_GL(glUseProgramStages(pp, GL_GEOMETRY_SHADER_BIT, gs));
     CHK_GL(glValidateProgramPipeline(pp));
+
+    GLint status = GL_FALSE;
+    CHK_GL(glGetProgramPipelineiv(pp, GL_VALIDATE_STATUS, &status));
+    if (GLboolean(status) == GL_FALSE)
+    {
+        GLint length = 0;
+        CHK_GL(glGetProgramPipelineiv(pp, GL_INFO_LOG_LENGTH, &length));
+        xr_vector<GLchar> errors(length > 0 ? length + 1 : 1, '\0');
+        if (length > 0)
+            CHK_GL(glGetProgramPipelineInfoLog(pp, length, nullptr, errors.data()));
+        Msg("! [shader-trace] pipeline validation failed '%s': vs=%u ps=%u gs=%u; %s",
+            name, vs, ps, gs, length > 0 ? errors.data() : "driver returned an empty pipeline log");
+        CHK_GL(glDeleteProgramPipelines(1, &pp));
+        return 0;
+    }
     return pp;
 }
 #endif

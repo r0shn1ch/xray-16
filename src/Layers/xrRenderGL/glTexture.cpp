@@ -113,6 +113,18 @@ bool decode_compressed_texture(gli::texture& texture)
         return false;
     }
 }
+
+bool supports_compressed_texture_format(GLenum internalFormat)
+{
+    GLint count = 0;
+    glGetIntegerv(GL_NUM_COMPRESSED_TEXTURE_FORMATS, &count);
+    if (count <= 0)
+        return false;
+
+    xr_vector<GLint> formats(static_cast<size_t>(count));
+    glGetIntegerv(GL_COMPRESSED_TEXTURE_FORMATS, formats.data());
+    return std::find(formats.begin(), formats.end(), static_cast<GLint>(internalFormat)) != formats.end();
+}
 #endif
 
 GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc,
@@ -171,17 +183,25 @@ GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc,
 
 #if defined(XR_PLATFORM_ANDROID)
     // GLES 3.0 does not require desktop S3TC/BC texture formats.  CoP ships
-    // many DDS files in DXT form, so decode formats for which GLI has a
-    // decoder to RGBA8 on the CPU instead of creating an unusable texture.
+    // many DDS files in DXT form.  Preserve hardware-supported compressed
+    // formats (Adreno normally exposes S3TC) to avoid multiplying level
+    // texture memory by four; decode only formats the current device cannot
+    // upload.  The previous decode-all path could exhaust a 32-bit process
+    // near the end of a large CoP level load.
     if (gli::is_compressed(texture.format()))
     {
-        if (!decode_compressed_texture(texture))
+        const gli::gl compressedGL(gli::gl::PROFILE_ES30);
+        const auto compressedFormat = compressedGL.translate(texture.format(), texture.swizzles());
+        if (!supports_compressed_texture_format(compressedFormat.Internal) &&
+            !decode_compressed_texture(texture))
         {
             Msg("! Android GLES: no decoder for compressed texture '%s'", fn);
             FS.r_close(S);
             return 0;
         }
-        Msg("* Android GLES: decoded compressed texture '%s' to RGBA8", fn);
+        // DeferredUpload reports bounded progress.  Logging every decoded DDS
+        // made a large CoP level produce thousands of lines and also caused
+        // the launcher diagnostics view to stutter badly.
     }
 #endif
 

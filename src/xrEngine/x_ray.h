@@ -20,6 +20,7 @@ class Core;
 // the first renderer call leaves a small async-signal-safe record on disk.
 void android_install_crash_handler();
 void android_engine_log_early(pcstr message);
+void android_set_load_context(pcstr context);
 #endif
 
 // definition

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    android:versionCode="14"
-    android:versionName="0.9.0"
+    android:versionCode="17"
+    android:versionName="0.9.3"
     android:installLocation="auto">
 
     <uses-feature android:glEsVersion="0x00030001" />
@@ -29,6 +29,7 @@
         <activity
             android:name="org.openxray.app.LauncherActivity"
             android:exported="true"
+            android:screenOrientation="portrait"
             android:theme="@style/LauncherTheme">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -209,6 +209,9 @@ bool CLevel::net_start_client5()
     if (connected_to_server)
     {
         ZoneScoped;
+        CTimer textureTimer;
+        textureTimer.Start();
+        Msg("[load-trace] client5 begin connected=1 mem=%uK", Memory.mem_usage() / 1024);
 
         // HUD
 
@@ -217,11 +220,16 @@ bool CLevel::net_start_client5()
         {
             g_pGamePersistent->LoadTitle("st_loading_textures");
             GEnv.Render->DeferredLoad(FALSE);
+            Msg("[load-trace] client5 deferred-upload begin total=%llu ms",
+                static_cast<unsigned long long>(textureTimer.GetElapsed_ms()));
             GEnv.Render->ResourcesDeferredUpload();
+            Msg("[load-trace] client5 deferred-upload end elapsed=%llu ms mem=%uK",
+                static_cast<unsigned long long>(textureTimer.GetElapsed_ms()), Memory.mem_usage() / 1024);
             LL_CheckTextures();
         }
         sended_request_connection_data = FALSE;
         deny_m_spawn = TRUE;
+        Msg("[load-trace] client5 end elapsed=%llu ms", static_cast<unsigned long long>(textureTimer.GetElapsed_ms()));
     }
     return true;
 }
