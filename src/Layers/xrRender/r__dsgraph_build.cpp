@@ -25,6 +25,30 @@ float r_ssaLOD_A, r_ssaLOD_B;
 float r_ssaGLOD_start, r_ssaGLOD_end;
 float r_ssaHZBvsTEX;
 
+#if defined(XR_PLATFORM_ANDROID)
+static thread_local u64 staticHierarchyFallbacks = 0;
+static thread_local u64 staticHomRejectedLeaves = 0;
+
+static bool hom_test_static_visual(dxRender_Visual* visual)
+{
+    // A single approximate HOM decision on a hierarchy can drop every child.
+    // Keep the fast parent test when it succeeds, but verify children on a
+    // negative result. Frustum tests and child HOM checks stay in place.
+    static const bool useHierarchyHom = strstr(Core.Params, "-android-hom-hierarchy") != nullptr;
+    const bool visible = RImplementation.HOM.visible(visual->vis);
+    if (!visible && !useHierarchyHom &&
+        (visual->Type == MT_HIERRARHY || visual->Type == MT_LOD ||
+            visual->Type == MT_SKELETON_ANIM || visual->Type == MT_SKELETON_RIGID))
+    {
+        ++staticHierarchyFallbacks;
+        return true;
+    }
+    if (!visible)
+        ++staticHomRejectedLeaves;
+    return visible;
+}
+#endif
+
 ICF float CalcSSA(float& distSQ, Fvector& C, dxRender_Visual* V)
 {
     float R = V->vis.sphere.R + 0;
@@ -343,7 +367,13 @@ void R_dsgraph_structure::add_leafs_static(dxRender_Visual* pVisual)
 {
     ZoneScoped;
 
-    if (o.use_hom && !RImplementation.HOM.visible(pVisual->vis))
+    if (o.use_hom && !
+#if defined(XR_PLATFORM_ANDROID)
+        hom_test_static_visual(pVisual)
+#else
+        RImplementation.HOM.visible(pVisual->vis)
+#endif
+    )
         return;
 
     // Visual is 100% visible - simply add it
@@ -553,7 +583,13 @@ void R_dsgraph_structure::add_static(dxRender_Visual* pVisual, const CFrustum& v
     if (fcvNone == VIS)
         return;
 
-    if (o.use_hom && !RImplementation.HOM.visible(vis))
+    if (o.use_hom && !
+#if defined(XR_PLATFORM_ANDROID)
+        hom_test_static_visual(pVisual)
+#else
+        RImplementation.HOM.visible(vis)
+#endif
+    )
         return;
 
     // If we get here visual is visible or partially visible
@@ -943,10 +979,13 @@ void R_dsgraph_structure::build_subspace()
             ++frames;
             if (Device.dwTimeContinual - lastReport >= 5000)
             {
-                Msg("[object-visibility] camera-sector=%u sectors=%zu frames=%u invalid=%llu inactive=%llu hom=%llu",
+                Msg("[object-visibility] camera-sector=%u sectors=%zu frames=%u invalid=%llu inactive=%llu hom=%llu static-groups=%llu static-hom=%llu",
                     static_cast<u32>(o.sector_id), PortalTraverser.r_sectors.size(), frames,
                     static_cast<unsigned long long>(invalidTotal), static_cast<unsigned long long>(inactiveTotal),
-                    static_cast<unsigned long long>(homTotal));
+                    static_cast<unsigned long long>(homTotal),
+                    static_cast<unsigned long long>(staticHierarchyFallbacks),
+                    static_cast<unsigned long long>(staticHomRejectedLeaves));
+                staticHierarchyFallbacks = staticHomRejectedLeaves = 0;
                 invalidTotal = inactiveTotal = homTotal = 0;
                 frames = 0;
                 lastReport = Device.dwTimeContinual;
