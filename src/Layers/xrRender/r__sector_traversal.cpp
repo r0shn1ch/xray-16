@@ -26,6 +26,16 @@ void CPortalTraverser::traverse(IRender_Sector* start, CFrustum& F, Fvector& vBa
     VERIFY(start);
     i_marker++;
     i_options = options;
+#if defined(XR_PLATFORM_ANDROID)
+    // HOM and SSA are screen-space approximations. Rejecting a portal by
+    // either of them drops the whole sector, including dynamic occupants.
+    // Traverse portal topology using the geometric frustum instead; the
+    // individual visuals and entities still get their own HOM tests in
+    // R_dsgraph_structure::build_subspace(). Keep the old behavior available
+    // as an explicit comparison mode while validating on devices.
+    if (!strstr(Core.Params, "-android-portal-hom"))
+        i_options &= ~(VQ_HOM | VQ_SSA | VQ_FADE);
+#endif
     i_vBase = vBase;
     i_mXFORM = mXFORM;
     i_mXFORM_01.mul(m_viewport_01, mXFORM);
@@ -35,6 +45,25 @@ void CPortalTraverser::traverse(IRender_Sector* start, CFrustum& F, Fvector& vBa
     scissor.set(0, 0, 1, 1);
     scissor.depth = 0;
     traverse_sector(i_start, F, scissor);
+
+#if defined(XR_PLATFORM_ANDROID)
+    if (options & VQ_HOM)
+    {
+        static u64 visitedSectors = 0;
+        static u32 traversals = 0;
+        static u32 lastReport = 0;
+        visitedSectors += r_sectors.size();
+        ++traversals;
+        if (Device.dwTimeContinual - lastReport >= 5000)
+        {
+            Msg("[sector-trace] portal-approx=%d visited=%llu traversals=%u",
+                !!(i_options & VQ_HOM), static_cast<unsigned long long>(visitedSectors), traversals);
+            visitedSectors = 0;
+            traversals = 0;
+            lastReport = Device.dwTimeContinual;
+        }
+    }
+#endif
 
     if (options & VQ_SCISSOR)
     {
