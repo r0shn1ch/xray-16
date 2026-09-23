@@ -1,6 +1,6 @@
 # Android port audit
 
-This audit covers the Android port through version 0.9.10. The comparison base
+This audit covers the Android port through version 0.9.11. The comparison base
 is upstream OpenXRay `dev` at `247d72764`. The Android branch already contains
 the two upstream UI commits that follow the fork's older `origin/dev`, so they
 are not Android-specific replacements.
@@ -106,6 +106,25 @@ The retained changes fall into these categories:
 - Compact crash records now include the actual shared-object name and
   module-relative program-counter offset when the Android linker can resolve
   them, allowing subsequent native faults to be symbolized from user logs.
+
+## Findings addressed in 0.9.11
+
+- BC1/BC2/BC3 fallback decoding now expands each compressed block once instead
+  of invoking GLI's per-texel decoder sixteen times. This removes the roughly
+  one-second stalls previously seen for individual 1024x1024 textures on ARM.
+- Android lazy texture loading once again runs the engine's normal rotating
+  visible-set precache behind the loading screen. It does not return to the
+  unsafe all-resource deferred upload, but it prepares the current level before
+  exposing gameplay and restores the stock new-game intro trigger.
+- The legacy Minimum preset is completed in memory for old CoP configurations
+  that do not reset newer SSR settings. Other presets still expose all renderer
+  features, and original configuration files remain read-only.
+- Invalid GLES sampler-object parameters for desktop LOD bias/max-level state
+  are no longer submitted. Frame diagnostics now state when detailed engine
+  timers are disabled instead of silently reporting misleading zero values.
+- Zero-quality sun shafts no longer define `SUN_SHAFTS_QUALITY=0`, which entered
+  the volumetric ray-march without a `RAY_SAMPLES` definition and broke the
+  shader on Adreno.
 
 ## Remaining renderer debt
 

@@ -347,9 +347,10 @@ void game_sv_Single::restart_simulator(LPCSTR saved_game_name)
 #if defined(XR_PLATFORM_ANDROID)
     if (strstr(Core.Params, "-android-lazy-textures"))
     {
-        Msg("[load-trace] simulator restart precache skipped; Android lazy first-bind loading enabled mem=%uK",
+        Msg("[load-trace] simulator restart Android visible-set precache frames=60 mem=%uK",
             Memory.mem_usage() / 1024);
-        android_set_load_context("simulator restart precache skipped; lazy first-bind enabled");
+        android_set_load_context("simulator restart visible-set precache scheduled");
+        Device.PreCache(60, true);
     }
     else
 #endif

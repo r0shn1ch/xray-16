@@ -785,11 +785,9 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
     }
     else
     {
-#if defined(XR_PLATFORM_ANDROID)
-        // Adreno's preprocessor rejects an undefined identifier in #if even
-        // though desktop GLSL treats it as zero.
-        options.add("SUN_SHAFTS_QUALITY", "0");
-#endif
+        // Do not define SUN_SHAFTS_QUALITY to zero. The volumetric shader uses
+        // #ifdef to remove the ray-march entirely; defining zero entered that
+        // branch without defining RAY_SAMPLES and broke shader compilation.
         sh_name.append(static_cast<u32>(0));
     }
 

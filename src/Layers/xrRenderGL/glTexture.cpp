@@ -77,6 +77,231 @@ bool check_texture_gl_error(cpcstr operation, cpcstr filename)
     return valid;
 }
 
+enum class AndroidBcFormat
+{
+    Unsupported,
+    Bc1,
+    Bc2,
+    Bc3
+};
+
+struct AndroidRgba8
+{
+    u8 r;
+    u8 g;
+    u8 b;
+    u8 a;
+};
+
+AndroidBcFormat android_bc_format(gli::format format)
+{
+    switch (format)
+    {
+    case gli::FORMAT_RGB_DXT1_UNORM_BLOCK8:
+    case gli::FORMAT_RGB_DXT1_SRGB_BLOCK8:
+    case gli::FORMAT_RGBA_DXT1_UNORM_BLOCK8:
+    case gli::FORMAT_RGBA_DXT1_SRGB_BLOCK8:
+        return AndroidBcFormat::Bc1;
+    case gli::FORMAT_RGBA_DXT3_UNORM_BLOCK16:
+    case gli::FORMAT_RGBA_DXT3_SRGB_BLOCK16:
+        return AndroidBcFormat::Bc2;
+    case gli::FORMAT_RGBA_DXT5_UNORM_BLOCK16:
+    case gli::FORMAT_RGBA_DXT5_SRGB_BLOCK16:
+        return AndroidBcFormat::Bc3;
+    default:
+        return AndroidBcFormat::Unsupported;
+    }
+}
+
+u16 read_bc_u16(const u8* data)
+{
+    return static_cast<u16>(data[0]) | (static_cast<u16>(data[1]) << 8);
+}
+
+u32 read_bc_u32(const u8* data)
+{
+    return static_cast<u32>(data[0]) |
+        (static_cast<u32>(data[1]) << 8) |
+        (static_cast<u32>(data[2]) << 16) |
+        (static_cast<u32>(data[3]) << 24);
+}
+
+AndroidRgba8 decode_565(u16 color)
+{
+    const u8 r5 = static_cast<u8>((color >> 11) & 31);
+    const u8 g6 = static_cast<u8>((color >> 5) & 63);
+    const u8 b5 = static_cast<u8>(color & 31);
+    return {
+        static_cast<u8>((r5 << 3) | (r5 >> 2)),
+        static_cast<u8>((g6 << 2) | (g6 >> 4)),
+        static_cast<u8>((b5 << 3) | (b5 >> 2)),
+        255
+    };
+}
+
+AndroidRgba8 interpolate_bc_color(const AndroidRgba8& a, const AndroidRgba8& b,
+    u32 aWeight, u32 bWeight, u32 divisor)
+{
+    return {
+        static_cast<u8>((a.r * aWeight + b.r * bWeight) / divisor),
+        static_cast<u8>((a.g * aWeight + b.g * bWeight) / divisor),
+        static_cast<u8>((a.b * aWeight + b.b * bWeight) / divisor),
+        255
+    };
+}
+
+void decode_bc_block(const u8* block, AndroidBcFormat format, AndroidRgba8 (&pixels)[16])
+{
+    const bool hasExplicitAlpha = format != AndroidBcFormat::Bc1;
+    const u8* colorBlock = hasExplicitAlpha ? block + 8 : block;
+    const u16 color0 = read_bc_u16(colorBlock);
+    const u16 color1 = read_bc_u16(colorBlock + 2);
+    AndroidRgba8 colors[4] = { decode_565(color0), decode_565(color1), {}, {} };
+
+    if (hasExplicitAlpha || color0 > color1)
+    {
+        colors[2] = interpolate_bc_color(colors[0], colors[1], 2, 1, 3);
+        colors[3] = interpolate_bc_color(colors[0], colors[1], 1, 2, 3);
+    }
+    else
+    {
+        colors[2] = interpolate_bc_color(colors[0], colors[1], 1, 1, 2);
+        colors[3] = { 0, 0, 0, 0 };
+    }
+
+    const u32 colorIndices = read_bc_u32(colorBlock + 4);
+    for (u32 pixel = 0; pixel < 16; ++pixel)
+        pixels[pixel] = colors[(colorIndices >> (pixel * 2)) & 3];
+
+    if (format == AndroidBcFormat::Bc2)
+    {
+        for (u32 row = 0; row < 4; ++row)
+        {
+            const u16 alphaRow = read_bc_u16(block + row * 2);
+            for (u32 column = 0; column < 4; ++column)
+            {
+                const u8 alpha4 = static_cast<u8>((alphaRow >> (column * 4)) & 15);
+                pixels[row * 4 + column].a = static_cast<u8>((alpha4 << 4) | alpha4);
+            }
+        }
+    }
+    else if (format == AndroidBcFormat::Bc3)
+    {
+        u8 alpha[8] = { block[0], block[1] };
+        if (alpha[0] > alpha[1])
+        {
+            for (u32 index = 2; index < 8; ++index)
+                alpha[index] = static_cast<u8>(((8 - index) * alpha[0] + (index - 1) * alpha[1]) / 7);
+        }
+        else
+        {
+            for (u32 index = 2; index < 6; ++index)
+                alpha[index] = static_cast<u8>(((6 - index) * alpha[0] + (index - 1) * alpha[1]) / 5);
+            alpha[6] = 0;
+            alpha[7] = 255;
+        }
+
+        u64 alphaIndices = 0;
+        for (u32 byte = 0; byte < 6; ++byte)
+            alphaIndices |= static_cast<u64>(block[2 + byte]) << (byte * 8);
+        for (u32 pixel = 0; pixel < 16; ++pixel)
+            pixels[pixel].a = alpha[(alphaIndices >> (pixel * 3)) & 7];
+    }
+}
+
+bool decode_bc_texture(gli::texture& texture, u32 downscale, AndroidBcFormat format)
+{
+    if (format == AndroidBcFormat::Unsupported)
+        return false;
+
+    constexpr gli::format decodedFormat = gli::FORMAT_RGBA8_UNORM_PACK8;
+    const auto sourceExtent = texture.extent();
+    const gli::texture::extent_type decodedExtent(
+        std::max(1, sourceExtent.x >> downscale),
+        std::max(1, sourceExtent.y >> downscale),
+        sourceExtent.z);
+    gli::texture decoded(texture.target(), decodedFormat, decodedExtent,
+        texture.layers(), texture.faces(), texture.levels(), texture.swizzles());
+    const size_t blockSize = format == AndroidBcFormat::Bc1 ? 8 : 16;
+    const u32 sampleStep = 1u << downscale;
+    const u32 sampleOffset = downscale ? sampleStep >> 1 : 0;
+
+    for (size_t layer = 0; layer < texture.layers(); ++layer)
+    {
+        for (size_t face = 0; face < texture.faces(); ++face)
+        {
+            for (size_t level = 0; level < texture.levels(); ++level)
+            {
+                const auto srcExtent = texture.extent(level);
+                const auto dstExtent = decoded.extent(level);
+                const size_t blocksX = std::max(1, (srcExtent.x + 3) / 4);
+                const size_t blocksY = std::max(1, (srcExtent.y + 3) / 4);
+                const u8* source = static_cast<const u8*>(texture.data(layer, face, level));
+                auto* destination = static_cast<AndroidRgba8*>(decoded.data(layer, face, level));
+
+                if (downscale == 0)
+                {
+                    for (int z = 0; z < srcExtent.z; ++z)
+                    {
+                        for (size_t blockY = 0; blockY < blocksY; ++blockY)
+                        {
+                            for (size_t blockX = 0; blockX < blocksX; ++blockX)
+                            {
+                                const size_t blockIndex =
+                                    (static_cast<size_t>(z) * blocksY + blockY) * blocksX + blockX;
+                                AndroidRgba8 pixels[16];
+                                decode_bc_block(source + blockIndex * blockSize, format, pixels);
+                                for (size_t localY = 0; localY < 4; ++localY)
+                                {
+                                    const size_t y = blockY * 4 + localY;
+                                    if (y >= static_cast<size_t>(srcExtent.y))
+                                        break;
+                                    for (size_t localX = 0; localX < 4; ++localX)
+                                    {
+                                        const size_t x = blockX * 4 + localX;
+                                        if (x >= static_cast<size_t>(srcExtent.x))
+                                            break;
+                                        destination[(static_cast<size_t>(z) * dstExtent.y + y) * dstExtent.x + x] =
+                                            pixels[localY * 4 + localX];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    for (int z = 0; z < dstExtent.z; ++z)
+                    {
+                        for (int y = 0; y < dstExtent.y; ++y)
+                        {
+                            const u32 sourceY = std::min<u32>(srcExtent.y - 1, y * sampleStep + sampleOffset);
+                            size_t cachedBlock = static_cast<size_t>(-1);
+                            AndroidRgba8 pixels[16];
+                            for (int x = 0; x < dstExtent.x; ++x)
+                            {
+                                const u32 sourceX = std::min<u32>(srcExtent.x - 1, x * sampleStep + sampleOffset);
+                                const size_t blockIndex =
+                                    (static_cast<size_t>(z) * blocksY + sourceY / 4) * blocksX + sourceX / 4;
+                                if (blockIndex != cachedBlock)
+                                {
+                                    decode_bc_block(source + blockIndex * blockSize, format, pixels);
+                                    cachedBlock = blockIndex;
+                                }
+                                destination[(static_cast<size_t>(z) * dstExtent.y + y) * dstExtent.x + x] =
+                                    pixels[(sourceY & 3) * 4 + (sourceX & 3)];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    texture = std::move(decoded);
+    return true;
+}
+
 bool decode_compressed_texture(gli::texture& texture, u32 downscale)
 {
     if (!gli::is_compressed(texture.format()))
@@ -84,6 +309,14 @@ bool decode_compressed_texture(gli::texture& texture, u32 downscale)
 
     if (!gli::has_decoder(texture.format()))
         return false;
+
+    // GLI's generic converter fetches each texel separately and therefore
+    // expands the same BC block up to sixteen times. On ARM this made a
+    // 1024x1024 DXT texture take roughly one second. Decode each block once;
+    // this also covers BC1/BC2/BC3 used by the original game assets.
+    const AndroidBcFormat bcFormat = android_bc_format(texture.format());
+    if (bcFormat != AndroidBcFormat::Unsupported)
+        return decode_bc_texture(texture, downscale, bcFormat);
 
     constexpr gli::format decoded_format = gli::FORMAT_RGBA8_UNORM_PACK8;
 

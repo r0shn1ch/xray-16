@@ -309,14 +309,14 @@ bool CLevel::net_start_client6()
 #if defined(XR_PLATFORM_ANDROID)
         if (strstr(Core.Params, "-android-lazy-textures"))
         {
-            // Lazy texture upload is specifically used to keep the first level
-            // load below the memory limit of 32-bit Android processes. A full
-            // 60-frame pre-cache immediately binds and uploads the same texture
-            // set again, defeating that policy and causing OOM/SIGSEGV near the
-            // end of client synchronisation on devices with large displays.
-            Msg("[load-trace] client6 precache skipped; Android lazy first-bind loading enabled mem=%uK",
+            // Keep the loading screen over the normal rotating-camera
+            // pre-cache. This touches only resources visible in the level,
+            // unlike ResourcesDeferredUpload(), and prevents hundreds of DDS
+            // decodes from blocking the first interactive gameplay frames.
+            Msg("[load-trace] client6 Android visible-set precache begin frames=60 mem=%uK",
                 Memory.mem_usage() / 1024);
-            android_set_load_context("client6 precache skipped; lazy first-bind enabled");
+            android_set_load_context("client6 visible-set precache scheduled");
+            Device.PreCache(60, true);
         }
         else
 #endif

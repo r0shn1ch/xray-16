@@ -414,15 +414,35 @@ void CHW::Present()
     SDL_GL_SwapWindow(m_window);
 
     static u32 lastFrameReport = 0;
+    static u32 previousPresentTick = 0;
+    static u64 intervalFrameTime = 0;
+    static u32 intervalFrameCount = 0;
+    static u32 intervalMaxFrame = 0;
     const u32 now = SDL_GetTicks();
+    if (previousPresentTick)
+    {
+        const u32 elapsed = now - previousPresentTick;
+        intervalFrameTime += elapsed;
+        ++intervalFrameCount;
+        intervalMaxFrame = std::max(intervalMaxFrame, elapsed);
+    }
     if (now - lastFrameReport >= 5000)
     {
         const auto& stats = Device.GetStats();
-        Msg("[frame-trace] fps=%.1f engine=%.1fms render=%.1fms internal=%ux%u drawable=%dx%d",
-            stats.fFPS, stats.EngineTotal.result, stats.RenderTotal.result,
+        const float averageFrame = intervalFrameCount ?
+            static_cast<float>(intervalFrameTime) / intervalFrameCount : 0.f;
+        Msg("[frame-trace] fps=%.1f frame-avg=%.1fms frame-max=%ums samples=%u "
+            "engine=%.1fms render=%.1fms stats=%d "
+            "internal=%ux%u drawable=%dx%d",
+            stats.fFPS, averageFrame, intervalMaxFrame, intervalFrameCount,
+            stats.EngineTotal.result, stats.RenderTotal.result, g_bEnableStatGather ? 1 : 0,
             Device.dwWidth, Device.dwHeight, drawableWidth, drawableHeight);
         lastFrameReport = now;
+        intervalFrameTime = 0;
+        intervalFrameCount = 0;
+        intervalMaxFrame = 0;
     }
+    previousPresentTick = now;
 #else
 #if 0 // kept for historical reasons
     RImplementation.Target->phase_flip();

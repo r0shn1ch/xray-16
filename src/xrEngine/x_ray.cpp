@@ -1006,6 +1006,21 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
             xr_sprintf(command, "_preset %s", preset);
             Msg("[android] applying launcher mobile preset: %s", preset);
             Console->Execute(command);
+
+            // Older CoP rspec_minimum.ltx files predate SSR and leave the
+            // renderer's High default (quality 3 + jitter) active. Complete
+            // the requested Minimum preset in memory; game files stay
+            // read-only and selecting another preset keeps every feature
+            // available.
+            if (0 == xr_stricmp(preset, "Minimum"))
+            {
+                Msg("[android] completing legacy Minimum preset for mobile GLES");
+                Console->Execute("r3_water_refl st_opt_off");
+                Console->Execute("r3_water_refl_half_depth off");
+                Console->Execute("r3_water_refl_jitter off");
+                Console->Execute("r2_smapsize 1024");
+                Console->Execute("r__tf_aniso 4");
+            }
         }
     }
     if (strstr(Core.Params, "-android-show-fps"))
