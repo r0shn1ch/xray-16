@@ -79,7 +79,7 @@ not a Play Store release.
 ## Install and run
 
 ```sh
-adb install -r build/openxray-armv7-launcher-v0.9.12-debug.apk
+adb install -r build/openxray-armv7-launcher-v0.9.13-debug.apk
 adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
 ```
 
@@ -91,6 +91,10 @@ landscape.
 Choose Call of Pripyat and point the launcher at the installation root that
 contains `fsgame.ltx` and the normal resource directories/archives. The
 launcher does not download, repair, copy or rewrite the installation.
+Settings, saves and screenshots are written to the app-private per-game
+directory instead of the selected PC installation. They are therefore removed
+when Android uninstalls the application; use Android backup or `adb` before an
+uninstall if those files must be preserved.
 
 Launcher settings are passed as explicit engine arguments:
 

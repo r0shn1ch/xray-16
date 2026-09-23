@@ -1,6 +1,6 @@
 # Android port audit
 
-This audit covers the Android port through version 0.9.12. The comparison base
+This audit covers the Android port through version 0.9.13. The comparison base
 is upstream OpenXRay `dev` at `247d72764`. The Android branch already contains
 the two upstream UI commits that follow the fork's older `origin/dev`, so they
 are not Android-specific replacements.
@@ -144,6 +144,17 @@ The retained changes fall into these categories:
   now expose real update/render/wait, present/swap, draw-call and polygon data.
 - Disabled SSR is explicitly compiled as quality zero on Android, avoiding the
   strict-preprocessor failure in the water shader without any vendor check.
+
+## Findings addressed in 0.9.13
+
+- Android app data, settings, screenshots and saves use a per-game private
+  writable directory. The selected PC installation remains a read-only resource
+  source even when shared-storage policy forbids writes beside `fsgame.ltx`.
+- The focused GLES validation set now compiles and links the soft-water and
+  soft-water-depth programs, including the strict `SSR_QUALITY=0` path seen in
+  physical-device logs.
+- Activity diagnostics record the APK version and version code at startup so a
+  log can be matched to its exact installed package before engine bootstrap.
 
 ## Remaining renderer debt
 

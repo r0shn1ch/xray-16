@@ -952,6 +952,24 @@ static xr_string android_engine_data_root()
     strconcat(sizeof(result), result, internal_path, "/openxray/engine-gamedata");
     return result;
 }
+
+static xr_string android_writable_root()
+{
+    const char* internal_path = SDL_AndroidGetInternalStoragePath();
+    if (!internal_path || !internal_path[0])
+        return {};
+
+    string_path openxray_root;
+    strconcat(sizeof(openxray_root), openxray_root, internal_path, "/openxray");
+    mkdir(openxray_root, 0775);
+
+    const pcstr game_folder = strstr(Core.Params, "-shoc") || strstr(Core.Params, "-soc") ? "soc" :
+        strstr(Core.Params, "-cs") ? "cs" : "cop";
+    string_path result;
+    strconcat(sizeof(result), result, openxray_root, "/", game_folder);
+    mkdir(result, 0775);
+    return result;
+}
 #endif
 
 void CLocatorAPI::_initialize(u32 flags, pcstr target_folder, pcstr fs_name)
@@ -1032,13 +1050,27 @@ void CLocatorAPI::_initialize(u32 flags, pcstr target_folder, pcstr fs_name)
 
 #if defined(XR_PLATFORM_ANDROID)
             const bool is_game_data = 0 == xr_strcmp(id, "$game_data$");
+            const bool is_app_data = 0 == xr_strcmp(id, "$app_data_root$");
 #endif
 
             auto p_it = m_paths.find(root);
 
             FS_Path* P = xr_new<FS_Path>(p_it != m_paths.end() ? p_it->second->m_Path : root, lp_add, lp_def, lp_capt, fl);
 #if defined(XR_PLATFORM_ANDROID)
-            if (is_game_data)
+            if (is_app_data)
+            {
+                const xr_string writable_root = android_writable_root();
+                if (!writable_root.empty())
+                {
+                    // Keep the selected PC installation read-only. Changing
+                    // this root while fsgame.ltx is expanded also makes all
+                    // later children ($game_saves$, $screenshots$, ...)
+                    // inherit the app-private writable location.
+                    P->_set_root(writable_root.c_str());
+                    Msg("* Android writable app-data root: %s", P->m_Path);
+                }
+            }
+            else if (is_game_data)
             {
                 const xr_string overlay_root = android_engine_data_root();
                 struct stat overlay_info;

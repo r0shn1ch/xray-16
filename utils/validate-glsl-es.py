@@ -60,6 +60,8 @@ DEFAULT_PROGRAMS = (
     ("deffer_particle.vs", "deffer_particle.ps"),
     ("model_def_lq.vs", "model_def_lq.ps"),
     ("sky2.vs", "sky2.ps"),
+    ("water_soft.vs", "water_soft.ps"),
+    ("waterd_soft.vs", "waterd_soft.ps"),
     # Android maps the GL renderer's depth-only "null" fragment stage to
     # dumb.ps because the Adreno monolithic GLES path requires both stages.
     ("shadow_direct_base.vs", "dumb.ps"),

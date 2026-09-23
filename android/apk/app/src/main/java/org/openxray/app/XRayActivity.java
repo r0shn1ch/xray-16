@@ -56,7 +56,8 @@ public final class XRayActivity extends SDLActivity {
         }
         installCrashHandler();
         runningInstance = this;
-        writeDiagnostic("activity onCreate; sdk=" + Build.VERSION.SDK_INT
+        writeDiagnostic("activity onCreate; version=" + BuildConfig.VERSION_NAME
+                + "; code=" + BuildConfig.VERSION_CODE + "; sdk=" + Build.VERSION.SDK_INT
                 + "; abi=" + (Build.SUPPORTED_ABIS.length == 0 ? "unknown" : Build.SUPPORTED_ABIS[0]));
         try {
             super.onCreate(savedInstanceState);
