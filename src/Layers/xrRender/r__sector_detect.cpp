@@ -43,19 +43,28 @@ IRender_Sector::sector_id_t R_dsgraph_structure::detect_sector(const Fvector& P,
 
     // Select ID
     int ID;
+    bool portalHit = false;
     if (id1 >= 0)
     {
         if (id2 >= 0)
-            ID = (range1 <= range2 + EPS) ? id1 : id2; // both was found
+        {
+            portalHit = range1 <= range2 + EPS;
+            ID = portalHit ? id1 : id2; // both were found
+        }
         else
+        {
+            portalHit = true;
             ID = id1; // only id1 found
+        }
     }
     else if (id2 >= 0)
         ID = id2; // only id2 found
     else
         return IRender_Sector::INVALID_SECTOR_ID;
 
-    if (ID == id1)
+    // The two IDs index different collision models. Equal numeric IDs do
+    // not mean the geometry hit came from the portal model.
+    if (portalHit)
     {
         // Take sector, facing to our point from portal
         CDB::TRI* pTri = RImplementation.rmPortals->get_tris() + ID;

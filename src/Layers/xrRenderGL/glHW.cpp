@@ -10,12 +10,21 @@
 namespace xray::render::RENDER_NAMESPACE
 {
 CHW HW;
+#if defined(XR_PLATFORM_ANDROID)
+static bool androidDebugCallbackInstalled = false;
+#endif
 
 void CALLBACK OnDebugCallback(GLenum /*source*/, GLenum /*type*/, GLuint id, GLenum severity, GLsizei /*length*/,
     const GLchar* message, const void* /*userParam*/)
 {
-    if (severity != GL_DEBUG_SEVERITY_NOTIFICATION)
-        Log(message, id);
+    if (severity == GL_DEBUG_SEVERITY_NOTIFICATION)
+        return;
+#if defined(XR_PLATFORM_ANDROID)
+    static u32 reportedMessages = 0;
+    if (reportedMessages++ >= 32)
+        return;
+#endif
+    Log(message, id);
 }
 
 static_assert(std::is_same_v<decltype(&OnDebugCallback), GLDEBUGPROC>);
@@ -167,6 +176,11 @@ void CHW::CreateDevice(SDL_Window* hWnd)
         return;
     }
 
+#if defined(XR_PLATFORM_ANDROID)
+    // Debug callbacks belong to the GL context, not to the CHW instance.
+    androidDebugCallbackInstalled = false;
+#endif
+
     if (ThisInstanceIsGlobal())
     {
         UpdateVSync();
@@ -186,6 +200,9 @@ void CHW::CreateDevice(SDL_Window* hWnd)
             CHK_GL(glEnable(GL_DEBUG_OUTPUT));
             CHK_GL(glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS));
             CHK_GL(glDebugMessageCallback((GLDEBUGPROC)OnDebugCallback, nullptr));
+#if defined(XR_PLATFORM_ANDROID)
+            androidDebugCallbackInstalled = true;
+#endif
             Msg("* OpenGL debug callback enabled");
         }
     }
@@ -371,6 +388,15 @@ void CHW::Present()
         if (reportedPendingErrors < 16)
             Msg("! OpenGL ES: pending error 0x%x before Present", pending);
         ++reportedPendingErrors;
+    }
+    if (reportedPendingErrors && !androidDebugCallbackInstalled && glDebugMessageCallback)
+    {
+        // Only enable tracing after a real renderer error. This identifies
+        // the generating call on the next frame without slowing clean runs.
+        glEnable(GL_DEBUG_OUTPUT);
+        glDebugMessageCallback((GLDEBUGPROC)OnDebugCallback, nullptr);
+        androidDebugCallbackInstalled = true;
+        Msg("* OpenGL ES: diagnostic callback enabled after renderer error");
     }
 
     glBindFramebuffer(GL_READ_FRAMEBUFFER, pFB);
