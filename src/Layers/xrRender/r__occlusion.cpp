@@ -110,6 +110,9 @@ R_occlusion::occq_result R_occlusion::occq_get(u32& ID)
             break;
         }
     }
+    // Query failure must fail open: zero means "occluded" to every caller.
+    if (FAILED(hr))
+        fragments = static_cast<occq_result>(-1);
     RImplementation.BasicStats.Wait.End();
 
     if (0 == fragments)

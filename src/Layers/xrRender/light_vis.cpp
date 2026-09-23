@@ -80,7 +80,13 @@ void light::vis_update()
     const u32 frame = Device.dwFrame;
     const auto fragments = RImplementation.occq_get(vis.query_id);
     // Log					("",fragments);
+#if defined(USE_OGL)
+    // GLES exposes only a boolean ANY_SAMPLES_PASSED result. Applying the
+    // desktop pixel-count threshold would reject every visible light.
+    vis.visible = GLAD_GL_ES_VERSION_3_0 ? (fragments != 0) : (fragments > cullfragments);
+#else
     vis.visible = (fragments > cullfragments);
+#endif
     vis.pending = false;
     if (vis.visible)
     {
