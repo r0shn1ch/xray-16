@@ -171,13 +171,23 @@ void CHW::CreateDevice(SDL_Window* hWnd)
     {
         UpdateVSync();
 
+        // Opt-in on release Android builds: callback identifies the GL call
+        // that produced an error instead of finding only the pending 0x500
+        // at the end of the frame. Leave it disabled during FPS measurements.
+        bool debugOutput = false;
 #ifdef DEBUG
-        if (glDebugMessageCallback)
+        debugOutput = true;
+#endif
+#if defined(XR_PLATFORM_ANDROID)
+        debugOutput = debugOutput || (Core.Params && strstr(Core.Params, "-android-gl-debug"));
+#endif
+        if (debugOutput && glDebugMessageCallback)
         {
             CHK_GL(glEnable(GL_DEBUG_OUTPUT));
+            CHK_GL(glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS));
             CHK_GL(glDebugMessageCallback((GLDEBUGPROC)OnDebugCallback, nullptr));
+            Msg("* OpenGL debug callback enabled");
         }
-#endif // DEBUG
     }
 
     int iMaxVTFUnits, iMaxCTIUnits;
@@ -399,11 +409,10 @@ void CHW::Present()
             0, 0, drawableWidth, drawableHeight,
             GL_COLOR_BUFFER_BIT, filter);
 
-        // The final color attachment has been consumed by the window blit.
-        // This standard ES 3.x hint avoids a needless tile-memory writeback on
-        // tile-based mobile GPUs and does not depend on a vendor allowlist.
-        const GLenum discardedAttachment = GL_COLOR_ATTACHMENT0;
-        glInvalidateFramebuffer(GL_READ_FRAMEBUFFER, 1, &discardedAttachment);
+        // The render target is owned by the engine and may be read again on
+        // the next frame (including after SDL recreates the window surface).
+        // Do not discard its contents from the presentation path; resource
+        // owners may invalidate an attachment after its last actual use.
     }
     else if (reportIncomplete)
     {

@@ -133,6 +133,7 @@ public final class LauncherActivity extends Activity {
     private View[] pages;
     private SharedPreferences preferences;
     private long engineLaunchTime;
+    private int stopGeneration;
     private boolean engineFailureToastShown;
     private boolean suppressProfileCallbacks = true;
     private int activeGameVariant = 3;
@@ -307,14 +308,8 @@ public final class LauncherActivity extends Activity {
                         + "файлы установки и конфиги не переписываются."), matchWrap());
 
         gameVariant = new Spinner(this);
-        String[] variants = {
-                "Автоматически / без ключа",
-                "Shadow of Chernobyl (-soc)",
-                "Clear Sky (-cs)",
-                "Call of Pripyat (-cop)"
-        };
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, variants);
+                android.R.layout.simple_spinner_item, OptionCatalog.GAME_LABELS);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         gameVariant.setAdapter(adapter);
         gameVariant.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
@@ -393,13 +388,8 @@ public final class LauncherActivity extends Activity {
                         + "Vulkan пока является экспериментальным резервным режимом с безопасным GLES fallback."),
                 matchWrap());
         rendererMode = new Spinner(this);
-        String[] renderers = {
-                "Автоматически (OpenGL ES)",
-                "OpenGL ES",
-                "Vulkan (экспериментальный fallback)"
-        };
         ArrayAdapter<String> rendererAdapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, renderers);
+                android.R.layout.simple_spinner_item, OptionCatalog.RENDERER_LABELS);
         rendererAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         rendererMode.setAdapter(rendererAdapter);
         content.addView(rendererMode, matchWrap());
@@ -410,16 +400,8 @@ public final class LauncherActivity extends Activity {
                         + "чтобы старый desktop-конфиг High/Extreme не перегружал телефон."),
                 matchWrap());
         graphicsPreset = new Spinner(this);
-        String[] graphicsPresets = {
-                "Автоматически для Android (Minimum)",
-                "Minimum",
-                "Low",
-                "Default",
-                "High",
-                "Extreme"
-        };
         ArrayAdapter<String> graphicsAdapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, graphicsPresets);
+                android.R.layout.simple_spinner_item, OptionCatalog.GRAPHICS_LABELS);
         graphicsAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         graphicsPreset.setAdapter(graphicsAdapter);
         content.addView(graphicsPreset, matchWrap());
@@ -600,15 +582,15 @@ public final class LauncherActivity extends Activity {
     }
 
     private int clampVariant(int value) {
-        return value >= 0 && value <= 3 ? value : 3;
+        return value >= 0 && value < OptionCatalog.GAME_LABELS.length ? value : 3;
     }
 
     private int clampRendererMode(int value) {
-        return value >= RENDERER_AUTO && value <= RENDERER_VULKAN ? value : RENDERER_AUTO;
+        return value >= 0 && value < OptionCatalog.RENDERER_LABELS.length ? value : RENDERER_AUTO;
     }
 
     private int clampGraphicsPreset(int value) {
-        return value >= GRAPHICS_AUTO && value <= GRAPHICS_EXTREME ? value : GRAPHICS_AUTO;
+        return value >= 0 && value < OptionCatalog.GRAPHICS_LABELS.length ? value : GRAPHICS_AUTO;
     }
 
     private void buildRenderResolutionList() {
@@ -673,16 +655,7 @@ public final class LauncherActivity extends Activity {
     }
 
     private String profileName(int variant) {
-        switch (clampVariant(variant)) {
-        case 1:
-            return "Shadow of Chernobyl";
-        case 2:
-            return "Clear Sky";
-        case 3:
-            return "Call of Pripyat";
-        default:
-            return "автоопределение";
-        }
+        return OptionCatalog.GAME_NAMES[clampVariant(variant)];
     }
 
     private void switchGameProfile(int requestedVariant) {
@@ -830,24 +803,20 @@ public final class LauncherActivity extends Activity {
     }
 
     private void launchEngine(boolean rendererSmoke, boolean vulkanRendererSmoke) {
+        ++stopGeneration; // Cancel pending retries before any new launch or reattach.
         if (!rendererSmoke && isEngineProcessRunning()) {
             setStatus("Возвращаю уже запущенный движок на экран…");
-            writeLauncherLog("[launcher] requesting existing engine task foreground");
-            Intent resume = new Intent(this, EngineControlReceiver.class);
-            resume.setAction(EngineControlReceiver.ACTION_RESUME_ENGINE);
-            sendBroadcast(resume);
-
-            // LauncherActivity normally sits immediately above XRayActivity
-            // in the same task. Finishing it uncovers the existing SDL
-            // SurfaceView instead of creating/reordering another SDL entry
-            // point. The engine-process receiver also moves its task to the
-            // foreground for the case where Android split the activities.
-            handler.postDelayed(() -> {
-                if (!isFinishing()) {
-                    finish();
-                    overridePendingTransition(0, 0);
-                }
-            }, 120);
+            // singleTask reuses the existing SDL Activity, including when
+            // Android placed the engine in a different task. Do not finish
+            // the launcher: it may be the task root and taking it down can
+            // destroy the engine Activity while its native thread is running.
+            Intent resume = new Intent(this, XRayActivity.class);
+            resume.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            try {
+                startActivity(resume);
+            } catch (RuntimeException error) {
+                setStatus("Не удалось вернуть игру: " + error.getMessage());
+            }
             return;
         }
         if (!rendererSmoke && !prepareEngineLaunch())
@@ -1274,8 +1243,22 @@ public final class LauncherActivity extends Activity {
     }
 
     private void stopEngine() {
+        setStatus("Останавливаю процесс движка…");
+        stopEngineAttempt(0, ++stopGeneration, findEngineProcessPid());
+    }
+
+    private void stopEngineAttempt(int attempt, int generation, int requestedPid) {
+        if (generation != stopGeneration)
+            return;
         int enginePid = findEngineProcessPid();
-        writeLauncherLog("[launcher] force-stop requested for engine process; pid=" + enginePid);
+        if (requestedPid > 0 && enginePid > 0 && requestedPid != enginePid)
+            return; // Another session has started; never signal its PID.
+        if (enginePid <= 0 && attempt > 0) {
+            refreshRunningState();
+            setStatus("Процесс движка остановлен.");
+            return;
+        }
+        writeLauncherLog("[launcher] force-stop attempt=" + attempt + " for engine process; pid=" + enginePid);
         if (enginePid > 0) {
             // Both processes belong to this application UID, so the launcher
             // can terminate a wedged engine directly. An in-process broadcast
@@ -1286,14 +1269,16 @@ public final class LauncherActivity extends Activity {
             stop.setAction(EngineControlReceiver.ACTION_STOP_ENGINE);
             sendBroadcast(stop);
         }
-        setStatus("Останавливаю процесс движка…");
-        handler.postDelayed(() -> {
+        if (attempt < 3) {
+            handler.postDelayed(() -> stopEngineAttempt(attempt + 1, generation, requestedPid),
+                    500L * (attempt + 1));
+        } else {
             refreshRunningState();
             if (isEngineProcessRunning())
-                setStatus("Процесс ещё завершается; нажмите стоп повторно через секунду.");
+                setStatus("Движок не завершился после SIGKILL. Отправьте журнал для диагностики.");
             else
                 setStatus("Процесс движка остановлен.");
-        }, 900);
+        }
     }
 
     private void refreshLog() {

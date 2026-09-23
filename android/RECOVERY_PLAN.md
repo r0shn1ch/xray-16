@@ -1,0 +1,32 @@
+# Android launcher and renderer recovery plan
+
+Baseline: fork `dev` at `e3e891ff`, upstream OpenXRay `dev` at `a7055a4b`;
+common ancestor `247d7276` (49 fork commits, eight upstream commits). Both sides
+changed 11 of the same paths, especially CMake configuration and
+`src/xrCore/LocatorAPI.cpp`; these need an explicit merge test.
+device log dated 2026-09-23, Adreno 710, CoP, 1280×576 internal resolution.
+The existing [Vulkan plan](VULKAN_RENDERER_PLAN.md) defines VK0–VK6.
+
+## Evidence and acceptance gates
+
+| Work | Evidence from the attached run | Required acceptance |
+| --- | --- | --- |
+| Process lifecycle | `activity onDestroy` precedes `Destroying Render...`; the launcher signals PID 26030 after shutdown stalls | 20 cycles of game → launcher → game and 20 normal quits; no second native entry point and no `:engine` PID after each normal quit. Force stop terminates a deliberately stalled engine; do not report success until the PID actually disappears. |
+| Configuration | Launcher repeats labels, preset tokens and command-line switches in Java; engine overrides Minimum with console commands | A single catalog generates labels and arguments; Android-specific renderer adjustments live in an APK-owned `.ltx` and do not modify original resources or `user.ltx`. |
+| Image correctness | Minimum explicitly issued `r2_sun off`; GL reports repeated `0x500` errors before Present; floors and walls disappear intermittently | Capture identical camera/time frames on PC and Android. Verify sunlight and every static surface in a scene with portals. Locate the *first* GLES error via per-pass diagnostics and fix its generating operation; preserve a fallback build for comparison. |
+| Frame pacing | 16–25 FPS gameplay; `update` commonly 24–50 ms and `render` 9–27 ms, with 75–456 ms worst frames | Record median/p95/p99 frame times, update/render time, allocations and lazy texture uploads across a fixed 60-second route. Profile update hot spots and remove stalls only after correctness parity. Compare same game data and resolution. |
+| Vulkan | VK0 surface/device/swapchain/present passes, gameplay selects GLES | VK1–VK6 pass independently using Vulkan objects only; validation layers have no errors. No renderer selection claims Vulkan gameplay until VK3 works. |
+| Upstream | Current tip differs from upstream in 128 paths (+17,250/−308 lines); much of this is old patch snapshots | Keep Android build, UI and preset files under `android/`; isolate unavoidable platform hooks behind `XR_PLATFORM_ANDROID`. Test an upstream merge in a temporary branch before advancing `dev`; measure real conflicts and avoid editing upstream game assets. |
+
+## Sequence
+
+1. **Lifecycle and configuration (started in this PR).** Give the engine process ownership of its own normal termination when native `main` completes; route both Android Back and SDL's manual back hook into the same task transition; bring the existing SDL Activity forward through Android task reuse; retry forced shutdown only for the same session. Generate launcher option tables from JSON. Load Android-only Minimum adjustments from the APK staging tree, keeping the sun enabled.
+2. **GLES correctness (started in this PR).** Preserve the final render attachment until its actual last consumer. Test the sun and missing-surface reports on the phone. If surfaces still vanish, instrument error boundaries around vertex declaration, framebuffer transitions and portal/HOM traversal, then fix the first failing state transition. Do not ship a broad culling disable as a substitute.
+   Launch with optional `-android-gl-debug` to get a synchronous GL debug callback on devices that support it; disable the option when measuring FPS.
+3. **Frame pacing.** Obtain p95/p99 and CPU hot-path traces on the same route after image parity. Separate per-frame simulation cost from on-demand texture decode and shader compilation. Move one-time work out of the gameplay frame and make any cache bounded by an explicit memory budget; repeat the route at two internal resolutions to distinguish CPU and GPU ceilings.
+4. **Vulkan implementation.** Replace the Android-only probe with a portable SDL surface bootstrap owned by `xrRenderVK`. Next build the HLSL→SPIR-V compile/reflection/cache path (including mods), then resource/barrier primitives, UI and static geometry, deferred lighting/shadows, post-process and lifecycle. Retain independent GLES for users while incomplete. Each gate has a validation-layer test and PC/Android screenshot comparison.
+5. **Upstream integration.** Keep this PR small; split later renderer work by backend capability and add Android CI with a reproducible toolchain. Replay each logical patch on a fresh upstream `dev` branch; record merge conflicts and actual platform build results before updating the main fork branch.
+
+The current runner has no Android SDK, NDK or device. APK, native gameplay,
+screen comparisons and lifecycle acceptance remain pending physical-device
+verification; static checks cannot establish visual correctness or FPS gains.

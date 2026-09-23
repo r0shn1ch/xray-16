@@ -1,6 +1,6 @@
 # Android port audit
 
-This audit covers the Android port through version 0.9.16. The comparison base
+This audit covers the Android port through version 0.9.17. The comparison base
 is upstream OpenXRay `dev` at `247d72764`. The Android branch already contains
 the two upstream UI commits that follow the fork's older `origin/dev`, so they
 are not Android-specific replacements.
@@ -193,6 +193,14 @@ The retained changes fall into these categories:
   optimizations and the `-O2`, ARM-mode baseline remain enabled.
 
 ## Remaining renderer debt
+
+Version 0.9.17 moves launcher options into a generated catalog and moves the
+Minimum quality adjustments to an APK-owned `.ltx`. The sun remains enabled.
+The final GLES attachment is preserved after presentation pending device
+validation of the missing-surface report. Normal native completion explicitly
+ends the isolated engine process; reattachment reuses the SDL Activity.
+Device validation and further work are tracked in `RECOVERY_PLAN.md`.
+
 
 `AndroidGlslCompatRules.inl` is an engine-side bridge for strict GLSL ES
 compilers. It preserves resources on disk, but exact source-line rewrites are
