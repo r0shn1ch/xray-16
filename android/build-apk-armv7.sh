@@ -23,7 +23,7 @@ sdk_dir=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}
 deps_prefix=${ANDROID_DEPS_PREFIX:-}
 sdl_dir=${SDL2_ANDROID_HOME:-}
 gradle_bin=${GRADLE_BIN:-}
-android_lto=${XRAY_ANDROID_ENABLE_LTO:-OFF}
+android_lto=${XRAY_ANDROID_ENABLE_LTO:-ON}
 build_dir=${XRAY_ANDROID_APK_BUILD_DIR:-"$repo_dir/build/android-apk-armv7"}
 
 remove_path()

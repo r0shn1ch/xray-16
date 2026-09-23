@@ -349,6 +349,8 @@ void CHW::EndScene() { }
 void CHW::Present()
 {
 #if defined(XR_PLATFORM_ANDROID)
+    const u64 presentStart = SDL_GetPerformanceCounter();
+
     // Resolve the engine's final color target into the EGL window surface.
     // Keep this explicit: framebuffer 0 cannot host the deferred renderer's
     // MRT attachments, while swapping without this copy presents untouched
@@ -396,6 +398,13 @@ void CHW::Present()
             0, 0, Device.dwWidth, Device.dwHeight,
             0, 0, drawableWidth, drawableHeight,
             GL_COLOR_BUFFER_BIT, filter);
+
+        // The engine color attachment has been fully consumed for this frame.
+        // Let tile-based GLES implementations discard it instead of writing
+        // its tile contents back to memory.  This is a standard ES 3.x hint,
+        // not a GPU-vendor path.
+        const GLenum discardedAttachment = GL_COLOR_ATTACHMENT0;
+        glInvalidateFramebuffer(GL_READ_FRAMEBUFFER, 1, &discardedAttachment);
     }
     else if (reportIncomplete)
     {
@@ -411,13 +420,21 @@ void CHW::Present()
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, pFB);
+    const u64 swapStart = SDL_GetPerformanceCounter();
     SDL_GL_SwapWindow(m_window);
+    const u64 presentEnd = SDL_GetPerformanceCounter();
 
     static u32 lastFrameReport = 0;
     static u32 previousPresentTick = 0;
     static u64 intervalFrameTime = 0;
     static u32 intervalFrameCount = 0;
     static u32 intervalMaxFrame = 0;
+    static u64 intervalPresentTime = 0;
+    static u64 intervalSwapTime = 0;
+    static u32 intervalPresentCount = 0;
+    intervalPresentTime += swapStart - presentStart;
+    intervalSwapTime += presentEnd - swapStart;
+    ++intervalPresentCount;
     const u32 now = SDL_GetTicks();
     if (previousPresentTick)
     {
@@ -431,16 +448,29 @@ void CHW::Present()
         const auto& stats = Device.GetStats();
         const float averageFrame = intervalFrameCount ?
             static_cast<float>(intervalFrameTime) / intervalFrameCount : 0.f;
+        const float counterToMilliseconds = SDL_GetPerformanceFrequency() ?
+            1000.f / SDL_GetPerformanceFrequency() : 0.f;
+        const float averagePresent = intervalPresentCount ?
+            counterToMilliseconds * intervalPresentTime / intervalPresentCount : 0.f;
+        const float averageSwap = intervalPresentCount ?
+            counterToMilliseconds * intervalSwapTime / intervalPresentCount : 0.f;
         Msg("[frame-trace] fps=%.1f frame-avg=%.1fms frame-max=%ums samples=%u "
-            "engine=%.1fms render=%.1fms stats=%d "
+            "update=%.1fms render=%.1fms wait=%.1fms present=%.1fms swap=%.1fms "
+            "calls=%u polys=%u stats=%d "
             "internal=%ux%u drawable=%dx%d",
             stats.fFPS, averageFrame, intervalMaxFrame, intervalFrameCount,
-            stats.EngineTotal.result, stats.RenderTotal.result, g_bEnableStatGather ? 1 : 0,
+            stats.fFrameMoveReal, stats.fRenderReal, stats.fParallelWaitReal,
+            averagePresent, averageSwap,
+            GEnv.Render->GetCacheStatCalls(), GEnv.Render->GetCacheStatPolys(),
+            g_bEnableStatGather ? 1 : 0,
             Device.dwWidth, Device.dwHeight, drawableWidth, drawableHeight);
         lastFrameReport = now;
         intervalFrameTime = 0;
         intervalFrameCount = 0;
         intervalMaxFrame = 0;
+        intervalPresentTime = 0;
+        intervalSwapTime = 0;
+        intervalPresentCount = 0;
     }
     previousPresentTick = now;
 #else

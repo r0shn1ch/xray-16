@@ -5,6 +5,16 @@
 
 namespace xray::render::RENDER_NAMESPACE
 {
+bool UseVertexAttribBinding()
+{
+    // Vertex-attrib binding is core in desktop GL 4.3 and GLES 3.1.  GLAD's
+    // extension bit alone stays false on GLES implementations that expose the
+    // feature through the core API, unnecessarily forcing an expensive
+    // glVertexAttribPointer update for every vertex-buffer/base-vertex change.
+    return (GLAD_GL_VERSION_4_3 || GLAD_GL_ES_VERSION_3_1 || GLAD_GL_ARB_vertex_attrib_binding) &&
+        glBindVertexBuffer && glVertexAttribFormat && glVertexAttribBinding;
+}
+
 enum
 {
     LOCKFLAGS_FLUSH  = GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT | GL_MAP_INVALIDATE_BUFFER_BIT,
@@ -171,7 +181,7 @@ void ConvertVertexDeclaration(const VertexElement* dxdecl, SDeclaration* decl)
     [](GLuint location, GLint size, GLenum type, GLboolean normalized, GLuint offset, GLuint stream)
     {
         CHK_GL(glEnableVertexAttribArray(location));
-        if (GLAD_GL_ARB_vertex_attrib_binding)
+        if (UseVertexAttribBinding())
         {
             CHK_GL(glVertexAttribFormat(location, size, type, normalized, offset));
             CHK_GL(glVertexAttribBinding(location, stream));

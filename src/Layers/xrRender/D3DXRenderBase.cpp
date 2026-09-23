@@ -266,6 +266,10 @@ bool D3DXRenderBase::GetForceGPU_REF()
 {
     return HW.Caps.bForceGPU_REF;
 }
+u32 D3DXRenderBase::GetCacheStatCalls()
+{
+    return RCache.stat.render.calls;
+}
 u32 D3DXRenderBase::GetCacheStatPolys()
 {
     return RCache.stat.render.polys;

@@ -1018,7 +1018,10 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
                 Console->Execute("r3_water_refl st_opt_off");
                 Console->Execute("r3_water_refl_half_depth off");
                 Console->Execute("r3_water_refl_jitter off");
-                Console->Execute("r2_smapsize 1024");
+                Console->Execute("r2_smap_size 1024");
+                Console->Execute("r2_sun off");
+                Console->Execute("r2_sun_details off");
+                Console->Execute("r2_sun_tsm off");
                 Console->Execute("r__tf_aniso 4");
             }
         }

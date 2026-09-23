@@ -1,6 +1,6 @@
 # Android port audit
 
-This audit covers the Android port through version 0.9.11. The comparison base
+This audit covers the Android port through version 0.9.12. The comparison base
 is upstream OpenXRay `dev` at `247d72764`. The Android branch already contains
 the two upstream UI commits that follow the fork's older `origin/dev`, so they
 are not Android-specific replacements.
@@ -125,6 +125,25 @@ The retained changes fall into these categories:
 - Zero-quality sun shafts no longer define `SUN_SHAFTS_QUALITY=0`, which entered
   the volumetric ray-march without a `RAY_SAMPLES` definition and broke the
   shader on Adreno.
+
+## Findings addressed in 0.9.12
+
+- ReleaseMasterGold now compiles the engine with `-O3`; Android ARMv7 APKs use
+  ARM instruction mode and LTO by default. Previous APKs unintentionally ran
+  most engine code without compiler optimization.
+- GLES vertex-input dispatch detects the OpenGL ES 3.1 core capability instead
+  of relying only on a desktop extension flag. This avoids repeatedly rebuilding
+  attribute pointers and remains capability-based across Adreno, Mali and other
+  conforming GPUs.
+- Android no longer forces an extra full-resolution postprocess copy when no
+  effect needs it, and invalidates the consumed final color attachment after
+  presentation so tile renderers may avoid a redundant memory writeback.
+- Minimum explicitly disables sun, detail and TSM shadows and uses the correct
+  `r2_smap_size` command. Other presets retain the complete shadow feature set.
+- The launcher FPS overlay is opaque red and centered at the top. Frame traces
+  now expose real update/render/wait, present/swap, draw-call and polygon data.
+- Disabled SSR is explicitly compiled as quality zero on Android, avoiding the
+  strict-preprocessor failure in the water shader without any vendor check.
 
 ## Remaining renderer debt
 

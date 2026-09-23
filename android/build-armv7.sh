@@ -24,6 +24,15 @@ fi
 ndk_dir=${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}
 build_dir=${XRAY_ANDROID_BUILD_DIR:-"$repo_dir/build/android-armv7"}
 deps_prefix=${ANDROID_DEPS_PREFIX:-}
+android_arm_mode=${XRAY_ANDROID_ARM_MODE:-arm}
+
+case "$android_arm_mode" in
+    arm|thumb) ;;
+    *)
+        echo "XRAY_ANDROID_ARM_MODE must be either arm or thumb" >&2
+        exit 2
+        ;;
+esac
 
 if [ -z "$ndk_dir" ] || [ ! -f "$ndk_dir/build/cmake/android.toolchain.cmake" ]; then
     echo "ANDROID_NDK_HOME must point to an installed Android NDK" >&2
@@ -108,7 +117,7 @@ cmake -S "$repo_dir" -B "$build_dir" -G "${CMAKE_GENERATOR:-Ninja}" \
     -DANDROID_ABI=armeabi-v7a \
     -DANDROID_PLATFORM=android-36 \
     -DANDROID_STL=c++_shared \
-    -DANDROID_ARM_MODE=thumb \
+    -DANDROID_ARM_MODE="$android_arm_mode" \
     -DBUILD_SHARED_LIBS=OFF \
     -DXRAY_USE_LUAJIT=ON \
     -DXRAY_ENABLE_TRACY=OFF \

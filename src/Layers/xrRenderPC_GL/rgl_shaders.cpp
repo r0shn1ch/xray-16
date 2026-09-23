@@ -761,6 +761,11 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
     }
     else
     {
+#if defined(XR_PLATFORM_ANDROID)
+        // Some GLES preprocessors reject an undefined identifier used in a
+        // numeric #if expression.  A zero value preserves the disabled path.
+        options.add("SSR_QUALITY", "0");
+#endif
         sh_name.append(static_cast<u32>(0));
     }
 

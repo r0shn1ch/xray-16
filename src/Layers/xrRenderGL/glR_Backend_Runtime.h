@@ -255,7 +255,7 @@ ICF void CBackend::set_Vertices(GLuint _vb, u32 _vb_stride)
         vb = _vb;
         vb_stride = _vb_stride;
 
-        if (GLAD_GL_ARB_vertex_attrib_binding)
+        if (UseVertexAttribBinding())
         {
             CHK_GL(glBindVertexBuffer(0, vb, 0, vb_stride));
         }
@@ -345,7 +345,7 @@ ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 baseV, u32 startV, u32 countV,
     // vertex stream's attribute pointers for this draw and restore them right
     // away so subsequent non-indexed draws keep their original base.
     const size_t vertex_offset = size_t(baseV) * vb_stride;
-    if (GLAD_GL_ARB_vertex_attrib_binding)
+    if (UseVertexAttribBinding())
     {
         CHK_GL(glBindVertexBuffer(0, vb, vertex_offset, vb_stride));
     }
@@ -358,7 +358,7 @@ ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 baseV, u32 startV, u32 countV,
     CHK_GL(glDrawElements(Topology, iIndexCount, GL_UNSIGNED_SHORT,
         (void*)(startI * sizeof(GLushort))));
 
-    if (GLAD_GL_ARB_vertex_attrib_binding)
+    if (UseVertexAttribBinding())
     {
         CHK_GL(glBindVertexBuffer(0, vb, 0, vb_stride));
     }

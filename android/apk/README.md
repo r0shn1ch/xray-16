@@ -27,9 +27,10 @@ SDL2_ANDROID_HOME=/path/to/SDL \
 ./android/build-apk-armv7.sh
 ```
 
-The APK build disables LTO by default so the ARMv7 shared-library link stays
-bounded on ordinary build hosts. Set `XRAY_ANDROID_ENABLE_LTO=ON` when a long
-LTO link is desired.
+The APK build uses `-O3`, ARM instruction mode and LTO by default; these are
+required for usable ARMv7 engine performance. Set
+`XRAY_ANDROID_ENABLE_LTO=OFF` only for a faster diagnostic build, or
+`XRAY_ANDROID_ARM_MODE=thumb` when compact code is more important than speed.
 
 The APK also carries the OpenXRay engine `res/gamedata` tree. The launcher
 extracts this engine-only data into its private app storage and exposes it to
@@ -46,7 +47,7 @@ The launcher does not reject an incomplete folder: missing `fsgame.ltx` or
 resources are reported by the engine in the log.
 
 The resulting debug APK is named from `android/PORT_VERSION`, for example
-`build/openxray-armv7-launcher-v0.9.11-debug.apk`. Proprietary game data is not
+`build/openxray-armv7-launcher-v0.9.12-debug.apk`. Proprietary game data is not
 bundled. The APK is a device-test candidate: a successful build and offline
 shader validation do not substitute for running the exact game/mod and GPU.
 
@@ -101,9 +102,10 @@ test with an empty log.
 
 For performance reports, leave the FPS option enabled and include at least
 30 seconds of gameplay in `android.log`. Each `[frame-trace]` line contains the
-smoothed FPS, total engine time, render time, internal resolution and physical
-drawable size. This distinguishes GPU fill-rate pressure from CPU/gameplay
-pressure without enabling the much heavier full `rs_stats` overlay.
+smoothed FPS, update/render/task-wait time, presentation/swap time, draw-call
+and polygon counts, internal resolution and physical drawable size. This
+distinguishes CPU, command-submission and GPU/presentation pressure without
+enabling the much heavier full `rs_stats` overlay.
 
 The native engine log is written to
 `/storage/emulated/0/openxray/android.log`. Java lifecycle and exception

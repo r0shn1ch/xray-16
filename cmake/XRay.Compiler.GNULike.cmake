@@ -140,6 +140,15 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_options(-Og)
 endif()
 
+# CMake does not provide optimization flags for OpenXRay's custom
+# ReleaseMasterGold configuration.  Without explicit flags Android shipped
+# the whole engine at effectively -O0, which is catastrophic on ARMv7.
+add_compile_options(
+    $<$<CONFIG:Mixed>:-O2>
+    $<$<CONFIG:Release,ReleaseMasterGold>:-O3>
+    $<$<CONFIG:Release,ReleaseMasterGold>:-fomit-frame-pointer>
+)
+
 if (NOT WIN32)
     # Android dependencies are expected to be built for the selected NDK ABI
     # and exposed through CMAKE_PREFIX_PATH.  Do not silently fall back to
