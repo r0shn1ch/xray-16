@@ -451,7 +451,7 @@ public final class LauncherActivity extends Activity {
         immersiveMode = makeCheckBox("Полноэкранный режим Android",
                 "Скрывает системные панели; жест от края временно возвращает их.");
         showFps = makeCheckBox("Показывать FPS",
-                "Лаунчер включает счётчик кадров самого движка в правом верхнем углу игры.");
+                "Лаунчер включает красный счётчик кадров движка по центру сверху.");
         content.addView(gamepadEnabled, matchWrap());
         content.addView(touchControlsEnabled, matchWrap());
         content.addView(splashEnabled, matchWrap());

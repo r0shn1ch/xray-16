@@ -25,44 +25,41 @@ Installation instructions are on the [How to install and play](https://github.co
 Shadow of Chernobyl is **not supported** yet. (see [#392](https://github.com/OpenXRay/xray-16/issues/392)) <br>
 Legends of the Zone/Enhanced Edition is not supported and won't ever be likely. (see [#1865](https://github.com/OpenXRay/xray-16/issues/1865))
 
-## Experimental Android port
+## Experimental Android port in this fork
 
-This fork can build and run OpenXRay on Android from an original PC game
-installation. The APK contains the engine and launcher only; copyrighted game
-data is not bundled. Call of Pripyat is the primary tested profile. Clear Sky
-and Shadow of Chernobyl compatibility modes are available but remain less
-tested than the desktop targets.
+This fork contains an experimental Android launcher and ARMv7 engine build.
+It is not part of upstream OpenXRay's supported release targets. The APK ships
+the launcher and engine only; users must provide their own legally obtained PC
+game files. Call of Pripyat is the intended game profile. The launcher's SoC
+and CS profile switches only pass compatibility flags and do not change the
+upstream support status listed above.
 
-Current Android requirements and limits:
+The current APK requires Android 8.0 (API 26) or newer, support for 32-bit
+`armeabi-v7a` applications, and OpenGL ES 3.1 with at least four draw buffers
+and four color attachments. A 64-bit phone is compatible only when its Android
+system still supports 32-bit apps. The engine remains limited by a 32-bit
+process address space, which can affect large levels and mods.
 
-- Android 8.0 (API 26) or newer and a 32-bit ARM (`armeabi-v7a`) capable device.
-- OpenGL ES 3.1 or newer with at least four draw buffers and four color
-  attachments. Hardware selection is capability-based, not tied to a GPU
-  vendor allowlist.
-- A device with at least 4 GB RAM is the practical minimum; 6 GB or more is
-  recommended for large Call of Pripyat levels and mods. The current ARMv7
-  process remains subject to 32-bit address-space limits.
-- Several gigabytes of free storage for an unmodified PC installation. Android
-  11 and newer require the launcher to receive **All files access** for a game
-  directory on shared storage.
-- OpenGL ES is the gameplay renderer. Vulkan selection currently performs a
-  real instance/device/surface/swapchain and capability probe, then uses the
-  GLES gameplay fallback while the full `xrRenderVK` pipeline is developed.
+Gameplay uses OpenGL ES. The Vulkan option runs an instance/device/surface/
+swapchain capability probe and then explicitly falls back to GLES; it is not a
+Vulkan gameplay renderer. Renderer decisions and optimizations are based on
+reported API capabilities rather than GPU vendor or model names.
 
-The launcher keeps the engine in landscape and itself in portrait, offers
-renderer selection, a concrete internal-resolution list, graphics presets,
-touch controls and an FPS overlay. Android auto mode selects an aspect-correct
-1280-pixel-wide internal resolution (or the native size on a smaller display)
-and the game's minimum preset; every preset from Minimum through Extreme and
-the native display resolution remain selectable. Launcher choices override a
-stale desktop `user.ltx` only for the new engine session; the source game
-installation is not rewritten. See [android/README.md](android/README.md) for
-build, install, launch and diagnostics instructions.
+The launcher is locked to portrait and the engine activity to landscape. It
+offers internal resolution and graphics-preset selection, optional touch
+controls, a red FPS counter at the top center, log diagnostics, return-to-game,
+and a force-stop action for a stuck engine process. Auto graphics selects
+Minimum and an aspect-correct width of at most 1280 pixels. These choices are
+applied in memory after `user.ltx`; the selected game installation is not
+rewritten.
 
-Quick APK build with the pinned build kit:
+See [android/README.md](android/README.md) for the current build, installation,
+runtime and diagnostics instructions.
+
+Quick build with a prepared build kit:
 
 ```sh
-export XRAY_ANDROID_KIT_ROOT=/path/to/openxray-android-build-kit
+export XRAY_ANDROID_KIT_ROOT=/absolute/path/to/openxray-android-build-kit
 ./android/build-harness.sh --apk
 ```
 

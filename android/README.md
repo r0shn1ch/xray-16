@@ -1,211 +1,151 @@
-# OpenXRay on Android (armeabi-v7a)
+# OpenXRay Android port
 
-This directory contains the Android 16 / ARMv7 build entry point. The engine
-still uses SDL2 as its platform layer; the Android SDL2 package and all native
-codec dependencies must therefore be built for the same NDK ABI and supplied
-through `CMAKE_PREFIX_PATH`.
+This directory contains the experimental Android build maintained by this
+fork. It produces an SDL2 launcher APK and a native OpenXRay engine for the
+`armeabi-v7a` ABI.
 
-The target ABI is `armeabi-v7a`, which is the Android NDK name for 32-bit ARM
-with Thumb-2 and Neon. The APK currently supports API 26 and targets/compiles
-against API 36 (Android 16). A device still needs to support running 32-bit ARM
-applications; some recent 64-bit-only phones cannot install this APK.
+## Current scope and limitations
 
-## Configure and build
+- Minimum Android version: Android 8.0 / API 26.
+- Target and compile SDK: API 36.
+- Packaged ABI: `armeabi-v7a` only. ARM64-only Android systems cannot install
+  it; an ARM64 device must retain 32-bit application support.
+- The build targets ARMv7-A with NEON. ReleaseMasterGold uses ARM instruction
+  mode, `-O3` and ThinLTO by default.
+- Gameplay rendering uses OpenGL ES 3.1+. At least four draw buffers and four
+  color attachments are required.
+- The Vulkan setting is a VK0 capability/presentation probe followed by an
+  explicit GLES gameplay fallback. `xrRenderVK` gameplay is not implemented.
+- Call of Pripyat is the intended game profile. Launcher entries for SoC and CS
+  pass existing compatibility flags; they are not a promise of additional
+  game support.
+- Proprietary game data is never included in the APK. The selected PC game
+  directory is treated as a read-only resource source.
 
-The recommended entry point is `build-harness.sh`. It applies the Android
-patchset automatically (and skips it when the source already contains the
-patches), loads a prepared build kit when `XRAY_ANDROID_KIT_ROOT` is set, and
-then builds either the APK or the native target:
+The renderer uses API feature/version checks and contains no GPU vendor/model
+allowlist. Devices without usable BC/S3TC support decode affected textures in
+memory, which costs loading time, memory and bandwidth. Large levels and mods
+can also hit the ARMv7 process address-space limit regardless of physical RAM.
+
+## Build with the prepared kit
+
+The recommended build uses an extracted kit containing the pinned NDK, SDK,
+ARMv7 dependencies, SDL2 Android project, Gradle and its offline cache:
 
 ```sh
-XRAY_ANDROID_KIT_ROOT=/path/to/openxray-android-build-kit-v0.9.0 \
+export XRAY_ANDROID_KIT_ROOT=/absolute/path/to/openxray-android-build-kit
 ./android/build-harness.sh --apk
 ```
 
-For a checkout that already has the Android toolchain exported, the same
-command works without `XRAY_ANDROID_KIT_ROOT`. Use `--native` for the
-headless/native target. No patch command is needed before either build.
+`build-harness.sh --native` builds only the native engine target. The APK is
+written to:
 
-```sh
-ANDROID_NDK_HOME=/path/to/android-ndk \
-ANDROID_DEPS_PREFIX=/path/to/android-deps \
-SDL2_DIR=/path/to/android-sdl2/lib/cmake/SDL2 \
-./android/build-armv7.sh
+```text
+build/openxray-armv7-launcher-v<android/PORT_VERSION>-debug.apk
 ```
 
-The script forwards `CMAKE_PREFIX_PATH` from `ANDROID_DEPS_PREFIX` and builds
-the Android `libmain.so` engine target used by the APK. The prefix must contain
-Android/armeabi-v7a builds of SDL2, OpenAL Soft, Ogg, Vorbis, Theora, LZO and
-JPEG. The script does not download dependencies implicitly.
+The checked-out source must already contain the current Android implementation.
+Files under `android/patches/` are retained for older port history and are not
+a supported way to upgrade an arbitrary upstream checkout to the current
+version.
 
-For a normal git checkout the build prepares recursive submodules itself and
-then verifies the LuaJIT, GLI, ImGui, luabind and xrLuaFix source sentinels.
-The complete source archive already contains those trees and can therefore be
-built offline with the kit. An incomplete source export now fails before CMake
-with a direct diagnostic instead of the misleading "unsupported LuaJIT target"
-error.
+## Build with an existing Android toolchain
 
-`apply-patches.sh` is idempotent. It verifies the null-safe Android core
-bootstrap, crash logging, launcher game-root diagnostics and LuaJIT host linker
-support before building; on an older clean checkout it applies the numbered
-patches in `android/patches/` automatically.
-
-The standalone harness can also patch a pristine `origin/dev` checkout without
-being copied into that checkout first. Keep the extracted harness outside the
-source tree and pass the source path explicitly:
+Set these paths before running the APK script:
 
 ```sh
-/path/to/openxray-android-build-harness-v0.9.0/android/apply-patches.sh \
-  /path/to/clean/xray-16
+export ANDROID_NDK_HOME=/path/to/android-ndk
+export ANDROID_SDK_ROOT=/path/to/android-sdk
+export ANDROID_DEPS_PREFIX=/path/to/android-deps-armv7
+export SDL2_ANDROID_HOME=/path/to/SDL
+export GRADLE_BIN=/path/to/gradle/bin/gradle  # optional when SDL gradlew works
+./android/build-apk-armv7.sh
 ```
 
-The script reads patches next to itself by default. Set
-`XRAY_ANDROID_PATCH_DIR` only when the patch directory is stored elsewhere.
+`ANDROID_DEPS_PREFIX` must contain ARMv7 builds of SDL2, OpenAL Soft, JPEG,
+Ogg, Vorbis, Theora and LZO. Recursive source submodules must also be present;
+`android/prepare-source.sh` initializes them for a normal git checkout and
+validates the required source trees before CMake starts.
 
-To preserve the installed NDK, SDK, native dependencies, SDL2 Android project
-and pinned Gradle distribution for later builds, create the build kit once:
+Release defaults favor runtime performance. For diagnostic builds only, LTO
+can be disabled with `XRAY_ANDROID_ENABLE_LTO=OFF`; compact Thumb mode can be
+requested with `XRAY_ANDROID_ARM_MODE=thumb`.
+
+The packaging script strips the staged native libraries, verifies that the APK
+contains that exact engine, checks the ABI and version, applies 16 KiB ZIP
+alignment and signs with the Gradle debug key. This is a debug-signed test APK,
+not a Play Store release.
+
+## Install and run
 
 ```sh
-ANDROID_NDK_HOME=/path/to/android-ndk-r30 \
-ANDROID_SDK_ROOT=/path/to/android-sdk \
-ANDROID_DEPS_PREFIX=/path/to/android-deps-armv7 \
-SDL2_ANDROID_HOME=/path/to/SDL \
-GRADLE_BIN=/path/to/gradle-8.1.1/bin/gradle \
-./android/create-build-kit.sh
+adb install -r build/openxray-armv7-launcher-v0.9.12-debug.apk
+adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
 ```
 
-The resulting `.tar.zst` contains the harness, patchset, complete pinned
-toolchain and the Gradle dependency cache from a successful APK build. Extract
-it once, point `XRAY_ANDROID_KIT_ROOT` at the extracted directory, and reuse
-`build-harness.sh` for subsequent builds. Builds made through this kit enable
-Gradle offline mode, so they do not depend on Maven availability or another
-machine's home-directory cache.
+On Android 11 or newer, grant **All files access** when the PC installation is
+stored in shared storage. On Android 8–10, grant the requested storage
+permissions. The launcher itself is portrait; the separate engine activity is
+landscape.
 
-Release archives are created by the same checked-in scripts:
+Choose Call of Pripyat and point the launcher at the installation root that
+contains `fsgame.ltx` and the normal resource directories/archives. The
+launcher does not download, repair, copy or rewrite the installation.
+
+Launcher settings are passed as explicit engine arguments:
+
+- **Renderer:** Auto and OpenGL ES both use GLES. Vulkan first runs the Vulkan
+  probe and then uses GLES for gameplay.
+- **Graphics:** Auto selects Minimum. Minimum also disables sun/detail/TSM
+  shadows and water reflections. Low through Extreme remain selectable.
+- **3D resolution:** Auto uses the native aspect ratio with a width no greater
+  than 1280; lower standard modes and native resolution are selectable. The
+  Android window remains at the physical landscape size and the final image is
+  scaled to it.
+- **FPS:** enables the engine counter in opaque red at the top center.
+- **Touch controls:** optional overlay including Escape; free screen space
+  controls the mouse.
+
+If the engine process is still alive, the launch button becomes **Return to
+running game** and a separate stop button can terminate a stuck engine after
+confirmation.
+
+## Renderer and performance diagnostics
+
+The GLES smoke test creates the same OpenXRay GLES 3.1 context path, compiles
+and links an ES 3.1 shader pair, draws a triangle and validates a pixel
+readback. The Vulkan test creates and presents a swapchain image, records
+capabilities, and then runs the GLES smoke fallback. Neither test proves that
+all game/mod shaders work on a physical device.
+
+During gameplay, `[frame-trace]` records smoothed FPS, frame average/maximum,
+update/render/task-wait time, present/swap time, draw calls, polygons, internal
+resolution and drawable size every five seconds. This tracing is intentionally
+lighter than the full `rs_stats` overlay.
+
+The diagnostics page reads only bounded log tails on a background executor:
+
+- `/storage/emulated/0/openxray/android.log`
+- `/storage/emulated/0/openxray/activity.log`
+- app-specific external/internal fallbacks when shared storage is unavailable
+
+For a report, reproduce at least 30 seconds of gameplay and collect both logs
+plus crash logcat when applicable:
 
 ```sh
-./android/create-harness-archive.sh
-./android/create-source-archive.sh
+adb logcat -c
+adb shell am force-stop org.openxray.stalker
+adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
+adb logcat -d -b all -v threadtime OpenXRay:I DEBUG:E '*:S' > openxray-logcat.txt
+adb logcat -d -b crash -v threadtime > openxray-crash.txt
+adb pull /sdcard/openxray/android.log openxray-engine.log
+adb pull /sdcard/openxray/activity.log openxray-activity.log
 ```
 
-The small harness archive contains the patchset and validator. The source
-archive copies only files tracked by the main repository and every recursive
-submodule, so it is complete for offline builds but excludes `.git`, local
-credentials, caches and build products.
+The unstripped `bin/armv7-a/ReleaseMasterGold/libmain.so` from the same commit
+is required for useful native symbolication.
 
-The APK build performs a final 16 KiB `zipalign` pass and then signs the
-aligned package with the standard Gradle debug key. `ANDROID_DEBUG_KEYSTORE`,
-`ANDROID_DEBUG_KEYSTORE_PASS`, `ANDROID_DEBUG_KEY_PASS` and
-`ANDROID_DEBUG_KEY_ALIAS` can override that key when a build host uses a
-non-default debug setup.
-
-The same kit contains the NDK shader compiler used by the focused GLES
-regression check. From the source root run:
-
-```sh
-python3 utils/validate-glsl-es.py \
-  --ndk "$XRAY_ANDROID_KIT_ROOT/toolchain/android-ndk-r30"
-```
-
-The default manifest compiles the startup shader stages that failed in the
-Adreno log and checks their vertex/fragment interfaces after applying the same
-Android source translation as the engine.
-
-LuaJIT also generates ARM32 code with host-side `minilua` and `buildvm`. On a
-64-bit Linux build host install the 32-bit compiler runtime (for example
-`gcc-multilib` and `libc6-dev-i386`). If the host kernel cannot execute i386
-ELF files, the CMake integration uses `qemu-i386` when it is available.
-The Android build scripts now select the NDK's `i686-linux-android26-clang`
-and the build kit's `qemu-i386-static` automatically. Explicit
-`LUAJIT_HOST_C_COMPILER` and `LUAJIT_HOST_EXECUTABLE_PREFIX` values still
-override those defaults; the host compiler must produce a statically linked
-32-bit helper.
-
-## First validation without game data
-
-For a separately built host executable, run the headless smoke check with:
-
-```sh
-./android/run-headless-smoke.sh path/to/xr_3da
-```
-
-`-headless-smoke` initializes SDL, xrCore, CPU feature probing, the task
-scheduler and the platform locator without creating a window or renderer and
-without opening any game files. A successful exit is only the native bootstrap
-check; it is not yet evidence that a game can render on a particular GPU.
-
-The APK opens a launcher and its **Проверить GLES** action uses the separate
-`-renderer-smoke` mode. It creates the Android SDL window and OpenXRay `CHW`,
-loads GLES through the same GLAD-backed renderer library, compiles a minimal ES
-3.0 shader pair and verifies a pixel readback. This keeps the test independent
-of proprietary game data while exercising the actual Android window/context
-and shader compiler path. The native activity runs in a separate `:engine`
-process, so the launcher can remain visible after a native crash.
-
-## Android renderer status
-
-The Android path requests an OpenGL ES 3.1 or newer context and keeps the
-deferred renderer on an engine-owned framebuffer. `CHW::Present()` explicitly
-copies its final color attachment into SDL's EGL framebuffer before the swap.
-The launcher exposes graphics preset and internal resolution as independent
-settings. Android auto mode applies the minimum game preset after `user.ltx`
-and chooses an aspect-correct 1280-pixel-wide mode (or native on a smaller
-display), preventing an old desktop High/Extreme config from silently driving
-a multi-megapixel mobile framebuffer. Low resolutions through native and all
-five stock presets remain selectable. The Android surface stays at its native
-landscape size while the final image is linearly upscaled; mouse/touch
-coordinates are converted between window and internal render sizes. A launcher
-checkbox enables the engine FPS counter; the engine log also records FPS,
-engine time, render time and both resolutions every five seconds as
-`[frame-trace]`.
-The GLES source layer assigns MRT output locations, normalizes stage varyings
-and makes the desktop shader expressions explicit at runtime. The tracked
-`res/gamedata/shaders/gl` directory is identical to upstream; neither original
-game files nor mod files are patched on disk. Compatible shader overrides from
-a game or mod pass through the same engine-side translation; line matching is
-insensitive to formatting whitespace. Texture upload
-uses GLES component swizzles and decodes unsupported desktop DDS compression
-in memory without rewriting the source DDS file.
-
-The OpenGL renderer in upstream OpenXRay still disables its unfinished MSAA
-mode globally. The Android code does not add another feature cut: multisample
-texture allocation and resolve have real GLES implementations for the point
-where the upstream OpenGL option is enabled.
-
-The ARMv7 build and the startup shaders implicated by the supplied Adreno log
-are statically validated as part of this port. That validation is not a claim
-that a physical device test has passed; use the generated APK and attach the
-new engine/activity logs for any remaining GPU- or data-specific issue.
-
-The audit of prior port changes is in [PORT_AUDIT.md](PORT_AUDIT.md). The
-cross-platform Vulkan requirements, upstream prototypes that were rejected,
-and implementation gates are in [VULKAN_RENDERER_PLAN.md](VULKAN_RENDERER_PLAN.md).
-
-Selecting Vulkan for a game now runs the VK0 probe and records device limits,
-texture compression features and the attachment formats needed by the deferred
-renderer. It then explicitly starts the GLES gameplay fallback. This selection
-must not be interpreted as a completed Vulkan gameplay renderer.
-
-## Runtime requirements and practical limits
-
-- OpenGL ES 3.1+, four draw buffers and four color attachments are hard startup
-  requirements. Native-resolution deferred rendering is intentionally not the
-  default on mobile GPUs.
-- 4 GB system RAM is a practical floor and 6 GB or more is recommended. Large
-  mods can still exceed the ARMv7 process address space even when the device has
-  more physical RAM.
-- The source game directory must contain its normal `fsgame.ltx`, archives and
-  resources. The launcher does not download, bundle or repair proprietary data.
-- On Android 11+, grant **All files access** when the installation is stored in
-  shared storage. Read-only or scoped-storage-only locations can prevent saves.
-- Drivers without S3TC/BC texture support require in-memory DDS decompression.
-  This increases first-level load time, texture memory and bandwidth; texture
-  LOD and the mobile preset reduce that cost without modifying source files.
-
-The APK displays a Toast after the renderer readback: successful initialization
-keeps the smoke window open, while failure shows the error, waits briefly and
-exits. The launcher also shows the current log tail and reports whether the
-engine process finished successfully or crashed. The native engine log targets
-`/storage/emulated/0/openxray/android.log` first and falls back to SDL's
-app-specific external/internal directory when Android storage policy denies the
-public path.
+For implementation constraints and Vulkan status, see
+[PORT_AUDIT.md](PORT_AUDIT.md) and
+[VULKAN_RENDERER_PLAN.md](VULKAN_RENDERER_PLAN.md). Launcher-specific behavior
+is summarized in [apk/README.md](apk/README.md).
