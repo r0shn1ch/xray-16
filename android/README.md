@@ -147,7 +147,7 @@ Enable USB debugging, connect the device, then check its ABI support:
 ```sh
 adb devices
 adb shell getprop ro.product.cpu.abilist
-adb install -r build/openxray-armv7-launcher-v0.9.14-debug.apk
+adb install -r build/openxray-armv7-launcher-v0.9.15-debug.apk
 adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
 ```
 
@@ -156,7 +156,7 @@ signed with another debug key. Back up anything important, then reinstall:
 
 ```sh
 adb uninstall org.openxray.stalker
-adb install build/openxray-armv7-launcher-v0.9.14-debug.apk
+adb install build/openxray-armv7-launcher-v0.9.15-debug.apk
 ```
 
 Uninstalling clears launcher preferences and private renderer support files,

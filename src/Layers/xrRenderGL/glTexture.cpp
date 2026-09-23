@@ -6,6 +6,10 @@
 
 #include <gli/gli.hpp>
 
+#if defined(XR_PLATFORM_ANDROID)
+#include "xrEngine/x_ray.h"
+#endif
+
 namespace xray::render::RENDER_NAMESPACE
 {
 void fix_texture_name(pstr fn)
@@ -546,8 +550,20 @@ GLuint CRender::texture_load(LPCSTR fRName, u32& ret_msize, GLenum& ret_desc,
 #ifdef DEBUG
     Msg("* Loaded: %s[%d]b", fn, img_size);
 #endif // DEBUG
+#if defined(XR_PLATFORM_ANDROID)
+    string256 androidTextureContext;
+    xr_sprintf(androidTextureContext, sizeof(androidTextureContext),
+        "texture-dds parse align=%u bytes=%zu '%.150s'",
+        static_cast<unsigned>(reinterpret_cast<uintptr_t>(S->pointer()) & 3u), img_size, fn);
+    android_set_load_context(androidTextureContext);
+#endif
     gli::texture texture = gli::load((char*)S->pointer(), img_size);
     R_ASSERT2(!texture.empty(), fn);
+#if defined(XR_PLATFORM_ANDROID)
+    xr_sprintf(androidTextureContext, sizeof(androidTextureContext),
+        "texture-dds parsed bytes=%zu '%.150s'", img_size, fn);
+    android_set_load_context(androidTextureContext);
+#endif
 
     xr_strlwr(fn);
     const u32 sourceMipCount = static_cast<u32>(texture.levels());

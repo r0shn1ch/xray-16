@@ -1,6 +1,6 @@
 # Android port audit
 
-This audit covers the Android port through version 0.9.14. The comparison base
+This audit covers the Android port through version 0.9.15. The comparison base
 is upstream OpenXRay `dev` at `247d72764`. The Android branch already contains
 the two upstream UI commits that follow the fork's older `origin/dev`, so they
 are not Android-specific replacements.
@@ -163,6 +163,20 @@ The retained changes fall into these categories:
   the large gain over the accidental `-O0` build while avoiding two aggressive
   compiler changes in the startup-regression range. ARM mode and optional LTO
   remain explicit, logged build choices.
+
+## Findings addressed in 0.9.15
+
+- The startup `SIGBUS/BUS_ADRALN` was symbolized to `gli::load_dds`. GLI 0.8.2
+  interpreted an arbitrary archive-reader byte pointer as an aligned DDS
+  header. Android builds now use an immutable generated GLI header overlay that
+  copies the 124-byte header before reading its 32-bit fields.
+- The compact native crash context records the DDS filename, size and source
+  pointer alignment while parsing, so a future texture failure is identifiable
+  without relying on a complete tombstone.
+- Portable GLES optimizations ruled out by the symbolized crash are restored:
+  core ES 3.1 vertex binding, final-target invalidation after presentation and
+  removal of an inactive extra postprocess pass. The compiler baseline remains
+  ARM mode, `-O2` and no LTO until this fix is verified on a physical device.
 
 ## Remaining renderer debt
 

@@ -398,6 +398,12 @@ void CHW::Present()
             0, 0, Device.dwWidth, Device.dwHeight,
             0, 0, drawableWidth, drawableHeight,
             GL_COLOR_BUFFER_BIT, filter);
+
+        // The final color attachment has been consumed by the window blit.
+        // This standard ES 3.x hint avoids a needless tile-memory writeback on
+        // tile-based mobile GPUs and does not depend on a vendor allowlist.
+        const GLenum discardedAttachment = GL_COLOR_ATTACHMENT0;
+        glInvalidateFramebuffer(GL_READ_FRAMEBUFFER, 1, &discardedAttachment);
     }
     else if (reportIncomplete)
     {
