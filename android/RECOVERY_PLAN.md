@@ -4,7 +4,7 @@ Baseline: fork `dev` at `e3e891ff`, upstream OpenXRay `dev` at `a7055a4b`;
 common ancestor `247d7276` (49 fork commits, eight upstream commits). Both sides
 changed 11 of the same paths, especially CMake configuration and
 `src/xrCore/LocatorAPI.cpp`; these need an explicit merge test.
-device log dated 2026-09-23, Adreno 710, CoP, 1280×576 internal resolution.
+Device log: 2026-09-23, Adreno 710, CoP, 1280×576 internal resolution.
 The existing [Vulkan plan](VULKAN_RENDERER_PLAN.md) defines VK0–VK6.
 
 ## Evidence and acceptance gates
