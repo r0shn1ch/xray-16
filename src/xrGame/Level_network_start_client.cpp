@@ -202,8 +202,20 @@ void CLevel::ClientSendProfileData()
 #endif
     NET_Packet NP;
     NP.w_begin(M_CREATE_PLAYER_STATE);
+#if defined(XR_PLATFORM_ANDROID)
+    android_set_load_context("client-profile constructing aligned player state");
+    Msg("[load-trace] client-profile state construct begin size=%u align=%u",
+        static_cast<u32>(sizeof(game_PlayerState)), static_cast<u32>(alignof(game_PlayerState)));
+#endif
     game_PlayerState tmp_player_state(NULL);
+#if defined(XR_PLATFORM_ANDROID)
+    Msg("[load-trace] client-profile state constructed ptr=%p", static_cast<void*>(&tmp_player_state));
+    android_set_load_context("client-profile exporting player state");
+#endif
     tmp_player_state.net_Export(NP, TRUE);
+#if defined(XR_PLATFORM_ANDROID)
+    android_set_load_context("client-profile sending player state");
+#endif
     SecureSend(NP, net_flags(TRUE, TRUE, TRUE, TRUE));
 }
 

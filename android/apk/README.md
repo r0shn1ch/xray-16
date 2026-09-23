@@ -10,7 +10,7 @@ Quick build and install:
 ```sh
 export XRAY_ANDROID_KIT_ROOT=/absolute/path/to/openxray-android-build-kit-v0.8.0
 ./android/build-harness.sh --apk
-adb install -r build/openxray-armv7-launcher-v0.9.15-debug.apk
+adb install -r build/openxray-armv7-launcher-v0.9.16-debug.apk
 ```
 
 The application ID is `org.openxray.stalker`; the main activity is

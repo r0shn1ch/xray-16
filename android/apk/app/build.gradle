@@ -10,8 +10,8 @@ android {
         applicationId 'org.openxray.stalker'
         minSdk 26
         targetSdk 36
-        versionCode 29
-        versionName '0.9.15'
+        versionCode 30
+        versionName '0.9.16'
 
         ndk {
             abiFilters 'armeabi-v7a'

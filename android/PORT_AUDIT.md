@@ -1,6 +1,6 @@
 # Android port audit
 
-This audit covers the Android port through version 0.9.15. The comparison base
+This audit covers the Android port through version 0.9.16. The comparison base
 is upstream OpenXRay `dev` at `247d72764`. The Android branch already contains
 the two upstream UI commits that follow the fork's older `origin/dev`, so they
 are not Android-specific replacements.
@@ -177,6 +177,20 @@ The retained changes fall into these categories:
   core ES 3.1 vertex binding, final-target invalidation after presentation and
   removal of an inactive extra postprocess pass. The compiler baseline remains
   ARM mode, `-O2` and no LTO until this fix is verified on a physical device.
+
+## Findings addressed in 0.9.16
+
+- The level-loading `SIGBUS/BUS_ADRALN` was symbolized to
+  `game_PlayerState::clear()` while the direct client sent its profile. The
+  runtime player-state class had inherited a one-byte packing directive even
+  though it contains virtual state, libc++ containers and shared strings.
+- Packing now remains limited to the adjacent plain-data records whose external
+  layout requires it. `game_PlayerState` uses its natural alignment, while its
+  existing field-by-field network import/export keeps the wire protocol
+  unchanged.
+- Client-profile construction, export and send now set precise Android crash
+  contexts and record the runtime type size/alignment. Portable GLES
+  optimizations and the `-O2`, ARM-mode baseline remain enabled.
 
 ## Remaining renderer debt
 
