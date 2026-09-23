@@ -386,6 +386,10 @@ BOOL CHOM::visible(const Fbox2& B, float depth) const
 
 BOOL CHOM::visible(vis_data& vis) const
 {
+    // A bounding volume containing the eye cannot be hidden behind an
+    // occluder. This applies to both hierarchy roots and individual visuals.
+    if (vis.box.contains(Device.vCameraPosition))
+        return TRUE;
     if (Device.dwFrame < vis.hom_frame)
         return TRUE; // not at this time :)
     if (!bEnabled)
