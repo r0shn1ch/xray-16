@@ -1317,9 +1317,8 @@ public final class LauncherActivity extends Activity {
     private void updateEngineStatus(String log) {
         if (engineLaunchTime == 0)
             return;
-        if (log.contains("[renderer-vulkan] PASS") && log.contains("[renderer-smoke] center pixel")
-                && log.contains(": PASS")) {
-            setStatus("Vulkan surface probe + GLES fallback завершены: PASS.");
+        if (log.contains("[renderer-vulkan] PASS: Vulkan command buffer")) {
+            setStatus("Самостоятельный Vulkan render pass завершён: PASS.");
             return;
         }
         if (log.contains("[renderer-smoke] center pixel") && log.contains(": PASS")) {

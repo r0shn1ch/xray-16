@@ -82,6 +82,11 @@ bool Run(std::string& reason)
     VkDevice device = VK_NULL_HANDLE;
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
     VkSemaphore acquire_semaphore = VK_NULL_HANDLE;
+    VkSemaphore render_semaphore = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkRenderPass render_pass = VK_NULL_HANDLE;
+    std::vector<VkImageView> image_views;
+    std::vector<VkFramebuffer> framebuffers;
 
     PFN_vkDestroyInstance destroy_instance = nullptr;
     PFN_vkDestroySurfaceKHR destroy_surface = nullptr;
@@ -89,11 +94,27 @@ bool Run(std::string& reason)
     PFN_vkDeviceWaitIdle device_wait_idle = nullptr;
     PFN_vkDestroySwapchainKHR destroy_swapchain = nullptr;
     PFN_vkDestroySemaphore destroy_semaphore = nullptr;
+    PFN_vkDestroyCommandPool destroy_command_pool = nullptr;
+    PFN_vkDestroyRenderPass destroy_render_pass = nullptr;
+    PFN_vkDestroyImageView destroy_image_view = nullptr;
+    PFN_vkDestroyFramebuffer destroy_framebuffer = nullptr;
 
     auto cleanup = [&]
     {
         if (device && device_wait_idle)
             device_wait_idle(device);
+        if (device && destroy_framebuffer)
+            for (VkFramebuffer framebuffer : framebuffers)
+                destroy_framebuffer(device, framebuffer, nullptr);
+        if (device && render_pass && destroy_render_pass)
+            destroy_render_pass(device, render_pass, nullptr);
+        if (device && destroy_image_view)
+            for (VkImageView view : image_views)
+                destroy_image_view(device, view, nullptr);
+        if (device && command_pool && destroy_command_pool)
+            destroy_command_pool(device, command_pool, nullptr);
+        if (device && render_semaphore && destroy_semaphore)
+            destroy_semaphore(device, render_semaphore, nullptr);
         if (device && acquire_semaphore && destroy_semaphore)
             destroy_semaphore(device, acquire_semaphore, nullptr);
         if (device && swapchain && destroy_swapchain)
@@ -316,8 +337,26 @@ bool Run(std::string& reason)
     destroy_swapchain = load_device_proc<PFN_vkDestroySwapchainKHR>(device, get_device_proc, "vkDestroySwapchainKHR");
     const auto create_semaphore = load_device_proc<PFN_vkCreateSemaphore>(device, get_device_proc, "vkCreateSemaphore");
     destroy_semaphore = load_device_proc<PFN_vkDestroySemaphore>(device, get_device_proc, "vkDestroySemaphore");
+    const auto create_image_view = load_device_proc<PFN_vkCreateImageView>(device, get_device_proc, "vkCreateImageView");
+    destroy_image_view = load_device_proc<PFN_vkDestroyImageView>(device, get_device_proc, "vkDestroyImageView");
+    const auto create_render_pass = load_device_proc<PFN_vkCreateRenderPass>(device, get_device_proc, "vkCreateRenderPass");
+    destroy_render_pass = load_device_proc<PFN_vkDestroyRenderPass>(device, get_device_proc, "vkDestroyRenderPass");
+    const auto create_framebuffer = load_device_proc<PFN_vkCreateFramebuffer>(device, get_device_proc, "vkCreateFramebuffer");
+    destroy_framebuffer = load_device_proc<PFN_vkDestroyFramebuffer>(device, get_device_proc, "vkDestroyFramebuffer");
+    const auto create_command_pool = load_device_proc<PFN_vkCreateCommandPool>(device, get_device_proc, "vkCreateCommandPool");
+    destroy_command_pool = load_device_proc<PFN_vkDestroyCommandPool>(device, get_device_proc, "vkDestroyCommandPool");
+    const auto allocate_command_buffers = load_device_proc<PFN_vkAllocateCommandBuffers>(device, get_device_proc, "vkAllocateCommandBuffers");
+    const auto begin_command_buffer = load_device_proc<PFN_vkBeginCommandBuffer>(device, get_device_proc, "vkBeginCommandBuffer");
+    const auto cmd_begin_render_pass = load_device_proc<PFN_vkCmdBeginRenderPass>(device, get_device_proc, "vkCmdBeginRenderPass");
+    const auto cmd_end_render_pass = load_device_proc<PFN_vkCmdEndRenderPass>(device, get_device_proc, "vkCmdEndRenderPass");
+    const auto end_command_buffer = load_device_proc<PFN_vkEndCommandBuffer>(device, get_device_proc, "vkEndCommandBuffer");
+    const auto queue_submit = load_device_proc<PFN_vkQueueSubmit>(device, get_device_proc, "vkQueueSubmit");
     if (!destroy_device || !device_wait_idle || !get_device_queue || !create_swapchain || !get_swapchain_images ||
-        !acquire_next_image || !queue_present || !destroy_swapchain || !create_semaphore || !destroy_semaphore)
+        !acquire_next_image || !queue_present || !destroy_swapchain || !create_semaphore || !destroy_semaphore ||
+        !create_image_view || !destroy_image_view || !create_render_pass || !destroy_render_pass ||
+        !create_framebuffer || !destroy_framebuffer || !create_command_pool || !destroy_command_pool ||
+        !allocate_command_buffers || !begin_command_buffer || !cmd_begin_render_pass || !cmd_end_render_pass ||
+        !end_command_buffer || !queue_submit)
         return fail("required Vulkan device procedures are unavailable");
 
     VkSurfaceCapabilitiesKHR capabilities{};
@@ -386,9 +425,109 @@ bool Run(std::string& reason)
     uint32_t swapchain_image_count = 0;
     if (get_swapchain_images(device, swapchain, &swapchain_image_count, nullptr) != VK_SUCCESS || swapchain_image_count == 0)
         return fail("Vulkan swapchain has no images");
+    std::vector<VkImage> images(swapchain_image_count);
+    if (get_swapchain_images(device, swapchain, &swapchain_image_count, images.data()) != VK_SUCCESS)
+        return fail("could not enumerate Vulkan swapchain images");
+
+    // A genuine Vulkan frame: render pass owns the color attachment and
+    // transitions it to PRESENT_SRC before the presentation queue sees it.
+    VkAttachmentDescription color_attachment{};
+    color_attachment.format = formats.front().format;
+    color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    VkAttachmentReference color_reference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &color_reference;
+    VkSubpassDependency dependency{};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    VkRenderPassCreateInfo pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    pass_info.attachmentCount = 1;
+    pass_info.pAttachments = &color_attachment;
+    pass_info.subpassCount = 1;
+    pass_info.pSubpasses = &subpass;
+    pass_info.dependencyCount = 1;
+    pass_info.pDependencies = &dependency;
+    if (create_render_pass(device, &pass_info, nullptr, &render_pass) != VK_SUCCESS)
+        return fail("vkCreateRenderPass failed");
+
+    image_views.reserve(swapchain_image_count);
+    framebuffers.reserve(swapchain_image_count);
+    for (VkImage image : images)
+    {
+        VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view_info.image = image;
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.format = formats.front().format;
+        view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        view_info.subresourceRange.levelCount = 1;
+        view_info.subresourceRange.layerCount = 1;
+        VkImageView view = VK_NULL_HANDLE;
+        if (create_image_view(device, &view_info, nullptr, &view) != VK_SUCCESS)
+            return fail("vkCreateImageView failed");
+        image_views.push_back(view);
+
+        VkFramebufferCreateInfo framebuffer_info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        framebuffer_info.renderPass = render_pass;
+        framebuffer_info.attachmentCount = 1;
+        framebuffer_info.pAttachments = &image_views.back();
+        framebuffer_info.width = extent.width;
+        framebuffer_info.height = extent.height;
+        framebuffer_info.layers = 1;
+        VkFramebuffer framebuffer = VK_NULL_HANDLE;
+        if (create_framebuffer(device, &framebuffer_info, nullptr, &framebuffer) != VK_SUCCESS)
+            return fail("vkCreateFramebuffer failed");
+        framebuffers.push_back(framebuffer);
+    }
+
+    VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    pool_info.queueFamilyIndex = queue_family;
+    if (create_command_pool(device, &pool_info, nullptr, &command_pool) != VK_SUCCESS)
+        return fail("vkCreateCommandPool failed");
+    std::vector<VkCommandBuffer> commands(swapchain_image_count);
+    VkCommandBufferAllocateInfo allocate_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    allocate_info.commandPool = command_pool;
+    allocate_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocate_info.commandBufferCount = swapchain_image_count;
+    if (allocate_command_buffers(device, &allocate_info, commands.data()) != VK_SUCCESS)
+        return fail("vkAllocateCommandBuffers failed");
+
+    for (uint32_t index = 0; index < swapchain_image_count; ++index)
+    {
+        VkCommandBufferBeginInfo begin_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        begin_info.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
+        if (begin_command_buffer(commands[index], &begin_info) != VK_SUCCESS)
+            return fail("vkBeginCommandBuffer failed");
+        VkClearValue clear{};
+        clear.color.float32[0] = 0.08f;
+        clear.color.float32[1] = 0.18f;
+        clear.color.float32[2] = 0.32f;
+        clear.color.float32[3] = 1.0f;
+        VkRenderPassBeginInfo render_info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        render_info.renderPass = render_pass;
+        render_info.framebuffer = framebuffers[index];
+        render_info.renderArea.extent = extent;
+        render_info.clearValueCount = 1;
+        render_info.pClearValues = &clear;
+        cmd_begin_render_pass(commands[index], &render_info, VK_SUBPASS_CONTENTS_INLINE);
+        cmd_end_render_pass(commands[index]);
+        if (end_command_buffer(commands[index]) != VK_SUCCESS)
+            return fail("vkEndCommandBuffer failed");
+    }
 
     VkSemaphoreCreateInfo semaphore_info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-    if (create_semaphore(device, &semaphore_info, nullptr, &acquire_semaphore) != VK_SUCCESS)
+    if (create_semaphore(device, &semaphore_info, nullptr, &acquire_semaphore) != VK_SUCCESS ||
+        create_semaphore(device, &semaphore_info, nullptr, &render_semaphore) != VK_SUCCESS)
         return fail("vkCreateSemaphore failed");
 
     VkQueue queue = VK_NULL_HANDLE;
@@ -399,9 +538,21 @@ bool Run(std::string& reason)
     if (acquire_result != VK_SUCCESS && acquire_result != VK_SUBOPTIMAL_KHR)
         return fail("vkAcquireNextImageKHR failed");
 
+    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    VkSubmitInfo submit_info{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit_info.waitSemaphoreCount = 1;
+    submit_info.pWaitSemaphores = &acquire_semaphore;
+    submit_info.pWaitDstStageMask = &wait_stage;
+    submit_info.commandBufferCount = 1;
+    submit_info.pCommandBuffers = &commands[image_index];
+    submit_info.signalSemaphoreCount = 1;
+    submit_info.pSignalSemaphores = &render_semaphore;
+    if (queue_submit(queue, 1, &submit_info, VK_NULL_HANDLE) != VK_SUCCESS)
+        return fail("vkQueueSubmit failed");
+
     VkPresentInfoKHR present_info{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     present_info.waitSemaphoreCount = 1;
-    present_info.pWaitSemaphores = &acquire_semaphore;
+    present_info.pWaitSemaphores = &render_semaphore;
     present_info.swapchainCount = 1;
     present_info.pSwapchains = &swapchain;
     present_info.pImageIndices = &image_index;
@@ -411,11 +562,11 @@ bool Run(std::string& reason)
     if (device_wait_idle(device) != VK_SUCCESS)
         return fail("Vulkan queue did not become idle after present");
 
-    Msg("[renderer-vulkan] surface/swapchain present PASS: %s, Vulkan %u.%u.%u",
+    Msg("[renderer-vulkan] render-pass clear and present PASS: %s, Vulkan %u.%u.%u",
         physical_properties.deviceName,
         VK_VERSION_MAJOR(physical_properties.apiVersion), VK_VERSION_MINOR(physical_properties.apiVersion),
         VK_VERSION_PATCH(physical_properties.apiVersion));
-    reason = "Vulkan surface, device, swapchain and present path passed";
+    reason = "Vulkan command buffer, render-pass clear, queue submit and present passed";
     cleanup();
     return true;
 #endif

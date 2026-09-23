@@ -25,8 +25,12 @@ The existing [Vulkan plan](VULKAN_RENDERER_PLAN.md) defines VK0–VK6.
    Launch with optional `-android-gl-debug` to get a synchronous GL debug callback on devices that support it; disable the option when measuring FPS.
 3. **Frame pacing.** Obtain p95/p99 and CPU hot-path traces on the same route after image parity. Separate per-frame simulation cost from on-demand texture decode and shader compilation. Move one-time work out of the gameplay frame and make any cache bounded by an explicit memory budget; repeat the route at two internal resolutions to distinguish CPU and GPU ceilings.
 4. **Vulkan implementation.** Replace the Android-only probe with a portable SDL surface bootstrap owned by `xrRenderVK`. Next build the HLSL→SPIR-V compile/reflection/cache path (including mods), then resource/barrier primitives, UI and static geometry, deferred lighting/shadows, post-process and lifecycle. Retain independent GLES for users while incomplete. Each gate has a validation-layer test and PC/Android screenshot comparison.
+   In 0.9.18 the Android smoke path creates a render pass, image views and
+   framebuffers, records one command buffer for each swapchain image, submits a
+   color clear and presents the submitted image. Its smoke mode does not load
+   GLES. It is not wired to gameplay or the cross-platform `xrRenderVK` module.
 5. **Upstream integration.** Keep this PR small; split later renderer work by backend capability and add Android CI with a reproducible toolchain. Replay each logical patch on a fresh upstream `dev` branch; record merge conflicts and actual platform build results before updating the main fork branch.
 
-The current runner has no Android SDK, NDK or device. APK, native gameplay,
-screen comparisons and lifecycle acceptance remain pending physical-device
-verification; static checks cannot establish visual correctness or FPS gains.
+The Android SDK/NDK build kit is available and APK/native compilation has passed.
+Native gameplay, screen comparisons and lifecycle acceptance remain pending
+physical-device verification; compilation cannot establish visual correctness or FPS gains.

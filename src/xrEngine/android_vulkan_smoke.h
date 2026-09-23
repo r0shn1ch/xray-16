@@ -6,9 +6,8 @@
 
 namespace AndroidVulkanSmoke
 {
-// Validates the Android Vulkan surface/device/swapchain/present path without
-// changing the gameplay renderer. The caller keeps GLES as the portable
-// fallback until the full xrRenderVK backend is ready.
+// Records and submits a Vulkan color render pass to an Android swapchain.
+// This is an independent renderer smoke path, not a gameplay renderer.
 bool Run(std::string& reason);
 }
 

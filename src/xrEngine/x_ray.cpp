@@ -590,7 +590,7 @@ void shutdown_android_engine_log()
 
 void show_renderer_smoke_status(bool success, bool vulkan_probe)
 {
-    SDL_AndroidShowToast(success ? (vulkan_probe ? "OpenXRay: Vulkan probe + GLES fallback passed" : "OpenXRay: GLES renderer passed") :
+    SDL_AndroidShowToast(success ? (vulkan_probe ? "OpenXRay: Vulkan render pass passed" : "OpenXRay: GLES renderer passed") :
         "OpenXRay: engine load failed; see android.log", 1, -1, 0, 0);
 }
 
@@ -903,8 +903,13 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
         if (m_renderer_vulkan_smoke)
         {
             std::string reason;
-            state->vulkan_probe = AndroidVulkanSmoke::Run(reason);
-            Msg("[renderer-vulkan] %s: %s", state->vulkan_probe ? "PASS" : "fallback to GLES", reason.c_str());
+            state->vulkan_probe = true;
+            state->passed = AndroidVulkanSmoke::Run(reason);
+            state->initialized = true;
+            state->status_reported = true;
+            Msg("[renderer-vulkan] %s: %s", state->passed ? "PASS" : "FAIL", reason.c_str());
+            show_renderer_smoke_status(state->passed, true);
+            return;
         }
         if (!initialize_renderer_smoke(*state))
         {
@@ -1171,6 +1176,11 @@ int CApplication::Run()
     if (m_renderer_smoke)
     {
         auto* state = static_cast<renderer_smoke_state*>(m_renderer_smoke_state);
+        if (m_renderer_vulkan_smoke)
+        {
+            SDL_Delay(3500);
+            return state && state->passed ? EXIT_SUCCESS : EXIT_FAILURE;
+        }
         if (!state || !state->initialized)
         {
             if (!state || !state->status_reported)
