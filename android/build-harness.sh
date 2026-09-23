@@ -48,6 +48,8 @@ mkdir -p "$(dirname "$manifest")"
     echo "sdk=${ANDROID_SDK_ROOT:-unset}"
     echo "deps=${ANDROID_DEPS_PREFIX:-unset}"
     echo "sdl=${SDL2_ANDROID_HOME:-unset}"
+    echo "arm_mode=${XRAY_ANDROID_ARM_MODE:-arm}"
+    echo "lto=${XRAY_ANDROID_ENABLE_LTO:-OFF}"
     cmake --version | head -1
     if [ -n "${GRADLE_BIN:-}" ] && [ -x "${GRADLE_BIN:-}" ]; then
         "$GRADLE_BIN" --version | sed -n '1,5p'

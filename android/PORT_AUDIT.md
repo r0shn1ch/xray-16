@@ -1,15 +1,16 @@
 # Android port audit
 
-This audit covers the Android port through version 0.9.13. The comparison base
+This audit covers the Android port through version 0.9.14. The comparison base
 is upstream OpenXRay `dev` at `247d72764`. The Android branch already contains
 the two upstream UI commits that follow the fork's older `origin/dev`, so they
 are not Android-specific replacements.
 
 ## Compatibility invariants
 
-- Original game and mod installations are read-only inputs. The launcher and
-  engine must not rewrite `fsgame.ltx`, `user.ltx`, shaders, textures, archives,
-  or other resources in a selected installation.
+- Original game and mod resources are read-only inputs. The launcher and engine
+  must not rewrite `fsgame.ltx`, shaders, textures or archives. The standard
+  `<STALKER>/_appdata_` subtree is deliberately writable and owns `user.ltx`,
+  saves, screenshots and normal engine logs, as it does on desktop.
 - The tracked `res/gamedata` resource tree stays identical to upstream. Android
   compatibility is implemented in engine code and in-memory conversion only.
 - Disk formats used by the three PC games remain unchanged. ARM fixes copy
@@ -29,7 +30,7 @@ The retained changes fall into these categories:
 | Area | Reason retained | Resource impact |
 |---|---|---|
 | ARMv7 build and dependency fixes | Required to compile the existing engine and LuaJIT with the NDK | None |
-| Android filesystem bootstrap | Mounts the user-selected PC installation without copying or rewriting it | Read-only |
+| Android filesystem bootstrap | Mounts the selected PC installation and verifies its normal `_appdata_` path | Resources read-only; `_appdata_` writable |
 | SDL Activity and diagnostics | Owns the native surface, lifecycle, logs, orientation, and process isolation | None |
 | GLES context and framebuffer presentation | Adapts SDL's EGL framebuffer to the existing deferred renderer | None |
 | Texture upload compatibility | Decodes unsupported desktop compression in memory when required | Source DDS files unchanged |
@@ -89,8 +90,8 @@ The retained changes fall into these categories:
   drawable remains native and landscape while the engine-owned 3D targets use
   the chosen size, preserving SDL lifecycle and orientation behavior.
 - Launcher overrides are applied after reading `user.ltx` and before game
-  startup; the selected installation and its configuration files stay
-  read-only.
+  startup; resource files stay unchanged and normal engine persistence remains
+  under `_appdata_`.
 
 ## Findings addressed in 0.9.10
 
@@ -128,16 +129,9 @@ The retained changes fall into these categories:
 
 ## Findings addressed in 0.9.12
 
-- ReleaseMasterGold now compiles the engine with `-O3`; Android ARMv7 APKs use
-  ARM instruction mode and LTO by default. Previous APKs unintentionally ran
-  most engine code without compiler optimization.
-- GLES vertex-input dispatch detects the OpenGL ES 3.1 core capability instead
-  of relying only on a desktop extension flag. This avoids repeatedly rebuilding
-  attribute pointers and remains capability-based across Adreno, Mali and other
-  conforming GPUs.
-- Android no longer forces an extra full-resolution postprocess copy when no
-  effect needs it, and invalidates the consumed final color attachment after
-  presentation so tile renderers may avoid a redundant memory writeback.
+- ReleaseMasterGold received explicit compiler optimization instead of the
+  accidental `-O0` Android build. Version 0.9.14 refines the Android baseline
+  to `-O2` with LTO opt-in while startup stability is validated.
 - Minimum explicitly disables sun, detail and TSM shadows and uses the correct
   `r2_smap_size` command. Other presets retain the complete shadow feature set.
 - The launcher FPS overlay is opaque red and centered at the top. Frame traces
@@ -147,14 +141,28 @@ The retained changes fall into these categories:
 
 ## Findings addressed in 0.9.13
 
-- Android app data, settings, screenshots and saves use a per-game private
-  writable directory. The selected PC installation remains a read-only resource
-  source even when shared-storage policy forbids writes beside `fsgame.ltx`.
 - The focused GLES validation set now compiles and links the soft-water and
   soft-water-depth programs, including the strict `SSR_QUALITY=0` path seen in
   physical-device logs.
 - Activity diagnostics record the APK version and version code at startup so a
   log can be matched to its exact installed package before engine bootstrap.
+
+## Findings addressed in 0.9.14
+
+- The temporary app-private `$app_data_root$` override is removed. Android once
+  again follows `fsgame.ltx`, so `user.ltx`, saves, screenshots and normal logs
+  live under `<STALKER>/_appdata_`.
+- The launcher creates the standard writable subdirectories and performs a real
+  write/delete probe before native startup. A scoped-storage denial is reported
+  in the launcher instead of surfacing later as a save failure.
+- Renderer-wide experiments added after the last confirmed playable build are
+  removed from the Android baseline: GLES uses the established
+  `glVertexAttribPointer` state path, retains the established final postprocess
+  transition, and does not invalidate the just-presented framebuffer.
+- Android ReleaseMasterGold uses `-O2` with LTO disabled by default. This keeps
+  the large gain over the accidental `-O0` build while avoiding two aggressive
+  compiler changes in the startup-regression range. ARM mode and optional LTO
+  remain explicit, logged build choices.
 
 ## Remaining renderer debt
 

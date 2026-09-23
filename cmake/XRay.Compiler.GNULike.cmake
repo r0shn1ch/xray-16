@@ -141,13 +141,22 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 # CMake does not provide optimization flags for OpenXRay's custom
-# ReleaseMasterGold configuration.  Without explicit flags Android shipped
-# the whole engine at effectively -O0, which is catastrophic on ARMv7.
-add_compile_options(
-    $<$<CONFIG:Mixed>:-O2>
-    $<$<CONFIG:Release,ReleaseMasterGold>:-O3>
-    $<$<CONFIG:Release,ReleaseMasterGold>:-fomit-frame-pointer>
-)
+# ReleaseMasterGold configuration. Android uses the conservative -O2 level:
+# it removes the accidental -O0 bottleneck without combining the most
+# aggressive optimizer with the engine's legacy ARM-sensitive code. LTO stays
+# separately opt-in in the APK build script until device startup is proven.
+if (ANDROID)
+    add_compile_options(
+        $<$<CONFIG:Mixed,Release,ReleaseMasterGold>:-O2>
+        $<$<CONFIG:Release,ReleaseMasterGold>:-fomit-frame-pointer>
+    )
+else()
+    add_compile_options(
+        $<$<CONFIG:Mixed>:-O2>
+        $<$<CONFIG:Release,ReleaseMasterGold>:-O3>
+        $<$<CONFIG:Release,ReleaseMasterGold>:-fomit-frame-pointer>
+    )
+endif()
 
 if (NOT WIN32)
     # Android dependencies are expected to be built for the selected NDK ABI

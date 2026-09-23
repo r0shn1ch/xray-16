@@ -2,87 +2,78 @@
 
 `build-apk-armv7.sh` packages the ARMv7 OpenXRay engine, SDL2 activity and
 launcher into a debug APK. No proprietary S.T.A.L.K.E.R. resources are
-included. Toolchain setup and complete build instructions are in
-[../README.md](../README.md).
+included. Required packages, pinned toolchain versions and full build/install
+commands are in [../README.md](../README.md).
 
-Build and install:
+Quick build and install:
 
 ```sh
-export XRAY_ANDROID_KIT_ROOT=/absolute/path/to/openxray-android-build-kit
+export XRAY_ANDROID_KIT_ROOT=/absolute/path/to/openxray-android-build-kit-v0.8.0
 ./android/build-harness.sh --apk
-adb install -r build/openxray-armv7-launcher-v0.9.13-debug.apk
+adb install -r build/openxray-armv7-launcher-v0.9.14-debug.apk
 ```
 
-The generated filename follows `android/PORT_VERSION`. The current application
-ID is `org.openxray.stalker`; the main activity is
+The application ID is `org.openxray.stalker`; the main activity is
 `org.openxray.app.LauncherActivity`.
 
 ## Launcher workflow
 
-1. Grant storage access. Android 11+ uses the system **All files access** page;
-   Android 8–10 uses runtime storage permissions.
-2. Select Call of Pripyat and its installation root. The folder should contain
-   `fsgame.ltx` and the original resource directories/archives. SoC and CS
-   entries only select existing engine compatibility flags and remain subject
-   to upstream game support.
+1. Grant storage access. Android 11+ opens the system **All files access**
+   page; Android 8–10 uses runtime storage permissions.
+2. Select the installation root containing `fsgame.ltx` and the original game
+   resources. Call of Pripyat is the intended profile.
 3. Configure renderer, graphics preset, internal 3D resolution, controls and
    FPS display under **Settings**.
 4. Optionally run the GLES smoke test or Vulkan probe without game files.
-5. Start the game. The launcher process stays separate from the native engine
-   process so logs remain accessible after a native crash.
+5. Start the game. Before launch, the app verifies a real write to
+   `<STALKER>/_appdata_` and refuses to continue if Android denies it.
 
-The launcher is fixed to portrait and the engine activity to landscape. Auto
-renderer and explicit OpenGL ES both use the GLES gameplay backend. Selecting
-Vulkan runs the Vulkan surface/device/swapchain probe and then explicitly uses
-GLES; it does not enable a native Vulkan gameplay renderer.
+Auto renderer and explicit OpenGL ES both use the GLES gameplay backend.
+Vulkan currently runs the surface/device/swapchain probe and then uses GLES; it
+does not select a native Vulkan gameplay renderer.
 
-Graphics choices are applied after loading the app-private `user.ltx` for that
-engine session. Auto graphics maps to Minimum; the completed Android Minimum
-profile disables sun/detail/TSM shadows and water reflections. Auto resolution
-preserves the physical display aspect ratio and caps internal width at 1280
-unless the display is smaller. The physical Android surface remains native and
-the final frame is scaled to it.
+Graphics choices are applied in memory after loading
+`<STALKER>/_appdata_/user.ltx`. Auto graphics maps to Minimum. Auto resolution
+preserves the physical aspect ratio and caps internal width at 1280 unless the
+display is smaller. The physical landscape surface remains native and receives
+the scaled final frame.
 
-The engine keeps Android settings, saves and screenshots in a private
-per-game directory. It does not attempt to create `_appdata_` beside the PC
-game files. Uninstalling the application removes this private data.
+The engine keeps the desktop filesystem layout:
 
-The optional engine FPS counter is opaque red at the top center. Touch
-controls include Escape as well as movement, fire, interaction and inventory
-actions.
+```text
+<STALKER>/_appdata_/user.ltx
+<STALKER>/_appdata_/savedgames/
+<STALKER>/_appdata_/screenshots/
+<STALKER>/_appdata_/logs/
+```
 
-## Running engine controls
+These files survive APK uninstall as long as the selected game directory is
+not removed. The private application directory contains only launcher state
+and the OpenXRay-owned renderer fallback data shipped in the APK.
+
+The launcher is portrait and the engine activity is landscape. The FPS counter
+is opaque red at the top center. Touch controls include Escape.
+
+## Running-engine controls
 
 While the `:engine` process exists, **Start game** changes to **Return to
-running game**. The launcher asks the existing engine activity to return to the
-foreground instead of starting a second engine. The adjacent stop button
-force-terminates the engine process after confirmation and is intended for a
-stuck load or renderer.
-
-These controls depend on Android still reporting the engine process as alive.
-They cannot restore an engine that has already crashed or been killed by the
-system.
+running game**. The adjacent stop button force-terminates a stuck engine after
+confirmation. These controls cannot restore a process that Android has already
+killed or that has crashed natively.
 
 ## Logs
 
-The diagnostics page polls bounded 32 KiB tails from each engine/activity log
-on a background executor, so it does not load entire growing log files on the
-UI thread. Sharing can include a larger bounded tail.
-
-Primary paths:
+The diagnostics page polls bounded 32 KiB tails on a background executor, so
+it does not load whole growing files on the UI thread. Primary Android paths:
 
 ```text
 /storage/emulated/0/openxray/android.log
 /storage/emulated/0/openxray/activity.log
 ```
 
-App-specific external and internal paths are used as fallbacks when shared
-storage is unavailable. **Clear** removes these diagnostic files; it does not
-touch game files, saves, mods, `fsgame.ltx` or `user.ltx`.
-
-For performance reports, enable FPS and include at least 30 seconds of
-gameplay. `[frame-trace]` reports update/render/wait, present/swap, draw calls,
-polygons and both internal and physical resolutions every five seconds.
+Normal engine logs are also written under `<STALKER>/_appdata_/logs/`.
+**Clear** only removes the Android diagnostic files; it does not delete saves,
+screenshots, game files or `user.ltx`.
 
 Useful collection commands:
 
@@ -94,6 +85,7 @@ adb logcat -d -b all -v threadtime OpenXRay:I DEBUG:E '*:S' > openxray-logcat.tx
 adb logcat -d -b crash -v threadtime > openxray-crash.txt
 adb pull /sdcard/openxray/android.log openxray-engine.log
 adb pull /sdcard/openxray/activity.log openxray-activity.log
+adb pull /sdcard/STALKER/_appdata_/logs openxray-game-logs
 ```
 
 Native crashes must be symbolicated against the unstripped `libmain.so` built

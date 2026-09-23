@@ -398,13 +398,6 @@ void CHW::Present()
             0, 0, Device.dwWidth, Device.dwHeight,
             0, 0, drawableWidth, drawableHeight,
             GL_COLOR_BUFFER_BIT, filter);
-
-        // The engine color attachment has been fully consumed for this frame.
-        // Let tile-based GLES implementations discard it instead of writing
-        // its tile contents back to memory.  This is a standard ES 3.x hint,
-        // not a GPU-vendor path.
-        const GLenum discardedAttachment = GL_COLOR_ATTACHMENT0;
-        glInvalidateFramebuffer(GL_READ_FRAMEBUFFER, 1, &discardedAttachment);
     }
     else if (reportIncomplete)
     {
@@ -454,6 +447,8 @@ void CHW::Present()
             counterToMilliseconds * intervalPresentTime / intervalPresentCount : 0.f;
         const float averageSwap = intervalPresentCount ?
             counterToMilliseconds * intervalSwapTime / intervalPresentCount : 0.f;
+        const u32 drawCalls = GEnv.Render ? GEnv.Render->GetCacheStatCalls() : 0;
+        const u32 polygons = GEnv.Render ? GEnv.Render->GetCacheStatPolys() : 0;
         Msg("[frame-trace] fps=%.1f frame-avg=%.1fms frame-max=%ums samples=%u "
             "update=%.1fms render=%.1fms wait=%.1fms present=%.1fms swap=%.1fms "
             "calls=%u polys=%u stats=%d "
@@ -461,7 +456,7 @@ void CHW::Present()
             stats.fFPS, averageFrame, intervalMaxFrame, intervalFrameCount,
             stats.fFrameMoveReal, stats.fRenderReal, stats.fParallelWaitReal,
             averagePresent, averageSwap,
-            GEnv.Render->GetCacheStatCalls(), GEnv.Render->GetCacheStatPolys(),
+            drawCalls, polygons,
             g_bEnableStatGather ? 1 : 0,
             Device.dwWidth, Device.dwHeight, drawableWidth, drawableHeight);
         lastFrameReport = now;

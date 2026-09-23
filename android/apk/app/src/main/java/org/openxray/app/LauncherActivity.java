@@ -51,10 +51,9 @@ import java.util.concurrent.Executors;
 /**
  * Configuration and diagnostics front end for the native SDL engine.
  *
- * The launcher deliberately never rewrites the selected installation,
- * fsgame.ltx or user.ltx. It only stages OpenXRay-owned renderer data in the
- * app's private directory and passes explicit command-line choices to the
- * engine process.
+ * The launcher never rewrites game resources or fsgame.ltx. It stages only
+ * OpenXRay-owned renderer data privately, verifies the installation's normal
+ * _appdata_ directory is writable, and passes explicit choices to the engine.
  */
 public final class LauncherActivity extends Activity {
     public static final String EXTRA_GAME_PATH = "org.openxray.extra.GAME_PATH";
@@ -1008,12 +1007,21 @@ public final class LauncherActivity extends Activity {
                 refreshGameInspection();
                 return false;
             }
+            try {
+                prepareWritableAppData(root);
+            } catch (IOException | SecurityException error) {
+                writeLauncherLog("[launcher] _appdata_ write check failed: "
+                        + error.getClass().getSimpleName() + ": " + error.getMessage());
+                setStatus("Нет записи в папку STALKER/_appdata_: " + error.getMessage());
+                showPage(PAGE_GAME);
+                return false;
+            }
             if (!prepareBundledEngineData()) {
                 writeLauncherLog("[launcher] bundled OpenXRay engine data is unavailable");
                 setStatus("Не удалось подготовить внутренние данные рендера. Смотрите диагностику.");
                 return false;
             }
-            writeLauncherLog("[launcher] passing game root to engine without modifying it: " + selectedPath);
+            writeLauncherLog("[launcher] game root and writable _appdata_ are ready: " + selectedPath);
             return true;
         } catch (IOException | SecurityException error) {
             writeLauncherLog("[launcher] cannot prepare engine data: "
@@ -1021,6 +1029,46 @@ public final class LauncherActivity extends Activity {
             setStatus("Не удалось подготовить внутренние данные движка: " + error.getMessage());
             return false;
         }
+    }
+
+    private void prepareWritableAppData(File gameRoot) throws IOException {
+        File appData = new File(gameRoot, "_appdata_");
+        ensureDirectory(appData);
+        File saves = new File(appData, "savedgames");
+        File screenshots = new File(appData, "screenshots");
+        File logs = new File(appData, "logs");
+        ensureDirectory(saves);
+        ensureDirectory(screenshots);
+        ensureDirectory(logs);
+
+        probeWritableDirectory(appData);
+        probeWritableDirectory(saves);
+        probeWritableDirectory(screenshots);
+        probeWritableDirectory(logs);
+
+        writeLauncherLog("[launcher] verified writable app data: " + appData.getAbsolutePath());
+    }
+
+    private void probeWritableDirectory(File directory) throws IOException {
+        File probe = File.createTempFile(".openxray-write-test-", ".tmp", directory);
+        boolean deleted = false;
+        try (FileOutputStream output = new FileOutputStream(probe, false)) {
+            output.write("OpenXRay Android write test\n".getBytes(StandardCharsets.UTF_8));
+            output.flush();
+        } finally {
+            deleted = !probe.exists() || probe.delete();
+        }
+        if (!deleted)
+            throw new IOException("не удалось удалить проверочный файл " + probe.getAbsolutePath());
+    }
+
+    private void ensureDirectory(File directory) throws IOException {
+        if (directory.isDirectory())
+            return;
+        if (directory.exists())
+            throw new IOException(directory.getAbsolutePath() + " существует, но это не папка");
+        if (!directory.mkdirs() && !directory.isDirectory())
+            throw new IOException("не удалось создать " + directory.getAbsolutePath());
     }
 
     private boolean prepareBundledEngineData() throws IOException {
@@ -1174,6 +1222,8 @@ public final class LauncherActivity extends Activity {
         boolean fsgame = new File(root, "fsgame.ltx").isFile();
         boolean gamedata = new File(root, "gamedata").isDirectory();
         boolean resources = new File(root, "resources").isDirectory();
+        File appData = new File(root, "_appdata_");
+        boolean appDataWritable = appData.isDirectory() ? appData.canWrite() : root.canWrite();
         boolean socExecutable = new File(root, "bin/XR_3DA.exe").isFile()
                 || new File(root, "bin/xr_3da.exe").isFile();
         boolean laterExecutable = new File(root, "bin/xrEngine.exe").isFile()
@@ -1188,9 +1238,10 @@ public final class LauncherActivity extends Activity {
         gameInspection.setText("Профиль: " + profileName(activeGameVariant)
                 + " · папка читается · fsgame.ltx: " + yesNo(fsgame)
                 + " · gamedata: " + yesNo(gamedata)
-                + " · resources: " + yesNo(resources) + "\n" + hint
+                + " · resources: " + yesNo(resources)
+                + " · _appdata_ доступна для записи: " + yesNo(appDataWritable) + "\n" + hint
                 + mismatch + ". Проверка информационная и не изменяет файлы.");
-        gameInspection.setTextColor(fsgame && mismatch.isEmpty()
+        gameInspection.setTextColor(fsgame && appDataWritable && mismatch.isEmpty()
                 ? Color.rgb(25, 115, 55) : Color.rgb(150, 95, 25));
     }
 

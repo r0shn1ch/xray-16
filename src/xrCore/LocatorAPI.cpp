@@ -952,24 +952,6 @@ static xr_string android_engine_data_root()
     strconcat(sizeof(result), result, internal_path, "/openxray/engine-gamedata");
     return result;
 }
-
-static xr_string android_writable_root()
-{
-    const char* internal_path = SDL_AndroidGetInternalStoragePath();
-    if (!internal_path || !internal_path[0])
-        return {};
-
-    string_path openxray_root;
-    strconcat(sizeof(openxray_root), openxray_root, internal_path, "/openxray");
-    mkdir(openxray_root, 0775);
-
-    const pcstr game_folder = strstr(Core.Params, "-shoc") || strstr(Core.Params, "-soc") ? "soc" :
-        strstr(Core.Params, "-cs") ? "cs" : "cop";
-    string_path result;
-    strconcat(sizeof(result), result, openxray_root, "/", game_folder);
-    mkdir(result, 0775);
-    return result;
-}
 #endif
 
 void CLocatorAPI::_initialize(u32 flags, pcstr target_folder, pcstr fs_name)
@@ -1059,16 +1041,11 @@ void CLocatorAPI::_initialize(u32 flags, pcstr target_folder, pcstr fs_name)
 #if defined(XR_PLATFORM_ANDROID)
             if (is_app_data)
             {
-                const xr_string writable_root = android_writable_root();
-                if (!writable_root.empty())
-                {
-                    // Keep the selected PC installation read-only. Changing
-                    // this root while fsgame.ltx is expanded also makes all
-                    // later children ($game_saves$, $screenshots$, ...)
-                    // inherit the app-private writable location.
-                    P->_set_root(writable_root.c_str());
-                    Msg("* Android writable app-data root: %s", P->m_Path);
-                }
+                // Preserve the desktop filesystem contract: user.ltx, saves,
+                // screenshots and normal engine logs live under the selected
+                // installation's _appdata_ directory.  LauncherActivity
+                // verifies this exact path with a real write before startup.
+                Msg("* Android game app-data root: %s", P->m_Path);
             }
             else if (is_game_data)
             {

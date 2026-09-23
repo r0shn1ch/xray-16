@@ -50,8 +50,9 @@ offers internal resolution and graphics-preset selection, optional touch
 controls, a red FPS counter at the top center, log diagnostics, return-to-game,
 and a force-stop action for a stuck engine process. Auto graphics selects
 Minimum and an aspect-correct width of at most 1280 pixels. These choices are
-applied in memory after `user.ltx`; the selected game installation is not
-rewritten.
+applied in memory after `user.ltx`. Game resources and `fsgame.ltx` are not
+rewritten; settings, saves, screenshots and normal logs use the desktop-style
+`<STALKER>/_appdata_` directory, which must be writable.
 
 See [android/README.md](android/README.md) for the current build, installation,
 runtime and diagnostics instructions.
@@ -59,7 +60,7 @@ runtime and diagnostics instructions.
 Quick build with a prepared build kit:
 
 ```sh
-export XRAY_ANDROID_KIT_ROOT=/absolute/path/to/openxray-android-build-kit
+export XRAY_ANDROID_KIT_ROOT=/absolute/path/to/openxray-android-build-kit-v0.8.0
 ./android/build-harness.sh --apk
 ```
 

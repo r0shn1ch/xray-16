@@ -2,154 +2,213 @@
 
 This directory contains the experimental Android build maintained by this
 fork. It produces an SDL2 launcher APK and a native OpenXRay engine for the
-`armeabi-v7a` ABI.
+`armeabi-v7a` ABI. Proprietary S.T.A.L.K.E.R. files are not included.
 
-## Current scope and limitations
+## Runtime scope and limitations
 
 - Minimum Android version: Android 8.0 / API 26.
 - Target and compile SDK: API 36.
-- Packaged ABI: `armeabi-v7a` only. ARM64-only Android systems cannot install
-  it; an ARM64 device must retain 32-bit application support.
-- The build targets ARMv7-A with NEON. ReleaseMasterGold uses ARM instruction
-  mode, `-O3` and ThinLTO by default.
-- Gameplay rendering uses OpenGL ES 3.1+. At least four draw buffers and four
-  color attachments are required.
-- The Vulkan setting is a VK0 capability/presentation probe followed by an
-  explicit GLES gameplay fallback. `xrRenderVK` gameplay is not implemented.
-- Call of Pripyat is the intended game profile. Launcher entries for SoC and CS
-  pass existing compatibility flags; they are not a promise of additional
-  game support.
-- Proprietary game data is never included in the APK. The selected PC game
-  directory is treated as a read-only resource source.
+- Packaged ABI: `armeabi-v7a` only. A 64-bit phone is compatible only if its
+  Android build still supports 32-bit applications.
+- Gameplay needs OpenGL ES 3.1, at least four draw buffers and four color
+  attachments. Renderer decisions do not use GPU vendor/model allowlists.
+- The Vulkan choice currently runs a VK0 device/surface/swapchain/present probe
+  and then explicitly falls back to GLES gameplay. It is not a Vulkan gameplay
+  renderer yet.
+- Call of Pripyat is the intended profile. SoC and CS choices only pass the
+  existing compatibility flags and do not change upstream game support.
+- The 32-bit address space remains a limit for large levels and mods. Devices
+  without usable BC/S3TC texture support decode those textures in memory.
 
-The renderer uses API feature/version checks and contains no GPU vendor/model
-allowlist. Devices without usable BC/S3TC support decode affected textures in
-memory, which costs loading time, memory and bandwidth. Large levels and mods
-can also hit the ARMv7 process address-space limit regardless of physical RAM.
+The launcher is portrait and the engine activity is landscape. The engine uses
+the selected installation as its filesystem root. In particular, the normal
+desktop paths remain in use:
 
-## Build with the prepared kit
+```text
+<STALKER>/_appdata_/user.ltx
+<STALKER>/_appdata_/savedgames/
+<STALKER>/_appdata_/screenshots/
+<STALKER>/_appdata_/logs/
+```
 
-The recommended build uses an extracted kit containing the pinned NDK, SDK,
-ARMv7 dependencies, SDL2 Android project, Gradle and its offline cache:
+The launcher creates the four `_appdata_` directories when needed and performs
+an actual write/delete test before starting the engine. Game resources,
+archives, shaders and `fsgame.ltx` are not rewritten.
+
+## Supported build host
+
+The maintained build path is Linux x86_64. On Debian or Ubuntu install the host
+tools first:
 
 ```sh
-export XRAY_ANDROID_KIT_ROOT=/absolute/path/to/openxray-android-build-kit
+sudo apt update
+sudo apt install git openjdk-17-jdk python3 ninja-build cmake unzip zip zstd
+```
+
+JDK 17 is required by the pinned Android Gradle Plugin. `adb`, `aapt`,
+`zipalign` and `apksigner` come from the Android SDK in the prepared kit. The
+kit also supplies the static `qemu-i386` used by the LuaJIT cross-build helper.
+
+Clone the fork with submodules and select its `dev` branch:
+
+```sh
+git clone --recursive https://github.com/r0shn1ch/xray-16.git
+cd xray-16
+git switch dev
+git submodule update --init --recursive
+```
+
+## Recommended build with the prepared kit
+
+Extract the OpenXRay Android build-kit archive. Its top-level directory must
+contain `build-kit-env.sh`, `BUILD-MANIFEST.txt` and `toolchain/`. The currently
+tested kit contains:
+
+- Android NDK r30 (`30.0.16248370`);
+- Android SDK platform 36, build-tools 36.0.0 and platform-tools;
+- CMake 3.31.6 and Ninja;
+- Gradle 8.1.1 with an offline dependency cache;
+- SDL 2.30.2 source and prebuilt ARMv7 SDL2, OpenAL Soft, JPEG, Ogg, Vorbis,
+  Theora and LZO dependencies;
+- `qemu-i386-static` for the LuaJIT host bootstrap.
+
+Build the complete APK from the repository root:
+
+```sh
+export XRAY_ANDROID_KIT_ROOT=/absolute/path/to/openxray-android-build-kit-v0.8.0
+test -f "$XRAY_ANDROID_KIT_ROOT/build-kit-env.sh"
 ./android/build-harness.sh --apk
 ```
 
-`build-harness.sh --native` builds only the native engine target. The APK is
-written to:
+Build only the native engine with:
+
+```sh
+./android/build-harness.sh --native
+```
+
+The APK and reproducibility manifest are written to:
 
 ```text
 build/openxray-armv7-launcher-v<android/PORT_VERSION>-debug.apk
+build/android-apk-armv7/build-manifest.txt
 ```
 
-The checked-out source must already contain the current Android implementation.
-Files under `android/patches/` are retained for older port history and are not
-a supported way to upgrade an arbitrary upstream checkout to the current
-version.
-
-## Build with an existing Android toolchain
-
-Set these paths before running the APK script:
+Android ReleaseMasterGold builds use ARM instruction mode and `-O2`. LTO is
+disabled by default while the ARMv7 startup regression is being isolated. Both
+settings can be changed explicitly for comparison builds:
 
 ```sh
-export ANDROID_NDK_HOME=/path/to/android-ndk
-export ANDROID_SDK_ROOT=/path/to/android-sdk
-export ANDROID_DEPS_PREFIX=/path/to/android-deps-armv7
-export SDL2_ANDROID_HOME=/path/to/SDL
-export GRADLE_BIN=/path/to/gradle/bin/gradle  # optional when SDL gradlew works
+XRAY_ANDROID_ENABLE_LTO=ON ./android/build-harness.sh --apk
+XRAY_ANDROID_ARM_MODE=thumb ./android/build-harness.sh --apk
+```
+
+Do not use those overrides for a baseline bug report. The manifest records the
+commit, toolchain paths, ARM mode and LTO choice used for each build.
+
+## Build with a separately installed toolchain
+
+This path is for maintainers who already have matching ARMv7 dependencies. The
+repository does not currently build all third-party Android libraries from
+source, so `ANDROID_DEPS_PREFIX` is mandatory.
+
+Install SDK components equivalent to the prepared kit, for example:
+
+```sh
+sdkmanager \
+  "platform-tools" \
+  "platforms;android-36" \
+  "build-tools;36.0.0" \
+  "cmake;3.31.6" \
+  "ndk;30.0.16248370"
+```
+
+Then export absolute paths and build:
+
+```sh
+export ANDROID_NDK_HOME=/absolute/path/to/android-sdk/ndk/30.0.16248370
+export ANDROID_SDK_ROOT=/absolute/path/to/android-sdk
+export ANDROID_DEPS_PREFIX=/absolute/path/to/android-deps-armv7
+export SDL2_ANDROID_HOME=/absolute/path/to/SDL-2.30.2
+export GRADLE_BIN=/absolute/path/to/gradle-8.1.1/bin/gradle
+export XRAY_QEMU_I386_STATIC=/absolute/path/to/qemu-i386-static
 ./android/build-apk-armv7.sh
 ```
 
-`ANDROID_DEPS_PREFIX` must contain ARMv7 builds of SDL2, OpenAL Soft, JPEG,
-Ogg, Vorbis, Theora and LZO. Recursive source submodules must also be present;
-`android/prepare-source.sh` initializes them for a normal git checkout and
-validates the required source trees before CMake starts.
-
-Release defaults favor runtime performance. For diagnostic builds only, LTO
-can be disabled with `XRAY_ANDROID_ENABLE_LTO=OFF`; compact Thumb mode can be
-requested with `XRAY_ANDROID_ARM_MODE=thumb`.
-
-The packaging script strips the staged native libraries, verifies that the APK
-contains that exact engine, checks the ABI and version, applies 16 KiB ZIP
-alignment and signs with the Gradle debug key. This is a debug-signed test APK,
-not a Play Store release.
+The dependency prefix must provide `lib/cmake/SDL2/SDL2Config.cmake` and ARMv7
+builds of SDL2, OpenAL Soft, JPEG, Ogg, Vorbis, Theora and LZO. The packaging
+script checks the version and ABI, compares the packaged `libmain.so` with the
+just-built engine, rejects duplicate assets, applies 16 KiB ZIP alignment and
+verifies the debug signature.
 
 ## Install and run
 
+Enable USB debugging, connect the device, then check its ABI support:
+
 ```sh
-adb install -r build/openxray-armv7-launcher-v0.9.13-debug.apk
+adb devices
+adb shell getprop ro.product.cpu.abilist
+adb install -r build/openxray-armv7-launcher-v0.9.14-debug.apk
 adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
 ```
 
-On Android 11 or newer, grant **All files access** when the PC installation is
-stored in shared storage. On Android 8–10, grant the requested storage
-permissions. The launcher itself is portrait; the separate engine activity is
-landscape.
+If `adb install -r` reports an incompatible signature, the installed APK was
+signed with another debug key. Back up anything important, then reinstall:
 
-Choose Call of Pripyat and point the launcher at the installation root that
-contains `fsgame.ltx` and the normal resource directories/archives. The
-launcher does not download, repair, copy or rewrite the installation.
-Settings, saves and screenshots are written to the app-private per-game
-directory instead of the selected PC installation. They are therefore removed
-when Android uninstalls the application; use Android backup or `adb` before an
-uninstall if those files must be preserved.
+```sh
+adb uninstall org.openxray.stalker
+adb install build/openxray-armv7-launcher-v0.9.14-debug.apk
+```
 
-Launcher settings are passed as explicit engine arguments:
+Uninstalling clears launcher preferences and private renderer support files,
+but saves and `user.ltx` under the selected installation's `_appdata_` remain.
 
-- **Renderer:** Auto and OpenGL ES both use GLES. Vulkan first runs the Vulkan
-  probe and then uses GLES for gameplay.
-- **Graphics:** Auto selects Minimum. Minimum also disables sun/detail/TSM
-  shadows and water reflections. Low through Extreme remain selectable.
-- **3D resolution:** Auto uses the native aspect ratio with a width no greater
-  than 1280; lower standard modes and native resolution are selectable. The
-  Android window remains at the physical landscape size and the final image is
-  scaled to it.
-- **FPS:** enables the engine counter in opaque red at the top center.
-- **Touch controls:** optional overlay including Escape; free screen space
-  controls the mouse.
+On Android 11 or newer, grant the launcher **All files access**. On Android
+8–10, grant the requested storage permissions. Select a normal shared-storage
+filesystem path such as `/storage/emulated/0/STALKER`, not a cloud/document
+provider URI. The root must contain `fsgame.ltx` and the original game
+directories or archives. The launcher will refuse to start if it cannot create
+and write `<STALKER>/_appdata_`.
 
-If the engine process is still alive, the launch button becomes **Return to
-running game** and a separate stop button can terminate a stuck engine after
-confirmation.
+Launcher options are applied after reading `user.ltx` and before game startup:
 
-## Renderer and performance diagnostics
+- **Renderer:** Auto and OpenGL ES use GLES; Vulkan runs the probe then GLES.
+- **Graphics:** Auto selects Minimum. Low through Extreme remain selectable.
+- **3D resolution:** Auto keeps the display aspect ratio and caps internal
+  width at 1280; lower fixed choices and native resolution are available.
+- **FPS:** shows the engine counter in opaque red at the top center.
+- **Touch controls:** optional overlay including Escape.
 
-The GLES smoke test creates the same OpenXRay GLES 3.1 context path, compiles
-and links an ES 3.1 shader pair, draws a triangle and validates a pixel
-readback. The Vulkan test creates and presents a swapchain image, records
-capabilities, and then runs the GLES smoke fallback. Neither test proves that
-all game/mod shaders work on a physical device.
+## Diagnostics
 
-During gameplay, `[frame-trace]` records smoothed FPS, frame average/maximum,
-update/render/task-wait time, present/swap time, draw calls, polygons, internal
-resolution and drawable size every five seconds. This tracing is intentionally
-lighter than the full `rs_stats` overlay.
+The diagnostics page reads bounded log tails on a background thread. Android
+bootstrap/crash logs are normally available at:
 
-The diagnostics page reads only bounded log tails on a background executor:
+```text
+/storage/emulated/0/openxray/android.log
+/storage/emulated/0/openxray/activity.log
+```
 
-- `/storage/emulated/0/openxray/android.log`
-- `/storage/emulated/0/openxray/activity.log`
-- app-specific external/internal fallbacks when shared storage is unavailable
-
-For a report, reproduce at least 30 seconds of gameplay and collect both logs
-plus crash logcat when applicable:
+The engine's normal log path remains `<STALKER>/_appdata_/logs/`. For a crash
+report, start from a cleared logcat and collect all three sources:
 
 ```sh
 adb logcat -c
 adb shell am force-stop org.openxray.stalker
 adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
+# Reproduce the problem, then run:
 adb logcat -d -b all -v threadtime OpenXRay:I DEBUG:E '*:S' > openxray-logcat.txt
 adb logcat -d -b crash -v threadtime > openxray-crash.txt
 adb pull /sdcard/openxray/android.log openxray-engine.log
 adb pull /sdcard/openxray/activity.log openxray-activity.log
+adb pull /sdcard/STALKER/_appdata_/logs openxray-game-logs
 ```
 
-The unstripped `bin/armv7-a/ReleaseMasterGold/libmain.so` from the same commit
-is required for useful native symbolication.
+The unstripped `bin/armv7-a/ReleaseMasterGold/libmain.so` from the exact same
+commit is required for native symbolication. Activity diagnostics record the
+APK version, version code and native git revision so stale installations can be
+identified.
 
-For implementation constraints and Vulkan status, see
+Implementation constraints and Vulkan milestones are documented in
 [PORT_AUDIT.md](PORT_AUDIT.md) and
-[VULKAN_RENDERER_PLAN.md](VULKAN_RENDERER_PLAN.md). Launcher-specific behavior
-is summarized in [apk/README.md](apk/README.md).
+[VULKAN_RENDERER_PLAN.md](VULKAN_RENDERER_PLAN.md). Launcher behavior is
+summarized in [apk/README.md](apk/README.md).

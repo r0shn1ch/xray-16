@@ -7,12 +7,21 @@ namespace xray::render::RENDER_NAMESPACE
 {
 bool UseVertexAttribBinding()
 {
+#if defined(XR_PLATFORM_ANDROID)
+    // Keep the known-good GLES vertex-input path for now.  The ES 3.1
+    // separate-binding fast path changed state ownership for every draw and
+    // was the only renderer-wide dispatch change between the last confirmed
+    // playable Android build and the startup-crashing build.  The legacy
+    // glVertexAttribPointer path is core GLES and portable across vendors.
+    return false;
+#else
     // Vertex-attrib binding is core in desktop GL 4.3 and GLES 3.1.  GLAD's
     // extension bit alone stays false on GLES implementations that expose the
     // feature through the core API, unnecessarily forcing an expensive
     // glVertexAttribPointer update for every vertex-buffer/base-vertex change.
     return (GLAD_GL_VERSION_4_3 || GLAD_GL_ES_VERSION_3_1 || GLAD_GL_ARB_vertex_attrib_binding) &&
         glBindVertexBuffer && glVertexAttribFormat && glVertexAttribBinding;
+#endif
 }
 
 enum
