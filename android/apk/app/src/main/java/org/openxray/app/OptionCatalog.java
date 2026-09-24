@@ -11,8 +11,8 @@ final class OptionCatalog {
     static final String[] RENDERER_LABELS = { "Автоматически (OpenGL ES)", "OpenGL ES", "Vulkan (экспериментальный fallback)" };
     static final String[] RENDERER_ARGS = { "-renderer-auto", "-renderer-gles", "-renderer-vulkan" };
 
-    static final String[] GRAPHICS_LABELS = { "Автоматически для Android (Minimum)", "Minimum", "Low", "Default", "High", "Extreme" };
-    static final String[] GRAPHICS_PRESETS = { "Minimum", "Minimum", "Low", "Default", "High", "Extreme" };
+    static final String[] GRAPHICS_LABELS = { "Автоматически для Android (Low)", "Minimum", "Low", "Default", "High", "Extreme" };
+    static final String[] GRAPHICS_PRESETS = { "Low", "Minimum", "Low", "Default", "High", "Extreme" };
 
     static String value(String[] values, int index, int fallback) {
         return values[index >= 0 && index < values.length ? index : fallback];

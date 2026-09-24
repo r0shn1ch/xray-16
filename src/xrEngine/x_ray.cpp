@@ -1012,8 +1012,6 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
             Msg("[android] applying launcher mobile preset: %s", preset);
             Console->Execute(command);
 
-            // Apply engine-owned Android adjustments from a config shipped
-            // with the APK, separately from the read-only PC installation.
             if (0 == xr_stricmp(preset, "Minimum"))
             {
                 if (const char* internal = SDL_AndroidGetInternalStoragePath())

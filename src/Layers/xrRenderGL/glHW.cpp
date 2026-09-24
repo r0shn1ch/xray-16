@@ -185,9 +185,6 @@ void CHW::CreateDevice(SDL_Window* hWnd)
     {
         UpdateVSync();
 
-        // Opt-in on release Android builds: callback identifies the GL call
-        // that produced an error instead of finding only the pending 0x500
-        // at the end of the frame. Leave it disabled during FPS measurements.
         bool debugOutput = false;
 #ifdef DEBUG
         debugOutput = true;
@@ -391,8 +388,6 @@ void CHW::Present()
     }
     if (reportedPendingErrors && !androidDebugCallbackInstalled && glDebugMessageCallback)
     {
-        // Only enable tracing after a real renderer error. This identifies
-        // the generating call on the next frame without slowing clean runs.
         glEnable(GL_DEBUG_OUTPUT);
         glDebugMessageCallback((GLDEBUGPROC)OnDebugCallback, nullptr);
         androidDebugCallbackInstalled = true;

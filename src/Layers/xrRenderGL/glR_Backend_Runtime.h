@@ -50,9 +50,6 @@ IC void CBackend::set_ZB(GLuint ZB)
     }
 }
 
-// Clear a color target without leaving a different attachment or draw-buffer
-// mapping behind. The render cache may otherwise skip the next set_RT call,
-// while the actual FBO still points at the temporary clear target.
 struct ScopedColorTargetClear
 {
     CBackend& backend;

@@ -62,8 +62,6 @@ IRender_Sector::sector_id_t R_dsgraph_structure::detect_sector(const Fvector& P,
     else
         return IRender_Sector::INVALID_SECTOR_ID;
 
-    // The two IDs index different collision models. Equal numeric IDs do
-    // not mean the geometry hit came from the portal model.
     if (portalHit)
     {
         // Take sector, facing to our point from portal

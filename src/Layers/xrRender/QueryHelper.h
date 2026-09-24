@@ -70,9 +70,6 @@ IC HRESULT GetData(GLuint query, void* pData, u32 DataSize)
         return E_FAIL;
     if (GLAD_GL_ES_VERSION_3_0)
     {
-        // GLES supports boolean occlusion queries, not desktop sample-count
-        // queries. Use the unsigned GLES entry point and check availability
-        // before requesting a result, so the query does not stall the GPU.
         VERIFY(DataSize == sizeof(GLuint));
         GLuint available = GL_FALSE;
         CHK_GL(glGetQueryObjectuiv(query, GL_QUERY_RESULT_AVAILABLE, &available));
@@ -89,13 +86,23 @@ IC HRESULT GetData(GLuint query, void* pData, u32 DataSize)
 
 IC HRESULT BeginQuery(GLuint query)
 {
-    CHK_GL(glBeginQuery(GLAD_GL_ES_VERSION_3_0 ? GL_ANY_SAMPLES_PASSED : GL_SAMPLES_PASSED, query));
+    const GLenum target = GLAD_GL_ES_VERSION_3_0 ? GL_ANY_SAMPLES_PASSED : GL_SAMPLES_PASSED;
+    GLint active = 0;
+    glGetQueryiv(target, GL_CURRENT_QUERY, &active);
+    if (active != 0)
+        return E_FAIL;
+    CHK_GL(glBeginQuery(target, query));
     return S_OK;
 }
 
 IC HRESULT EndQuery(GLuint query)
 {
-    CHK_GL(glEndQuery(GLAD_GL_ES_VERSION_3_0 ? GL_ANY_SAMPLES_PASSED : GL_SAMPLES_PASSED));
+    const GLenum target = GLAD_GL_ES_VERSION_3_0 ? GL_ANY_SAMPLES_PASSED : GL_SAMPLES_PASSED;
+    GLint active = 0;
+    glGetQueryiv(target, GL_CURRENT_QUERY, &active);
+    if (active != static_cast<GLint>(query))
+        return E_FAIL;
+    CHK_GL(glEndQuery(target));
     return S_OK;
 }
 

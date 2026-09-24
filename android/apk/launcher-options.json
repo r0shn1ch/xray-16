@@ -11,7 +11,7 @@
     {"label": "Vulkan (экспериментальный fallback)", "arg": "-renderer-vulkan"}
   ],
   "graphics": [
-    {"label": "Автоматически для Android (Minimum)", "preset": "Minimum"},
+    {"label": "Автоматически для Android (Low)", "preset": "Low"},
     {"label": "Minimum", "preset": "Minimum"},
     {"label": "Low", "preset": "Low"},
     {"label": "Default", "preset": "Default"},

@@ -99,9 +99,6 @@ public final class XRayActivity extends SDLActivity {
 
     @Override
     public void superOnBackPressed() {
-        // SDL's manualBackButton() invokes this hook directly, bypassing
-        // onBackPressed(). Route both Android and SDL back events through the
-        // same task transition so SDL does not destroy a running engine.
         onBackPressed();
     }
 

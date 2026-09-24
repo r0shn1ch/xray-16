@@ -270,7 +270,7 @@ public final class LauncherActivity extends Activity {
         root.addView(title, matchWrap());
 
         TextView version = new TextView(this);
-        version.setText("Версия " + BuildConfig.VERSION_NAME + " · ARMv7 · GLES / Vulkan probe");
+        version.setText("Версия " + BuildConfig.VERSION_NAME + " · ARMv7");
         version.setTextSize(13);
         version.setPadding(0, 0, 0, dp(10));
         root.addView(version, matchWrap());
@@ -303,9 +303,7 @@ public final class LauncherActivity extends Activity {
     private View buildGamePage() {
         LinearLayout content = pageContent();
         addSectionTitle(content, "Профиль игры");
-        content.addView(bodyText(
-                "Для каждой игры сохраняется отдельная папка. Профиль передаётся движку штатным ключом; "
-                        + "файлы установки и конфиги не переписываются."), matchWrap());
+        content.addView(bodyText("Выберите профиль игры."), matchWrap());
 
         gameVariant = new Spinner(this);
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
@@ -327,9 +325,7 @@ public final class LauncherActivity extends Activity {
 
         addSectionTitle(content, "Установка игры");
 
-        content.addView(bodyText(
-                "Выберите корневую папку оригинальной ПК-версии. Лаунчер не меняет её содержимое; "
-                        + "OpenXRay читает ресурсы напрямую."), matchWrap());
+        content.addView(bodyText("Выберите папку установки с fsgame.ltx."), matchWrap());
 
         gamePath = new EditText(this);
         gamePath.setSingleLine(true);
@@ -368,9 +364,9 @@ public final class LauncherActivity extends Activity {
         stopParams.setMarginStart(dp(6));
         launchActions.addView(stopButton, stopParams);
         content.addView(launchActions, matchWrap());
-        content.addView(actionButton("Проверить GLES без игровых файлов", view -> launchEngine(true)),
+        content.addView(actionButton("Проверка GLES", view -> launchEngine(true)),
                 new LinearLayout.LayoutParams(-1, dp(52)));
-        content.addView(actionButton("Проверить Vulkan + GLES fallback", view -> launchVulkanSmoke()),
+        content.addView(actionButton("Проверка Vulkan", view -> launchVulkanSmoke()),
                 new LinearLayout.LayoutParams(-1, dp(52)));
 
         status = bodyText("Готово к настройке.");
@@ -383,9 +379,7 @@ public final class LauncherActivity extends Activity {
     private View buildSettingsPage() {
         LinearLayout content = pageContent();
         addSectionTitle(content, "Рендерер");
-        content.addView(bodyText(
-                "Авто сохраняет штатное определение движка и выбирает OpenGL ES на Android. "
-                        + "Vulkan пока является экспериментальным резервным режимом с безопасным GLES fallback."),
+        content.addView(bodyText("Для игры используется OpenGL ES. Vulkan доступен для проверки."),
                 matchWrap());
         rendererMode = new Spinner(this);
         ArrayAdapter<String> rendererAdapter = new ArrayAdapter<>(this,
@@ -395,9 +389,7 @@ public final class LauncherActivity extends Activity {
         content.addView(rendererMode, matchWrap());
 
         addSectionTitle(content, "Графика");
-        content.addView(bodyText(
-                "Настройки применяются после user.ltx, но до запуска игры. Авто использует Minimum на Android, "
-                        + "чтобы старый desktop-конфиг High/Extreme не перегружал телефон."),
+        content.addView(bodyText("Автоматический профиль: Low."),
                 matchWrap());
         graphicsPreset = new Spinner(this);
         ArrayAdapter<String> graphicsAdapter = new ArrayAdapter<>(this,
@@ -407,10 +399,7 @@ public final class LauncherActivity extends Activity {
         content.addView(graphicsPreset, matchWrap());
 
         addSectionTitle(content, "Разрешение 3D-рендера");
-        content.addView(bodyText(
-                "Экран Android остаётся в нативном ландшафтном режиме, а движок рендерит 3D в выбранном "
-                        + "разрешении и масштабирует кадр. Это сохраняет правильную ориентацию и серьёзно "
-                        + "снижает нагрузку на GPU."), matchWrap());
+        content.addView(bodyText("Снижение разрешения ускоряет рендеринг, но уменьшает чёткость."), matchWrap());
         buildRenderResolutionList();
         renderResolution = new Spinner(this);
         ArrayAdapter<RenderResolution> resolutionAdapter = new ArrayAdapter<>(this,
@@ -420,19 +409,16 @@ public final class LauncherActivity extends Activity {
         content.addView(renderResolution, matchWrap());
 
         addSectionTitle(content, "Управление и экран");
-        gamepadEnabled = makeCheckBox("Включить поддержку геймпада",
-                "Если выключено, движок получает -no_gamepad.");
+        gamepadEnabled = makeCheckBox("Включить поддержку геймпада", "Подключённый контроллер.");
         touchControlsEnabled = makeCheckBox("Показывать сенсорное управление",
                 "Экранный стик и кнопки движения, огня, взаимодействия и инвентаря. "
                         + "Свободная область работает как мышь.");
-        splashEnabled = makeCheckBox("Показывать заставку OpenXRay",
-                "Не влияет на оригинальные игровые intro-видео.");
+        splashEnabled = makeCheckBox("Показывать заставку OpenXRay", "Заставка при запуске.");
         keepScreenOn = makeCheckBox("Не выключать экран во время игры",
                 "Предотвращает системную блокировку при загрузке.");
         immersiveMode = makeCheckBox("Полноэкранный режим Android",
                 "Скрывает системные панели; жест от края временно возвращает их.");
-        showFps = makeCheckBox("Показывать FPS",
-                "Лаунчер включает красный счётчик кадров движка по центру сверху.");
+        showFps = makeCheckBox("Показывать FPS", "Счётчик кадров во время игры.");
         content.addView(gamepadEnabled, matchWrap());
         content.addView(touchControlsEnabled, matchWrap());
         content.addView(splashEnabled, matchWrap());
@@ -441,9 +427,7 @@ public final class LauncherActivity extends Activity {
         content.addView(showFps, matchWrap());
 
         addSectionTitle(content, "Дополнительные аргументы");
-        content.addView(bodyText(
-                "Аргументы разбираются без shell. Кавычки поддерживаются. Путь, профиль игры и smoke-режим "
-                        + "задаются полями выше и не могут быть переопределены здесь."), matchWrap());
+        content.addView(bodyText("Необязательные параметры движка."), matchWrap());
         customArgs = new EditText(this);
         customArgs.setHint("Например: -novtf");
         customArgs.setMinLines(2);
@@ -806,10 +790,6 @@ public final class LauncherActivity extends Activity {
         ++stopGeneration; // Cancel pending retries before any new launch or reattach.
         if (!rendererSmoke && isEngineProcessRunning()) {
             setStatus("Возвращаю уже запущенный движок на экран…");
-            // singleTask reuses the existing SDL Activity, including when
-            // Android placed the engine in a different task. Do not finish
-            // the launcher: it may be the task root and taking it down can
-            // destroy the engine Activity while its native thread is running.
             Intent resume = new Intent(this, XRayActivity.class);
             resume.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             try {

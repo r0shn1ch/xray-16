@@ -147,7 +147,7 @@ Enable USB debugging, connect the device, then check its ABI support:
 ```sh
 adb devices
 adb shell getprop ro.product.cpu.abilist
-adb install -r build/openxray-armv7-launcher-v0.9.16-debug.apk
+adb install -r build/openxray-armv7-launcher-v0.9.24-debug.apk
 adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
 ```
 
@@ -156,7 +156,7 @@ signed with another debug key. Back up anything important, then reinstall:
 
 ```sh
 adb uninstall org.openxray.stalker
-adb install build/openxray-armv7-launcher-v0.9.16-debug.apk
+adb install build/openxray-armv7-launcher-v0.9.24-debug.apk
 ```
 
 Uninstalling clears launcher preferences and private renderer support files,
@@ -172,7 +172,7 @@ and write `<STALKER>/_appdata_`.
 Launcher options are applied after reading `user.ltx` and before game startup:
 
 - **Renderer:** Auto and OpenGL ES use GLES; Vulkan runs the probe then GLES.
-- **Graphics:** Auto selects Minimum. Low through Extreme remain selectable.
+- **Graphics:** Auto selects Low. Low through Extreme remain selectable.
 - **3D resolution:** Auto keeps the display aspect ratio and caps internal
   width at 1280; lower fixed choices and native resolution are available.
 - **FPS:** shows the engine counter in opaque red at the top center.
@@ -208,7 +208,5 @@ commit is required for native symbolication. Activity diagnostics record the
 APK version, version code and native git revision so stale installations can be
 identified.
 
-Implementation constraints and Vulkan milestones are documented in
-[PORT_AUDIT.md](PORT_AUDIT.md) and
-[VULKAN_RENDERER_PLAN.md](VULKAN_RENDERER_PLAN.md). Launcher behavior is
-summarized in [apk/README.md](apk/README.md).
+Platform boundaries are documented in [PORT_AUDIT.md](PORT_AUDIT.md). Launcher
+behavior is summarized in [apk/README.md](apk/README.md).
