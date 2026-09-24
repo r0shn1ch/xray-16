@@ -162,6 +162,7 @@ public final class XRayActivity extends SDLActivity {
         int renderHeight = getIntent().getIntExtra(LauncherActivity.EXTRA_RENDER_HEIGHT, 720);
         boolean showFps = getIntent().getBooleanExtra(LauncherActivity.EXTRA_SHOW_FPS, true);
         ArrayList<String> args = new ArrayList<>();
+        args.add("-unique_logs");
 
         if (rendererSmoke) {
             args.add(vulkanRendererSmoke ? "-renderer-vulkan-smoke" : "-renderer-smoke");
@@ -248,28 +249,15 @@ public final class XRayActivity extends SDLActivity {
     }
 
     private File createDiagnosticsFile() {
-        File publicFile = new File(Environment.getExternalStorageDirectory(), "openxray/activity.log");
-        if (canAppend(publicFile))
-            return publicFile;
-
-        File root = getExternalFilesDir("openxray");
-        if (root == null)
-            root = new File(getFilesDir(), "openxray");
-        if (!root.exists() && !root.mkdirs())
-            Log.e(TAG, "Unable to create diagnostics directory: " + root);
-        return new File(root, "activity.log");
-    }
-
-    private boolean canAppend(File file) {
-        File parent = file.getParentFile();
-        if (parent == null || (!parent.exists() && !parent.mkdirs()))
-            return false;
-
-        try (FileOutputStream stream = new FileOutputStream(file, true)) {
-            return true;
+        try {
+            return SessionLogs.start(this, getIntent().getStringExtra(LauncherActivity.EXTRA_GAME_PATH));
         } catch (IOException | SecurityException error) {
-            Log.w(TAG, "Shared-storage diagnostics unavailable: " + file, error);
-            return false;
+            Log.e(TAG, "Unable to create game-directory diagnostics", error);
+            try {
+                return SessionLogs.start(this, null);
+            } catch (IOException fallback) {
+                throw new IllegalStateException("Unable to create diagnostics", fallback);
+            }
         }
     }
 

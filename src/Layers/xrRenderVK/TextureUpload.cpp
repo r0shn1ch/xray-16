@@ -32,7 +32,8 @@ bool upload_texture(VkDevice device, VkQueue queue, VkCommandPool pool,
     const DdsTexture& source, UploadedTexture& result, std::string& error)
 {
     result = {};
-    if (source.format == VK_FORMAT_UNDEFINED || source.pixels.empty() || source.copies.empty())
+    if (source.format == VK_FORMAT_UNDEFINED || source.pixels.empty() || source.copies.empty() || !source.mip_levels ||
+        (source.layers != 1 && source.layers != 6) || (source.cube != (source.layers == 6)))
     {
         error = "texture data is empty";
         return false;
@@ -86,8 +87,9 @@ bool upload_texture(VkDevice device, VkQueue queue, VkCommandPool pool,
     image_info.imageType = VK_IMAGE_TYPE_2D;
     image_info.format = source.format;
     image_info.extent = source.extent;
-    image_info.mipLevels = static_cast<uint32_t>(source.copies.size());
-    image_info.arrayLayers = 1;
+    image_info.mipLevels = source.mip_levels;
+    image_info.arrayLayers = source.layers;
+    image_info.flags = source.cube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0;
     image_info.samples = VK_SAMPLE_COUNT_1_BIT;
     image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
     image_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -124,7 +126,9 @@ bool upload_texture(VkDevice device, VkQueue queue, VkCommandPool pool,
     barrier.image = result.image;
     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     barrier.subresourceRange.levelCount = image_info.mipLevels;
-    barrier.subresourceRange.layerCount = 1;
+    barrier.subresourceRange.layerCount = source.layers;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     vk.cmd_pipeline_barrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
         0, 0, nullptr, 0, nullptr, 1, &barrier);
     vk.cmd_copy_buffer_to_image(command, staging, result.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -133,7 +137,7 @@ bool upload_texture(VkDevice device, VkQueue queue, VkCommandPool pool,
     barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vk.cmd_pipeline_barrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+    vk.cmd_pipeline_barrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
         0, 0, nullptr, 0, nullptr, 1, &barrier);
     if (vk.end_command_buffer(command) != VK_SUCCESS)
         return fail("Vulkan upload command finalization failed");
@@ -152,11 +156,11 @@ bool upload_texture(VkDevice device, VkQueue queue, VkCommandPool pool,
 
     VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     view_info.image = result.image;
-    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.viewType = source.cube ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
     view_info.format = source.format;
     view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     view_info.subresourceRange.levelCount = image_info.mipLevels;
-    view_info.subresourceRange.layerCount = 1;
+    view_info.subresourceRange.layerCount = source.layers;
     if (vk.create_image_view(device, &view_info, nullptr, &result.view) != VK_SUCCESS)
         return fail("Vulkan texture view creation failed");
     error.clear();

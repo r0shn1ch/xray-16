@@ -98,8 +98,7 @@ remove_path "$asset_root"
 mkdir -p "$asset_root/gamedata"
 cp "$repo_dir/res/fsgame.ltx" "$asset_root/fsgame.ltx"
 cp -R "$repo_dir/res/gamedata/." "$asset_root/gamedata/"
-cp "$repo_dir/android/apk/android_mobile_minimum.ltx" \
-    "$asset_root/gamedata/configs/android_mobile_minimum.ltx"
+cp "$repo_dir"/android/apk/quality_*.ltx "$asset_root/gamedata/configs/"
 if [ -d "$asset_root/gamedata/gamedata" ]; then
     echo "APK asset staging unexpectedly nested gamedata inside itself" >&2
     exit 1

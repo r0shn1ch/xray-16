@@ -9,13 +9,23 @@ namespace xray::render::RENDER_NAMESPACE
 // Assert this just in case
 static_assert(sizeof(void*) == sizeof(GLsync), "void* is used instead of GLsync, sizes should match");
 
-void R_sync_point::Create() {}
-void R_sync_point::Destroy() {}
+void R_sync_point::Create() { q_sync_count = 0; }
+void R_sync_point::Destroy()
+{
+    for (auto& fence : q_sync_point)
+    {
+        if (fence) glDeleteSync(static_cast<GLsync>(fence));
+        fence = nullptr;
+    }
+    q_sync_count = 0;
+}
 
 bool R_sync_point::Wait(u32 /*wait_sleep*/, u64 timeout)
 {
     ZoneScoped;
-    CHK_GL(q_sync_point[q_sync_count] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
+    // Wait only when reusing a slot, never on a fence just submitted by this frame.
+    if (!q_sync_point[q_sync_count])
+        return true;
 
     const auto status = glClientWaitSync((GLsync)q_sync_point[q_sync_count],
         GL_SYNC_FLUSH_COMMANDS_BIT, timeout * 1000 * 1000);
@@ -43,8 +53,12 @@ bool R_sync_point::Wait(u32 /*wait_sleep*/, u64 timeout)
 
 void R_sync_point::End()
 {
-    q_sync_count = (q_sync_count + 1) % HW.Caps.iGPUNum;
-    CHK_GL(glDeleteSync((GLsync)q_sync_point[q_sync_count]));
+    if (q_sync_point[q_sync_count])
+        CHK_GL(glDeleteSync(static_cast<GLsync>(q_sync_point[q_sync_count])));
+    CHK_GL(q_sync_point[q_sync_count] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
+    const u32 bufferedFrames = GLAD_GL_ES_VERSION_3_0 ? 2u : std::max(1u, HW.Caps.iGPUNum);
+    static_assert(CHWCaps::MAX_GPUS >= 2);
+    q_sync_count = (q_sync_count + 1) % bufferedFrames;
 }
 #elif defined(USE_DX11)
 void R_sync_point::Create()

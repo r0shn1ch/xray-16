@@ -66,12 +66,14 @@ The diagnostics page polls bounded 32 KiB tails on a background executor, so
 it does not load whole growing files on the UI thread. Primary Android paths:
 
 ```text
-/storage/emulated/0/openxray/android.log
-/storage/emulated/0/openxray/activity.log
+<game>/_appdata_/logs/session-<id>.engine.log
+<game>/_appdata_/logs/session-<id>.activity.log
 ```
 
 Normal engine logs are also written under `<STALKER>/_appdata_/logs/`.
-**Clear** only removes the Android diagnostic files; it does not delete saves,
+Each engine launch creates new, uniquely named files. Diagnostics displays and
+shares the latest session; previous sessions remain in the game directory.
+**Clear** removes the latest Android diagnostic files while the engine is stopped; it does not delete saves,
 screenshots, game files or `user.ltx`.
 
 Useful collection commands:
@@ -82,8 +84,6 @@ adb shell am force-stop org.openxray.stalker
 adb shell am start -n org.openxray.stalker/org.openxray.app.LauncherActivity
 adb logcat -d -b all -v threadtime OpenXRay:I DEBUG:E '*:S' > openxray-logcat.txt
 adb logcat -d -b crash -v threadtime > openxray-crash.txt
-adb pull /sdcard/openxray/android.log openxray-engine.log
-adb pull /sdcard/openxray/activity.log openxray-activity.log
 adb pull /sdcard/STALKER/_appdata_/logs openxray-game-logs
 ```
 

@@ -1309,6 +1309,11 @@ public final class LauncherActivity extends Activity {
 
     private String collectLogs() {
         StringBuilder result = new StringBuilder();
+        File[] session = SessionLogs.latest(this);
+        if (session.length != 0) {
+            for (File file : session) appendLog(result, file);
+            return result.toString();
+        }
         appendLog(result, new File(Environment.getExternalStorageDirectory(), "openxray/android.log"));
         appendLog(result, new File(Environment.getExternalStorageDirectory(), "openxray/activity.log"));
         File external = getExternalFilesDir("openxray");
@@ -1424,6 +1429,11 @@ public final class LauncherActivity extends Activity {
     }
 
     private void clearLogs() {
+        if (isEngineProcessRunning()) {
+            Toast.makeText(this, "Закройте игру перед очисткой текущего журнала", Toast.LENGTH_LONG).show();
+            return;
+        }
+        for (File file : SessionLogs.latest(this)) deleteLog(file);
         deleteLog(new File(Environment.getExternalStorageDirectory(), "openxray/android.log"));
         deleteLog(new File(Environment.getExternalStorageDirectory(), "openxray/activity.log"));
         File external = getExternalFilesDir("openxray");
@@ -1439,7 +1449,8 @@ public final class LauncherActivity extends Activity {
 
     private void writeLauncherLog(String message) {
         File externalRoot = getExternalFilesDir("openxray");
-        File[] candidates = new File[] {
+        File[] session = SessionLogs.latest(this);
+        File[] candidates = session.length != 0 ? new File[] {session[0]} : new File[] {
                 new File(Environment.getExternalStorageDirectory(), "openxray/android.log"),
                 externalRoot == null ? null : new File(externalRoot, "android.log"),
                 new File(getFilesDir(), "openxray/android.log")
