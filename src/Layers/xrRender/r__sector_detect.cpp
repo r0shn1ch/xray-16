@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "xrCDB/RayQuerySimd.h"
 
 namespace xray::render::RENDER_NAMESPACE
 {
@@ -121,7 +122,7 @@ void R_dsgraph_structure::audit_camera_sector(const Fvector& position, IRender_S
         }
         Msg("[sector-audit] begin frame=%u pos=(%.9g,%.9g,%.9g) selected=%u tree-path=%s triangles=%u",
             audit.frame, position.x, position.y, position.z, static_cast<u32>(sector),
-            CPU::HasSSE ? "simd" : "scalar", g_pGameLevel->ObjectSpace.GetStaticModel()->get_tris_count());
+            CDB::use_simd_ray_query(CPU::HasSSE) ? "simd" : "scalar", g_pGameLevel->ObjectSpace.GetStaticModel()->get_tris_count());
     }
 
     const u64 start = CPU::QPC();
