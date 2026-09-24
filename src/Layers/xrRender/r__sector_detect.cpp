@@ -111,12 +111,11 @@ void R_dsgraph_structure::audit_camera_sector(const Fvector& position, IRender_S
     }
 
     const u64 start = CPU::QPC();
-    const u64 budget = _max(u64(1), CPU::qpc_freq / 4000); // 0.25 ms per frame.
-    for (u32 tested = 0; audit.query < 4 && tested < 2048;)
+    const u64 budget = _max(u64(1), CPU::qpc_freq / 1000); // 1 ms per frame.
+    for (u32 tested = 0; audit.query < 2 && tested < 32768;)
     {
         const u32 query = audit.query;
         const auto* model = query % 2 ? RImplementation.rmPortals : g_pGameLevel->ObjectSpace.GetStaticModel();
-        auto& ref = audit.reference[query];
         if (model && audit.next_triangle < model->get_tris_count())
         {
             const u32 id = audit.next_triangle++;
@@ -125,54 +124,69 @@ void R_dsgraph_structure::audit_camera_sector(const Fvector& position, IRender_S
             const auto& a = verts[tri.verts[0]];
             const auto& b = verts[tri.verts[1]];
             const auto& c = verts[tri.verts[2]];
-            ref.test(id, {a.x, a.y, a.z}, {b.x, b.y, b.z}, {c.x, c.y, c.z});
+            // Both vertical rays share the same XZ projection. Rejecting an
+            // enclosing interval here does not depend on the collision tree.
+            const auto& pos = audit.position;
+            if (!((pos.x < a.x && pos.x < b.x && pos.x < c.x) ||
+                  (pos.x > a.x && pos.x > b.x && pos.x > c.x) ||
+                  (pos.z < a.z && pos.z < b.z && pos.z < c.z) ||
+                  (pos.z > a.z && pos.z > b.z && pos.z > c.z)))
+            {
+                for (u32 direction : {query, query + 2})
+                    audit.reference[direction].test(id, {a.x, a.y, a.z}, {b.x, b.y, b.z}, {c.x, c.y, c.z});
+            }
             ++tested;
             if (tested % 64 == 0 && CPU::QPC() - start >= budget)
                 break;
             continue;
         }
 
-        const int accelerated = audit.accelerated_id[query];
-        const auto sectorFor = [&](int id) -> u32
+        for (u32 resultQuery : {query, query + 2})
         {
-            if (id < 0 || !model)
-                return IRender_Sector::INVALID_SECTOR_ID;
-            const auto& tri = model->get_tris()[id];
-            if (query % 2)
-                return tri.dummy < Portals.size() ? Portals[tri.dummy]->getSectorFacing(audit.position)->unique_id :
-                    IRender_Sector::INVALID_SECTOR_ID;
-            return tri.sector;
-        };
-        const bool sameHit = (accelerated < 0 && ref.nearest < 0) ||
-            (accelerated >= 0 && ref.nearest >= 0 && sectorFor(accelerated) == sectorFor(ref.nearest) &&
-                _abs(double(audit.accelerated_range[query]) - ref.distance) < 0.001);
-        Msg("[sector-audit] frame=%u query=%s/%s tree=%d sector=%u range=%.6f "
-            "reference=%d sector=%u range=%.6f match=%d",
-            audit.frame, query < 2 ? "down" : "up", query % 2 ? "portals" : "static",
-            accelerated, sectorFor(accelerated), audit.accelerated_range[query],
-            ref.nearest, sectorFor(ref.nearest), ref.distance, sameHit);
-        if (!sameHit && model)
-        {
-            for (int id : {accelerated, ref.nearest})
+            auto& ref = audit.reference[resultQuery];
+            const int accelerated = audit.accelerated_id[resultQuery];
+            const auto sectorFor = [&](int id) -> u32
             {
-                if (id < 0)
-                    continue;
+                if (id < 0 || !model)
+                    return IRender_Sector::INVALID_SECTOR_ID;
                 const auto& tri = model->get_tris()[id];
-                const auto* verts = model->get_verts();
-                const auto& a = verts[tri.verts[0]];
-                const auto& b = verts[tri.verts[1]];
-                const auto& c = verts[tri.verts[2]];
-                Msg("[sector-audit] triangle=%d metadata=%08x a=(%.6f,%.6f,%.6f) "
-                    "b=(%.6f,%.6f,%.6f) c=(%.6f,%.6f,%.6f)", id, tri.dummy,
-                    a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+                if (resultQuery % 2)
+                    return tri.dummy < Portals.size() ? Portals[tri.dummy]->getSectorFacing(audit.position)->unique_id :
+                        IRender_Sector::INVALID_SECTOR_ID;
+                return tri.sector;
+            };
+            const bool sameHit = (accelerated < 0 && ref.nearest < 0) ||
+                (accelerated >= 0 && ref.nearest >= 0 && sectorFor(accelerated) == sectorFor(ref.nearest) &&
+                    _abs(double(audit.accelerated_range[resultQuery]) - ref.distance) < 0.001);
+            Msg("[sector-audit] frame=%u query=%s/%s tree=%d sector=%u range=%.6f "
+                "reference=%d sector=%u range=%.6f match=%d",
+                audit.frame, resultQuery < 2 ? "down" : "up", resultQuery % 2 ? "portals" : "static",
+                accelerated, sectorFor(accelerated), audit.accelerated_range[resultQuery],
+                ref.nearest, sectorFor(ref.nearest), ref.distance, sameHit);
+            if (model)
+            {
+                for (int id : {accelerated, ref.nearest})
+                {
+                    if (id < 0)
+                        continue;
+                    const auto& tri = model->get_tris()[id];
+                    const auto* verts = model->get_verts();
+                    const auto& a = verts[tri.verts[0]];
+                    const auto& b = verts[tri.verts[1]];
+                    const auto& c = verts[tri.verts[2]];
+                    Msg("[sector-audit] triangle frame=%u query=%u id=%d metadata=%08x a=(%.9g,%.9g,%.9g) "
+                        "b=(%.9g,%.9g,%.9g) c=(%.9g,%.9g,%.9g)", audit.frame, resultQuery, id, tri.dummy,
+                        a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+                }
             }
         }
         ++audit.query;
         audit.next_triangle = 0;
     }
     audit.work_ms += 1000.0 * double(CPU::QPC() - start) / double(CPU::qpc_freq);
-    if (audit.query == 4)
+    if (audit.query == 2)
     {
+        audit.query = 4;
         const auto resolveSector = [&](bool reference) -> u32
         {
             for (u32 base : {0u, 2u})
@@ -193,6 +207,14 @@ void R_dsgraph_structure::audit_camera_sector(const Fvector& position, IRender_S
         };
         Msg("[sector-audit] end frame=%u finished=%u selected=%u tree-sector=%u reference-sector=%u work=%.3fms",
             audit.frame, Device.dwFrame, static_cast<u32>(audit.sector), resolveSector(false), resolveSector(true), audit.work_ms);
+        audit.last_sample = Device.dwTimeContinual;
+    }
+    else if (Device.dwTimeContinual - audit.last_sample >= 5000)
+    {
+        const auto* model = audit.query ? RImplementation.rmPortals : g_pGameLevel->ObjectSpace.GetStaticModel();
+        Msg("[sector-audit] progress frame=%u model=%s triangles=%u/%u work=%.3fms",
+            audit.frame, audit.query ? "portals" : "static", audit.next_triangle,
+            model ? model->get_tris_count() : 0, audit.work_ms);
         audit.last_sample = Device.dwTimeContinual;
     }
 }

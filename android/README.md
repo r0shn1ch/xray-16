@@ -217,8 +217,9 @@ lateness of processed objects.
 On Android, `[sector-audit]` compares downward and upward camera rays against
 both the collision tree and an independent double-precision triangle scan.
 It captures the camera position and frame before scanning, so movement during
-an audit does not change the reference ray. Work is limited to 2048 triangles
-and a 0.25 ms target per frame, checked every 64 triangles. Up to eight samples
+an audit does not change the reference ray. The two directions share a single scan per model, with an independent XZ
+interval rejection before triangle intersection. Work is limited to 32768
+triangles and a 1 ms target per frame, checked every 64 triangles. Up to eight samples
 are collected per level, with at least five seconds between completed samples.
 The audit only reports results; it does not override visibility.
 
@@ -235,3 +236,10 @@ python3 android/apk/generate-options.py --check
 c++ -std=c++17 -O2 -Isrc tests/ray_query_audit.cpp -o /tmp/ray-query-audit
 /tmp/ray-query-audit
 ```
+
+Use `python3 android/analyze-sector-audit.py android.log` to check the capture.
+Exit code 0 means all recorded audits completed and their ray results agree;
+this does not prove rendering correctness. Exit code 1 reports differing ray
+results. Exit code 2 indicates missing or incomplete audit evidence. Hit triangle
+coordinates and metadata are recorded for offline reproduction, including when
+the tree and reference agree. Progress reports identify long-running scans.
