@@ -14,5 +14,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Check Android version against commits
         run: python3 android/update-version.py --check
