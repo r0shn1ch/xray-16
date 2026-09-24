@@ -77,6 +77,20 @@ IRender_Sector::sector_id_t R_dsgraph_structure::detect_sector(const Fvector& P,
 void R_dsgraph_structure::audit_camera_sector(const Fvector& position, IRender_Sector::sector_id_t sector)
 {
     auto& audit = sector_audit;
+    if (audit.query == 3)
+    {
+        const auto q = audit.path_query;
+        const auto* model = q % 2 ? RImplementation.rmPortals : g_pGameLevel->ObjectSpace.GetStaticModel();
+        const Fvector direction{0, q < 2 ? -1.f : 1.f, 0};
+        if (model->audit_ray_path_step(audit.path, audit.position, direction,
+            static_cast<u32>(audit.reference[q].nearest), static_cast<float>(audit.reference[q].distance),
+            audit.frame, q))
+        {
+            audit.query = 4;
+            audit.last_sample = Device.dwTimeContinual;
+        }
+        return;
+    }
     if (audit.query == 4)
     {
         if (audit.samples >= 8 || (audit.samples && Device.dwTimeContinual - audit.last_sample < 5000))
@@ -105,7 +119,7 @@ void R_dsgraph_structure::audit_camera_sector(const Fvector& position, IRender_S
                 audit.accelerated_range[query] = Sectors_xrc.r_begin()->range;
             }
         }
-        Msg("[sector-audit] begin frame=%u pos=(%.5f,%.5f,%.5f) selected=%u tree-path=%s triangles=%u",
+        Msg("[sector-audit] begin frame=%u pos=(%.9g,%.9g,%.9g) selected=%u tree-path=%s triangles=%u",
             audit.frame, position.x, position.y, position.z, static_cast<u32>(sector),
             CPU::HasSSE ? "simd" : "scalar", g_pGameLevel->ObjectSpace.GetStaticModel()->get_tris_count());
     }
@@ -163,6 +177,8 @@ void R_dsgraph_structure::audit_camera_sector(const Fvector& position, IRender_S
                 audit.frame, resultQuery < 2 ? "down" : "up", resultQuery % 2 ? "portals" : "static",
                 accelerated, sectorFor(accelerated), audit.accelerated_range[resultQuery],
                 ref.nearest, sectorFor(ref.nearest), ref.distance, sameHit);
+            if (!sameHit && ref.nearest >= 0 && audit.path_query == 4)
+                audit.path_query = resultQuery;
             if (model)
             {
                 for (int id : {accelerated, ref.nearest})
@@ -186,7 +202,7 @@ void R_dsgraph_structure::audit_camera_sector(const Fvector& position, IRender_S
     audit.work_ms += 1000.0 * double(CPU::QPC() - start) / double(CPU::qpc_freq);
     if (audit.query == 2)
     {
-        audit.query = 4;
+        audit.query = audit.path_query < 4 ? 3 : 4;
         const auto resolveSector = [&](bool reference) -> u32
         {
             for (u32 base : {0u, 2u})

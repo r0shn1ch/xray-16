@@ -93,6 +93,8 @@ struct R_dsgraph_structure
         u32 next_triangle{}, query{4}, frame{}, last_sample{}, samples{};
         IRender_Sector::sector_id_t sector{IRender_Sector::INVALID_SECTOR_ID};
         double work_ms{};
+        CDB::RayPathAudit path;
+        u32 path_query = 4;
     } sector_audit;
     void audit_camera_sector(const Fvector& position, IRender_Sector::sector_id_t sector);
     dxRender_Visual* visibility_sample_root{};

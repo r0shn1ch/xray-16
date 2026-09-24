@@ -433,6 +433,88 @@ public:
     }
 };
 
+#if defined(XR_PLATFORM_ANDROID)
+bool MODEL::audit_ray_path_step(RayPathAudit& audit, const Fvector& origin, const Fvector& direction,
+    u32 triangle, float referenceRange, u32 frame, u32 query) const
+{
+    syncronize();
+    const auto* nodes = static_cast<const AABBNoLeafTree*>(tree->GetTree())->GetNodes();
+    if (!audit.started)
+    {
+        audit.started = true;
+        audit.path.push_back({nodes, 0});
+    }
+    const auto start = CPU::QPC();
+    const auto budget = std::max(u64(1), CPU::qpc_freq / 1000);
+    for (u32 work = 0; !audit.path.empty() && work < 32768; ++work)
+    {
+        if (work && work % 64 == 0 && CPU::QPC() - start >= budget)
+            return false;
+        auto& entry = audit.path.back();
+        if (entry.child == 2)
+        {
+            audit.path.pop_back();
+            continue;
+        }
+        const bool negative = entry.child++ != 0;
+        const auto* node = entry.node;
+        ++audit.visited;
+        const bool leaf = negative ? node->HasLeaf2() : node->HasLeaf();
+        if (!leaf)
+        {
+            audit.path.push_back({negative ? node->GetNeg() : node->GetPos(), 0});
+            continue;
+        }
+        if ((negative ? node->GetPrimitive2() : node->GetPrimitive()) != triangle)
+            continue;
+
+        ray_collider<false, false, false, true> scalar;
+        scalar._init(nullptr, verts, tris, origin, direction, 500.f);
+        float u = 0, v = 0, range = 0;
+        const bool triangleHit = scalar._tri(tris[triangle].verts, u, v, range);
+        COLLIDER simdResult;
+        ray_collider<true, false, false, true> simd;
+        simd._init(&simdResult, verts, tris, origin, direction, 500.f);
+        simd.ray.pos.pad = simd.ray.inv_dir.pad = simd.ray.fwd_dir.pad = 0;
+        simd._stab(nodes);
+        Msg("[ray-path] frame=%u query=%u target=%u found=1 depth=%zu visited=%u "
+            "float-hit=%d float-range=%.9g reference-range=%.9g simd-id=%d simd-range=%.9g",
+            frame, query, triangle, audit.path.size(), audit.visited, triangleHit, range, referenceRange,
+            simdResult.r_count() ? simdResult.r_begin()->id : -1,
+            simdResult.r_count() ? simdResult.r_begin()->range : 0.f);
+        u32 rejected = 0;
+        for (const auto& ancestor : audit.path)
+        {
+            const auto& box = ancestor.node->mAABB;
+            const Fvector center{box.mCenter.x, box.mCenter.y, box.mCenter.z};
+            const Fvector extent{box.mExtents.x, box.mExtents.y, box.mExtents.z};
+            Fvector point{};
+            float distance = 0;
+            const bool fpuHit = scalar._box_fpu(center, extent, point);
+            const bool simdHit = simd._box_sse(center, extent, distance);
+            const float fpuDistance = fpuHit ? point.distance_to(origin) : -1.f;
+            if (!fpuHit || !simdHit || fpuDistance > referenceRange + EPS_L || distance > referenceRange + EPS_L)
+            {
+                ++rejected;
+                Msg("[ray-path] frame=%u query=%u node=%zu fpu=%d entry=%.9g simd=%d entry=%.9g "
+                    "center=(%.9g,%.9g,%.9g) extent=(%.9g,%.9g,%.9g)",
+                    frame, query, size_t(ancestor.node - nodes), fpuHit, fpuDistance, simdHit, distance,
+                    center.x, center.y, center.z, extent.x, extent.y, extent.z);
+            }
+        }
+        Msg("[ray-path] end frame=%u query=%u rejected-ancestors=%u", frame, query, rejected);
+        audit.path.clear();
+        return true;
+    }
+    if (audit.path.empty())
+    {
+        Msg("[ray-path] frame=%u query=%u target=%u found=0 visited=%u", frame, query, triangle, audit.visited);
+        return true;
+    }
+    return false;
+}
+#endif
+
 void COLLIDER::ray_query(u32 ray_mode, const MODEL* m_def, const Fvector& r_start, const Fvector& r_dir, float r_range)
 {
     ZoneScoped;
