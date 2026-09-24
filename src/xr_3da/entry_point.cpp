@@ -137,6 +137,13 @@ int main(int argc, char *argv[])
     // this executes if f() throws std::string or int or any other unrelated type
     }
 
+#if defined(XR_PLATFORM_ANDROID)
+    // SDL runs main() on a Java-owned native thread. Returning from that
+    // thread leaves the dedicated :engine process (and its other threads)
+    // alive after the engine has shut down. The launcher is a separate
+    // process, so terminate this process once all engine destructors ran.
+    _exit(result);
+#endif
     return result;
 }
 #endif

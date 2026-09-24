@@ -10,7 +10,7 @@ Quick build and install:
 ```sh
 export XRAY_ANDROID_KIT_ROOT=/absolute/path/to/openxray-android-build-kit-v0.8.0
 ./android/build-harness.sh --apk
-adb install -r build/openxray-armv7-launcher-v0.9.16-debug.apk
+adb install -r build/openxray-armv7-launcher-v0.9.24-debug.apk
 ```
 
 The application ID is `org.openxray.stalker`; the main activity is
@@ -33,7 +33,7 @@ Vulkan currently runs the surface/device/swapchain probe and then uses GLES; it
 does not select a native Vulkan gameplay renderer.
 
 Graphics choices are applied in memory after loading
-`<STALKER>/_appdata_/user.ltx`. Auto graphics maps to Minimum. Auto resolution
+`<STALKER>/_appdata_/user.ltx`. Auto graphics maps to Low. Auto resolution
 preserves the physical aspect ratio and caps internal width at 1280 unless the
 display is smaller. The physical landscape surface remains native and receives
 the scaled final frame.

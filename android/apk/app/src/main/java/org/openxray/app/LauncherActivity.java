@@ -133,6 +133,7 @@ public final class LauncherActivity extends Activity {
     private View[] pages;
     private SharedPreferences preferences;
     private long engineLaunchTime;
+    private int stopGeneration;
     private boolean engineFailureToastShown;
     private boolean suppressProfileCallbacks = true;
     private int activeGameVariant = 3;
@@ -269,7 +270,7 @@ public final class LauncherActivity extends Activity {
         root.addView(title, matchWrap());
 
         TextView version = new TextView(this);
-        version.setText("Версия " + BuildConfig.VERSION_NAME + " · ARMv7 · GLES / Vulkan probe");
+        version.setText("Версия " + BuildConfig.VERSION_NAME + " · ARMv7");
         version.setTextSize(13);
         version.setPadding(0, 0, 0, dp(10));
         root.addView(version, matchWrap());
@@ -302,19 +303,11 @@ public final class LauncherActivity extends Activity {
     private View buildGamePage() {
         LinearLayout content = pageContent();
         addSectionTitle(content, "Профиль игры");
-        content.addView(bodyText(
-                "Для каждой игры сохраняется отдельная папка. Профиль передаётся движку штатным ключом; "
-                        + "файлы установки и конфиги не переписываются."), matchWrap());
+        content.addView(bodyText("Выберите профиль игры."), matchWrap());
 
         gameVariant = new Spinner(this);
-        String[] variants = {
-                "Автоматически / без ключа",
-                "Shadow of Chernobyl (-soc)",
-                "Clear Sky (-cs)",
-                "Call of Pripyat (-cop)"
-        };
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, variants);
+                android.R.layout.simple_spinner_item, OptionCatalog.GAME_LABELS);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         gameVariant.setAdapter(adapter);
         gameVariant.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
@@ -332,9 +325,7 @@ public final class LauncherActivity extends Activity {
 
         addSectionTitle(content, "Установка игры");
 
-        content.addView(bodyText(
-                "Выберите корневую папку оригинальной ПК-версии. Лаунчер не меняет её содержимое; "
-                        + "OpenXRay читает ресурсы напрямую."), matchWrap());
+        content.addView(bodyText("Выберите папку установки с fsgame.ltx."), matchWrap());
 
         gamePath = new EditText(this);
         gamePath.setSingleLine(true);
@@ -373,9 +364,9 @@ public final class LauncherActivity extends Activity {
         stopParams.setMarginStart(dp(6));
         launchActions.addView(stopButton, stopParams);
         content.addView(launchActions, matchWrap());
-        content.addView(actionButton("Проверить GLES без игровых файлов", view -> launchEngine(true)),
+        content.addView(actionButton("Проверка GLES", view -> launchEngine(true)),
                 new LinearLayout.LayoutParams(-1, dp(52)));
-        content.addView(actionButton("Проверить Vulkan + GLES fallback", view -> launchVulkanSmoke()),
+        content.addView(actionButton("Проверка Vulkan", view -> launchVulkanSmoke()),
                 new LinearLayout.LayoutParams(-1, dp(52)));
 
         status = bodyText("Готово к настройке.");
@@ -388,47 +379,27 @@ public final class LauncherActivity extends Activity {
     private View buildSettingsPage() {
         LinearLayout content = pageContent();
         addSectionTitle(content, "Рендерер");
-        content.addView(bodyText(
-                "Авто сохраняет штатное определение движка и выбирает OpenGL ES на Android. "
-                        + "Vulkan пока является экспериментальным резервным режимом с безопасным GLES fallback."),
+        content.addView(bodyText("Для игры используется OpenGL ES. Vulkan доступен для проверки."),
                 matchWrap());
         rendererMode = new Spinner(this);
-        String[] renderers = {
-                "Автоматически (OpenGL ES)",
-                "OpenGL ES",
-                "Vulkan (экспериментальный fallback)"
-        };
         ArrayAdapter<String> rendererAdapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, renderers);
+                android.R.layout.simple_spinner_item, OptionCatalog.RENDERER_LABELS);
         rendererAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         rendererMode.setAdapter(rendererAdapter);
         content.addView(rendererMode, matchWrap());
 
         addSectionTitle(content, "Графика");
-        content.addView(bodyText(
-                "Настройки применяются после user.ltx, но до запуска игры. Авто использует Minimum на Android, "
-                        + "чтобы старый desktop-конфиг High/Extreme не перегружал телефон."),
+        content.addView(bodyText("Автоматический профиль: Low."),
                 matchWrap());
         graphicsPreset = new Spinner(this);
-        String[] graphicsPresets = {
-                "Автоматически для Android (Minimum)",
-                "Minimum",
-                "Low",
-                "Default",
-                "High",
-                "Extreme"
-        };
         ArrayAdapter<String> graphicsAdapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, graphicsPresets);
+                android.R.layout.simple_spinner_item, OptionCatalog.GRAPHICS_LABELS);
         graphicsAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         graphicsPreset.setAdapter(graphicsAdapter);
         content.addView(graphicsPreset, matchWrap());
 
         addSectionTitle(content, "Разрешение 3D-рендера");
-        content.addView(bodyText(
-                "Экран Android остаётся в нативном ландшафтном режиме, а движок рендерит 3D в выбранном "
-                        + "разрешении и масштабирует кадр. Это сохраняет правильную ориентацию и серьёзно "
-                        + "снижает нагрузку на GPU."), matchWrap());
+        content.addView(bodyText("Снижение разрешения ускоряет рендеринг, но уменьшает чёткость."), matchWrap());
         buildRenderResolutionList();
         renderResolution = new Spinner(this);
         ArrayAdapter<RenderResolution> resolutionAdapter = new ArrayAdapter<>(this,
@@ -438,19 +409,16 @@ public final class LauncherActivity extends Activity {
         content.addView(renderResolution, matchWrap());
 
         addSectionTitle(content, "Управление и экран");
-        gamepadEnabled = makeCheckBox("Включить поддержку геймпада",
-                "Если выключено, движок получает -no_gamepad.");
+        gamepadEnabled = makeCheckBox("Включить поддержку геймпада", "Подключённый контроллер.");
         touchControlsEnabled = makeCheckBox("Показывать сенсорное управление",
                 "Экранный стик и кнопки движения, огня, взаимодействия и инвентаря. "
                         + "Свободная область работает как мышь.");
-        splashEnabled = makeCheckBox("Показывать заставку OpenXRay",
-                "Не влияет на оригинальные игровые intro-видео.");
+        splashEnabled = makeCheckBox("Показывать заставку OpenXRay", "Заставка при запуске.");
         keepScreenOn = makeCheckBox("Не выключать экран во время игры",
                 "Предотвращает системную блокировку при загрузке.");
         immersiveMode = makeCheckBox("Полноэкранный режим Android",
                 "Скрывает системные панели; жест от края временно возвращает их.");
-        showFps = makeCheckBox("Показывать FPS",
-                "Лаунчер включает красный счётчик кадров движка по центру сверху.");
+        showFps = makeCheckBox("Показывать FPS", "Счётчик кадров во время игры.");
         content.addView(gamepadEnabled, matchWrap());
         content.addView(touchControlsEnabled, matchWrap());
         content.addView(splashEnabled, matchWrap());
@@ -459,9 +427,7 @@ public final class LauncherActivity extends Activity {
         content.addView(showFps, matchWrap());
 
         addSectionTitle(content, "Дополнительные аргументы");
-        content.addView(bodyText(
-                "Аргументы разбираются без shell. Кавычки поддерживаются. Путь, профиль игры и smoke-режим "
-                        + "задаются полями выше и не могут быть переопределены здесь."), matchWrap());
+        content.addView(bodyText("Необязательные параметры движка."), matchWrap());
         customArgs = new EditText(this);
         customArgs.setHint("Например: -novtf");
         customArgs.setMinLines(2);
@@ -600,15 +566,15 @@ public final class LauncherActivity extends Activity {
     }
 
     private int clampVariant(int value) {
-        return value >= 0 && value <= 3 ? value : 3;
+        return value >= 0 && value < OptionCatalog.GAME_LABELS.length ? value : 3;
     }
 
     private int clampRendererMode(int value) {
-        return value >= RENDERER_AUTO && value <= RENDERER_VULKAN ? value : RENDERER_AUTO;
+        return value >= 0 && value < OptionCatalog.RENDERER_LABELS.length ? value : RENDERER_AUTO;
     }
 
     private int clampGraphicsPreset(int value) {
-        return value >= GRAPHICS_AUTO && value <= GRAPHICS_EXTREME ? value : GRAPHICS_AUTO;
+        return value >= 0 && value < OptionCatalog.GRAPHICS_LABELS.length ? value : GRAPHICS_AUTO;
     }
 
     private void buildRenderResolutionList() {
@@ -673,16 +639,7 @@ public final class LauncherActivity extends Activity {
     }
 
     private String profileName(int variant) {
-        switch (clampVariant(variant)) {
-        case 1:
-            return "Shadow of Chernobyl";
-        case 2:
-            return "Clear Sky";
-        case 3:
-            return "Call of Pripyat";
-        default:
-            return "автоопределение";
-        }
+        return OptionCatalog.GAME_NAMES[clampVariant(variant)];
     }
 
     private void switchGameProfile(int requestedVariant) {
@@ -830,24 +787,16 @@ public final class LauncherActivity extends Activity {
     }
 
     private void launchEngine(boolean rendererSmoke, boolean vulkanRendererSmoke) {
+        ++stopGeneration; // Cancel pending retries before any new launch or reattach.
         if (!rendererSmoke && isEngineProcessRunning()) {
             setStatus("Возвращаю уже запущенный движок на экран…");
-            writeLauncherLog("[launcher] requesting existing engine task foreground");
-            Intent resume = new Intent(this, EngineControlReceiver.class);
-            resume.setAction(EngineControlReceiver.ACTION_RESUME_ENGINE);
-            sendBroadcast(resume);
-
-            // LauncherActivity normally sits immediately above XRayActivity
-            // in the same task. Finishing it uncovers the existing SDL
-            // SurfaceView instead of creating/reordering another SDL entry
-            // point. The engine-process receiver also moves its task to the
-            // foreground for the case where Android split the activities.
-            handler.postDelayed(() -> {
-                if (!isFinishing()) {
-                    finish();
-                    overridePendingTransition(0, 0);
-                }
-            }, 120);
+            Intent resume = new Intent(this, XRayActivity.class);
+            resume.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            try {
+                startActivity(resume);
+            } catch (RuntimeException error) {
+                setStatus("Не удалось вернуть игру: " + error.getMessage());
+            }
             return;
         }
         if (!rendererSmoke && !prepareEngineLaunch())
@@ -1274,8 +1223,22 @@ public final class LauncherActivity extends Activity {
     }
 
     private void stopEngine() {
+        setStatus("Останавливаю процесс движка…");
+        stopEngineAttempt(0, ++stopGeneration, findEngineProcessPid());
+    }
+
+    private void stopEngineAttempt(int attempt, int generation, int requestedPid) {
+        if (generation != stopGeneration)
+            return;
         int enginePid = findEngineProcessPid();
-        writeLauncherLog("[launcher] force-stop requested for engine process; pid=" + enginePid);
+        if (requestedPid > 0 && enginePid > 0 && requestedPid != enginePid)
+            return; // Another session has started; never signal its PID.
+        if (enginePid <= 0 && attempt > 0) {
+            refreshRunningState();
+            setStatus("Процесс движка остановлен.");
+            return;
+        }
+        writeLauncherLog("[launcher] force-stop attempt=" + attempt + " for engine process; pid=" + enginePid);
         if (enginePid > 0) {
             // Both processes belong to this application UID, so the launcher
             // can terminate a wedged engine directly. An in-process broadcast
@@ -1286,14 +1249,16 @@ public final class LauncherActivity extends Activity {
             stop.setAction(EngineControlReceiver.ACTION_STOP_ENGINE);
             sendBroadcast(stop);
         }
-        setStatus("Останавливаю процесс движка…");
-        handler.postDelayed(() -> {
+        if (attempt < 3) {
+            handler.postDelayed(() -> stopEngineAttempt(attempt + 1, generation, requestedPid),
+                    500L * (attempt + 1));
+        } else {
             refreshRunningState();
             if (isEngineProcessRunning())
-                setStatus("Процесс ещё завершается; нажмите стоп повторно через секунду.");
+                setStatus("Движок не завершился после SIGKILL. Отправьте журнал для диагностики.");
             else
                 setStatus("Процесс движка остановлен.");
-        }, 900);
+        }
     }
 
     private void refreshLog() {
@@ -1332,9 +1297,8 @@ public final class LauncherActivity extends Activity {
     private void updateEngineStatus(String log) {
         if (engineLaunchTime == 0)
             return;
-        if (log.contains("[renderer-vulkan] PASS") && log.contains("[renderer-smoke] center pixel")
-                && log.contains(": PASS")) {
-            setStatus("Vulkan surface probe + GLES fallback завершены: PASS.");
+        if (log.contains("[renderer-vulkan] PASS: Vulkan command buffer")) {
+            setStatus("Самостоятельный Vulkan render pass завершён: PASS.");
             return;
         }
         if (log.contains("[renderer-smoke] center pixel") && log.contains(": PASS")) {

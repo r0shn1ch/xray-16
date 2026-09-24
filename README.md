@@ -49,7 +49,7 @@ The launcher is locked to portrait and the engine activity to landscape. It
 offers internal resolution and graphics-preset selection, optional touch
 controls, a red FPS counter at the top center, log diagnostics, return-to-game,
 and a force-stop action for a stuck engine process. Auto graphics selects
-Minimum and an aspect-correct width of at most 1280 pixels. These choices are
+Low and an aspect-correct width of at most 1280 pixels. These choices are
 applied in memory after `user.ltx`. Game resources and `fsgame.ltx` are not
 rewritten; settings, saves, screenshots and normal logs use the desktop-style
 `<STALKER>/_appdata_` directory, which must be writable.

@@ -590,7 +590,7 @@ void shutdown_android_engine_log()
 
 void show_renderer_smoke_status(bool success, bool vulkan_probe)
 {
-    SDL_AndroidShowToast(success ? (vulkan_probe ? "OpenXRay: Vulkan probe + GLES fallback passed" : "OpenXRay: GLES renderer passed") :
+    SDL_AndroidShowToast(success ? (vulkan_probe ? "OpenXRay: Vulkan render pass passed" : "OpenXRay: GLES renderer passed") :
         "OpenXRay: engine load failed; see android.log", 1, -1, 0, 0);
 }
 
@@ -903,8 +903,13 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
         if (m_renderer_vulkan_smoke)
         {
             std::string reason;
-            state->vulkan_probe = AndroidVulkanSmoke::Run(reason);
-            Msg("[renderer-vulkan] %s: %s", state->vulkan_probe ? "PASS" : "fallback to GLES", reason.c_str());
+            state->vulkan_probe = true;
+            state->passed = AndroidVulkanSmoke::Run(reason);
+            state->initialized = true;
+            state->status_reported = true;
+            Msg("[renderer-vulkan] %s: %s", state->passed ? "PASS" : "FAIL", reason.c_str());
+            show_renderer_smoke_status(state->passed, true);
+            return;
         }
         if (!initialize_renderer_smoke(*state))
         {
@@ -1007,22 +1012,19 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
             Msg("[android] applying launcher mobile preset: %s", preset);
             Console->Execute(command);
 
-            // Older CoP rspec_minimum.ltx files predate SSR and leave the
-            // renderer's High default (quality 3 + jitter) active. Complete
-            // the requested Minimum preset in memory; game files stay
-            // read-only and selecting another preset keeps every feature
-            // available.
             if (0 == xr_stricmp(preset, "Minimum"))
             {
-                Msg("[android] completing legacy Minimum preset for mobile GLES");
-                Console->Execute("r3_water_refl st_opt_off");
-                Console->Execute("r3_water_refl_half_depth off");
-                Console->Execute("r3_water_refl_jitter off");
-                Console->Execute("r2_smap_size 1024");
-                Console->Execute("r2_sun off");
-                Console->Execute("r2_sun_details off");
-                Console->Execute("r2_sun_tsm off");
-                Console->Execute("r__tf_aniso 4");
+                if (const char* internal = SDL_AndroidGetInternalStoragePath())
+                {
+                    const auto config = std::filesystem::path(internal) / "openxray/engine-gamedata/configs/android_mobile_minimum.ltx";
+                    if (std::filesystem::is_regular_file(config))
+                    {
+                        Msg("[android] loading mobile adjustments: %s", config.string().c_str());
+                        Console->ExecuteScript(config.string().c_str());
+                    }
+                    else
+                        Msg("! [android] mobile adjustments unavailable: %s", config.string().c_str());
+                }
             }
         }
     }
@@ -1172,6 +1174,11 @@ int CApplication::Run()
     if (m_renderer_smoke)
     {
         auto* state = static_cast<renderer_smoke_state*>(m_renderer_smoke_state);
+        if (m_renderer_vulkan_smoke)
+        {
+            SDL_Delay(3500);
+            return state && state->passed ? EXIT_SUCCESS : EXIT_FAILURE;
+        }
         if (!state || !state->initialized)
         {
             if (!state || !state->status_reported)

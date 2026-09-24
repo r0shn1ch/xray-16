@@ -8,7 +8,6 @@ import android.util.Log;
 
 /** Receives explicit launcher commands inside the dedicated :engine process. */
 public final class EngineControlReceiver extends BroadcastReceiver {
-    public static final String ACTION_RESUME_ENGINE = "org.openxray.action.RESUME_ENGINE";
     public static final String ACTION_STOP_ENGINE = "org.openxray.action.STOP_ENGINE";
 
     private static final String TAG = "OpenXRay";
@@ -16,11 +15,6 @@ public final class EngineControlReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         String action = intent == null ? null : intent.getAction();
-        if (ACTION_RESUME_ENGINE.equals(action)) {
-            boolean accepted = XRayActivity.returnRunningEngineToForeground();
-            Log.i(TAG, "engine foreground command accepted=" + accepted);
-            return;
-        }
         if (ACTION_STOP_ENGINE.equals(action)) {
             Log.w(TAG, "launcher requested forced engine stop");
             Process.killProcess(Process.myPid());

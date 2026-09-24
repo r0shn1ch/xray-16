@@ -10,12 +10,21 @@
 namespace xray::render::RENDER_NAMESPACE
 {
 CHW HW;
+#if defined(XR_PLATFORM_ANDROID)
+static bool androidDebugCallbackInstalled = false;
+#endif
 
 void CALLBACK OnDebugCallback(GLenum /*source*/, GLenum /*type*/, GLuint id, GLenum severity, GLsizei /*length*/,
     const GLchar* message, const void* /*userParam*/)
 {
-    if (severity != GL_DEBUG_SEVERITY_NOTIFICATION)
-        Log(message, id);
+    if (severity == GL_DEBUG_SEVERITY_NOTIFICATION)
+        return;
+#if defined(XR_PLATFORM_ANDROID)
+    static u32 reportedMessages = 0;
+    if (reportedMessages++ >= 32)
+        return;
+#endif
+    Log(message, id);
 }
 
 static_assert(std::is_same_v<decltype(&OnDebugCallback), GLDEBUGPROC>);
@@ -167,17 +176,32 @@ void CHW::CreateDevice(SDL_Window* hWnd)
         return;
     }
 
+#if defined(XR_PLATFORM_ANDROID)
+    // Debug callbacks belong to the GL context, not to the CHW instance.
+    androidDebugCallbackInstalled = false;
+#endif
+
     if (ThisInstanceIsGlobal())
     {
         UpdateVSync();
 
+        bool debugOutput = false;
 #ifdef DEBUG
-        if (glDebugMessageCallback)
+        debugOutput = true;
+#endif
+#if defined(XR_PLATFORM_ANDROID)
+        debugOutput = debugOutput || (Core.Params && strstr(Core.Params, "-android-gl-debug"));
+#endif
+        if (debugOutput && glDebugMessageCallback)
         {
             CHK_GL(glEnable(GL_DEBUG_OUTPUT));
+            CHK_GL(glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS));
             CHK_GL(glDebugMessageCallback((GLDEBUGPROC)OnDebugCallback, nullptr));
+#if defined(XR_PLATFORM_ANDROID)
+            androidDebugCallbackInstalled = true;
+#endif
+            Msg("* OpenGL debug callback enabled");
         }
-#endif // DEBUG
     }
 
     int iMaxVTFUnits, iMaxCTIUnits;
@@ -362,6 +386,13 @@ void CHW::Present()
             Msg("! OpenGL ES: pending error 0x%x before Present", pending);
         ++reportedPendingErrors;
     }
+    if (reportedPendingErrors && !androidDebugCallbackInstalled && glDebugMessageCallback)
+    {
+        glEnable(GL_DEBUG_OUTPUT);
+        glDebugMessageCallback((GLDEBUGPROC)OnDebugCallback, nullptr);
+        androidDebugCallbackInstalled = true;
+        Msg("* OpenGL ES: diagnostic callback enabled after renderer error");
+    }
 
     glBindFramebuffer(GL_READ_FRAMEBUFFER, pFB);
     const GLenum sourceStatus = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
@@ -399,11 +430,10 @@ void CHW::Present()
             0, 0, drawableWidth, drawableHeight,
             GL_COLOR_BUFFER_BIT, filter);
 
-        // The final color attachment has been consumed by the window blit.
-        // This standard ES 3.x hint avoids a needless tile-memory writeback on
-        // tile-based mobile GPUs and does not depend on a vendor allowlist.
-        const GLenum discardedAttachment = GL_COLOR_ATTACHMENT0;
-        glInvalidateFramebuffer(GL_READ_FRAMEBUFFER, 1, &discardedAttachment);
+        // The render target is owned by the engine and may be read again on
+        // the next frame (including after SDL recreates the window surface).
+        // Do not discard its contents from the presentation path; resource
+        // owners may invalidate an attachment after its last actual use.
     }
     else if (reportIncomplete)
     {

@@ -1,6 +1,5 @@
 package org.openxray.app;
 
-import android.app.ActivityManager;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.os.Build;
@@ -34,7 +33,6 @@ import org.libsdl.app.SDLActivity;
  */
 public final class XRayActivity extends SDLActivity {
     private static final String TAG = "OpenXRay";
-    private static volatile XRayActivity runningInstance;
     private File diagnosticsFile;
     private boolean immersiveMode = true;
     private TouchControlsView touchControls;
@@ -55,7 +53,6 @@ public final class XRayActivity extends SDLActivity {
             diagnosticsFile = new File(getFilesDir(), "activity.log");
         }
         installCrashHandler();
-        runningInstance = this;
         writeDiagnostic("activity onCreate; version=" + BuildConfig.VERSION_NAME
                 + "; code=" + BuildConfig.VERSION_CODE + "; sdk=" + Build.VERSION.SDK_INT
                 + "; abi=" + (Build.SUPPORTED_ABIS.length == 0 ? "unknown" : Build.SUPPORTED_ABIS[0]));
@@ -101,6 +98,11 @@ public final class XRayActivity extends SDLActivity {
     }
 
     @Override
+    public void superOnBackPressed() {
+        onBackPressed();
+    }
+
+    @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         // A launcher reattach intent intentionally has no engine arguments.
@@ -126,33 +128,8 @@ public final class XRayActivity extends SDLActivity {
 
     @Override
     protected void onDestroy() {
-        if (runningInstance == this)
-            runningInstance = null;
         writeDiagnostic("activity onDestroy");
         super.onDestroy();
-    }
-
-    static boolean returnRunningEngineToForeground() {
-        final XRayActivity activity = runningInstance;
-        if (activity == null || activity.isFinishing() || activity.isDestroyed())
-            return false;
-
-        activity.runOnUiThread(() -> {
-            activity.writeDiagnostic("engine foreground command received; task=" + activity.getTaskId());
-            Intent self = new Intent(activity, XRayActivity.class);
-            self.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            activity.startActivity(self);
-
-            ActivityManager manager = (ActivityManager) activity.getSystemService(ACTIVITY_SERVICE);
-            if (manager != null) {
-                try {
-                    manager.moveTaskToFront(activity.getTaskId(), ActivityManager.MOVE_TASK_WITH_HOME);
-                } catch (RuntimeException error) {
-                    activity.writeDiagnostic("moveTaskToFront failed: " + error);
-                }
-            }
-        });
-        return true;
     }
 
     @Override
@@ -198,58 +175,22 @@ public final class XRayActivity extends SDLActivity {
             args.add("-android-lazy-textures");
             args.add("-android-game-root-hex");
             args.add(encodeHex(selectedPath));
-            switch (gameVariant) {
-            case 1:
-                args.add("-soc");
-                break;
-            case 2:
-                args.add("-cs");
-                break;
-            case 3:
-                args.add("-cop");
-                break;
-            default:
-                break;
-            }
+            String gameArg = OptionCatalog.value(OptionCatalog.GAME_ARGS, gameVariant, 0);
+            if (!gameArg.isEmpty())
+                args.add(gameArg);
         } else {
             args.add("-headless-smoke");
         }
 
         if (!rendererSmoke) {
-            switch (rendererMode) {
-            case LauncherActivity.RENDERER_GLES:
-                args.add("-renderer-gles");
-                break;
-            case LauncherActivity.RENDERER_VULKAN:
-                args.add("-renderer-vulkan");
-                break;
-            default:
-                args.add("-renderer-auto");
-                break;
-            }
+            args.add(OptionCatalog.value(OptionCatalog.RENDERER_ARGS, rendererMode, 0));
 
             args.add("-android-render-width");
             args.add(Integer.toString(Math.max(320, renderWidth)));
             args.add("-android-render-height");
             args.add(Integer.toString(Math.max(320, renderHeight)));
             args.add("-android-mobile-preset");
-            switch (graphicsPreset) {
-            case LauncherActivity.GRAPHICS_LOW:
-                args.add("Low");
-                break;
-            case LauncherActivity.GRAPHICS_DEFAULT:
-                args.add("Default");
-                break;
-            case LauncherActivity.GRAPHICS_HIGH:
-                args.add("High");
-                break;
-            case LauncherActivity.GRAPHICS_EXTREME:
-                args.add("Extreme");
-                break;
-            default:
-                args.add("Minimum");
-                break;
-            }
+            args.add(OptionCatalog.value(OptionCatalog.GRAPHICS_PRESETS, graphicsPreset, 0));
             if (showFps)
                 args.add("-android-show-fps");
         }
