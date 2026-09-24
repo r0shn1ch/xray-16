@@ -95,7 +95,13 @@ void dxRainRender::Render(CEffect_Rain& owner)
         //.		float xdt		= float(one.dwTime_Hit-Device.dwTimeGlobal)/1000.f;
         //.		float dt		= Device.fTimeDelta;//xdt<Device.fTimeDelta?xdt:Device.fTimeDelta;
         float dt = Device.fTimeDelta;
-        one.P.mad(one.D, one.fSpeed * dt);
+        const float step = one.fSpeed * dt;
+        Fvector toHit;
+        toHit.sub(one.Phit, one.P);
+        if (one.dwTime_Hit == one.dwTime_Life && one.D.dotproduct(toHit) <= step)
+            one.P = one.Phit;
+        else
+            one.P.mad(one.D, step);
         Fvector wdir;
         wdir.set(one.P.x - vEye.x, 0, one.P.z - vEye.z);
         float wlen = wdir.square_magnitude();

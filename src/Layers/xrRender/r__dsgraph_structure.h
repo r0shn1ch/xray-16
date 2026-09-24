@@ -80,6 +80,11 @@ struct R_dsgraph_structure
 
     u32 counter_S{};
     u32 counter_D{};
+#if defined(XR_PLATFORM_ANDROID)
+    dxRender_Visual* visibility_sample_root{};
+    u32 visibility_sample_frustum{};
+    u32 visibility_sample_hom{};
+#endif
 
     void set_Feedback(R_feedback* V, u32 id)
     {

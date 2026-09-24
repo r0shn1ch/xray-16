@@ -4,6 +4,7 @@
 
 #include "android_vulkan_smoke.h"
 #include "../Layers/xrRenderVK/DdsTexture.h"
+#include "../Layers/xrRenderVK/TextureUpload.h"
 
 #include <SDL.h>
 
@@ -86,6 +87,10 @@ bool Run(std::string& reason)
     VkSemaphore render_semaphore = VK_NULL_HANDLE;
     VkCommandPool command_pool = VK_NULL_HANDLE;
     VkRenderPass render_pass = VK_NULL_HANDLE;
+    xray::render::vulkan::DdsTexture game_dds;
+    std::string game_dds_name;
+    xray::render::vulkan::UploadedTexture game_texture;
+    xray::render::vulkan::TextureUploadDispatch upload_dispatch;
     std::vector<VkImageView> image_views;
     std::vector<VkFramebuffer> framebuffers;
 
@@ -104,6 +109,8 @@ bool Run(std::string& reason)
     {
         if (device && device_wait_idle)
             device_wait_idle(device);
+        if (device && game_texture.image)
+            xray::render::vulkan::destroy_texture(device, upload_dispatch, game_texture);
         if (device && destroy_framebuffer)
             for (VkFramebuffer framebuffer : framebuffers)
                 destroy_framebuffer(device, framebuffer, nullptr);
@@ -334,7 +341,14 @@ bool Run(std::string& reason)
             Msg("[renderer-vulkan] game DDS '%s': %ux%u, %zu mips, format=%u, sampled=%u",
                 file.name.c_str(), texture.extent.width, texture.extent.height, texture.copies.size(),
                 static_cast<unsigned int>(texture.format), sampled);
-            break;
+            if (sampled && texture.pixels.size() <= 8u * 1024u * 1024u &&
+                texture.extent.width <= physical_properties.limits.maxImageDimension2D &&
+                texture.extent.height <= physical_properties.limits.maxImageDimension2D)
+            {
+                game_dds = std::move(texture);
+                game_dds_name = file.name.c_str();
+                break;
+            }
         }
     }
 
@@ -521,6 +535,55 @@ bool Run(std::string& reason)
     pool_info.queueFamilyIndex = queue_family;
     if (create_command_pool(device, &pool_info, nullptr, &command_pool) != VK_SUCCESS)
         return fail("vkCreateCommandPool failed");
+
+#define XRAY_LOAD_UPLOAD(member, name) \
+    upload_dispatch.member = load_device_proc<decltype(upload_dispatch.member)>(device, get_device_proc, name)
+    XRAY_LOAD_UPLOAD(create_buffer, "vkCreateBuffer");
+    XRAY_LOAD_UPLOAD(destroy_buffer, "vkDestroyBuffer");
+    XRAY_LOAD_UPLOAD(get_buffer_memory_requirements, "vkGetBufferMemoryRequirements");
+    XRAY_LOAD_UPLOAD(create_image, "vkCreateImage");
+    XRAY_LOAD_UPLOAD(destroy_image, "vkDestroyImage");
+    XRAY_LOAD_UPLOAD(get_image_memory_requirements, "vkGetImageMemoryRequirements");
+    XRAY_LOAD_UPLOAD(allocate_memory, "vkAllocateMemory");
+    XRAY_LOAD_UPLOAD(free_memory, "vkFreeMemory");
+    XRAY_LOAD_UPLOAD(bind_buffer_memory, "vkBindBufferMemory");
+    XRAY_LOAD_UPLOAD(bind_image_memory, "vkBindImageMemory");
+    XRAY_LOAD_UPLOAD(map_memory, "vkMapMemory");
+    XRAY_LOAD_UPLOAD(unmap_memory, "vkUnmapMemory");
+    XRAY_LOAD_UPLOAD(create_image_view, "vkCreateImageView");
+    XRAY_LOAD_UPLOAD(destroy_image_view, "vkDestroyImageView");
+    XRAY_LOAD_UPLOAD(allocate_command_buffers, "vkAllocateCommandBuffers");
+    XRAY_LOAD_UPLOAD(free_command_buffers, "vkFreeCommandBuffers");
+    XRAY_LOAD_UPLOAD(begin_command_buffer, "vkBeginCommandBuffer");
+    XRAY_LOAD_UPLOAD(end_command_buffer, "vkEndCommandBuffer");
+    XRAY_LOAD_UPLOAD(cmd_pipeline_barrier, "vkCmdPipelineBarrier");
+    XRAY_LOAD_UPLOAD(cmd_copy_buffer_to_image, "vkCmdCopyBufferToImage");
+    XRAY_LOAD_UPLOAD(queue_submit, "vkQueueSubmit");
+    XRAY_LOAD_UPLOAD(queue_wait_idle, "vkQueueWaitIdle");
+#undef XRAY_LOAD_UPLOAD
+    if (!upload_dispatch.create_buffer || !upload_dispatch.destroy_buffer ||
+        !upload_dispatch.get_buffer_memory_requirements || !upload_dispatch.create_image ||
+        !upload_dispatch.destroy_image || !upload_dispatch.get_image_memory_requirements ||
+        !upload_dispatch.allocate_memory || !upload_dispatch.free_memory ||
+        !upload_dispatch.bind_buffer_memory || !upload_dispatch.bind_image_memory ||
+        !upload_dispatch.map_memory || !upload_dispatch.unmap_memory ||
+        !upload_dispatch.create_image_view || !upload_dispatch.destroy_image_view ||
+        !upload_dispatch.allocate_command_buffers || !upload_dispatch.free_command_buffers ||
+        !upload_dispatch.begin_command_buffer || !upload_dispatch.end_command_buffer ||
+        !upload_dispatch.cmd_pipeline_barrier || !upload_dispatch.cmd_copy_buffer_to_image ||
+        !upload_dispatch.queue_submit || !upload_dispatch.queue_wait_idle)
+        return fail("Vulkan image upload procedures are unavailable");
+
+    VkQueue queue = VK_NULL_HANDLE;
+    get_device_queue(device, queue_family, 0, &queue);
+    if (!game_dds.pixels.empty())
+    {
+        std::string upload_error;
+        if (!xray::render::vulkan::upload_texture(device, queue, command_pool, memory_properties,
+                upload_dispatch, game_dds, game_texture, upload_error))
+            return fail("game DDS Vulkan upload failed: " + upload_error);
+        Msg("[renderer-vulkan] game DDS uploaded to sampled GPU image: '%s'", game_dds_name.c_str());
+    }
     std::vector<VkCommandBuffer> commands(swapchain_image_count);
     VkCommandBufferAllocateInfo allocate_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     allocate_info.commandPool = command_pool;
@@ -557,8 +620,6 @@ bool Run(std::string& reason)
         create_semaphore(device, &semaphore_info, nullptr, &render_semaphore) != VK_SUCCESS)
         return fail("vkCreateSemaphore failed");
 
-    VkQueue queue = VK_NULL_HANDLE;
-    get_device_queue(device, queue_family, 0, &queue);
     uint32_t image_index = 0;
     const VkResult acquire_result = acquire_next_image(device, swapchain, UINT64_MAX, acquire_semaphore,
         VK_NULL_HANDLE, &image_index);

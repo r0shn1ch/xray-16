@@ -417,6 +417,8 @@ if(ANDROID)
     target_sources(xrEngine PRIVATE
         ../Layers/xrRenderVK/DdsTexture.cpp
         ../Layers/xrRenderVK/DdsTexture.h
+        ../Layers/xrRenderVK/TextureUpload.cpp
+        ../Layers/xrRenderVK/TextureUpload.h
     )
     target_include_directories(xrEngine PRIVATE
         "${XRAY_GLI_INCLUDE_DIR}"
