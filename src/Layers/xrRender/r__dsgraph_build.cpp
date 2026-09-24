@@ -560,7 +560,7 @@ void R_dsgraph_structure::add_static(dxRender_Visual* pVisual, const CFrustum& v
     if (fcvNone == VIS)
     {
 #if defined(XR_PLATFORM_ANDROID)
-        if (pVisual == visibility_sample_root)
+        if (visibility_sample_root)
             ++visibility_sample_frustum;
 #endif
         return;
@@ -569,8 +569,11 @@ void R_dsgraph_structure::add_static(dxRender_Visual* pVisual, const CFrustum& v
     if (o.use_hom && !RImplementation.HOM.visible(vis))
     {
 #if defined(XR_PLATFORM_ANDROID)
-        if (pVisual == visibility_sample_root)
+        if (visibility_sample_root)
+        {
             ++visibility_sample_hom;
+            visibility_sample_largest_hom = _max(visibility_sample_largest_hom, vis.sphere.R);
+        }
 #endif
         return;
     }
@@ -799,6 +802,7 @@ void R_dsgraph_structure::build_subspace()
             {
                 visibility_sample_root = root;
                 visibility_sample_frustum = visibility_sample_hom = 0;
+                visibility_sample_largest_hom = 0;
             }
 #endif
             //VERIFY(root->getType() == MT_HIERRARHY);
@@ -834,9 +838,10 @@ void R_dsgraph_structure::build_subspace()
             if (sampleVisibility && s_it < 16)
             {
                 char entry[128];
-                std::snprintf(entry, sizeof(entry), " %u:f%zu/g%u/clip%u/hom%u",
+                std::snprintf(entry, sizeof(entry), " %u:f%zu/g%u/clip%u/hom%u/max-radius%.1f",
                     static_cast<u32>(sector->unique_id), sector->r_frustums.size(),
-                    counter_S - sectorSubmittedBefore, visibility_sample_frustum, visibility_sample_hom);
+                    counter_S - sectorSubmittedBefore, visibility_sample_frustum, visibility_sample_hom,
+                    visibility_sample_largest_hom);
                 sectorDetails += entry;
             }
             visibility_sample_root = nullptr;
@@ -1044,7 +1049,7 @@ void R_dsgraph_structure::build_subspace()
             const auto& rejects = PortalTraverser.traversal_stats;
             Msg("[visibility-frame] frame=%u camera-sector=%u pos=(%.2f,%.2f,%.2f) "
                 "sectors=%u prev=%u static=%u prev-static=%u portals=%u portal-hom=%u portal-frustum=%u "
-                "portal-sphere=%u portal-scissor=%u portal-facing=%u portal-ssa=%u "
+                "portal-sphere=%u portal-scissor=%u portal-legacy-facing=%u portal-ssa=%u "
                 "dynamic-invalid=%u dynamic-inactive=%u dynamic-hom=%u roots:%s",
                 Device.dwFrame, static_cast<u32>(o.sector_id), o.view_pos.x, o.view_pos.y, o.view_pos.z,
                 visited, previousSectors, submitted, previousStatic, rejects.traversed, rejects.hom,

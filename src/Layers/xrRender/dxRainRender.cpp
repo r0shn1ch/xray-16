@@ -152,6 +152,12 @@ void dxRainRender::Render(CEffect_Rain& owner)
             }
             //.			Device.Statistic->TEST3.End();
         }
+#if defined(XR_PLATFORM_ANDROID)
+        // A roof hit above the viewer must hide the drop even when the roof's
+        // render sector was not submitted in this frame.
+        if (one.dwTime_Hit == one.dwTime_Life && one.Phit.y > vEye.y && one.P.y >= one.Phit.y)
+            continue;
+#endif
         // Build line
         Fvector& pos_head = one.P;
         Fvector pos_trail;

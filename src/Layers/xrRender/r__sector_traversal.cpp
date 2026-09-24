@@ -188,16 +188,22 @@ void CPortalTraverser::traverse_sector(CSector* sector, CFrustum& F, _scissor& R
         }
         else
         {
+#if defined(XR_PLATFORM_ANDROID)
+            // The current sector comes from collision geometry. At a portal boundary its
+            // geometry can belong to either side; traverse the actual adjacent sector
+            // whenever the portal intersects the view, independent of plane classification.
+            if (PORTAL->getSectorBack(i_vBase) == sector)
+                ++traversal_stats.facing;
+            pSector = PORTAL->getSector(sector);
+#else
             pSector = PORTAL->getSectorBack(i_vBase);
             if (pSector == sector)
             {
-#if defined(XR_PLATFORM_ANDROID)
-                ++traversal_stats.facing;
-#endif
                 continue;
             }
             if (pSector == i_start)
                 continue;
+#endif
         }
 
         // Early-out sphere

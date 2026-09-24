@@ -84,6 +84,7 @@ struct R_dsgraph_structure
     dxRender_Visual* visibility_sample_root{};
     u32 visibility_sample_frustum{};
     u32 visibility_sample_hom{};
+    float visibility_sample_largest_hom{};
 #endif
 
     void set_Feedback(R_feedback* V, u32 id)

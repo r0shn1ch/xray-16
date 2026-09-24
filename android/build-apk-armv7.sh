@@ -85,6 +85,7 @@ for stale_path in \
 done
 
 cp "$repo_dir/android/apk/app/build.gradle" "$project_dir/app/build.gradle"
+cp "$repo_dir/android/PORT_VERSION" "$project_dir/android-version.txt"
 python3 "$repo_dir/android/apk/generate-options.py" --check
 cp "$repo_dir/android/apk/app/src/main/AndroidManifest.xml" "$project_dir/app/src/main/AndroidManifest.xml"
 mkdir -p "$project_dir/app/src/main/java/org/openxray/app"
