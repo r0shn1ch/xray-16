@@ -724,6 +724,9 @@ void R_dsgraph_structure::load(const xr_vector<CSector::level_sector_data_t>& se
 
 void R_dsgraph_structure::unload()
 {
+#if defined(XR_PLATFORM_ANDROID)
+    sector_audit = {};
+#endif
     for (auto* sector : Sectors)
         xr_delete(sector);
     Sectors.clear();
@@ -1049,7 +1052,7 @@ void R_dsgraph_structure::build_subspace()
             const auto& rejects = PortalTraverser.traversal_stats;
             Msg("[visibility-frame] frame=%u camera-sector=%u pos=(%.2f,%.2f,%.2f) "
                 "sectors=%u prev=%u static=%u prev-static=%u portals=%u portal-hom=%u portal-frustum=%u "
-                "portal-sphere=%u portal-scissor=%u portal-legacy-facing=%u portal-ssa=%u "
+                "portal-sphere=%u portal-scissor=%u portal-facing=%u portal-ssa=%u "
                 "dynamic-invalid=%u dynamic-inactive=%u dynamic-hom=%u roots:%s",
                 Device.dwFrame, static_cast<u32>(o.sector_id), o.view_pos.x, o.view_pos.y, o.view_pos.z,
                 visited, previousSectors, submitted, previousStatic, rejects.traversed, rejects.hom,

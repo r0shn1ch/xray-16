@@ -107,6 +107,10 @@ void CRender::Calculate()
         }
     }
 
+#if defined(XR_PLATFORM_ANDROID)
+    dsgraph_main.audit_camera_sector(Device.vCameraPosition, last_sector_id);
+#endif
+
     //
     Lights.Update();
 

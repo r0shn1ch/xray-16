@@ -7,6 +7,11 @@
 //#define DEBUG_SCHEDULER
 //#define DEBUG_SCHEDULERMT
 
+#if defined(XR_PLATFORM_ANDROID)
+float psShedulerBudget = 10.f;
+#else
+float psShedulerBudget = 66.f;
+#endif
 float psShedulerCurrent = 10.f;
 float psShedulerTarget = 10.f;
 const float psShedulerReaction = 0.1f;
@@ -324,7 +329,7 @@ void CSheduler::ProcessStep()
     const bool profileScheduler = Device.dwTimeContinual - lastSchedulerProfile >= 5000;
     const u64 profileStart = profileScheduler ? CPU::QPC() : 0;
     u64 neededCycles = 0, updateCycles = 0, slowestCycles = 0;
-    u32 profiledObjects = 0;
+    u32 profiledObjects = 0, maximumLateness = 0;
     shared_str slowestName;
 #endif
 
@@ -337,6 +342,11 @@ void CSheduler::ProcessStep()
 
     for (int i = 0; !Items.empty() && Top().dwTimeForExecute < dwTime; ++i)
     {
+        if (i > 0 && Device.dwPrecacheFrame == 0 && CPU::QPC() > cycles_limit)
+        {
+            psShedulerTarget += psShedulerReaction * 3;
+            break;
+        }
         // Update
 #if defined(XR_PLATFORM_ANDROID)
         const u64 beforeNeeded = profileScheduler ? CPU::QPC() : 0;
@@ -344,7 +354,10 @@ void CSheduler::ProcessStep()
         const bool needed = Top().Object && Top().Object->shedule_Needed();
 #if defined(XR_PLATFORM_ANDROID)
         if (profileScheduler)
+        {
             neededCycles += CPU::QPC() - beforeNeeded;
+            maximumLateness = _max(maximumLateness, dwTime - Top().dwTimeForExecute);
+        }
 #endif
         if (!needed)
         {
@@ -432,16 +445,6 @@ void CSheduler::ProcessStep()
         if (execTime > 15)
             Msg("* xrSheduler: too much time consumed by object [%s] (%dms)", itemName, execTime);
 #endif
-
-        if (i % 3 != 3 - 1)
-            continue;
-
-        if (Device.dwPrecacheFrame == 0 && CPU::QPC() > cycles_limit)
-        {
-            // we have maxed out the load - increase heap
-            psShedulerTarget += psShedulerReaction * 3;
-            break;
-        }
     }
 
     // Rebuilding the heap is cheaper than a push_heap per object when a
@@ -474,10 +477,11 @@ void CSheduler::ProcessStep()
         const u64 totalCycles = CPU::QPC() - profileStart;
         const double ms = 1000.0 / double(CPU::qpc_freq);
         Msg("[scheduler-profile] frame=%u due=%u total=%.2fms needed=%.2fms update=%.2fms "
-            "other=%.2fms slowest=%s:%.2fms",
+            "other=%.2fms slowest=%s:%.2fms budget=%.2fms target=%.2fms late=%ums remaining=%zu",
             Device.dwFrame, profiledObjects, totalCycles * ms, neededCycles * ms,
             updateCycles * ms, (totalCycles - neededCycles - updateCycles) * ms,
-            slowestName.c_str(), slowestCycles * ms);
+            slowestName.c_str(), slowestCycles * ms, psShedulerBudget, psShedulerCurrent,
+            maximumLateness, Items.size());
         lastSchedulerProfile = Device.dwTimeContinual;
     }
 #endif
@@ -493,7 +497,8 @@ void CSheduler::Update()
     // Initialize
     stats.Update.Begin();
     cycles_start = CPU::QPC();
-    cycles_limit = CPU::qpc_freq * u64(iCeil(psShedulerCurrent)) / 1000ul + cycles_start;
+    const double budgetMs = _min(double(psShedulerCurrent), double(psShedulerBudget));
+    cycles_limit = cycles_start + u64(double(CPU::qpc_freq) * budgetMs / 1000.0);
     internal_Registration();
     isSheduleInProgress = true;
 
@@ -533,7 +538,7 @@ void CSheduler::Update()
 #ifdef DEBUG_SCHEDULER
     Msg("SCHEDULER: PROCESS STEP FINISHED %d", Device.dwFrame);
 #endif
-    clamp(psShedulerTarget, 3.f, 66.f);
+    clamp(psShedulerTarget, 3.f, psShedulerBudget);
     psShedulerCurrent = 0.9f * psShedulerCurrent + 0.1f * psShedulerTarget;
     stats.Load = psShedulerCurrent;
 

@@ -434,6 +434,12 @@ public final class LauncherActivity extends Activity {
             content.addView(advancedOptions[index], matchWrap());
         }
 
+        content.addView(actionButton(OptionCatalog.ADVANCED_RESET_LABEL, view -> {
+            for (CheckBox option : advancedOptions)
+                option.setChecked(false);
+            savePreferences();
+        }), matchWrap());
+
         addSectionTitle(content, OptionCatalog.SETTINGS_SECTIONS[5]);
         content.addView(bodyText("Необязательные параметры движка."), matchWrap());
         customArgs = new EditText(this);

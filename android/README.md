@@ -122,9 +122,10 @@ The APK is written to `build/openxray-armv7-launcher-v<version>-debug.apk`;
 the version comes from `android/PORT_VERSION`. The second line of that file is
 Android's monotonically increasing `versionCode`. Enable the repository's
 commit hook once per clone with `git config core.hooksPath .githooks`. Each
-subsequent commit then increments both values in the same commit. The read-only
-CI job checks the file on pushes and PRs. For a local branch without the hook,
-run `python3 android/update-version.py` after committing; `--check` verifies it.
+subsequent commit then increments both values in the same commit. The hook runs locally; no GitHub Actions job is needed. Re-running a failed
+commit does not increment the version twice. For commits prepared through an API,
+run `python3 android/update-version.py --pending` and include `android/PORT_VERSION`
+in the same commit. `--check` verifies an already committed version.
 The Gradle build, launcher display,
 APK filename and archive scripts all read this file.
 
@@ -203,3 +204,34 @@ identified.
 
 Platform boundaries are documented in [PORT_AUDIT.md](PORT_AUDIT.md). Launcher
 behavior is summarized in [apk/README.md](apk/README.md).
+
+### Frame scheduling and visibility diagnostics
+
+`rs_sheduler_budget` sets the maximum adaptive scheduling budget in milliseconds
+(3–66; Android default 10, desktop default 66). Real-time updates and precaching
+are unaffected. A running object callback cannot be interrupted; pending objects
+retain their due-time order. Lower budgets can delay AI updates under load.
+`[scheduler-profile]` records callback time, the current budget and maximum
+lateness of processed objects.
+
+On Android, `[sector-audit]` compares downward and upward camera rays against
+both the collision tree and an independent double-precision triangle scan.
+It captures the camera position and frame before scanning, so movement during
+an audit does not change the reference ray. Work is limited to 2048 triangles
+and a 0.25 ms target per frame, checked every 64 triangles. Up to eight samples
+are collected per level, with at least five seconds between completed samples.
+The audit only reports results; it does not override visibility.
+
+For ordinary performance measurements, leave HOM and GPU occlusion enabled
+and disable detailed OpenGL output. The launcher provides a reset button for
+these diagnostic options. The sector and scheduler summaries are available
+without enabling them.
+
+Local checks:
+
+```sh
+python3 tests/test_android_version.py
+python3 android/apk/generate-options.py --check
+c++ -std=c++17 -O2 -Isrc tests/ray_query_audit.cpp -o /tmp/ray-query-audit
+/tmp/ray-query-audit
+```
