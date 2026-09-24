@@ -3,6 +3,7 @@
 #if defined(XR_PLATFORM_ANDROID)
 
 #include "android_vulkan_smoke.h"
+#include "../Layers/xrRenderVK/DdsTexture.h"
 
 #include <SDL.h>
 
@@ -310,6 +311,32 @@ bool Run(std::string& reason)
         physical_features.geometryShader, physical_features.tessellationShader);
     Msg("[renderer-vulkan] attachment formats: RGBA8=%u RGBA16F=%u R32F=%u D24S8=%u D32S8=%u",
         rgba8_attachment, rgba16f_attachment, r32f_attachment, d24s8_attachment, d32s8_attachment);
+
+    if (FS.get_path("$game_textures$"))
+    {
+        FS_FileSet files;
+        FS.file_list(files, "$game_textures$", FS_ListFiles | FS_RootOnly, "*.dds");
+        for (const auto& file : files)
+        {
+            string_path path;
+            FS.update_path(path, "$game_textures$", file.name.c_str());
+            IReader* reader = FS.r_open(path);
+            if (!reader)
+                continue;
+            xray::render::vulkan::DdsTexture texture;
+            std::string decode_error;
+            const bool decoded = xray::render::vulkan::decode_dds(reader->pointer(), reader->length(),
+                physical_features.textureCompressionBC != VK_FALSE, texture, decode_error);
+            FS.r_close(reader);
+            if (!decoded)
+                continue;
+            const bool sampled = (format_features(texture.format) & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0;
+            Msg("[renderer-vulkan] game DDS '%s': %ux%u, %zu mips, format=%u, sampled=%u",
+                file.name.c_str(), texture.extent.width, texture.extent.height, texture.copies.size(),
+                static_cast<unsigned int>(texture.format), sampled);
+            break;
+        }
+    }
 
     float queue_priority = 1.0f;
     VkDeviceQueueCreateInfo queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
