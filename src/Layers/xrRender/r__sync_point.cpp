@@ -3,8 +3,10 @@
 
 #include "QueryHelper.h"
 
+#if defined(XR_PLATFORM_ANDROID)
 #include <chrono>
 #include <thread>
+#endif
 
 namespace xray::render::RENDER_NAMESPACE
 {
@@ -30,6 +32,7 @@ bool R_sync_point::Wait(u32 /*wait_sleep*/, u64 timeout)
     if (!q_sync_point[q_sync_count])
         return true;
 
+#if defined(XR_PLATFORM_ANDROID)
     const auto started = std::chrono::steady_clock::now();
     bool reported_backlog = false;
     for (;;)
@@ -59,6 +62,23 @@ bool R_sync_point::Wait(u32 /*wait_sleep*/, u64 timeout)
         }
         std::this_thread::yield();
     }
+#else
+    const auto status = glClientWaitSync((GLsync)q_sync_point[q_sync_count],
+        GL_SYNC_FLUSH_COMMANDS_BIT, timeout * 1000 * 1000);
+    switch (status)
+    {
+    case GL_ALREADY_SIGNALED:
+    case GL_CONDITION_SATISFIED:
+        return true;
+    case GL_TIMEOUT_EXPIRED:
+        return false;
+    case GL_WAIT_FAILED:
+        Log("! R_sync_point::Wait raised GL_WAIT_FAILED");
+        [[fallthrough]];
+    default:
+        NODEFAULT;
+    }
+#endif
 }
 
 void R_sync_point::End()
