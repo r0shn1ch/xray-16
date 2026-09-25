@@ -44,7 +44,8 @@ void destroy_texture(VkDevice device, const TextureUploadDispatch& vk, UploadedT
 bool upload_texture(VkDevice device, VkQueue queue, VkCommandPool pool,
     const VkPhysicalDeviceMemoryProperties& memory_types, const TextureUploadDispatch& vk,
     const DdsTexture& source, UploadedTexture& result,
-    std::vector<PendingTextureUpload>& pending_uploads, std::string& error)
+    std::vector<PendingTextureUpload>& pending_uploads, ImageStateTracker& image_states,
+    std::string& error)
 {
     collect_completed_uploads(device, pool, vk, pending_uploads);
     result = {};
@@ -64,6 +65,8 @@ bool upload_texture(VkDevice device, VkQueue queue, VkCommandPool pool,
     {
         error = why;
         cleanup();
+        if (result.image)
+            image_states.forget_image(result.image);
         destroy_texture(device, vk, result);
         return false;
     };
@@ -106,6 +109,16 @@ bool upload_texture(VkDevice device, VkQueue queue, VkCommandPool pool,
     image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     if (vk.create_image(device, &image_info, nullptr, &result.image) != VK_SUCCESS)
         return fail("Vulkan texture image creation failed");
+    VkImageSubresourceRange image_range{};
+    image_range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    image_range.levelCount = source.mip_levels;
+    image_range.layerCount = source.layers;
+    if (!image_states.register_image(result.image, image_range, ImageUse::Undefined, error))
+    {
+        cleanup();
+        destroy_texture(device, vk, result);
+        return false;
+    }
     vk.get_image_memory_requirements(device, result.image, &requirements);
     uint32_t image_type = memory_index(memory_types, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (image_type == VK_MAX_MEMORY_TYPES)
@@ -128,26 +141,25 @@ bool upload_texture(VkDevice device, VkQueue queue, VkCommandPool pool,
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     if (vk.begin_command_buffer(upload.command, &begin) != VK_SUCCESS)
         return fail("Vulkan upload command recording failed");
-    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.image = result.image;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.levelCount = image_info.mipLevels;
-    barrier.subresourceRange.layerCount = source.layers;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    vk.cmd_pipeline_barrier(upload.command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-        0, 0, nullptr, 0, nullptr, 1, &barrier);
+    const ImageStateDispatch image_state_dispatch{vk.cmd_pipeline_barrier};
+    if (!image_states.transition(upload.command, result.image, ImageUse::TransferDestination,
+            image_state_dispatch, error))
+    {
+        cleanup();
+        image_states.forget_image(result.image);
+        destroy_texture(device, vk, result);
+        return false;
+    }
     vk.cmd_copy_buffer_to_image(upload.command, upload.staging, result.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         static_cast<uint32_t>(source.copies.size()), source.copies.data());
-    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vk.cmd_pipeline_barrier(upload.command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
-        0, 0, nullptr, 0, nullptr, 1, &barrier);
+    if (!image_states.transition(upload.command, result.image, ImageUse::Sampled,
+            image_state_dispatch, error))
+    {
+        cleanup();
+        image_states.forget_image(result.image);
+        destroy_texture(device, vk, result);
+        return false;
+    }
     if (vk.end_command_buffer(upload.command) != VK_SUCCESS)
         return fail("Vulkan upload command finalization failed");
 

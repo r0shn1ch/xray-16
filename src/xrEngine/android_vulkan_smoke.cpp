@@ -86,6 +86,7 @@ bool Run(std::string& reason)
     xray::render::vulkan::UploadedTexture game_texture;
     xray::render::vulkan::TextureUploadDispatch upload_dispatch;
     std::vector<xray::render::vulkan::PendingTextureUpload> pending_uploads;
+    xray::render::vulkan::ImageStateTracker image_states;
     std::vector<VkImageView> image_views;
     std::vector<VkFramebuffer> framebuffers;
 
@@ -107,7 +108,10 @@ bool Run(std::string& reason)
         if (device && !pending_uploads.empty())
             xray::render::vulkan::wait_for_uploads(device, command_pool, upload_dispatch, pending_uploads);
         if (device && game_texture.image)
+        {
+            image_states.forget_image(game_texture.image);
             xray::render::vulkan::destroy_texture(device, upload_dispatch, game_texture);
+        }
         if (device && destroy_framebuffer)
             for (VkFramebuffer framebuffer : framebuffers)
                 destroy_framebuffer(device, framebuffer, nullptr);
@@ -528,7 +532,7 @@ bool Run(std::string& reason)
     {
         std::string upload_error;
         if (!xray::render::vulkan::upload_texture(device, queue, command_pool, memory_properties,
-                upload_dispatch, game_dds, game_texture, pending_uploads, upload_error))
+                upload_dispatch, game_dds, game_texture, pending_uploads, image_states, upload_error))
             return fail("game DDS Vulkan upload failed: " + upload_error);
         Msg("[renderer-vulkan] game DDS uploaded to sampled GPU image: '%s'", game_dds_name.c_str());
     }

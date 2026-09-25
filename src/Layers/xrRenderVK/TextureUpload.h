@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DdsTexture.h"
+#include "ImageStateTracker.h"
 
 #include <vector>
 
@@ -55,7 +56,8 @@ struct PendingTextureUpload
 bool upload_texture(VkDevice device, VkQueue queue, VkCommandPool pool,
     const VkPhysicalDeviceMemoryProperties& memory_types, const TextureUploadDispatch& vk,
     const DdsTexture& source, UploadedTexture& result,
-    std::vector<PendingTextureUpload>& pending_uploads, std::string& error);
+    std::vector<PendingTextureUpload>& pending_uploads, ImageStateTracker& image_states,
+    std::string& error);
 void collect_completed_uploads(VkDevice device, VkCommandPool pool, const TextureUploadDispatch& vk,
     std::vector<PendingTextureUpload>& pending_uploads);
 bool wait_for_uploads(VkDevice device, VkCommandPool pool, const TextureUploadDispatch& vk,

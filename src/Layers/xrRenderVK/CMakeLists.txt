@@ -3,6 +3,8 @@ add_library(xrRenderVK STATIC)
 target_sources(xrRenderVK PRIVATE
     DdsTexture.cpp
     DdsTexture.h
+    ImageStateTracker.cpp
+    ImageStateTracker.h
     TextureUpload.cpp
     TextureUpload.h
     VulkanHardware.cpp
