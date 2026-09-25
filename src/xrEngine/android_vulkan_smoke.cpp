@@ -5,6 +5,7 @@
 #include "android_vulkan_smoke.h"
 #include "../Layers/xrRenderVK/DdsTexture.h"
 #include "../Layers/xrRenderVK/TextureUpload.h"
+#include "../Layers/xrRenderVK/VulkanHardware.h"
 
 #include <SDL.h>
 
@@ -52,14 +53,6 @@ bool has_extension(const std::vector<const char*>& extensions, const char* name)
     });
 }
 
-template <typename T>
-bool has_device_extension(const std::vector<T>& extensions, const char* name)
-{
-    return std::any_of(extensions.begin(), extensions.end(), [name](const T& extension)
-    {
-        return std::strcmp(extension.extensionName, name) == 0;
-    });
-}
 }
 #endif
 
@@ -82,6 +75,7 @@ bool Run(std::string& reason)
     VkInstance instance = VK_NULL_HANDLE;
     VkSurfaceKHR surface = VK_NULL_HANDLE;
     VkDevice device = VK_NULL_HANDLE;
+    VkQueue queue = VK_NULL_HANDLE;
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
     VkSemaphore acquire_semaphore = VK_NULL_HANDLE;
     VkSemaphore render_semaphore = VK_NULL_HANDLE;
@@ -198,42 +192,6 @@ bool Run(std::string& reason)
 
     destroy_instance = load_instance_proc<PFN_vkDestroyInstance>(instance, get_instance_proc, "vkDestroyInstance");
     destroy_surface = load_instance_proc<PFN_vkDestroySurfaceKHR>(instance, get_instance_proc, "vkDestroySurfaceKHR");
-    const auto enumerate_physical_devices = load_instance_proc<PFN_vkEnumeratePhysicalDevices>(
-        instance, get_instance_proc, "vkEnumeratePhysicalDevices");
-    const auto get_queue_families = load_instance_proc<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
-        instance, get_instance_proc, "vkGetPhysicalDeviceQueueFamilyProperties");
-    const auto get_surface_support = load_instance_proc<PFN_vkGetPhysicalDeviceSurfaceSupportKHR>(
-        instance, get_instance_proc, "vkGetPhysicalDeviceSurfaceSupportKHR");
-    const auto get_surface_capabilities = load_instance_proc<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>(
-        instance, get_instance_proc, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
-    const auto get_surface_formats = load_instance_proc<PFN_vkGetPhysicalDeviceSurfaceFormatsKHR>(
-        instance, get_instance_proc, "vkGetPhysicalDeviceSurfaceFormatsKHR");
-    const auto get_present_modes = load_instance_proc<PFN_vkGetPhysicalDeviceSurfacePresentModesKHR>(
-        instance, get_instance_proc, "vkGetPhysicalDeviceSurfacePresentModesKHR");
-    const auto enumerate_device_extensions = load_instance_proc<PFN_vkEnumerateDeviceExtensionProperties>(
-        instance, get_instance_proc, "vkEnumerateDeviceExtensionProperties");
-    const auto get_device_proc = load_instance_proc<PFN_vkGetDeviceProcAddr>(
-        instance, get_instance_proc, "vkGetDeviceProcAddr");
-    if (!destroy_instance || !destroy_surface || !enumerate_physical_devices || !get_queue_families ||
-        !get_surface_support || !get_surface_capabilities || !get_surface_formats || !get_present_modes ||
-        !enumerate_device_extensions || !get_device_proc || !get_physical_properties ||
-        !get_physical_features || !get_memory_properties || !get_format_properties)
-        return fail("required Vulkan instance procedures are unavailable");
-
-    if (!create_surface(window, instance, &surface))
-        return fail("SDL could not create a Vulkan window surface");
-
-    uint32_t physical_count = 0;
-    if (enumerate_physical_devices(instance, &physical_count, nullptr) != VK_SUCCESS || physical_count == 0)
-        return fail("no Vulkan physical device is available");
-    std::vector<VkPhysicalDevice> physical_devices(physical_count);
-    if (enumerate_physical_devices(instance, &physical_count, physical_devices.data()) != VK_SUCCESS)
-        return fail("could not enumerate Vulkan physical devices");
-
-    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
-    uint32_t queue_family = std::numeric_limits<uint32_t>::max();
-    VkPhysicalDeviceProperties physical_properties{};
-    int64_t selected_device_score = std::numeric_limits<int64_t>::min();
     const auto get_physical_properties = load_instance_proc<PFN_vkGetPhysicalDeviceProperties>(
         instance, get_instance_proc, "vkGetPhysicalDeviceProperties");
     const auto get_physical_features = load_instance_proc<PFN_vkGetPhysicalDeviceFeatures>(
@@ -242,75 +200,45 @@ bool Run(std::string& reason)
         instance, get_instance_proc, "vkGetPhysicalDeviceMemoryProperties");
     const auto get_format_properties = load_instance_proc<PFN_vkGetPhysicalDeviceFormatProperties>(
         instance, get_instance_proc, "vkGetPhysicalDeviceFormatProperties");
-    for (VkPhysicalDevice candidate : physical_devices)
-    {
-        uint32_t family_count = 0;
-        get_queue_families(candidate, &family_count, nullptr);
-        std::vector<VkQueueFamilyProperties> families(family_count);
-        get_queue_families(candidate, &family_count, families.data());
-        for (uint32_t index = 0; index < family_count; ++index)
-        {
-            VkBool32 presentation_supported = VK_FALSE;
-            if ((families[index].queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
-                get_surface_support(candidate, index, surface, &presentation_supported) == VK_SUCCESS &&
-                presentation_supported)
-            {
-                uint32_t device_extension_count = 0;
-                enumerate_device_extensions(candidate, nullptr, &device_extension_count, nullptr);
-                std::vector<VkExtensionProperties> device_extensions(device_extension_count);
-                enumerate_device_extensions(candidate, nullptr, &device_extension_count, device_extensions.data());
-                if (has_device_extension(device_extensions, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
-                {
-                    VkPhysicalDeviceProperties candidate_properties{};
-                    VkPhysicalDeviceMemoryProperties candidate_memory{};
-                    if (get_physical_properties)
-                        get_physical_properties(candidate, &candidate_properties);
-                    if (get_memory_properties)
-                        get_memory_properties(candidate, &candidate_memory);
+    const auto get_surface_capabilities = load_instance_proc<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>(
+        instance, get_instance_proc, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
+    const auto get_surface_formats = load_instance_proc<PFN_vkGetPhysicalDeviceSurfaceFormatsKHR>(
+        instance, get_instance_proc, "vkGetPhysicalDeviceSurfaceFormatsKHR");
+    const auto get_present_modes = load_instance_proc<PFN_vkGetPhysicalDeviceSurfacePresentModesKHR>(
+        instance, get_instance_proc, "vkGetPhysicalDeviceSurfacePresentModesKHR");
+    const auto get_device_proc = load_instance_proc<PFN_vkGetDeviceProcAddr>(
+        instance, get_instance_proc, "vkGetDeviceProcAddr");
+    if (!destroy_instance || !destroy_surface || !get_surface_capabilities || !get_surface_formats ||
+        !get_present_modes || !get_device_proc || !get_physical_properties ||
+        !get_physical_features || !get_memory_properties || !get_format_properties)
+        return fail("required Vulkan instance procedures are unavailable");
 
-                    uint64_t local_memory = 0;
-                    for (uint32_t heap = 0; heap < candidate_memory.memoryHeapCount; ++heap)
-                        if (candidate_memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
-                            local_memory += candidate_memory.memoryHeaps[heap].size;
+    if (!create_surface(window, instance, &surface))
+        return fail("SDL could not create a Vulkan window surface");
 
-                    int64_t score = static_cast<int64_t>(std::min<uint64_t>(local_memory >> 20, 65535));
-                    switch (candidate_properties.deviceType)
-                    {
-                    case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: score += 1'000'000; break;
-                    case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: score += 800'000; break;
-                    case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: score += 400'000; break;
-                    case VK_PHYSICAL_DEVICE_TYPE_CPU: score += 100'000; break;
-                    default: break;
-                    }
-                    score += static_cast<int64_t>(candidate_properties.limits.maxImageDimension2D);
-                    score += static_cast<int64_t>(families[index].queueCount) * 100;
-                    if (score > selected_device_score)
-                    {
-                        selected_device_score = score;
-                        physical_device = candidate;
-                        queue_family = index;
-                        physical_properties = candidate_properties;
-                    }
-                }
-            }
-        }
-    }
-    if (!physical_device)
-        return fail("no Vulkan graphics queue supports the Android surface and swapchain");
-
-    VkPhysicalDeviceFeatures physical_features{};
-    VkPhysicalDeviceMemoryProperties memory_properties{};
-    if (get_physical_features)
-        get_physical_features(physical_device, &physical_features);
-    if (get_memory_properties)
-        get_memory_properties(physical_device, &memory_properties);
-
-    VkDeviceSize device_local_bytes = 0;
-    for (uint32_t index = 0; index < memory_properties.memoryHeapCount; ++index)
-    {
-        if (memory_properties.memoryHeaps[index].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
-            device_local_bytes += memory_properties.memoryHeaps[index].size;
-    }
+    const auto enumerate_physical_devices = load_instance_proc<PFN_vkEnumeratePhysicalDevices>(
+        instance, get_instance_proc, "vkEnumeratePhysicalDevices");
+    const auto get_queue_families = load_instance_proc<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
+        instance, get_instance_proc, "vkGetPhysicalDeviceQueueFamilyProperties");
+    const auto get_surface_support = load_instance_proc<PFN_vkGetPhysicalDeviceSurfaceSupportKHR>(
+        instance, get_instance_proc, "vkGetPhysicalDeviceSurfaceSupportKHR");
+    const auto enumerate_device_extensions = load_instance_proc<PFN_vkEnumerateDeviceExtensionProperties>(
+        instance, get_instance_proc, "vkEnumerateDeviceExtensionProperties");
+    xray::render::vulkan::HardwareDispatch hardware_dispatch{
+        enumerate_physical_devices, get_queue_families, get_surface_support, enumerate_device_extensions,
+        get_physical_properties, get_physical_features, get_memory_properties
+    };
+    xray::render::vulkan::PhysicalDevice physical_selection;
+    std::string hardware_error;
+    if (!xray::render::vulkan::select_physical_device(instance, surface, hardware_dispatch,
+            physical_selection, hardware_error))
+        return fail(hardware_error);
+    const VkPhysicalDevice physical_device = physical_selection.handle;
+    const uint32_t queue_family = physical_selection.graphics_present_family;
+    const VkPhysicalDeviceProperties& physical_properties = physical_selection.properties;
+    const VkPhysicalDeviceFeatures& physical_features = physical_selection.features;
+    const VkPhysicalDeviceMemoryProperties& memory_properties = physical_selection.memory;
+    const VkDeviceSize device_local_bytes = physical_selection.local_memory_bytes;
 
     const auto format_features = [&](VkFormat format)
     {
@@ -380,25 +308,15 @@ bool Run(std::string& reason)
         }
     }
 
-    float queue_priority = 1.0f;
-    VkDeviceQueueCreateInfo queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-    queue_info.queueFamilyIndex = queue_family;
-    queue_info.queueCount = 1;
-    queue_info.pQueuePriorities = &queue_priority;
-    const char* device_extensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
-    VkDeviceCreateInfo device_info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
-    device_info.queueCreateInfoCount = 1;
-    device_info.pQueueCreateInfos = &queue_info;
-    device_info.enabledExtensionCount = 1;
-    device_info.ppEnabledExtensionNames = device_extensions;
-
     const auto create_device = load_instance_proc<PFN_vkCreateDevice>(instance, get_instance_proc, "vkCreateDevice");
-    if (!create_device || create_device(physical_device, &device_info, nullptr, &device) != VK_SUCCESS)
-        return fail("vkCreateDevice failed");
+    xray::render::vulkan::DeviceDispatch device_dispatch{create_device, get_device_proc};
+    std::string device_error;
+    if (!xray::render::vulkan::create_logical_device(physical_selection, device_dispatch,
+            device, queue, device_error))
+        return fail(device_error);
 
     destroy_device = load_device_proc<PFN_vkDestroyDevice>(device, get_device_proc, "vkDestroyDevice");
     device_wait_idle = load_device_proc<PFN_vkDeviceWaitIdle>(device, get_device_proc, "vkDeviceWaitIdle");
-    const auto get_device_queue = load_device_proc<PFN_vkGetDeviceQueue>(device, get_device_proc, "vkGetDeviceQueue");
     const auto create_swapchain = load_device_proc<PFN_vkCreateSwapchainKHR>(device, get_device_proc, "vkCreateSwapchainKHR");
     const auto get_swapchain_images = load_device_proc<PFN_vkGetSwapchainImagesKHR>(device, get_device_proc, "vkGetSwapchainImagesKHR");
     const auto acquire_next_image = load_device_proc<PFN_vkAcquireNextImageKHR>(device, get_device_proc, "vkAcquireNextImageKHR");
@@ -420,7 +338,7 @@ bool Run(std::string& reason)
     const auto cmd_end_render_pass = load_device_proc<PFN_vkCmdEndRenderPass>(device, get_device_proc, "vkCmdEndRenderPass");
     const auto end_command_buffer = load_device_proc<PFN_vkEndCommandBuffer>(device, get_device_proc, "vkEndCommandBuffer");
     const auto queue_submit = load_device_proc<PFN_vkQueueSubmit>(device, get_device_proc, "vkQueueSubmit");
-    if (!destroy_device || !device_wait_idle || !get_device_queue || !create_swapchain || !get_swapchain_images ||
+    if (!destroy_device || !device_wait_idle || !create_swapchain || !get_swapchain_images ||
         !acquire_next_image || !queue_present || !destroy_swapchain || !create_semaphore || !destroy_semaphore ||
         !create_image_view || !destroy_image_view || !create_render_pass || !destroy_render_pass ||
         !create_framebuffer || !destroy_framebuffer || !create_command_pool || !destroy_command_pool ||
@@ -606,8 +524,6 @@ bool Run(std::string& reason)
         !upload_dispatch.get_fence_status || !upload_dispatch.wait_for_fences)
         return fail("Vulkan image upload procedures are unavailable");
 
-    VkQueue queue = VK_NULL_HANDLE;
-    get_device_queue(device, queue_family, 0, &queue);
     if (!game_dds.pixels.empty())
     {
         std::string upload_error;
