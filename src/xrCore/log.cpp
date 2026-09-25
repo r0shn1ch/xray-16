@@ -225,14 +225,6 @@ void CreateLog(bool nl)
         strconcat(log_file_name, Core.ApplicationName, "_", Core.UserName, ".log");
     }
 
-#if defined(XR_PLATFORM_ANDROID)
-    if (const char* session = std::getenv("OPENXRAY_ENGINE_LOG"); session && *session)
-    {
-        const char* basename = strrchr(session, '/');
-        strconcat(log_file_name, basename ? basename + 1 : session, ".core.log");
-    }
-#endif
-
     if (FS.path_exist("$logs$"))
         FS.update_path(log_file_name, "$logs$", log_file_name);
 

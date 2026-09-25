@@ -50,7 +50,7 @@ public final class XRayActivity extends SDLActivity {
             diagnosticsFile = createDiagnosticsFile();
         } catch (RuntimeException error) {
             Log.e(TAG, "Unable to initialize diagnostics storage", error);
-            diagnosticsFile = new File(getFilesDir(), "activity.log");
+            diagnosticsFile = null;
         }
         installCrashHandler();
         writeDiagnostic("activity onCreate; version=" + BuildConfig.VERSION_NAME
@@ -250,11 +250,21 @@ public final class XRayActivity extends SDLActivity {
 
     private File createDiagnosticsFile() {
         try {
-            return SessionLogs.start(this, getIntent().getStringExtra(LauncherActivity.EXTRA_GAME_PATH));
+            String enginePath = getIntent().getStringExtra(LauncherActivity.EXTRA_ENGINE_LOG);
+            String activityPath = getIntent().getStringExtra(LauncherActivity.EXTRA_ACTIVITY_LOG);
+            if (activityPath == null || activityPath.isEmpty())
+                throw new IOException("Missing activity log path");
+            SessionLogs.activate(enginePath);
+            File activity = new File(activityPath);
+            if (!activity.isFile()) throw new IOException("Activity log was not created: " + activity);
+            return activity;
         } catch (IOException | SecurityException error) {
-            Log.e(TAG, "Unable to create game-directory diagnostics", error);
+            Log.e(TAG, "Unable to activate launcher log session", error);
             try {
-                return SessionLogs.start(this, null);
+                SessionLogs.Session fallback = SessionLogs.start(this,
+                        getIntent().getStringExtra(LauncherActivity.EXTRA_GAME_PATH));
+                SessionLogs.activate(fallback.engine.getAbsolutePath());
+                return fallback.activity;
             } catch (IOException fallback) {
                 throw new IllegalStateException("Unable to create diagnostics", fallback);
             }
@@ -276,7 +286,12 @@ public final class XRayActivity extends SDLActivity {
     private synchronized void writeDiagnostic(String message) {
         Log.i(TAG, message);
         if (diagnosticsFile == null) {
-            diagnosticsFile = createDiagnosticsFile();
+            try {
+                diagnosticsFile = createDiagnosticsFile();
+            } catch (RuntimeException error) {
+                Log.e(TAG, "Unable to open a timestamped diagnostic log", error);
+                return;
+            }
         }
         try (PrintWriter writer = new PrintWriter(new FileWriter(diagnosticsFile, true))) {
             String timestamp = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
