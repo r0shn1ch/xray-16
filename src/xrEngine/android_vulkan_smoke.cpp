@@ -91,6 +91,7 @@ bool Run(std::string& reason)
     std::string game_dds_name;
     xray::render::vulkan::UploadedTexture game_texture;
     xray::render::vulkan::TextureUploadDispatch upload_dispatch;
+    std::vector<xray::render::vulkan::PendingTextureUpload> pending_uploads;
     std::vector<VkImageView> image_views;
     std::vector<VkFramebuffer> framebuffers;
 
@@ -109,6 +110,8 @@ bool Run(std::string& reason)
     {
         if (device && device_wait_idle)
             device_wait_idle(device);
+        if (device && !pending_uploads.empty())
+            xray::render::vulkan::wait_for_uploads(device, command_pool, upload_dispatch, pending_uploads);
         if (device && game_texture.image)
             xray::render::vulkan::destroy_texture(device, upload_dispatch, game_texture);
         if (device && destroy_framebuffer)
@@ -213,7 +216,8 @@ bool Run(std::string& reason)
         instance, get_instance_proc, "vkGetDeviceProcAddr");
     if (!destroy_instance || !destroy_surface || !enumerate_physical_devices || !get_queue_families ||
         !get_surface_support || !get_surface_capabilities || !get_surface_formats || !get_present_modes ||
-        !enumerate_device_extensions || !get_device_proc)
+        !enumerate_device_extensions || !get_device_proc || !get_physical_properties ||
+        !get_physical_features || !get_memory_properties || !get_format_properties)
         return fail("required Vulkan instance procedures are unavailable");
 
     if (!create_surface(window, instance, &surface))
@@ -229,6 +233,7 @@ bool Run(std::string& reason)
     VkPhysicalDevice physical_device = VK_NULL_HANDLE;
     uint32_t queue_family = std::numeric_limits<uint32_t>::max();
     VkPhysicalDeviceProperties physical_properties{};
+    int64_t selected_device_score = std::numeric_limits<int64_t>::min();
     const auto get_physical_properties = load_instance_proc<PFN_vkGetPhysicalDeviceProperties>(
         instance, get_instance_proc, "vkGetPhysicalDeviceProperties");
     const auto get_physical_features = load_instance_proc<PFN_vkGetPhysicalDeviceFeatures>(
@@ -256,16 +261,39 @@ bool Run(std::string& reason)
                 enumerate_device_extensions(candidate, nullptr, &device_extension_count, device_extensions.data());
                 if (has_device_extension(device_extensions, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
                 {
-                    physical_device = candidate;
-                    queue_family = index;
+                    VkPhysicalDeviceProperties candidate_properties{};
+                    VkPhysicalDeviceMemoryProperties candidate_memory{};
                     if (get_physical_properties)
-                        get_physical_properties(candidate, &physical_properties);
-                    break;
+                        get_physical_properties(candidate, &candidate_properties);
+                    if (get_memory_properties)
+                        get_memory_properties(candidate, &candidate_memory);
+
+                    uint64_t local_memory = 0;
+                    for (uint32_t heap = 0; heap < candidate_memory.memoryHeapCount; ++heap)
+                        if (candidate_memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+                            local_memory += candidate_memory.memoryHeaps[heap].size;
+
+                    int64_t score = static_cast<int64_t>(std::min<uint64_t>(local_memory >> 20, 65535));
+                    switch (candidate_properties.deviceType)
+                    {
+                    case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: score += 1'000'000; break;
+                    case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: score += 800'000; break;
+                    case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: score += 400'000; break;
+                    case VK_PHYSICAL_DEVICE_TYPE_CPU: score += 100'000; break;
+                    default: break;
+                    }
+                    score += static_cast<int64_t>(candidate_properties.limits.maxImageDimension2D);
+                    score += static_cast<int64_t>(families[index].queueCount) * 100;
+                    if (score > selected_device_score)
+                    {
+                        selected_device_score = score;
+                        physical_device = candidate;
+                        queue_family = index;
+                        physical_properties = candidate_properties;
+                    }
                 }
             }
         }
-        if (physical_device)
-            break;
     }
     if (!physical_device)
         return fail("no Vulkan graphics queue supports the Android surface and swapchain");
@@ -559,7 +587,10 @@ bool Run(std::string& reason)
     XRAY_LOAD_UPLOAD(cmd_pipeline_barrier, "vkCmdPipelineBarrier");
     XRAY_LOAD_UPLOAD(cmd_copy_buffer_to_image, "vkCmdCopyBufferToImage");
     XRAY_LOAD_UPLOAD(queue_submit, "vkQueueSubmit");
-    XRAY_LOAD_UPLOAD(queue_wait_idle, "vkQueueWaitIdle");
+    XRAY_LOAD_UPLOAD(create_fence, "vkCreateFence");
+    XRAY_LOAD_UPLOAD(destroy_fence, "vkDestroyFence");
+    XRAY_LOAD_UPLOAD(get_fence_status, "vkGetFenceStatus");
+    XRAY_LOAD_UPLOAD(wait_for_fences, "vkWaitForFences");
 #undef XRAY_LOAD_UPLOAD
     if (!upload_dispatch.create_buffer || !upload_dispatch.destroy_buffer ||
         !upload_dispatch.get_buffer_memory_requirements || !upload_dispatch.create_image ||
@@ -571,7 +602,8 @@ bool Run(std::string& reason)
         !upload_dispatch.allocate_command_buffers || !upload_dispatch.free_command_buffers ||
         !upload_dispatch.begin_command_buffer || !upload_dispatch.end_command_buffer ||
         !upload_dispatch.cmd_pipeline_barrier || !upload_dispatch.cmd_copy_buffer_to_image ||
-        !upload_dispatch.queue_submit || !upload_dispatch.queue_wait_idle)
+        !upload_dispatch.queue_submit || !upload_dispatch.create_fence || !upload_dispatch.destroy_fence ||
+        !upload_dispatch.get_fence_status || !upload_dispatch.wait_for_fences)
         return fail("Vulkan image upload procedures are unavailable");
 
     VkQueue queue = VK_NULL_HANDLE;
@@ -580,7 +612,7 @@ bool Run(std::string& reason)
     {
         std::string upload_error;
         if (!xray::render::vulkan::upload_texture(device, queue, command_pool, memory_properties,
-                upload_dispatch, game_dds, game_texture, upload_error))
+                upload_dispatch, game_dds, game_texture, pending_uploads, upload_error))
             return fail("game DDS Vulkan upload failed: " + upload_error);
         Msg("[renderer-vulkan] game DDS uploaded to sampled GPU image: '%s'", game_dds_name.c_str());
     }

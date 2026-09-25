@@ -178,8 +178,8 @@ The diagnostics page reads bounded log tails on a background thread. Android
 bootstrap/crash logs are normally available at:
 
 ```text
-<game>/_appdata_/logs/android_<timestamp>_<pid>_<id>.log
-<game>/_appdata_/logs/activity_<timestamp>_<pid>_<id>.log
+<game>/_appdata_/logs/session-<id>.engine.log
+<game>/_appdata_/logs/session-<id>.activity.log
 ```
 
 The engine's normal log path remains `<STALKER>/_appdata_/logs/`. For a crash
@@ -235,7 +235,7 @@ c++ -std=c++17 -O2 -Isrc tests/ray_query_audit.cpp -o /tmp/ray-query-audit
 /tmp/ray-query-audit
 ```
 
-Use `python3 android/analyze-sector-audit.py <timestamped-engine-log>` to check the capture.
+Use `python3 android/analyze-sector-audit.py android.log` to check the capture.
 Exit code 0 means all recorded audits completed and their ray results agree;
 this does not prove rendering correctness. Exit code 1 reports differing ray
 results. Exit code 2 indicates missing or incomplete audit evidence. Hit triangle
