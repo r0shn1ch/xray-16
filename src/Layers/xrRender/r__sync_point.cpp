@@ -78,6 +78,7 @@ bool R_sync_point::Wait(u32 /*wait_sleep*/, u64 timeout)
     default:
         NODEFAULT;
     }
+    return false;
 #endif
 }
 

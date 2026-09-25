@@ -89,3 +89,19 @@ adb pull /sdcard/STALKER/_appdata_/logs openxray-game-logs
 
 Native crashes must be symbolicated against the unstripped `libmain.so` built
 from the same commit as the APK.
+
+## Checking and installing updates
+
+Open **Settings → Updates → Check for updates** to query published releases in
+`r0shn1ch/xray-16`. Releases without `android-update.json` are ignored. When an
+update is available, the launcher downloads the named APK, checks its SHA-256,
+and hands installation to Android. Android asks the user to approve the update;
+on Android 8 and later, allow installs from OpenXRay when prompted.
+
+`android/build-apk-armv7.sh` creates `build/android-update.json` beside the APK.
+To publish an Android update, attach both files to a **published** GitHub
+release, preserving the APK's filename from the manifest. The APK must be signed
+with the same certificate as the installed app; Android rejects updates signed
+with a different key. The checked-in build script produces a debug-signed APK,
+so distributing updates beyond builds made with the same debug key requires a
+stable release keystore.

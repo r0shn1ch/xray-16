@@ -187,7 +187,7 @@ struct XRCORE_API SJointLimit
     }
 };
 
-struct alignas(4) XRCORE_API SBoneShape
+struct XRCORE_API SBoneShape
 {
     enum EShapeType
     {
@@ -221,7 +221,7 @@ struct alignas(4) XRCORE_API SBoneShape
         sphere.R = 0.f;
         cylinder.invalidate();
     }
-	bool Valid() const;
+    bool Valid() const;
 };
 
 struct XRCORE_API SJointIKData

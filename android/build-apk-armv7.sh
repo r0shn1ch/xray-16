@@ -210,6 +210,9 @@ aligned_apk="$build_dir/app-debug-16k-aligned.apk"
 unlink "$aligned_apk"
 "$zipalign_bin" -c -P 16 4 "$output_apk"
 "$apksigner_bin" verify "$output_apk"
+python3 "$script_dir/create-update-manifest.py" \
+    --apk "$output_apk" \
+    --output "$build_dir/android-update.json"
 printf '%s\n' "$output_apk"
 
 manifest="$build_dir/build-manifest.txt"
@@ -225,3 +228,4 @@ manifest="$build_dir/build-manifest.txt"
     echo "lto=$android_lto"
 } > "$manifest"
 echo "Build manifest: $manifest"
+echo "Android release update manifest: $build_dir/android-update.json"
