@@ -68,6 +68,8 @@ public final class LauncherActivity extends Activity {
     public static final String EXTRA_TOUCH_CONTROLS = "org.openxray.extra.TOUCH_CONTROLS";
     public static final String EXTRA_RENDERER_MODE = "org.openxray.extra.RENDERER_MODE";
     public static final String EXTRA_GRAPHICS_PRESET = "org.openxray.extra.GRAPHICS_PRESET";
+    public static final String EXTRA_ENGINE_LOG = "org.openxray.extra.ENGINE_LOG";
+    public static final String EXTRA_ACTIVITY_LOG = "org.openxray.extra.ACTIVITY_LOG";
     public static final String EXTRA_RENDER_WIDTH = "org.openxray.extra.RENDER_WIDTH";
     public static final String EXTRA_RENDER_HEIGHT = "org.openxray.extra.RENDER_HEIGHT";
     public static final String EXTRA_SHOW_FPS = "org.openxray.extra.SHOW_FPS";
@@ -839,18 +841,39 @@ public final class LauncherActivity extends Activity {
             return;
         }
 
-        clearLogs();
         savePreferences();
         String selectedPath = gamePath.getText().toString().trim();
+        SessionLogs.Session logSession;
+        try {
+            logSession = SessionLogs.start(this, rendererSmoke ? null : selectedPath);
+        } catch (IOException | SecurityException error) {
+            setStatus("Не удалось создать журналы в папке игры: " + error.getMessage());
+            return;
+        }
         writeLauncherLog("[launcher] starting "
-                + (rendererSmoke ? "renderer smoke test" : "OpenXRay; game root=" + selectedPath));
+                + (rendererSmoke ? "renderer smoke test" : "OpenXRay; game root=" + selectedPath),
+                logSession.activity);
         engineLaunchTime = SystemClock.elapsedRealtime();
         engineFailureToastShown = false;
 
         Intent intent = createEngineIntent(rendererSmoke, vulkanRendererSmoke);
+        intent.putExtra(EXTRA_ENGINE_LOG, logSession.engine.getAbsolutePath());
+        intent.putExtra(EXTRA_ACTIVITY_LOG, logSession.activity.getAbsolutePath());
         intent.putExtra(EXTRA_ADDITIONAL_ARGS, additionalArgs);
-        setStatus(vulkanRendererSmoke ? "Запускаю Vulkan probe и GLES fallback…" :
-                (rendererSmoke ? "Запускаю GLES smoke test…" : "Запускаю OpenXRay…"));
+        String launchStatus;
+        if (vulkanRendererSmoke) {
+            launchStatus = "Запускаю Vulkan probe и GLES fallback…";
+        } else if (rendererSmoke) {
+            launchStatus = "Запускаю GLES smoke test…";
+        } else {
+            launchStatus = "Запускаю OpenXRay: "
+                    + OptionCatalog.value(OptionCatalog.RENDERER_LABELS,
+                            clampRendererMode(rendererMode.getSelectedItemPosition()), 0)
+                    + ", качество: "
+                    + OptionCatalog.value(OptionCatalog.GRAPHICS_LABELS,
+                            clampGraphicsPreset(graphicsPreset.getSelectedItemPosition()), 0);
+        }
+        setStatus(launchStatus);
         Toast.makeText(this, "OpenXRay: запуск движка…", Toast.LENGTH_SHORT).show();
         try {
             startActivity(intent);
@@ -1310,20 +1333,7 @@ public final class LauncherActivity extends Activity {
     private String collectLogs() {
         StringBuilder result = new StringBuilder();
         File[] session = SessionLogs.latest(this);
-        if (session.length != 0) {
-            for (File file : session) appendLog(result, file);
-            return result.toString();
-        }
-        appendLog(result, new File(Environment.getExternalStorageDirectory(), "openxray/android.log"));
-        appendLog(result, new File(Environment.getExternalStorageDirectory(), "openxray/activity.log"));
-        File external = getExternalFilesDir("openxray");
-        if (external != null) {
-            appendLog(result, new File(external, "android.log"));
-            appendLog(result, new File(external, "activity.log"));
-        }
-        File internal = new File(getFilesDir(), "openxray");
-        appendLog(result, new File(internal, "android.log"));
-        appendLog(result, new File(internal, "activity.log"));
+        for (File file : session) appendLog(result, file);
         return result.toString();
     }
 
@@ -1434,42 +1444,30 @@ public final class LauncherActivity extends Activity {
             return;
         }
         for (File file : SessionLogs.latest(this)) deleteLog(file);
-        deleteLog(new File(Environment.getExternalStorageDirectory(), "openxray/android.log"));
-        deleteLog(new File(Environment.getExternalStorageDirectory(), "openxray/activity.log"));
-        File external = getExternalFilesDir("openxray");
-        if (external != null) {
-            deleteLog(new File(external, "android.log"));
-            deleteLog(new File(external, "activity.log"));
-        }
-        File internal = new File(getFilesDir(), "openxray");
-        deleteLog(new File(internal, "android.log"));
-        deleteLog(new File(internal, "activity.log"));
         refreshLog();
     }
 
     private void writeLauncherLog(String message) {
-        File externalRoot = getExternalFilesDir("openxray");
         File[] session = SessionLogs.latest(this);
-        File[] candidates = session.length != 0 ? new File[] {session[0]} : new File[] {
-                new File(Environment.getExternalStorageDirectory(), "openxray/android.log"),
-                externalRoot == null ? null : new File(externalRoot, "android.log"),
-                new File(getFilesDir(), "openxray/android.log")
-        };
+        writeLauncherLog(message, session.length != 0 ? session[1] : null);
+    }
+
+    private void writeLauncherLog(String message, File sessionFile) {
+        if (sessionFile == null) {
+            String gameRoot = gamePath == null ? "" : gamePath.getText().toString().trim();
+            File directory = gameRoot.isEmpty() ? new File(getFilesDir(), "openxray/logs")
+                    : new File(gameRoot, "_appdata_/logs");
+            if (!directory.isDirectory() && !directory.mkdirs()) return;
+            String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
+            sessionFile = new File(directory, "activity_" + stamp + "_launcher.log");
+        }
         String timestamp = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
                 .format(new Date());
-        for (File file : candidates) {
-            if (file == null)
-                continue;
-            File parent = file.getParentFile();
-            if (parent == null || (!parent.exists() && !parent.mkdirs()))
-                continue;
-            try (PrintWriter writer = new PrintWriter(new FileWriter(file, true))) {
-                writer.println(timestamp + " " + message);
-                return;
-            } catch (IOException | SecurityException ignored) {
-                // Try the app-specific fallback when shared storage is unavailable.
-            }
-        }
+        File parent = sessionFile.getParentFile();
+        if (parent == null || (!parent.exists() && !parent.mkdirs())) return;
+        try (PrintWriter writer = new PrintWriter(new FileWriter(sessionFile, true))) {
+            writer.println(timestamp + " " + message);
+        } catch (IOException | SecurityException ignored) { }
     }
 
     private void deleteLog(File file) {

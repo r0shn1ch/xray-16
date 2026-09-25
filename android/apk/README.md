@@ -66,8 +66,8 @@ The diagnostics page polls bounded 32 KiB tails on a background executor, so
 it does not load whole growing files on the UI thread. Primary Android paths:
 
 ```text
-<game>/_appdata_/logs/session-<id>.engine.log
-<game>/_appdata_/logs/session-<id>.activity.log
+<game>/_appdata_/logs/android_<timestamp>_<pid>_<id>.log
+<game>/_appdata_/logs/activity_<timestamp>_<pid>_<id>.log
 ```
 
 Normal engine logs are also written under `<STALKER>/_appdata_/logs/`.
