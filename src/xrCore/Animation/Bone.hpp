@@ -187,11 +187,7 @@ struct XRCORE_API SJointLimit
     }
 };
 
-#if defined(__GNUC__)
-struct XRCORE_API alignas(4) SBoneShape
-#else
 struct alignas(4) XRCORE_API SBoneShape
-#endif
 {
     enum EShapeType
     {
