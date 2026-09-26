@@ -114,6 +114,7 @@ jobs:
     - name: Download Alpine bootstrap with retries
       if: ${{ matrix.platform.name == 'Alpine' }}
       id: alpine_apk
+      shell: bash
       env:
         APK_TOOLS_URL: https://gitlab.alpinelinux.org/api/v4/projects/5/packages/generic/v2.14.10/x86_64/apk.static
         APK_TOOLS_SHA256: 34bb1a96f0258982377a289392d4ea9f3f4b767a4bb5806b1b87179b79ad8a1c
