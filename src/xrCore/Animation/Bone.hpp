@@ -187,7 +187,7 @@ struct XRCORE_API SJointLimit
     }
 };
 
-struct alignas(4) XRCORE_API SBoneShape
+struct XRCORE_API SBoneShape
 {
     enum EShapeType
     {
@@ -206,7 +206,7 @@ struct alignas(4) XRCORE_API SBoneShape
         sfNoFogCollider = (1u << 3u),
     };
 
-    u16 type; // 2
+    alignas(4) u16 type; // 2
     Flags16 flags; // 2
     Fobb box; // 15*4
     Fsphere sphere; // 4*4
