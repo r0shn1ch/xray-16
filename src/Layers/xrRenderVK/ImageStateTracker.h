@@ -23,8 +23,8 @@ struct ImageStateDispatch
     PFN_vkCmdPipelineBarrier cmd_pipeline_barrier{};
 };
 
-// Tracks whole-image usage on one externally synchronized graphics queue.
-// Swapchain and image lifetime remain owned by their renderer resources.
+// Tracks image subresources on one externally synchronized queue.
+// Queue ownership transfers and image lifetime remain owned by renderer resources.
 class ImageStateTracker
 {
 public:
@@ -32,6 +32,8 @@ public:
         ImageUse initial_use, std::string& error);
     bool transition(VkCommandBuffer command, VkImage image, ImageUse next_use,
         const ImageStateDispatch& vk, std::string& error);
+    bool transition(VkCommandBuffer command, VkImage image, const VkImageSubresourceRange& range,
+        ImageUse next_use, const ImageStateDispatch& vk, std::string& error);
     bool forget_image(VkImage image);
 
 private:
@@ -39,8 +41,12 @@ private:
     {
         VkImage image = VK_NULL_HANDLE;
         VkImageSubresourceRange range{};
-        ImageUse use = ImageUse::Undefined;
+        std::vector<VkImageAspectFlagBits> aspects;
+        std::vector<ImageUse> uses;
     };
+
+    bool transition_range(VkCommandBuffer command, VkImage image, const VkImageSubresourceRange* range,
+        ImageUse next_use, const ImageStateDispatch& vk, std::string& error);
 
     std::vector<ImageState> m_images;
 };
