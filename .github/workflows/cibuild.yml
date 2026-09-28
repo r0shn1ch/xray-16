@@ -118,18 +118,33 @@ jobs:
         name: Utils.${{ matrix.Configuration }} ${{ matrix.Platform }} (github-${{ github.run_number }}).7z
         path: res/Utils.*.7z
 
+
+  nightly-release:
+    name: Publish Windows nightly
+    if: github.event_name == 'push' && github.ref_name == 'dev'
+    needs: windows
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/download-artifact@main
+      with:
+        pattern: OpenXRay.*.7z
+        path: release-assets
+        merge-multiple: true
+
     - name: Update latest-nightly tag
       uses: EndBug/latest-tag@latest
-      if: github.ref_name == 'dev'
-      id: update-latest-nightly-tag
       with:
         ref: latest-nightly
 
     - name: Publish latest nightly build
-      if: ${{ steps.update-latest-nightly-tag.outcome == 'success' }}
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: gh release upload --clobber latest-nightly (get-item res/*.*.7z)
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        $assets = Get-ChildItem -Path release-assets -Filter '*.7z' -File | ForEach-Object { $_.FullName }
+        if (-not $assets) { throw "No OpenXRay artifacts were downloaded." }
+        gh release upload --clobber latest-nightly @assets
 
   cmake:
     name: ${{ matrix.platform.name }} ${{ matrix.configuration }} ${{ matrix.platform.arch }} (${{ matrix.platform.cc || 'unknown compiler' }})
