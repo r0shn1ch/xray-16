@@ -127,6 +127,8 @@ jobs:
     permissions:
       contents: write
     steps:
+    - uses: actions/checkout@main
+
     - uses: actions/download-artifact@main
       with:
         pattern: OpenXRay.*.7z
