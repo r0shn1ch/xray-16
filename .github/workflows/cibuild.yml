@@ -144,6 +144,11 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
+        gh release view latest-nightly 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+          gh release create latest-nightly --title "OpenXRay Windows Nightly" --notes "Automated Windows nightly artifacts from the dev branch." --verify-tag --prerelease --latest=false
+          if ($LASTEXITCODE -ne 0) { throw "Could not create the latest-nightly GitHub Release." }
+        }
         $assets = Get-ChildItem -Path release-assets -Filter '*.7z' -File | ForEach-Object { $_.FullName }
         if (-not $assets) { throw "No OpenXRay artifacts were downloaded." }
         gh release upload --clobber latest-nightly @assets
