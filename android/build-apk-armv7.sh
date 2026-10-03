@@ -98,6 +98,9 @@ remove_path "$asset_root"
 mkdir -p "$asset_root/gamedata"
 cp "$repo_dir/res/fsgame.ltx" "$asset_root/fsgame.ltx"
 cp -R "$repo_dir/res/gamedata/." "$asset_root/gamedata/"
+python3 "$repo_dir/tools/check_vulkan_shader_assets.py" \
+    --shader-root "$asset_root/gamedata/shaders" \
+    --manifest "$repo_dir/res/gamedata/shaders/vk/opaque-variants.json"
 cp "$repo_dir"/android/apk/quality_*.ltx "$asset_root/gamedata/configs/"
 if [ -d "$asset_root/gamedata/gamedata" ]; then
     echo "APK asset staging unexpectedly nested gamedata inside itself" >&2
@@ -134,6 +137,13 @@ chmod +x "$project_dir/gradlew"
 )
 
 apk="$project_dir/app/build/outputs/apk/debug/app-debug.apk"
+python3 "$repo_dir/tools/check_vulkan_shader_assets.py" \
+    --shader-root "$asset_root/gamedata/shaders" \
+    --manifest "$repo_dir/res/gamedata/shaders/vk/opaque-variants.json" \
+    --apk "$apk"
+python3 "$repo_dir/tools/check_android_vulkan_route.py" \
+    --repo "$repo_dir" --sdl-root "$sdl_dir" --native-lib "$native_lib" \
+    --readelf "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" --apk "$apk"
 mkdir -p "$repo_dir/build"
 port_version=$(sed -n '1p' "$project_dir/android-version.txt")
 port_version_code=$(sed -n '2p' "$project_dir/android-version.txt")

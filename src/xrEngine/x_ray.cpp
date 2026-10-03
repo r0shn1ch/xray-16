@@ -24,6 +24,7 @@
 #include "Layers/xrRenderGL/glHW.h"
 #undef RENDER_NAMESPACE
 #include "android_vulkan_smoke.h"
+#include "AndroidRendererChoice.h"
 #endif
 
 #include "IGame_Persistent.h"
@@ -573,7 +574,7 @@ void shutdown_android_engine_log()
 
 void show_renderer_smoke_status(bool success, bool vulkan_probe)
 {
-    SDL_AndroidShowToast(success ? (vulkan_probe ? "OpenXRay: Vulkan render pass passed" : "OpenXRay: GLES renderer passed") :
+    SDL_AndroidShowToast(success ? (vulkan_probe ? "OpenXRay: Vulkan triangle and pixel passed" : "OpenXRay: GLES renderer passed") :
         "OpenXRay: engine load failed; see android.log", 1, -1, 0, 0);
 }
 
@@ -809,7 +810,7 @@ void destroy_renderer_smoke(renderer_smoke_state& state)
 }
 #endif
 
-CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array<RendererModule*, 2>& modules)
+CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array<RendererModule*, 3>& modules)
 {
     commandLine = commandLine ? commandLine : "";
     m_headless_smoke = commandLine && strstr(commandLine, "-headless-smoke");
@@ -910,7 +911,11 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
         shortcuts.Disable();
 #endif
 
+#if defined(XR_PLATFORM_ANDROID)
+    if (xray::render::android_native_splash_allowed(commandLine))
+#else
     if (!strstr(commandLine, "-nosplash"))
+#endif
     {
         const bool topmost = !strstr(commandLine, "-splashnotop");
         ShowSplash(topmost);
@@ -954,14 +959,8 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
         Core.Initialize("OpenXRay", commandLine, true, *fsgame ? fsgame : nullptr);
 
 #if defined(XR_PLATFORM_ANDROID)
-    if (strstr(commandLine, "-renderer-vulkan"))
-    {
-        std::string vulkanReason;
-        const bool vulkanReady = AndroidVulkanSmoke::Run(vulkanReason);
-        Msg("[renderer-vulkan] gameplay selection probe: %s; %s",
-            vulkanReady ? "PASS" : "FAILED", vulkanReason.c_str());
-        Msg("[renderer-vulkan] xrRenderVK gameplay pipeline is not complete; GLES fallback will be used");
-    }
+    // The Vulkan smoke test is a separate no-game mode. A game request goes
+    // through renderer selection and cannot turn into an implicit GLES launch.
 #endif
 
     InitSettings();
@@ -1206,6 +1205,9 @@ int CApplication::Run()
         FrameMarkStart(FRAME_MARK_APPLICATION_RUN);
         bool canCallActivate = false;
         bool shouldActivate = false;
+        bool hasAppLifecycleChange = false;
+        bool appIsActive = true;
+        bool appWentToBackground = false;
 
 #if defined(XR_PLATFORM_ANDROID)
         // SDLActivity reports process/task lifecycle with SDL_APP_* events,
@@ -1223,11 +1225,16 @@ int CApplication::Run()
             case SDL_APP_DIDENTERBACKGROUND:
                 canCallActivate = true;
                 shouldActivate = false;
+                hasAppLifecycleChange = true;
+                appIsActive = false;
+                appWentToBackground = true;
                 break;
             case SDL_APP_WILLENTERFOREGROUND:
             case SDL_APP_DIDENTERFOREGROUND:
                 canCallActivate = true;
                 shouldActivate = true;
+                hasAppLifecycleChange = true;
+                appIsActive = true;
                 break;
             case SDL_APP_TERMINATING:
                 Engine.Event.Defer("KERNEL:disconnect");
@@ -1289,6 +1296,13 @@ int CApplication::Run()
         } // for (int i = 0; i < count; ++i)
 
         // Workaround for screen blinking when there's too much timeouts
+        if (hasAppLifecycleChange && GEnv.Render)
+        {
+            if (appWentToBackground)
+                GEnv.Render->OnAppLifecycleChanged(false);
+            GEnv.Render->OnAppLifecycleChanged(appIsActive);
+        }
+
         if (canCallActivate)
         {
             Device.OnWindowActivate(Device.m_sdlWnd, shouldActivate);

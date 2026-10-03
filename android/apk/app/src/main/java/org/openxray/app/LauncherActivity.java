@@ -394,7 +394,7 @@ public final class LauncherActivity extends Activity {
     private View buildSettingsPage() {
         LinearLayout content = pageContent();
         addSectionTitle(content, OptionCatalog.SETTINGS_SECTIONS[0]);
-        content.addView(bodyText("Для игры используется OpenGL ES. Vulkan доступен для проверки."),
+        content.addView(bodyText("Игровой Vulkan ещё не реализован. Отдельная проверка Vulkan доступна на экране запуска."),
                 matchWrap());
         rendererMode = new Spinner(this);
         ArrayAdapter<String> rendererAdapter = new ArrayAdapter<>(this,
@@ -1010,7 +1010,7 @@ public final class LauncherActivity extends Activity {
         intent.putExtra(EXTRA_ADDITIONAL_ARGS, additionalArgs);
         String launchStatus;
         if (vulkanRendererSmoke) {
-            launchStatus = "Запускаю Vulkan probe и GLES fallback…";
+            launchStatus = "Запускаю независимую проверку Vulkan…";
         } else if (rendererSmoke) {
             launchStatus = "Запускаю GLES smoke test…";
         } else {
@@ -1488,8 +1488,8 @@ public final class LauncherActivity extends Activity {
     private void updateEngineStatus(String log) {
         if (engineLaunchTime == 0)
             return;
-        if (log.contains("[renderer-vulkan] PASS: Vulkan command buffer")) {
-            setStatus("Самостоятельный Vulkan render pass завершён: PASS.");
+        if (log.contains("[renderer-vulkan] PASS: three Vulkan lit geometry and UI draws")) {
+            setStatus("Vulkan: геометрия, освещение и UI-проверка завершены: PASS.");
             return;
         }
         if (log.contains("[renderer-smoke] center pixel") && log.contains(": PASS")) {

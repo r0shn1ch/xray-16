@@ -236,15 +236,18 @@ Runtime data uses the normal desktop paths:
 
 ## Renderer status
 
-Gameplay currently uses OpenGL ES. `Auto` and `OpenGL ES` select the same GLES
-backend. Selecting Vulkan runs the Vulkan probe and then falls back to GLES;
-there is no Vulkan gameplay renderer yet. See
+The launcher can request the separate Vulkan gameplay module. `Auto` selects it
+only when the Vulkan probe and required game shaders pass, then selects GLES
+otherwise. Explicit Vulkan requests fail if those requirements are missing.
+Android hardware and representative gameplay have not yet been validated. See
 [VULKAN_RENDERER_PLAN.md](VULKAN_RENDERER_PLAN.md) for the implemented Vulkan
 pieces and remaining work.
 
-The launcher can run GLES and Vulkan smoke tests without game data. A passing
-smoke test verifies context/device setup and a small render path only; it does
-not prove that a level can be loaded or rendered correctly.
+The launcher can run GLES and Vulkan smoke tests without game data. The Vulkan
+test draws depth-tested indexed, lit geometry and a textured UI overlay, reads back one pixel
+from each draw and presents three frames.
+A passing smoke test verifies a small render path only; it does not prove that
+a level can be loaded or rendered correctly.
 
 ## Diagnostics
 
