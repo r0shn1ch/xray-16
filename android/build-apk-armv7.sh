@@ -97,7 +97,14 @@ asset_root="$project_dir/app/src/main/assets"
 remove_path "$asset_root"
 mkdir -p "$asset_root/gamedata"
 cp "$repo_dir/res/fsgame.ltx" "$asset_root/fsgame.ltx"
+glslc_bin=${GLSLC_BIN:-glslc}
+python3 "$repo_dir/tools/compile_vulkan_shader.py" --compiler glslc --dxc "$glslc_bin" \
+    --manifest "$repo_dir/res/gamedata/shaders/vk/opaque-variants.json" \
+    --output-dir "$repo_dir/res/gamedata/shaders"
 cp -R "$repo_dir/res/gamedata/." "$asset_root/gamedata/"
+python3 "$repo_dir/tools/check_vulkan_shader_assets.py" \
+    --shader-root "$asset_root/gamedata/shaders" \
+    --manifest "$repo_dir/res/gamedata/shaders/vk/opaque-variants.json"
 cp "$repo_dir"/android/apk/quality_*.ltx "$asset_root/gamedata/configs/"
 if [ -d "$asset_root/gamedata/gamedata" ]; then
     echo "APK asset staging unexpectedly nested gamedata inside itself" >&2
@@ -110,6 +117,21 @@ cp "$native_lib" "$native_lib_dir/libmain.so"
 cp "$deps_prefix/lib/libopenal.so" "$native_lib_dir/libopenal.so"
 cp "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so" \
     "$native_lib_dir/libc++_shared.so"
+# Optional official validation binary, supplied by the Android Vulkan SDK.
+# Keep it out of release builds and ensure the ELF matches the packaged ABI.
+if [ -n "${XRAY_ANDROID_VALIDATION_LAYER_ARMV7:-}" ]; then
+    validation_layer=$XRAY_ANDROID_VALIDATION_LAYER_ARMV7
+    if [ ! -f "$validation_layer" ]; then
+        echo "Android validation layer does not exist: $validation_layer" >&2
+        exit 2
+    fi
+    readelf_bin="$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+    if ! "$readelf_bin" -h "$validation_layer" | grep -Eq 'Machine:.*ARM($|[[:space:]])'; then
+        echo "Android validation layer must be an ARMv7 ELF" >&2
+        exit 2
+    fi
+    cp "$validation_layer" "$native_lib_dir/libVkLayer_khronos_validation.so"
+fi
 
 strip_bin="$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
 if [ -x "$strip_bin" ]; then
@@ -134,6 +156,13 @@ chmod +x "$project_dir/gradlew"
 )
 
 apk="$project_dir/app/build/outputs/apk/debug/app-debug.apk"
+python3 "$repo_dir/tools/check_vulkan_shader_assets.py" \
+    --shader-root "$asset_root/gamedata/shaders" \
+    --manifest "$repo_dir/res/gamedata/shaders/vk/opaque-variants.json" \
+    --apk "$apk"
+python3 "$repo_dir/tools/check_android_vulkan_route.py" \
+    --repo "$repo_dir" --sdl-root "$sdl_dir" --native-lib "$native_lib" \
+    --readelf "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" --apk "$apk"
 mkdir -p "$repo_dir/build"
 port_version=$(sed -n '1p' "$project_dir/android-version.txt")
 port_version_code=$(sed -n '2p' "$project_dir/android-version.txt")
@@ -164,6 +193,12 @@ if ! printf '%s\n' "$apk_badging" | grep -Fq "versionCode='$port_version_code' v
 fi
 if ! unzip -p "$apk" lib/armeabi-v7a/libmain.so | cmp - "$native_lib_dir/libmain.so"; then
     echo "Gradle produced an APK with a stale native engine" >&2
+    exit 1
+fi
+if [ -n "${XRAY_ANDROID_VALIDATION_LAYER_ARMV7:-}" ] &&
+    ! unzip -p "$apk" lib/armeabi-v7a/libVkLayer_khronos_validation.so |
+        cmp - "$native_lib_dir/libVkLayer_khronos_validation.so"; then
+    echo "Gradle did not package the requested Vulkan validation layer" >&2
     exit 1
 fi
 packaged_abis=$(zipinfo -1 "$apk" | sed -n 's#^lib/\([^/]*\)/.*#\1#p' | sort -u)
