@@ -50,13 +50,49 @@ int64_t score_device(const VkPhysicalDeviceProperties& properties, uint64_t loca
 }
 }
 
+bool supports_game_formats(VkPhysicalDevice device, PFN_vkGetPhysicalDeviceFormatProperties get,
+    const VkPhysicalDeviceProperties& properties, std::string& error)
+{
+    if (!get || properties.limits.maxPushConstantsSize < 240 ||
+        properties.limits.maxColorAttachments < 3 ||
+        properties.limits.maxImageDimension2D < 1024 ||
+        // The material set declares bindings 0..19 for fragment sampling.
+        // Pipeline layout creation counts the declared stage bindings, even
+        // when a particular variant only samples the first few roles.
+        properties.limits.maxPerStageDescriptorSamplers < 20 ||
+        properties.limits.maxPerStageDescriptorSampledImages < 20)
+    {
+        error = "Vulkan gameplay needs 240 push-constant bytes, three color attachments, "
+            "1024px textures and 20 fragment sampled images/samplers";
+        return false;
+    }
+    const auto supports = [&](VkFormat format, VkFormatFeatureFlags required)
+    {
+        VkFormatProperties available{};
+        get(device, format, &available);
+        return (available.optimalTilingFeatures & required) == required;
+    };
+    const auto color = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+    if (!supports(VK_FORMAT_R8G8B8A8_UNORM, color) ||
+        (!supports(VK_FORMAT_D32_SFLOAT, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) &&
+         !supports(VK_FORMAT_D16_UNORM, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)))
+    {
+        error = "Vulkan gameplay attachment or sampled depth formats are unavailable";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 bool select_physical_device(VkInstance instance, VkSurfaceKHR surface,
     const HardwareDispatch& vk, PhysicalDevice& selected, std::string& error)
 {
     selected = {};
     if (!vk.enumerate_physical_devices || !vk.get_queue_families || !vk.get_surface_support ||
         !vk.enumerate_device_extensions || !vk.get_physical_properties || !vk.get_physical_features ||
-        !vk.get_memory_properties)
+        !vk.get_memory_properties || !vk.get_format_properties)
     {
         error = "required Vulkan hardware procedures are unavailable";
         return false;
@@ -103,6 +139,10 @@ bool select_physical_device(VkInstance instance, VkSurfaceKHR surface,
             candidate.handle = device;
             candidate.graphics_present_family = family;
             vk.get_physical_properties(device, &candidate.properties);
+            std::string requirements_error;
+            if (!supports_game_formats(device, vk.get_format_properties,
+                    candidate.properties, requirements_error))
+                continue;
             vk.get_physical_features(device, &candidate.features);
             vk.get_memory_properties(device, &candidate.memory);
             for (uint32_t heap = 0; heap < candidate.memory.memoryHeapCount; ++heap)
@@ -151,6 +191,10 @@ bool create_logical_device(const PhysicalDevice& physical_device, const DeviceDi
     device_info.pQueueCreateInfos = &queue_info;
     device_info.enabledExtensionCount = 1;
     device_info.ppEnabledExtensionNames = extensions;
+    // The world sampler enables this only on GPUs advertising the feature.
+    VkPhysicalDeviceFeatures enabled_features{};
+    enabled_features.samplerAnisotropy = physical_device.features.samplerAnisotropy;
+    device_info.pEnabledFeatures = &enabled_features;
 
     if (vk.create_device(physical_device.handle, &device_info, nullptr, &device) != VK_SUCCESS)
     {
