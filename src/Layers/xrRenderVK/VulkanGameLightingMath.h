@@ -25,6 +25,8 @@ struct VulkanLightSnapshot
     std::array<float, 3> color{1.f, 1.f, 1.f};
     float range{1.f};
     float cone{0.785398163f};
+    bool hemi_only{};
+    std::array<float,4> attenuation{1.f,0.f,0.f,0.f}; // constant, linear, quadratic, falloff
 };
 
 struct VulkanObjectLighting

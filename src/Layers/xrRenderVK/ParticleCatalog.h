@@ -16,6 +16,8 @@ struct ParticleEffectDef
     std::array<float, 2> frame_size{1.f, 1.f};
     uint32_t frame_columns{1}, frame_count{1};
     float frame_rate{24.f};
+    std::array<float,3> velocity_scale{};
+    std::array<float,3> align_rotation{-1.57079632679f,0.f,0.f};
     std::vector<uint8_t> actions;
 };
 

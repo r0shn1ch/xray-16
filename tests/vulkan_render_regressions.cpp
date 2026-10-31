@@ -11,6 +11,12 @@
 #include <cmath>
 using namespace xray::render::vulkan;
 int main() {
+    for(float pitch : {0.f,.5f,1.4f,1.57079632679f}) {
+        const auto basis=particle_path_basis({0,1,0},{0,-std::sin(pitch),std::cos(pitch)});
+        assert(basis.up[0]==0 && basis.up[1]==1 && basis.up[2]==0);
+        float length=0,dot=0;for(unsigned i=0;i<3;++i) {length+=basis.right[i]*basis.right[i];dot+=basis.right[i]*basis.up[i];}
+        assert(std::abs(length-1)<1e-5f && std::abs(dot)<1e-5f);
+    }
     LevelModel decal;decal.vertices.resize(1);
     decal.vertices[0].position[0]=12;decal.vertices[0].normal[1]=1;decal.vertices[0].uv[0]=.3f;
     offset_level_wallmark(decal);

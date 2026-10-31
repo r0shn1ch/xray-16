@@ -277,7 +277,39 @@ bool VulkanParticleEffect::record(const FrameRecordingContext& frame, const Defe
         const auto& p = particles[i];
         Fvector center;
         transform_.transform_tiny(center, p.pos);
-        const float sx = p.size.x * .5f, sy = p.size.y * .5f;
+        float sx = p.size.x * .5f, sy = p.size.y * .5f;
+        Fvector sprite_right=right,sprite_up=up;
+        const Fvector velocity{p.vel.x,p.vel.y,p.vel.z};
+        const float speed=velocity.magnitude();
+        if(def_->flags & (1u<<18))
+        { sx+=speed*def_->velocity_scale[0];sy+=speed*def_->velocity_scale[1]; }
+        if(def_->flags & (1u<<15))
+        {
+            if(speed<EPS_S && (def_->flags & (1u<<20)))
+            {
+                Fmatrix basis;basis.setXYZ(def_->align_rotation[0],def_->align_rotation[1],def_->align_rotation[2]);
+                basis.mulA_43(transform_);sprite_right=basis.i;sprite_up=basis.k;
+            }
+            else if(speed>=EPS_S && (def_->flags & (1u<<21)))
+            {
+                Fmatrix basis;basis.identity();basis.k.div(velocity,speed);basis.j.set(0,1,0);
+                if(std::abs(basis.j.dotproduct(basis.k))>.99f) basis.j.set(0,0,1);
+                basis.i.crossproduct(basis.j,basis.k).normalize_safe();
+                basis.j.crossproduct(basis.k,basis.i).normalize_safe();
+                basis.mulA_43(transform_);sprite_right=basis.i;sprite_up=basis.j;
+            }
+            else
+            {
+                Fvector direction,camera_direction;
+                if(speed>=EPS_S) direction.div(velocity,speed);
+                else direction.setHP(-def_->align_rotation[1],-def_->align_rotation[0]);
+                transform_.transform_dir(direction);camera_direction.crossproduct(right,up);
+                const auto basis=particle_path_basis({direction.x,direction.y,direction.z},
+                    {camera_direction.x,camera_direction.y,camera_direction.z});
+                sprite_right.set(basis.right[0],basis.right[1],basis.right[2]);
+                sprite_up.set(basis.up[0],basis.up[1],basis.up[2]);
+            }
+        }
         const u32 sprite_frame = p.frame / 255u % def_->frame_count;
         const float u0 = (sprite_frame % def_->frame_columns) * def_->frame_size[0];
         const float v0 = (sprite_frame / def_->frame_columns) * def_->frame_size[1];
@@ -288,9 +320,9 @@ bool VulkanParticleEffect::record(const FrameRecordingContext& frame, const Defe
             const auto sprite = particle_sprite_corner(corner, sx, sy, p.rot.x);
             auto& v = vertices[i * 4 + corner];
             const float rotated_x = sprite.right, rotated_y = sprite.up;
-            v.position[0] = center.x + right.x * rotated_x + up.x * rotated_y;
-            v.position[1] = center.y + right.y * rotated_x + up.y * rotated_y;
-            v.position[2] = center.z + right.z * rotated_x + up.z * rotated_y;
+            v.position[0] = center.x + sprite_right.x * rotated_x + sprite_up.x * rotated_y;
+            v.position[1] = center.y + sprite_right.y * rotated_x + sprite_up.y * rotated_y;
+            v.position[2] = center.z + sprite_right.z * rotated_x + sprite_up.z * rotated_y;
             v.normal[0] = 0.f; v.normal[1] = 1.f; v.normal[2] = 0.f;
             v.uv[0] = u0 + sprite.u * du;
             v.uv[1] = v0 + sprite.v * dv;

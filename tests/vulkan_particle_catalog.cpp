@@ -56,6 +56,28 @@ int main()
     assert(parse_particle_catalog({library.data(), library.size()}, catalog, error));
     assert(catalog.effect("campfire") && catalog.effect("campfire")->max_particles == 64);
     assert(catalog.group("campfire_group") && catalog.group("campfire_group")->effects.size() == 1);
+    const auto aligned_library=[&](bool scale_chunk,bool align_chunk,bool truncated) {
+        Bytes def,values,table,lib;
+        chunk(def,1,version);name(values,"campfire");chunk(def,2,values);values.clear();
+        u32(values,64);chunk(def,3,values);values.clear();chunk(def,4,Bytes{0,0,0,0});
+        u32(values,1|(1u<<15)|(1u<<18));chunk(def,5,values);values.clear();
+        name(values,"particle");name(values,"fire");chunk(def,7,values);values.clear();
+        real(values,1);real(values,2);real(values,3);if(scale_chunk)chunk(def,0x22,values);values.clear();
+        real(values,.1f);real(values,.2f);real(values,.3f);if(truncated)values.pop_back();if(align_chunk)chunk(def,0x25,values);
+        chunk(table,0,def);chunk(lib,1,version);chunk(lib,3,table);chunk(lib,4,groups);return lib;
+    };
+    auto aligned=aligned_library(true,true,false);
+    assert(parse_particle_catalog({aligned.data(),aligned.size()},catalog,error));
+    assert(catalog.effect("campfire")->velocity_scale[1]==2 && catalog.effect("campfire")->align_rotation[2]==.3f);
+    aligned=aligned_library(true,false,false);
+    assert(parse_particle_catalog({aligned.data(),aligned.size()},catalog,error));
+    assert(catalog.effect("campfire")->align_rotation[0]<-1.57f);
+    aligned=aligned_library(false,true,false);
+    assert(parse_particle_catalog({aligned.data(),aligned.size()},catalog,error));
+    assert(!catalog.effect("campfire") && error.find("effects=1")!=std::string::npos);
+    aligned=aligned_library(true,true,true);
+    assert(parse_particle_catalog({aligned.data(),aligned.size()},catalog,error));
+    assert(!catalog.effect("campfire") && error.find("effects=1")!=std::string::npos);
     // Older libraries can omit the optional flags chunk; a missing child
     // effect must not make the entire group disappear.
     Bytes legacy_group, legacy_groups, legacy_library;

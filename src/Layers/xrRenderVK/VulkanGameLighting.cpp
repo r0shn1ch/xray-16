@@ -1,5 +1,6 @@
 #include "xrEngine/stdafx.h"
 #include "VulkanGameLighting.h"
+#include "LevelLights.h"
 #include "Include/xrRender/RenderVisual.h"
 #include "xrEngine/vis_common.h"
 
@@ -87,7 +88,7 @@ void VulkanGlow::set_color(float r, float g, float b)
 }
 
 void VulkanObjectSpecific::update(const float* ambient, const float* hemi, const float* sun,
-    const std::vector<VulkanLightSnapshot>& lights)
+    const std::vector<VulkanLightSnapshot>& lights, const VulkanHemiLightGrid* baked)
 {
     std::array<float, 3> position{};
     if (parent_)
@@ -102,8 +103,13 @@ void VulkanObjectSpecific::update(const float* ambient, const float* hemi, const
         position = {origin.x, origin.y, origin.z};
     }
 
+    if(baked && baked->size())
+    {
+        lighting_sources_.assign(lights.begin(),lights.end());
+        baked->append(position,lighting_sources_);
+    }
     const VulkanObjectLighting lighting = evaluate_object_lighting(position,
-        ambient, hemi, sun, mode_, lights);
+        ambient, hemi, sun, mode_, baked && baked->size()?lighting_sources_:lights);
     luminocity_ = lighting.luminocity;
     hemi_luminocity_ = lighting.hemi_luminocity;
     hemi_cube_ = lighting.hemi_cube;

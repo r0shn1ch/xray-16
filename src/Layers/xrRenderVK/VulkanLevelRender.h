@@ -6,6 +6,7 @@
 #include "VulkanDeviceResourceState.h"
 #include "VulkanFramePhaseState.h"
 #include "VulkanGameLighting.h"
+#include "LevelLights.h"
 #include "VulkanRenderContextState.h"
 #include "VulkanSurfaceLifecycle.h"
 #include "VulkanFrameMetrics.h"
@@ -171,6 +172,8 @@ private:
   std::unique_ptr<VulkanGameDevice> owned_game_device_;
   VulkanGameDevice *external_game_device_{};
   std::vector<VulkanLight *> lights_;
+  std::vector<VulkanLightSnapshot> level_lights_;
+  VulkanHemiLightGrid level_hemi_lights_;
   std::vector<VulkanGlow *> glows_;
   // World glows use screen-space UI quads. Cache static-geometry visibility
   // briefly so they do not shine through walls without a ray test per frame.
