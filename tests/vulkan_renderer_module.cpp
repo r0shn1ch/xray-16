@@ -12,6 +12,57 @@
 #include "xrEngine/XR_IOConsole.h"
 
 #include <cassert>
+#include <array>
+#include <new>
+
+static void check_camera_frustum()
+{
+    using xray::render::vulkan::VulkanLevelRender;
+    // Heap contents must not decide whether a tracer can query the camera
+    // before its first update. Static renderer instances can conceal this.
+    alignas(VulkanLevelRender) std::array<unsigned char, sizeof(VulkanLevelRender)> storage;
+    storage.fill(0xa5);
+    auto* renderer = new (storage.data()) VulkanLevelRender;
+    IRender& render = *renderer;
+    assert(render.ViewBase.p_count == 0);
+    Fvector inside, outside, far;
+    inside.set(0.f, 0.f, .5f);
+    outside.set(2.f, 0.f, .5f);
+    far.set(0.f, 0.f, 2.f);
+    assert(render.ViewBase.testSphere_dirty(outside, .05f));
+
+    const Fmatrix saved_transform = Device.mFullTransform;
+    Device.mFullTransform.identity();
+    render.OnCameraUpdated();
+    assert(render.ViewBase.p_count == 5);
+    assert(render.ViewBase.testSphere_dirty(inside, .05f));
+    assert(!render.ViewBase.testSphere_dirty(outside, .05f));
+    assert(!render.ViewBase.testSphere_dirty(far, .05f));
+
+    Fmatrix view, project;
+    view.translate(-10.f, 0.f, 0.f);
+    project.identity();
+    render.SetCacheXform(view, project);
+    assert(!render.ViewBase.testSphere_dirty(inside, .05f));
+    Fvector moved;
+    moved.set(10.f, 0.f, .5f);
+    assert(render.ViewBase.testSphere_dirty(moved, .05f));
+
+    Fbox box;
+    box.vMin.set(9.9f, -.1f, .4f);
+    box.vMax.set(10.1f, .1f, .6f);
+    assert(render.occ_visible(box));
+    box.vMin.set(-.1f, -.1f, .4f);
+    box.vMax.set(.1f, .1f, .6f);
+    assert(!render.occ_visible(box));
+
+    // A camera callback must replace a previously cached transform.
+    render.OnCameraUpdated();
+    assert(render.ViewBase.testSphere_dirty(inside, .05f));
+    assert(!render.ViewBase.testSphere_dirty(moved, .05f));
+    Device.mFullTransform = saved_transform;
+    renderer->~VulkanLevelRender();
+}
 
 namespace xray::render::vulkan
 {
@@ -21,6 +72,7 @@ RendererModule* GetRendererModule();
 int main()
 {
     Core.Initialize("vulkan_renderer_module_test", nullptr, false);
+    check_camera_frustum();
     // SetupEnv registers renderer commands in the engine-owned console.
     CConsole console;
     Console = &console;
