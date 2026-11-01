@@ -18,14 +18,14 @@ namespace xray::render::vulkan
 // linked children belong to the loaded level and are never deleted here.
 class VulkanModelVisual final : public IRenderVisual
 {
-public:
-    VulkanModelVisual(const VisualRecord& record, std::string cache_name, std::shared_ptr<GpuModel> gpu,
-        GpuLevel* level = nullptr)
-        : gpu_(std::move(gpu)), cache_name_(std::move(cache_name)), type_(record.type),
-          linked_(record.linked_children), level_(level), level_revision_(level ? level->revision() : 0)
+  public:
+    VulkanModelVisual(const VisualRecord &record, std::string cache_name, std::shared_ptr<GpuModel> gpu,
+                      GpuLevel *level = nullptr)
+        : gpu_(std::move(gpu)), cache_name_(std::move(cache_name)), type_(record.type), linked_(record.linked_children),
+          level_(level), level_revision_(level ? level->revision() : 0)
     {
         visibility_.clear();
-        const auto& b = record.bounds;
+        const auto &b = record.bounds;
         visibility_.box.set(b[0], b[1], b[2], b[3], b[4], b[5]);
         visibility_.sphere.P.set(b[6], b[7], b[8]);
         visibility_.sphere.R = b[9];
@@ -35,10 +35,9 @@ public:
 
     // Every copy has independent bounds and child identities, while GPU
     // buffers and materials remain alive until the final copy is retired.
-    explicit VulkanModelVisual(const VulkanModelVisual& other)
-        : gpu_(other.gpu_), lod_gpu_(other.lod_gpu_), lod_normals_(other.lod_normals_),
-          cache_name_(other.cache_name_), type_(other.type_), linked_(other.linked_),
-          level_(other.level_), level_revision_(other.level_revision_)
+    explicit VulkanModelVisual(const VulkanModelVisual &other)
+        : gpu_(other.gpu_), lod_gpu_(other.lod_gpu_), lod_normals_(other.lod_normals_), cache_name_(other.cache_name_),
+          type_(other.type_), linked_(other.linked_), level_(other.level_), level_revision_(other.level_revision_)
     {
         visibility_.clear();
         visibility_.box = other.visibility_.box;
@@ -47,30 +46,40 @@ public:
         initial_sphere_ = other.initial_sphere_;
         if (other.skeleton_)
             skeleton_ = std::make_unique<VulkanKinematics>(*other.skeleton_, this);
-        for (const auto& child : other.children_)
+        for (const auto &child : other.children_)
             children_.push_back(std::make_unique<VulkanModelVisual>(*child));
     }
 
-    vis_data& getVisData() override
+    ~VulkanModelVisual() override
+    {
+        release_pose_buffers();
+    }
+
+    vis_data &getVisData() override
     {
         return visibility_;
     }
-    const vis_data& visibility() const { return visibility_; }
+    const vis_data &visibility() const
+    {
+        return visibility_;
+    }
 
     u32 getType() const override
     {
         return type_;
     }
 
-    IRenderVisual* getSubModel(u8 index) override
+    IRenderVisual *getSubModel(u8 index) override
     {
-        if (index < children_.size()) return children_[index].get();
+        if (index < children_.size())
+            return children_[index].get();
         const size_t linked_index = size_t(index) - children_.size();
-        return linked_valid() && linked_index < linked_.size() ?
-            level_->get_visual(linked_[linked_index]) : nullptr;
+        return linked_valid() && linked_index < linked_.size() ? level_->get_visual(linked_[linked_index]) : nullptr;
     }
 
-    void add_child(std::unique_ptr<VulkanModelVisual> child) { children_.push_back(std::move(child));
+    void add_child(std::unique_ptr<VulkanModelVisual> child)
+    {
+        children_.push_back(std::move(child));
     }
 
     void reset_instance_state()
@@ -81,54 +90,91 @@ public:
         visibility_.sphere = initial_sphere_;
         if (skeleton_)
             skeleton_->reset_instance_state();
-        for (auto& child : children_)
+        for (auto &child : children_)
             child->reset_instance_state();
     }
 
-    void release_pose_buffers(IKinematics* owner = nullptr)
+    void release_pose_buffers(IKinematics *owner = nullptr)
     {
         if (skeleton_)
             owner = skeleton_.get();
         if (owner && gpu_)
             gpu_->release_instance(owner);
-        for (auto& child : children_)
+        for (auto &child : children_)
             child->release_pose_buffers(owner);
     }
-    const auto& children() const { return children_; }
-    const auto& linked() const { return linked_; }
-    bool linked_valid() const { return level_ && level_->revision() == level_revision_; }
-    bool has_gpu() const { return !!gpu_; }
-    void set_lod(std::array<std::shared_ptr<GpuModel>, 8> gpu,
-        std::array<std::array<float, 3>, 8> normals)
+    const auto &children() const
+    {
+        return children_;
+    }
+    const auto &linked() const
+    {
+        return linked_;
+    }
+    bool linked_valid() const
+    {
+        return level_ && level_->revision() == level_revision_;
+    }
+    bool has_gpu() const
+    {
+        return !!gpu_;
+    }
+    void set_lod(std::array<std::shared_ptr<GpuModel>, 8> gpu, std::array<std::array<float, 3>, 8> normals)
     {
         lod_gpu_ = std::move(gpu);
         lod_normals_ = normals;
     }
-    bool has_lod() const { return !!lod_gpu_[0]; }
-    GpuModel& lod_gpu(uint8_t facet) const { return *lod_gpu_[facet]; }
-    const auto& lod_normals() const { return lod_normals_; }
-    void set_skeleton(std::unique_ptr<VulkanKinematics> skeleton) { skeleton_ = std::move(skeleton); }
-    IKinematics* dcast_PKinematics() override { return skeleton_.get(); }
+    bool has_lod() const
+    {
+        return !!lod_gpu_[0];
+    }
+    GpuModel &lod_gpu(uint8_t facet) const
+    {
+        return *lod_gpu_[facet];
+    }
+    const auto &lod_normals() const
+    {
+        return lod_normals_;
+    }
+    void set_skeleton(std::unique_ptr<VulkanKinematics> skeleton)
+    {
+        skeleton_ = std::move(skeleton);
+    }
+    IKinematics *dcast_PKinematics() override
+    {
+        return skeleton_.get();
+    }
     // MT_SKELETON_RIGID has bones but no motion table. The OpenGL model
     // exposes only IKinematics for it; advertising animation makes physics
     // objects try to play startup motions that cannot exist.
-    IKinematicsAnimated* dcast_PKinematicsAnimated() override { return type_ == 3 ? skeleton_.get() : nullptr; }
-    VulkanKinematics* skeleton() const { return skeleton_.get(); }
-    const VulkanModelVisual* find(const IRenderVisual* visual) const
+    IKinematicsAnimated *dcast_PKinematicsAnimated() override
     {
-        if (this == visual) return this;
-        for (const auto& child : children_)
-            if (const auto* found = child->find(visual)) return found;
+        return type_ == 3 ? skeleton_.get() : nullptr;
+    }
+    VulkanKinematics *skeleton() const
+    {
+        return skeleton_.get();
+    }
+    const VulkanModelVisual *find(const IRenderVisual *visual) const
+    {
+        if (this == visual)
+            return this;
+        for (const auto &child : children_)
+            if (const auto *found = child->find(visual))
+                return found;
         return nullptr;
     }
 
-    GpuModel& gpu()
+    GpuModel &gpu()
     {
         return *gpu_;
     }
-    GpuModel& gpu() const { return *gpu_; }
+    GpuModel &gpu() const
+    {
+        return *gpu_;
+    }
 
-    const std::string& cache_name() const
+    const std::string &cache_name() const
     {
         return cache_name_;
     }
@@ -144,7 +190,7 @@ public:
     }
 #endif
 
-private:
+  private:
     vis_data visibility_;
     Fbox initial_box_;
     Fsphere initial_sphere_;
@@ -156,7 +202,7 @@ private:
     u32 type_{};
     std::vector<std::unique_ptr<VulkanModelVisual>> children_;
     std::vector<uint32_t> linked_;
-    GpuLevel* level_{};
+    GpuLevel *level_{};
     uint64_t level_revision_{};
 };
 } // namespace xray::render::vulkan

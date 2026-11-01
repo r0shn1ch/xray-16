@@ -18,6 +18,8 @@ struct Vertex
     [[vk::location(0)]] float3 position : POSITION;
     [[vk::location(1)]] float3 normal : NORMAL;
     [[vk::location(2)]] float2 uv : TEXCOORD0;
+    [[vk::location(7)]] float3 tangent : TANGENT;
+    [[vk::location(8)]] float3 bitangent : BINORMAL;
 #if defined(LEVEL_GEOMETRY)
     [[vk::location(5)]] float2 lightmap_uv : TEXCOORD1;
     [[vk::location(6)]] float4 baked : COLOR0;
@@ -31,6 +33,8 @@ struct Fragment
     [[vk::location(1)]] float2 uv : TEXCOORD1;
     [[vk::location(4)]] float3 world_position : TEXCOORD4;
     [[vk::location(5)]] float hemi : TEXCOORD5;
+    [[vk::location(6)]] float3 tangent : TEXCOORD6;
+    [[vk::location(7)]] float3 bitangent : TEXCOORD7;
 #if defined(LEVEL_GEOMETRY)
     [[vk::location(2)]] float2 lightmap_uv : TEXCOORD2;
     [[vk::location(3)]] float4 baked : COLOR0;
@@ -57,8 +61,10 @@ Fragment main(Vertex vertex)
     fragment.position.y = -fragment.position.y;
 #if defined(LEVEL_GEOMETRY)
     fragment.normal = vertex.normal;
+    fragment.tangent = vertex.tangent;fragment.bitangent=vertex.bitangent;
 #else
     fragment.normal = normalize(rotate_object(vertex.normal));
+    fragment.tangent=rotate_object(vertex.tangent);fragment.bitangent=rotate_object(vertex.bitangent);
 #endif
     fragment.hemi = saturate(0.5 + 0.5 * normalize(fragment.normal).y);
 #if !defined(LEVEL_GEOMETRY)

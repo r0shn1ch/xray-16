@@ -25,41 +25,25 @@ namespace xray::render::vulkan
 {
 namespace
 {
-// Attribute CPU recording time to actual render passes in the normal device
-// log. Aggregate CPU p95 also includes acquisition/fence waits.
-struct PassCpuSample
-{
-    const char* name;
-    const DeferredPass& pass;
-    uint32_t draws;
-    std::chrono::steady_clock::time_point begin{std::chrono::steady_clock::now()};
-    ~PassCpuSample()
-    {
-        if (Device.dwFrame % 300 == 0)
-            Msg("[renderer-vulkan] pass.cpu frame=%u pass=%s ms=%.3f draws=%u", Device.dwFrame, name,
-                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-begin).count(),
-                pass.draw_calls()-draws);
-    }
-};
 
-template <typename T> T proc(VkDevice device, PFN_vkGetDeviceProcAddr get, const char* name)
+template <typename T> T proc(VkDevice device, PFN_vkGetDeviceProcAddr get, const char *name)
 {
     return reinterpret_cast<T>(get(device, name));
 }
 
 #if defined(XR_PLATFORM_ANDROID)
-bool set_android_buffer_extent(SDL_Window* window, VkExtent2D extent, std::string& error)
+bool set_android_buffer_extent(SDL_Window *window, VkExtent2D extent, std::string &error)
 {
     SDL_SysWMinfo info{};
     SDL_VERSION(&info.version);
-    if (!window || !SDL_GetWindowWMInfo(window, &info) ||
-        info.subsystem != SDL_SYSWM_ANDROID || !info.info.android.window)
+    if (!window || !SDL_GetWindowWMInfo(window, &info) || info.subsystem != SDL_SYSWM_ANDROID ||
+        !info.info.android.window)
     {
         error = "Android Vulkan window has no native surface";
         return false;
     }
-    if (ANativeWindow_setBuffersGeometry(info.info.android.window,
-            static_cast<int32_t>(extent.width), static_cast<int32_t>(extent.height), 0) != 0)
+    if (ANativeWindow_setBuffersGeometry(info.info.android.window, static_cast<int32_t>(extent.width),
+                                         static_cast<int32_t>(extent.height), 0) != 0)
     {
         error = "could not set Android Vulkan buffer resolution";
         return false;
@@ -68,15 +52,31 @@ bool set_android_buffer_extent(SDL_Window* window, VkExtent2D extent, std::strin
 }
 #endif
 
+} // namespace
 
+void VulkanGameDevice::collect_retired(uint32_t slot)
+{
+    textures_.set_retirement_safe(true);
+    retired_.complete(slot);
+    textures_.set_retirement_safe(false);
+}
+bool VulkanGameDevice::wait_idle()
+{
+    if (window_.device() && !window_.frame().device_lost() && !window_.frame().wait_idle() &&
+        !window_.frame().device_lost())
+        return false;
+    textures_.set_retirement_safe(true);
+    retired_.drain();
+    textures_.set_retirement_safe(false);
+    return true;
 }
 
-bool VulkanGameDevice::initialize(SDL_Window* window, VkExtent2D extent, std::string& error)
+bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::string &error)
 {
     destroy();
 #if defined(XR_PLATFORM_ANDROID)
-    if (!extent.width || !extent.height ||
-        !set_android_buffer_extent(window, extent, error)) return false;
+    if (!extent.width || !extent.height || !set_android_buffer_extent(window, extent, error))
+        return false;
     scaled_android_window_ = window;
     requested_android_extent_ = extent;
 #endif
@@ -88,11 +88,10 @@ bool VulkanGameDevice::initialize(SDL_Window* window, VkExtent2D extent, std::st
     }
     const VkDevice device = window_.device();
     const auto get = window_.device_proc();
-    const auto& physical = window_.physical();
-    const auto& frame = window_.frame();
+    const auto &physical = window_.physical();
+    const auto &frame = window_.frame();
 #if defined(XR_PLATFORM_ANDROID)
-    Msg("[renderer-vulkan] internal resolution requested=%ux%u swapchain=%ux%u",
-        extent.width, extent.height,
+    Msg("[renderer-vulkan] internal resolution requested=%ux%u swapchain=%ux%u", extent.width, extent.height,
         frame.extent().width, frame.extent().height);
     if (frame.extent().width != extent.width || frame.extent().height != extent.height)
         Msg("! [renderer-vulkan] Android surface did not adopt the requested buffer resolution");
@@ -101,8 +100,8 @@ bool VulkanGameDevice::initialize(SDL_Window* window, VkExtent2D extent, std::st
         physical.properties.deviceName, physical.properties.driverVersion,
         VK_VERSION_MAJOR(physical.properties.apiVersion), VK_VERSION_MINOR(physical.properties.apiVersion),
         physical.properties.limits.maxPushConstantsSize);
-    if (!load_frame_dispatch(window_.instance(), window_.instance_proc(), device, get,
-            frame_dispatch_, error)) goto failed;
+    if (!load_frame_dispatch(window_.instance(), window_.instance_proc(), device, get, frame_dispatch_, error))
+        goto failed;
 
 #define LOAD_TEXTURE(field, name) texture_dispatch_.field = proc<decltype(texture_dispatch_.field)>(device, get, name)
     LOAD_TEXTURE(create_buffer, "vkCreateBuffer");
@@ -133,11 +132,14 @@ bool VulkanGameDevice::initialize(SDL_Window* window, VkExtent2D extent, std::st
 #undef LOAD_TEXTURE
     texture_dispatch_.fence_after_copy = physical.properties.vendorID == 0x5143; // Qualcomm
 
-    buffer_upload_.buffer = {
-        texture_dispatch_.create_buffer, texture_dispatch_.destroy_buffer,
-        texture_dispatch_.get_buffer_memory_requirements, texture_dispatch_.allocate_memory,
-        texture_dispatch_.free_memory, texture_dispatch_.bind_buffer_memory,
-        texture_dispatch_.map_memory, texture_dispatch_.unmap_memory};
+    buffer_upload_.buffer = {texture_dispatch_.create_buffer,
+                             texture_dispatch_.destroy_buffer,
+                             texture_dispatch_.get_buffer_memory_requirements,
+                             texture_dispatch_.allocate_memory,
+                             texture_dispatch_.free_memory,
+                             texture_dispatch_.bind_buffer_memory,
+                             texture_dispatch_.map_memory,
+                             texture_dispatch_.unmap_memory};
     buffer_upload_.allocate_command_buffers = texture_dispatch_.allocate_command_buffers;
     buffer_upload_.free_command_buffers = texture_dispatch_.free_command_buffers;
     buffer_upload_.begin_command_buffer = texture_dispatch_.begin_command_buffer;
@@ -156,50 +158,59 @@ bool VulkanGameDevice::initialize(SDL_Window* window, VkExtent2D extent, std::st
         create_sampler_ = create_sampler;
         destroy_sampler_ = destroy_sampler;
         ScenePassDispatch scene_dispatch;
-        if (!load_scene_pass_dispatch(device, get, scene_dispatch, error) ||
-            !create_sampler || !destroy_sampler || !buffer_upload_.cmd_copy_buffer)
+        if (!load_scene_pass_dispatch(device, get, scene_dispatch, error) || !create_sampler || !destroy_sampler ||
+            !buffer_upload_.cmd_copy_buffer)
         {
-            if (error.empty()) error = "Vulkan game procedures are incomplete";
+            if (error.empty())
+                error = "Vulkan game procedures are incomplete";
             goto failed;
         }
-        if (!targets_.initialize(physical.handle, device, frame.extent(),
-                static_cast<uint32_t>(frame.image_count()), frame.depth_format(),
-                physical.memory, frame_dispatch_, create_sampler, destroy_sampler, error)) goto failed;
+        if (!targets_.initialize(physical.handle, device, frame.extent(), static_cast<uint32_t>(frame.image_count()),
+                                 frame.depth_format(), physical.memory, frame_dispatch_, create_sampler,
+                                 destroy_sampler, error))
+            goto failed;
         if (!sun_shadows_.initialize(device, frame.depth_format(), static_cast<uint32_t>(frame.image_count()),
-                physical.memory, frame_dispatch_, buffer_upload_.buffer,
-                create_sampler, destroy_sampler, error)) goto failed;
+                                     physical.memory, frame_dispatch_, buffer_upload_.buffer, create_sampler,
+                                     destroy_sampler, error))
+            goto failed;
         if (!local_shadows_.initialize(device, frame.depth_format(), static_cast<uint32_t>(frame.image_count()),
-                physical.memory, frame_dispatch_, buffer_upload_.buffer,
-                create_sampler, destroy_sampler, error,
-                physical.properties.limits.minUniformBufferOffsetAlignment)) goto failed;
+                                       physical.memory, frame_dispatch_, buffer_upload_.buffer, create_sampler,
+                                       destroy_sampler, error,
+                                       physical.properties.limits.minUniformBufferOffsetAlignment))
+            goto failed;
         local_sets_.resize(frame.image_count());
         {
             std::vector<VkImageView> depth_views;
             for (uint32_t i = 0; i < frame.image_count(); ++i)
                 depth_views.push_back(targets_.depth_view(i));
-            if (!window_.frame().attach_scene_depth(depth_views, error)) goto failed;
+            if (!window_.frame().attach_scene_depth(depth_views, error))
+                goto failed;
         }
         if (!window_.frame().enable_interpass(error) ||
             !water_targets_.initialize(physical.handle, device, frame.format(), frame.extent(),
-                static_cast<uint32_t>(frame.image_count()), physical.memory,
-                frame_dispatch_, buffer_upload_.buffer, error)) goto failed;
+                                       static_cast<uint32_t>(frame.image_count()), physical.memory, frame_dispatch_,
+                                       buffer_upload_.buffer, error))
+            goto failed;
         const ShaderModuleDispatch shaders{proc<PFN_vkCreateShaderModule>(device, get, "vkCreateShaderModule"),
                                            proc<PFN_vkDestroyShaderModule>(device, get, "vkDestroyShaderModule")};
         configure_engine_shader_resources(device, shaders, shader_resources_);
         DeferredShaderFactory deferred_factory;
         Msg("[renderer-vulkan] device.deferred begin");
-        if (!deferred_factory.create(device, shaders, scene_dispatch, targets_.render_pass(), frame.render_pass(), deferred_, shader_resources_, error,
-                sun_shadows_.render_pass(), local_shadows_.render_pass()) ||
+        if (!deferred_factory.create(device, shaders, scene_dispatch, targets_.render_pass(), frame.render_pass(),
+                                     deferred_, shader_resources_, error, sun_shadows_.render_pass(),
+                                     local_shadows_.render_pass()) ||
             !targets_.bind_lighting(deferred_, error))
             goto failed;
         // enable_interpass() creates a second, compatible render pass. Register it
         // on first startup as well as on swapchain recreation: transparent
         // geometry and UI are recorded there when the level uses water.
         deferred_.rebind_compatible_render_passes(targets_.render_pass(), frame.render_pass(),
-            sun_shadows_.render_pass(), local_shadows_.render_pass(), frame.overlay_render_pass());
+                                                  sun_shadows_.render_pass(), local_shadows_.render_pass(),
+                                                  frame.overlay_render_pass());
         Msg("[renderer-vulkan] device.deferred ready");
         targets_.bind_sun_shadow(deferred_, sun_shadows_);
-        if (!create_forward_targets(error)) goto failed;
+        if (!create_forward_targets(error))
+            goto failed;
         ShaderModule scene_vertex, scene_fragment, ui_vertex, ui_fragment;
         if (!scene_vertex.initialize(device, shaders, scene_shaders::SceneVertex, sizeof(scene_shaders::SceneVertex), error) ||
             !scene_fragment.initialize(device, shaders, scene_shaders::SceneFragment, sizeof(scene_shaders::SceneFragment), error) ||
@@ -224,18 +235,23 @@ bool VulkanGameDevice::initialize(SDL_Window* window, VkExtent2D extent, std::st
             goto failed;
         for (uint32_t i = 0; i < frame.image_count(); ++i)
             if (!deferred_.water_set(i, water_targets_.refraction(i), water_targets_.reflection(i),
-                    targets_.sampled_depth_view(i), textures_.sampler(), targets_.sampler(), water_targets_.uniform(i), error)) goto failed;
+                                     targets_.sampled_depth_view(i), textures_.sampler(), targets_.sampler(),
+                                     water_targets_.uniform(i), error))
+                goto failed;
         ui_pass_.rebind_render_pass(frame.render_pass(), frame.overlay_render_pass());
-        if (!create_ui_scene_sets(error)) goto failed;
+        if (!create_ui_scene_sets(error))
+            goto failed;
         Msg("[renderer-vulkan] device.passes ready water-overlay=%d images=%zu",
             frame.overlay_render_pass() != VK_NULL_HANDLE, frame.image_count());
     }
-    deferred_.set_game_pipeline_request([this](const std::string &vs, const std::string &ps, SurfaceMode mode, bool hud, bool skinned, std::string &reason) {
-        return request_shader_pair(vs, ps, mode, hud, skinned, reason);
-    });
+    deferred_.set_game_pipeline_request(
+        [this](const std::string &vs, const std::string &ps, SurfaceMode mode, bool hud, bool skinned,
+               std::string &reason) { return request_shader_pair(vs, ps, mode, hud, skinned, reason); });
     ui_.configure(
         device, physical.memory, buffer_upload_.buffer, ui_pass_,
-        {[this](VkDescriptorSet set) { return textures_.retain_ui(set, ui_pass_); }, [this](VkDescriptorSet set) { textures_.release_ui(set, ui_pass_); }});
+        {[this](VkDescriptorSet set) { return textures_.retain_ui(set, ui_pass_); },
+         [this](VkDescriptorSet set) { retired_.defer([this, set] { textures_.release_ui(set, ui_pass_); }); }});
+    deferred_.set_frame_ready([this](uint32_t slot) { collect_retired(slot); });
     error.clear();
     return true;
 failed:
@@ -244,10 +260,10 @@ failed:
     return false;
 }
 
-bool VulkanGameDevice::reload_game_shaders(std::string& error)
+bool VulkanGameDevice::reload_game_shaders(std::string &error)
 {
     const VkDevice device = window_.device();
-    if (!device || !window_.frame().wait_idle())
+    if (!device || !wait_idle())
     {
         error = "Vulkan shader reload needs an idle gameplay device";
         return false;
@@ -260,63 +276,44 @@ bool VulkanGameDevice::reload_game_shaders(std::string& error)
     return factory.reload_game_pipelines(device, shaders, deferred_, shader_resources_, error);
 }
 
-bool VulkanGameDevice::create_ui_scene_sets(std::string& error)
+bool VulkanGameDevice::create_ui_scene_sets(std::string &error)
 {
     ui_scene_sets_.resize(window_.frame().image_count());
     ui_depth_sets_.resize(window_.frame().image_count());
     for (uint32_t i = 0; i < ui_scene_sets_.size(); ++i)
-        if (!ui_pass_.create_ui_texture_set(water_targets_.refraction(i),
-                targets_.sampler(), ui_scene_sets_[i], error) ||
-            !ui_pass_.create_ui_texture_set(targets_.sampled_depth_view(i),
-                targets_.sampler(), ui_depth_sets_[i], error, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)) return false;
+        if (!ui_pass_.create_ui_texture_set(water_targets_.refraction(i), targets_.sampler(), ui_scene_sets_[i],
+                                            error) ||
+            !ui_pass_.create_ui_texture_set(targets_.sampled_depth_view(i), targets_.sampler(), ui_depth_sets_[i],
+                                            error, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
+            return false;
     return true;
 }
 
 void VulkanGameDevice::release_ui_scene_sets()
 {
-    for (auto& set : ui_scene_sets_) ui_pass_.release_ui_texture_set(set);
+    for (auto &set : ui_scene_sets_)
+        ui_pass_.release_ui_texture_set(set);
     ui_scene_sets_.clear();
-    for (auto& set : ui_depth_sets_) ui_pass_.release_ui_texture_set(set);
+    for (auto &set : ui_depth_sets_)
+        ui_pass_.release_ui_texture_set(set);
     ui_depth_sets_.clear();
 }
 
-void VulkanGameDevice::capture_ui(VkCommandBuffer command, VkImage image, uint32_t index, void* user)
-{
-    auto& owner = *static_cast<VulkanGameDevice*>(user);
-    owner.ui_recorded_ &= owner.water_targets_.capture(command, image, index);
-}
-
-void VulkanGameDevice::record_ui_distortion(const FrameRecordingContext& frame, void* user)
-{
-    auto& owner = *static_cast<VulkanGameDevice*>(user);
-    owner.ui_recorded_ &= owner.ui_.record(frame, owner.ui_error_, true,
-        owner.ui_scene_sets_.at(frame.image_index));
-}
-
-void VulkanGameDevice::record_ui(const FrameRecordingContext &frame, void *user)
-{
-    auto& owner = *static_cast<VulkanGameDevice*>(user);
-    owner.ui_recorded_ &= owner.ui_.record(frame, owner.ui_error_, false, VK_NULL_HANDLE,
-        frame.image_index < owner.ui_depth_sets_.size() ? owner.ui_depth_sets_[frame.image_index] : VK_NULL_HANDLE);
-    if (!owner.ui_recorded_)
-        Msg("! [renderer-vulkan] ui.record failed image=%u frame=%u overlay=%d draws=%u reason=%s",
-            frame.image_index, frame.frame_index,
-            frame.render_pass == owner.window_.frame().overlay_render_pass() ? 1 : 0,
-            owner.last_ui_draw_calls_, owner.ui_error_.c_str());
-}
-
-bool VulkanGameDevice::create_forward_targets(std::string& error)
+bool VulkanGameDevice::create_forward_targets(std::string &error)
 {
     release_forward_targets();
-    const auto& frame = window_.frame();
+    const auto &frame = window_.frame();
     forward_buffers_.resize(frame.image_count());
     for (uint32_t i = 0; i < frame.image_count(); ++i)
         if (!forward_buffers_[i].initialize(window_.device(), sizeof(ForwardLightUniform),
-                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                window_.physical().memory, buffer_upload_.buffer, error) ||
+                                            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                            window_.physical().memory, buffer_upload_.buffer, error) ||
             !deferred_.forward_set(i, forward_buffers_[i].handle(), error))
-        { release_forward_targets(); return false; }
+        {
+            release_forward_targets();
+            return false;
+        }
     return true;
 }
 
@@ -326,30 +323,30 @@ void VulkanGameDevice::release_forward_targets()
     forward_buffers_.clear();
 }
 
-bool VulkanGameDevice::create_postprocess(std::string& error)
+bool VulkanGameDevice::create_postprocess(std::string &error)
 {
     postprocess_passes_.clear();
-    auto& frame = window_.frame();
+    auto &frame = window_.frame();
     const auto device = window_.device();
     const auto get = window_.device_proc();
     ScreenCopyDispatch dispatch;
     ShaderModuleDispatch modules{proc<PFN_vkCreateShaderModule>(device, get, "vkCreateShaderModule"),
-        proc<PFN_vkDestroyShaderModule>(device, get, "vkDestroyShaderModule")};
+                                 proc<PFN_vkDestroyShaderModule>(device, get, "vkDestroyShaderModule")};
     ShaderModule vertex, fragment;
     if (!load_screen_copy_dispatch(device, get, dispatch, error) || !dispatch.cmd_push_constants ||
-        !vertex.initialize(device, modules, postprocess_shaders::Vertex,
-            sizeof(postprocess_shaders::Vertex), error) ||
-        !fragment.initialize(device, modules, postprocess_shaders::Fragment,
-            sizeof(postprocess_shaders::Fragment), error))
+        !vertex.initialize(device, modules, postprocess_shaders::Vertex, sizeof(postprocess_shaders::Vertex), error) ||
+        !fragment.initialize(device, modules, postprocess_shaders::Fragment, sizeof(postprocess_shaders::Fragment),
+                             error))
     {
-        if (error.empty()) error = "Vulkan postprocess requires push constants";
+        if (error.empty())
+            error = "Vulkan postprocess requires push constants";
         return false;
     }
     for (size_t i = 0; i < frame.image_count(); ++i)
     {
         auto pass = std::make_unique<ScreenCopyPass>();
-        if (!pass->initialize(device, frame.composite_render_pass(), frame.postprocess_view(i),
-                textures_.sampler(), vertex.handle(), fragment.handle(), dispatch, error))
+        if (!pass->initialize(device, frame.composite_render_pass(), frame.postprocess_view(i), textures_.sampler(),
+                              vertex.handle(), fragment.handle(), dispatch, error))
         {
             postprocess_passes_.clear();
             return false;
@@ -360,8 +357,7 @@ bool VulkanGameDevice::create_postprocess(std::string& error)
     return true;
 }
 
-void VulkanGameDevice::set_postprocess(const PostProcessConstants& params,
-    std::string first, std::string second)
+void VulkanGameDevice::set_postprocess(const PostProcessConstants &params, std::string first, std::string second)
 {
     postprocess_params_ = params;
     postprocess_params_.grade[3] = tonemap_enabled ? tonemap_amount : 0.f;
@@ -370,66 +366,63 @@ void VulkanGameDevice::set_postprocess(const PostProcessConstants& params,
     color_map_names_[1] = std::move(second);
 }
 
-bool VulkanGameDevice::refresh_color_maps(std::string& error)
+bool VulkanGameDevice::refresh_color_maps(std::string &error)
 {
-    if (color_map_names_[0] == active_map_names_[0] &&
-        color_map_names_[1] == active_map_names_[1]) return true;
+    if (color_map_names_[0] == active_map_names_[0] && color_map_names_[1] == active_map_names_[1])
+        return true;
     // Descriptor writes and texture eviction must wait for previous submissions.
-    if (!window_.frame().wait_idle())
+    if (!wait_idle())
     {
         error = "could not wait for previous frames before changing postprocess color maps";
         return false;
     }
     VkImageView replacements[2]{};
     for (size_t i = 0; i < 2; ++i)
-        if (!color_map_names_[i].empty() &&
-            !textures_.environment(color_map_names_[i], replacements[i], error))
+        if (!color_map_names_[i].empty() && !textures_.environment(color_map_names_[i], replacements[i], error))
         {
-            for (auto view : replacements) if (view) textures_.release_environment(view);
+            for (auto view : replacements)
+                if (view)
+                    textures_.release_environment(view);
             return false;
         }
     if (!textures_.finish_uploads())
     {
-        for (auto view : replacements) if (view) textures_.release_environment(view);
+        for (auto view : replacements)
+            if (view)
+                textures_.release_environment(view);
         error = "could not upload Vulkan postprocess color maps";
         return false;
     }
-    for (auto& pass : postprocess_passes_)
+    for (auto &pass : postprocess_passes_)
         pass->set_color_maps(replacements[0], replacements[1]);
-    for (auto view : color_map_views_) if (view) textures_.release_environment(view);
+    for (auto view : color_map_views_)
+        if (view)
+            textures_.release_environment(view);
     std::copy_n(replacements, 2, color_map_views_);
     std::copy_n(color_map_names_, 2, active_map_names_);
     return true;
 }
 
-void VulkanGameDevice::record_postprocess(const FrameRecordingContext& frame, void* user)
-{
-    auto& owner = *static_cast<VulkanGameDevice*>(user);
-    owner.postprocess_passes_[frame.image_index]->record(frame);
-}
-
-void VulkanGameDevice::queue_model(GpuModel& model, IKinematics* skeleton, const float (&mvp)[16],
-    bool hud, float sort_distance, const void* instance, float lod, const Fmatrix* world,
-    const float* hemi_faces)
+void VulkanGameDevice::queue_model(GpuModel &model, IKinematics *skeleton, const float (&mvp)[16], bool hud,
+                                   float sort_distance, const void *instance, float lod, const Fmatrix *world,
+                                   const float *hemi_faces)
 {
     ModelDraw draw;
     draw.model = &model;
     draw.instance = instance;
     draw.skeleton = skeleton;
     std::copy_n(mvp, 16, draw.mvp.data());
-    const Fmatrix& rotation = world ? *world : Fidentity;
-    draw.normal_rows = {rotation.i.x, rotation.j.x, rotation.k.x, -1.f,
-        rotation.i.y, rotation.j.y, rotation.k.y, 0.f,
-        rotation.i.z, rotation.j.z, rotation.k.z, 0.f};
-    if (hemi_faces && std::all_of(hemi_faces, hemi_faces + 6,
-            [](float value) { return std::isfinite(value); }))
+    const Fmatrix &rotation = world ? *world : Fidentity;
+    std::memcpy(draw.world.data(), &rotation, sizeof(rotation));
+    draw.normal_rows = {rotation.i.x, rotation.j.x, rotation.k.x, -1.f,         rotation.i.y, rotation.j.y,
+                        rotation.k.y, 0.f,          rotation.i.z, rotation.j.z, rotation.k.z, 0.f};
+    if (hemi_faces && std::all_of(hemi_faces, hemi_faces + 6, [](float value) { return std::isfinite(value); }))
     {
         draw.normal_rows[3] = std::clamp(hemi_faces[VulkanShaderHemiFaceOrder[0]], 0.f, 1.f);
         draw.normal_rows[7] = std::clamp(hemi_faces[VulkanShaderHemiFaceOrder[1]], 0.f, 1.f);
         draw.normal_rows[11] = std::clamp(hemi_faces[VulkanShaderHemiFaceOrder[2]], 0.f, 1.f);
         for (unsigned face = 0; face < 3; ++face)
-            draw.hemi_negative[face] =
-                std::clamp(hemi_faces[VulkanShaderHemiFaceOrder[face + 3]], 0.f, 1.f);
+            draw.hemi_negative[face] = std::clamp(hemi_faces[VulkanShaderHemiFaceOrder[face + 3]], 0.f, 1.f);
     }
     draw.sort_distance = std::isfinite(sort_distance) ? std::max(sort_distance, 0.f) : 0.f;
     draw.lod = lod;
@@ -437,8 +430,8 @@ void VulkanGameDevice::queue_model(GpuModel& model, IKinematics* skeleton, const
     model_draws_.push_back(draw);
 }
 
-void VulkanGameDevice::queue_particle(IRenderVisual* visual, const float (&mvp)[16],
-    const Fvector& right, const Fvector& up, bool hud, float distance)
+void VulkanGameDevice::queue_particle(IRenderVisual *visual, const float (&mvp)[16], const Fvector &right,
+                                      const Fvector &up, bool hud, float distance)
 {
     ParticleDraw draw;
     draw.visual = visual;
@@ -450,38 +443,36 @@ void VulkanGameDevice::queue_particle(IRenderVisual* visual, const float (&mvp)[
     particle_draws_.push_back(draw);
 }
 
-void VulkanGameDevice::discard_model_draws(const void* instance)
+void VulkanGameDevice::discard_model_draws(const void *instance)
 {
     particle_draws_.erase(std::remove_if(particle_draws_.begin(), particle_draws_.end(),
-                              [instance](const ParticleDraw& draw) { return draw.visual == instance; }),
-        particle_draws_.end());
+                                         [instance](const ParticleDraw &draw) { return draw.visual == instance; }),
+                          particle_draws_.end());
     model_draws_.erase(std::remove_if(model_draws_.begin(), model_draws_.end(),
-                           [instance](const ModelDraw& draw)
-                           {
-                               return draw.instance == instance;
-                           }),
-        model_draws_.end());
-    const size_t previous_level_count=level_draws_.size();
+                                      [instance](const ModelDraw &draw) { return draw.instance == instance; }),
+                       model_draws_.end());
+    const size_t previous_level_count = level_draws_.size();
     level_draws_.erase(std::remove_if(level_draws_.begin(), level_draws_.end(),
-                           [instance](const LevelDraw& draw) { return draw.instance == instance; }),
-        level_draws_.end());
-    if (level_draws_.size()==previous_level_count) return;
+                                      [instance](const LevelDraw &draw) { return draw.instance == instance; }),
+                       level_draws_.end());
+    if (level_draws_.size() == previous_level_count)
+        return;
     // Erasure shifts vector indices. Rebuild before another submission can
     // consult the deduplication table in this same frame.
     level_draw_lookup_.clear();
-    for (size_t index=0; index<level_draws_.size(); ++index)
-        level_draw_lookup_.emplace(level_draws_[index].index,index);
+    for (size_t index = 0; index < level_draws_.size(); ++index)
+        level_draw_lookup_.emplace(level_draws_[index].index, index);
 }
 
-void VulkanGameDevice::queue_level_visual(uint32_t index, const float (&mvp)[16],
-    bool hud, float sort_distance, const void* instance, float lod)
+void VulkanGameDevice::queue_level_visual(uint32_t index, const float (&mvp)[16], bool hud, float sort_distance,
+                                          const void *instance, float lod)
 {
     const auto existing = level_draw_lookup_.equal_range(index);
     for (auto it = existing.first; it != existing.second; ++it)
     {
-        const LevelDraw& draw = level_draws_[it->second];
-        if (draw.hud == hud && draw.instance == instance &&
-            std::equal(draw.mvp.begin(), draw.mvp.end(), mvp)) return;
+        const LevelDraw &draw = level_draws_[it->second];
+        if (draw.hud == hud && draw.instance == instance && std::equal(draw.mvp.begin(), draw.mvp.end(), mvp))
+            return;
     }
 
     LevelDraw draw;
@@ -495,362 +486,14 @@ void VulkanGameDevice::queue_level_visual(uint32_t index, const float (&mvp)[16]
     level_draw_lookup_.emplace(index, level_draws_.size() - 1);
 }
 
-void VulkanGameDevice::record_level_visuals(const FrameRecordingContext& frame, void* user)
-{
-    auto& owner = *static_cast<VulkanGameDevice*>(user);
-    PassCpuSample timing{"opaque-level", owner.deferred_, owner.deferred_.draw_calls()};
-    auto command_batch = owner.deferred_.geometry_batch();
-    for (const auto& draw : owner.level_draws_)
-    {
-        if (draw.hud) continue;
-        float mvp[16];
-        std::copy(draw.mvp.begin(), draw.mvp.end(), mvp);
-        if (!owner.current_level_->record_visual(draw.index, frame, owner.deferred_, mvp,
-                GeometryPhase::OpaqueAndAlphaTest, draw.lod, draw.instance == nullptr))
-        {
-            owner.level_recorded_ = false;
-            owner.level_error_ = "Vulkan opaque level visual " + std::to_string(draw.index) +
-                " failed (lod=" + std::to_string(draw.lod) + ")";
-            return;
-        }
-    }
-    float mvp[16];
-    std::copy(owner.scene_mvp_.begin(), owner.scene_mvp_.end(), mvp);
-    if (!owner.current_level_->record_details(frame, owner.deferred_, mvp))
-    {
-        owner.level_recorded_ = false;
-        owner.level_error_ = "Vulkan level detail recording failed";
-    }
-}
-
-void VulkanGameDevice::record_transparent(const FrameRecordingContext& frame, void* user)
-{
-    auto& owner = *static_cast<VulkanGameDevice*>(user);
-    PassCpuSample timing{"transparent", owner.deferred_, owner.deferred_.draw_calls()};
-    if (frame.image_index >= owner.forward_buffers_.size() ||
-        !owner.forward_buffers_[frame.image_index].write(0, &owner.forward_lighting_,
-            sizeof(owner.forward_lighting_), owner.model_error_))
-    { owner.models_recorded_ = false; return; }
-    // R2 draws secondary priority ordinary geometry after combine and before
-    // the sorted forward list. This pass replaces color and writes depth.
-    if (owner.current_level_)
-        for (const auto& level : owner.level_draws_)
-        {
-            if (level.hud || !owner.current_level_->has_secondary_priority(level.index)) continue;
-            float mvp[16];
-            std::copy(level.mvp.begin(), level.mvp.end(), mvp);
-            auto command_batch = owner.deferred_.geometry_batch();
-            if (!owner.current_level_->record_visual(level.index, frame, owner.deferred_,
-                    mvp, GeometryPhase::Transparent, level.lod, level.instance == nullptr, true))
-            {
-                owner.level_recorded_ = false;
-                owner.level_error_ = "Vulkan secondary-priority level visual " +
-                    std::to_string(level.index) + " failed";
-                return;
-            }
-        }
-    for (auto& model : owner.model_draws_)
-    {
-        if (model.hud || !model.model->has_secondary_priority()) continue;
-        float mvp[16];
-        owner.deferred_.set_model_hemi_negative(model.hemi_negative.data());
-        std::copy(model.mvp.begin(), model.mvp.end(), mvp);
-        const bool ok = model.skeleton ?
-            model.model->record_animated(frame, owner.deferred_, mvp,
-                *model.skeleton, owner.model_error_, GeometryPhase::SecondaryOpaque,
-                model.lod, model.normal_rows.data()) :
-            model.model->record(frame, owner.deferred_, mvp, nullptr, 0,
-                owner.model_error_, GeometryPhase::SecondaryOpaque, model.lod,
-                nullptr, model.normal_rows.data());
-        if (!ok) { owner.models_recorded_ = false; return; }
-    }
-    std::vector<TransparentDrawRef> draws;
-    for (size_t i = 0; i < owner.level_draws_.size(); ++i)
-        if (!owner.level_draws_[i].hud && owner.current_level_)
-            for (uint8_t priority = 1; priority <= 3; ++priority)
-                if (owner.current_level_->has_transparent_priority(owner.level_draws_[i].index, priority))
-                    draws.push_back({owner.level_draws_[i].sort_distance, false, i,
-                        false, false, priority});
-    for (size_t i = 0; i < owner.model_draws_.size(); ++i)
-        if (!owner.model_draws_[i].hud)
-            for (uint8_t priority = 1; priority <= 3; ++priority)
-                if (owner.model_draws_[i].model->has_transparent_priority(priority))
-                    draws.push_back({owner.model_draws_[i].sort_distance, true, i,
-                        false, false, priority});
-    for (size_t i = 0; i < owner.particle_draws_.size(); ++i)
-    {
-        const auto& particle = owner.particle_draws_[i];
-        if (particle.hud) continue;
-        if (particle.visual->getType() == 8)
-            draws.push_back({particle.sort_distance, false, i, true, false,
-                static_cast<VulkanParticleEffect*>(particle.visual)->priority()});
-        else
-        {
-            const auto* group = static_cast<VulkanParticleGroup*>(particle.visual);
-            for (uint8_t priority = 1; priority <= 3; ++priority)
-                if (group->has_priority(priority))
-                    draws.push_back({particle.sort_distance, false, i, true, false, priority});
-        }
-    }
-    if (owner.current_level_)
-    {
-        float mvp[16];
-        std::copy(owner.scene_mvp_.begin(), owner.scene_mvp_.end(), mvp);
-        std::vector<float> detail_distances;
-        if (!owner.current_level_->prepare_transparent_details(frame, mvp, detail_distances))
-        {
-            owner.level_recorded_ = false;
-            owner.level_error_ = "Vulkan transparent level detail preparation failed";
-            return;
-        }
-        for (size_t i = 0; i < detail_distances.size(); ++i)
-            draws.push_back({detail_distances[i], false, i, false, true});
-    }
-    sort_transparent_draws(draws);
-#if defined(XR_PLATFORM_ANDROID)
-    if (Device.dwFrame % 300 == 0)
-    {
-        size_t counts[4][3]{}; // priority 1..3: level, model, particle
-        bool ordered = true;
-        for (size_t i = 0; i < draws.size(); ++i)
-        {
-            const auto& draw = draws[i];
-            if (draw.priority >= 1 && draw.priority <= 3)
-                ++counts[draw.priority][draw.particle ? 2 : draw.model ? 1 : 0];
-            if (i && (draws[i - 1].priority > draw.priority ||
-                (draws[i - 1].priority == draw.priority &&
-                    draws[i - 1].distance < draw.distance))) ordered = false;
-        }
-        Msg("[renderer-vulkan] N2.priority frame=%u sorted=%d refs=%zu p1=%zu/%zu/%zu p2=%zu/%zu/%zu p3=%zu/%zu/%zu (level/model/particle)",
-            Device.dwFrame, ordered ? 1 : 0, draws.size(), counts[1][0], counts[1][1], counts[1][2],
-            counts[2][0], counts[2][1], counts[2][2], counts[3][0], counts[3][1], counts[3][2]);
-    }
-#endif
-    for (const TransparentDrawRef& draw : draws)
-    {
-        float mvp[16];
-        if (draw.detail)
-        {
-            std::copy(owner.scene_mvp_.begin(), owner.scene_mvp_.end(), mvp);
-            if (!owner.current_level_->record_transparent_detail(draw.index, frame,
-                    owner.deferred_, mvp))
-            {
-                owner.level_recorded_ = false;
-                owner.level_error_ = "Vulkan transparent level detail recording failed";
-                return;
-            }
-        }
-        else if (draw.particle)
-        {
-            auto& particle = owner.particle_draws_[draw.index];
-            std::copy(particle.mvp.begin(), particle.mvp.end(), mvp);
-            bool ok = particle.visual->getType() == 8 ?
-                static_cast<VulkanParticleEffect*>(particle.visual)->record(frame, owner.deferred_, mvp,
-                    particle.right, particle.up, false, owner.model_error_) :
-                static_cast<VulkanParticleGroup*>(particle.visual)->record(frame, owner.deferred_, mvp,
-                    particle.right, particle.up, false, owner.model_error_,
-                    GeometryPhase::Transparent, draw.priority);
-            if (!ok) { owner.models_recorded_ = false; return; }
-        }
-        else if (draw.model)
-        {
-            ModelDraw& model = owner.model_draws_[draw.index];
-            owner.deferred_.set_model_hemi_negative(model.hemi_negative.data());
-            std::copy(model.mvp.begin(), model.mvp.end(), mvp);
-            if (model.skeleton ?
-                    !model.model->record_animated(frame, owner.deferred_, mvp,
-                        *model.skeleton, owner.model_error_, GeometryPhase::Transparent, model.lod,
-                    model.normal_rows.data(), draw.priority) :
-                    !model.model->record(frame, owner.deferred_, mvp,
-                        nullptr, 0, owner.model_error_, GeometryPhase::Transparent, model.lod,
-                    nullptr, model.normal_rows.data(), draw.priority))
-            {
-                owner.models_recorded_ = false;
-                return;
-            }
-        }
-        else
-        {
-            const LevelDraw& level = owner.level_draws_[draw.index];
-            std::copy(level.mvp.begin(), level.mvp.end(), mvp);
-            auto command_batch = owner.deferred_.geometry_batch();
-            if (!owner.current_level_->record_visual(level.index, frame,
-                    owner.deferred_, mvp, GeometryPhase::Transparent, level.lod,
-                    level.instance == nullptr, false, draw.priority))
-            {
-                owner.level_recorded_ = false;
-                owner.level_error_ = "Vulkan transparent level visual " +
-                    std::to_string(level.index) + " failed (lod=" + std::to_string(level.lod) + ")";
-                return;
-            }
-        }
-    }
-    for (VulkanRainRender* rain : owner.rain_draws_)
-        if (rain && !rain->record(frame, owner.model_error_))
-        {
-            owner.models_recorded_ = false;
-            return;
-        }
-    for (VulkanThunderboltRender* bolt : owner.thunderbolt_draws_)
-        if (bolt && !bolt->record(frame, owner.model_error_))
-        {
-            owner.models_recorded_ = false;
-            return;
-        }
-    // World-space IUIRender effects belong before the HUD clears depth and
-    // paints the weapon. Overlay UI is recorded separately after the HUD.
-    owner.ui_recorded_ &= owner.ui_.record(frame, owner.ui_error_, false, VK_NULL_HANDLE,
-        frame.image_index < owner.ui_depth_sets_.size() ? owner.ui_depth_sets_[frame.image_index] : VK_NULL_HANDLE,
-        true);
-}
-
-void VulkanGameDevice::record_local_lights(const FrameRecordingContext& frame, void* user)
-{
-    auto& owner = *static_cast<VulkanGameDevice*>(user);
-    PassCpuSample timing{"local-lights", owner.deferred_, owner.deferred_.draw_calls()};
-    if (frame.image_index >= owner.local_sets_.size())
-    { owner.local_lights_recorded_ = false; return; }
-    for (uint32_t i = 0; i < owner.local_uniforms_.size(); ++i)
-    {
-        VkDescriptorSet& set = owner.local_sets_[frame.image_index][i];
-        if (!set && !owner.deferred_.local_light_set(owner.local_shadows_.view(frame.image_index),
-                owner.local_shadows_.sampler(), owner.local_shadows_.uniform(frame.image_index),
-                VkDeviceSize(i) * owner.local_shadows_.uniform_stride(), sizeof(LocalLightUniform),
-                set, owner.model_error_))
-        { owner.local_lights_recorded_ = false; return; }
-        VkRect2D scissor = owner.local_scissors_[i];
-        if (owner.local_uniforms_[i].debug_mode[0] == 1.f)
-        {
-            // Project each light's scissor into the upper-left base panel.
-            // Round the far edge up so edge pixels cannot lose their light.
-            const uint32_t right = uint32_t(scissor.offset.x) + scissor.extent.width;
-            const uint32_t bottom = uint32_t(scissor.offset.y) + scissor.extent.height;
-            scissor.offset.x /= 2;
-            scissor.offset.y /= 2;
-            scissor.extent.width = (right + 1) / 2 - uint32_t(scissor.offset.x);
-            scissor.extent.height = (bottom + 1) / 2 - uint32_t(scissor.offset.y);
-        }
-        if (!owner.deferred_.record_local_light(frame, owner.targets_.lighting_set(frame.image_index),
-                set, scissor))
-        { owner.local_lights_recorded_ = false; return; }
-    }
-}
-
-void VulkanGameDevice::record_hud(const FrameRecordingContext& frame, void* user)
-{
-    auto& owner = *static_cast<VulkanGameDevice*>(user);
-    struct DrawRef
-    {
-        float distance{};
-        bool model{};
-        size_t index{};
-        bool particle{};
-    };
-    std::vector<DrawRef> hud;
-    for (size_t i = 0; i < owner.level_draws_.size(); ++i)
-        if (owner.level_draws_[i].hud) hud.push_back({owner.level_draws_[i].sort_distance, false, i});
-    for (size_t i = 0; i < owner.model_draws_.size(); ++i)
-        if (owner.model_draws_[i].hud) hud.push_back({owner.model_draws_[i].sort_distance, true, i});
-    for (size_t i = 0; i < owner.particle_draws_.size(); ++i)
-        if (owner.particle_draws_[i].hud) hud.push_back({owner.particle_draws_[i].sort_distance, false, i, true});
-    std::stable_sort(hud.begin(), hud.end(), [](const DrawRef& left, const DrawRef& right)
-    {
-        return left.distance > right.distance;
-    });
-    for (const DrawRef& draw : hud)
-    {
-        float mvp[16];
-        if (draw.particle)
-        {
-            auto& particle = owner.particle_draws_[draw.index];
-            std::copy(particle.mvp.begin(), particle.mvp.end(), mvp);
-            bool ok = particle.visual->getType() == 8 ?
-                static_cast<VulkanParticleEffect*>(particle.visual)->record(frame, owner.deferred_, mvp,
-                    particle.right, particle.up, true, owner.model_error_) :
-                static_cast<VulkanParticleGroup*>(particle.visual)->record(frame, owner.deferred_, mvp,
-                    particle.right, particle.up, true, owner.model_error_);
-            if (!ok) { owner.models_recorded_ = false; return; }
-        }
-        else if (draw.model)
-        {
-            ModelDraw& model = owner.model_draws_[draw.index];
-            owner.deferred_.set_model_hemi_negative(model.hemi_negative.data());
-            std::copy(model.mvp.begin(), model.mvp.end(), mvp);
-            const bool recorded = model.skeleton ?
-                model.model->record_animated(frame, owner.deferred_, mvp,
-                    *model.skeleton, owner.model_error_, GeometryPhase::Hud, model.lod,
-                    model.normal_rows.data()) :
-                model.model->record(frame, owner.deferred_, mvp,
-                    nullptr, 0, owner.model_error_, GeometryPhase::Hud, model.lod,
-                    nullptr, model.normal_rows.data());
-            if (!recorded)
-            {
-                owner.models_recorded_ = false;
-                return;
-            }
-        }
-        else
-        {
-            const LevelDraw& level = owner.level_draws_[draw.index];
-            std::copy(level.mvp.begin(), level.mvp.end(), mvp);
-            if (!owner.current_level_->record_hud_visual(level.index, frame,
-                    owner.deferred_, mvp, level.lod))
-            {
-                owner.level_recorded_ = false;
-                owner.level_error_ = "Vulkan HUD level visual " + std::to_string(level.index) +
-                    " failed (lod=" + std::to_string(level.lod) + ")";
-                return;
-            }
-        }
-    }
-}
-
-void VulkanGameDevice::record_models(const FrameRecordingContext& frame, void* user)
-{
-    auto& owner = *static_cast<VulkanGameDevice*>(user);
-    PassCpuSample timing{"opaque-models", owner.deferred_, owner.deferred_.draw_calls()};
-    for (auto& draw : owner.model_draws_)
-    {
-        if (draw.hud) continue;
-        owner.deferred_.set_model_hemi_negative(draw.hemi_negative.data());
-        float mvp[16];
-        std::copy(draw.mvp.begin(), draw.mvp.end(), mvp);
-        if (draw.skeleton ?
-                !draw.model->record_animated(frame, owner.deferred_, mvp,
-                    *draw.skeleton, owner.model_error_, GeometryPhase::OpaqueAndAlphaTest, draw.lod,
-                    draw.normal_rows.data()) :
-                !draw.model->record(frame, owner.deferred_, mvp,
-                    nullptr, 0, owner.model_error_, GeometryPhase::OpaqueAndAlphaTest, draw.lod,
-                    nullptr, draw.normal_rows.data()))
-        {
-            owner.models_recorded_ = false;
-            return;
-        }
-    }
-    // R2's PARTICLE SET is a cutout G-buffer draw. Particle groups can mix
-    // this mode with forward effects; each child filters itself by phase.
-    for (auto& particle : owner.particle_draws_)
-    {
-        if (particle.hud) continue;
-        float mvp[16];
-        std::copy(particle.mvp.begin(), particle.mvp.end(), mvp);
-        const bool ok = particle.visual->getType() == 8 ?
-            static_cast<VulkanParticleEffect*>(particle.visual)->record(frame, owner.deferred_, mvp,
-                particle.right, particle.up, false, owner.model_error_, GeometryPhase::OpaqueAndAlphaTest) :
-            static_cast<VulkanParticleGroup*>(particle.visual)->record(frame, owner.deferred_, mvp,
-                particle.right, particle.up, false, owner.model_error_, GeometryPhase::OpaqueAndAlphaTest);
-        if (!ok) { owner.models_recorded_ = false; return; }
-    }
-}
-
 void VulkanGameDevice::begin_frame()
 {
     if (!launch_settings_applied_)
     {
         apply_vulkan_launch_settings(Core.Params);
-        launch_settings_applied_=true;
-        Msg("[renderer-vulkan] launcher.settings preset=%u detail=%d ambient=%.3f hemi=%.3f sun=%.3f",
-            quality_preset, detail_radius, ambient_scale, hemisphere_scale, sun_scale);
+        launch_settings_applied_ = true;
+        Msg("[renderer-vulkan] launcher.settings preset=%u detail=%d ambient=%.3f hemi=%.3f sun=%.3f", quality_preset,
+            detail_radius, ambient_scale, hemisphere_scale, sun_scale);
     }
     discard_scene_draws();
     light_snapshots_.clear();
@@ -858,30 +501,64 @@ void VulkanGameDevice::begin_frame()
     weather_set_ = VK_NULL_HANDLE;
 }
 
-VkDescriptorSet VulkanGameDevice::glow_texture(const std::string& name)
+VkDescriptorSet VulkanGameDevice::glow_texture(const std::string &name)
 {
-    if (name.empty()) return VK_NULL_HANDLE;
+    if (name.empty())
+        return VK_NULL_HANDLE;
     const auto found = glow_textures_.find(name);
-    if (found != glow_textures_.end()) return found->second;
+    if (found != glow_textures_.end())
+        return found->second;
     VkDescriptorSet set = VK_NULL_HANDLE;
     std::string error;
     if (!textures_.ui(name, ui_pass_, set, error))
-    { Msg("! [renderer-vulkan] glow texture '%s': %s", name.c_str(), error.c_str()); return VK_NULL_HANDLE; }
+    {
+        Msg("! [renderer-vulkan] glow texture '%s': %s", name.c_str(), error.c_str());
+        return VK_NULL_HANDLE;
+    }
     glow_textures_.emplace(name, set);
     return set;
 }
 
+VkImageView VulkanGameDevice::light_projection(const std::string &name)
+{
+    if (failed_light_projections_.count(name))
+        return light_projection("");
+    auto found = light_projections_.find(name);
+    if (found != light_projections_.end())
+        return found->second;
+    VkImageView view{};
+    std::string error;
+    if (!textures_.projection_texture(name, view, error))
+    {
+        Msg("! [renderer-vulkan] spot texture '%s': %s", name.c_str(), error.c_str());
+        failed_light_projections_.insert(name);
+        return light_projection("");
+    }
+    light_projections_.emplace(name, view);
+    return view;
+}
+
 void VulkanGameDevice::release_level_glows()
 {
-    if (glow_textures_.empty()) return;
+    for (const auto &entry : light_projections_)
+        if (!entry.first.empty() && entry.second)
+            textures_.release_environment(entry.second);
+    local_shadows_.invalidate_cache();
+    light_projections_.clear();
+    failed_light_projections_.clear();
+    local_projection_views_.clear();
+    local_bound_projections_.clear();
+
+    if (glow_textures_.empty())
+        return;
     R_ASSERT2(wait_idle(), "Vulkan glow descriptors require idle GPU frames");
-    for (const auto& [name, set] : glow_textures_)
+    for (const auto &[name, set] : glow_textures_)
         textures_.release_ui(set, ui_pass_);
     glow_textures_.clear();
 }
 
-void VulkanGameDevice::queue_weather(VkDescriptorSet set, const WeatherLighting& lighting,
-    const float (&fog_color)[3], float fog_near, float fog_far)
+void VulkanGameDevice::queue_weather(VkDescriptorSet set, const WeatherLighting &lighting, const float (&fog_color)[3],
+                                     float fog_near, float fog_far)
 {
     weather_set_ = set;
     weather_lighting_ = lighting;
@@ -890,58 +567,41 @@ void VulkanGameDevice::queue_weather(VkDescriptorSet set, const WeatherLighting&
     forward_lighting_.fog_end_camera[0] = fog_far;
 }
 
-void VulkanGameDevice::queue_rain(VulkanRainRender& rain)
+void VulkanGameDevice::queue_rain(VulkanRainRender &rain)
 {
     rain_draws_.push_back(&rain);
 }
 
-void VulkanGameDevice::queue_thunderbolt(VulkanThunderboltRender& bolt)
+void VulkanGameDevice::queue_thunderbolt(VulkanThunderboltRender &bolt)
 {
     thunderbolt_draws_.push_back(&bolt);
 }
 
-void VulkanGameDevice::discard_rain(const VulkanRainRender* rain)
+void VulkanGameDevice::discard_rain(const VulkanRainRender *rain)
 {
     rain_draws_.erase(std::remove(rain_draws_.begin(), rain_draws_.end(), rain), rain_draws_.end());
 }
 
-void VulkanGameDevice::discard_thunderbolt(const VulkanThunderboltRender* bolt)
+void VulkanGameDevice::discard_thunderbolt(const VulkanThunderboltRender *bolt)
 {
     thunderbolt_draws_.erase(std::remove(thunderbolt_draws_.begin(), thunderbolt_draws_.end(), bolt),
-        thunderbolt_draws_.end());
+                             thunderbolt_draws_.end());
 }
 
-void VulkanGameDevice::record_readback(VkCommandBuffer command, VkImage image,
-    VkExtent2D extent, void* user)
+bool VulkanGameDevice::take_screenshot(std::vector<uint8_t> &pixels, VkExtent2D &extent, VkFormat &format)
 {
-    auto& owner = *static_cast<VulkanGameDevice*>(user);
-    VkBufferImageCopy region{};
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.layerCount = 1;
-    region.imageExtent = {extent.width, extent.height, 1};
-    owner.frame_dispatch_.cmd_copy_image_to_buffer(command, image,
-        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, owner.screenshot_buffer_.handle(), 1, &region);
-    VkBufferMemoryBarrier barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.buffer = owner.screenshot_buffer_.handle();
-    barrier.size = VK_WHOLE_SIZE;
-    owner.frame_dispatch_.cmd_pipeline_barrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
-}
-
-bool VulkanGameDevice::take_screenshot(std::vector<uint8_t>& pixels,
-    VkExtent2D& extent, VkFormat& format)
-{
-    if (!screenshot_ready_) return false;
+    if (!screenshot_ready_)
+        return false;
     screenshot_ready_ = false;
     extent = screenshot_extent_;
     format = window_.frame().format();
     pixels.resize(size_t(extent.width) * extent.height * 4);
     std::string error;
     if (!screenshot_buffer_.read(0, pixels.data(), pixels.size(), error))
-    { Msg("! [renderer-vulkan] screenshot: %s", error.c_str()); return false; }
+    {
+        Msg("! [renderer-vulkan] screenshot: %s", error.c_str());
+        return false;
+    }
     return true;
 }
 
@@ -956,9 +616,9 @@ void VulkanGameDevice::discard_scene_draws()
     current_level_ = nullptr;
 }
 
-bool VulkanGameDevice::render(const GpuLevel& level, const float (&mvp)[16],
-    const DeferredLight& light, FrameStatus& status, std::string& error,
-    bool render_world, bool clear_target, const DeferredEnvironment* environment)
+bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], const DeferredLight &light,
+                              FrameStatus &status, std::string &error, bool render_world, bool clear_target,
+                              const DeferredEnvironment *environment)
 {
     ui_recorded_ = true;
     models_recorded_ = true;
@@ -969,8 +629,10 @@ bool VulkanGameDevice::render(const GpuLevel& level, const float (&mvp)[16],
     std::copy(std::begin(mvp), std::end(mvp), scene_mvp_.begin());
     ui_error_.clear();
     model_error_.clear();
-    if (!refresh_color_maps(error)) return false;
-    for (auto& pass : postprocess_passes_) pass->set_constants(postprocess_params_);
+    if (!refresh_color_maps(error))
+        return false;
+    for (auto &pass : postprocess_passes_)
+        pass->set_constants(postprocess_params_);
     const float weather_blend = weather_lighting_.light.color[3];
     const float cloud_params = weather_lighting_.light.grade[3];
     weather_lighting_.light = light;
@@ -978,13 +640,13 @@ bool VulkanGameDevice::render(const GpuLevel& level, const float (&mvp)[16],
     weather_lighting_.light.grade[3] = cloud_params;
     last_ui_draw_calls_ = ui_.draw_calls();
     last_ui_triangles_ = ui_.triangles();
-    if (Device.dwPrecacheFrame && (Device.dwPrecacheFrame == Device.dwPrecacheTotal ||
-            Device.dwPrecacheFrame % 10 == 0))
-        Msg("[renderer-vulkan] frame.begin precache=%u world=%d clear=%d water=%d ui-draws=%u level-draws=%zu model-draws=%zu particles=%zu ambient=%.3f sun=(%.3f,%.3f,%.3f)",
-            Device.dwPrecacheFrame, render_world ? 1 : 0, clear_target ? 1 : 0,
-            level.has_water() ? 1 : 0, last_ui_draw_calls_, level_draws_.size(),
-            model_draws_.size(), particle_draws_.size(), light.direction_ambient[3],
-            light.color[0], light.color[1], light.color[2]);
+    if (Device.dwPrecacheFrame &&
+        (Device.dwPrecacheFrame == Device.dwPrecacheTotal || Device.dwPrecacheFrame % 10 == 0))
+        Msg("[renderer-vulkan] frame.begin precache=%u world=%d clear=%d water=%d ui-draws=%u level-draws=%zu "
+            "model-draws=%zu particles=%zu ambient=%.3f sun=(%.3f,%.3f,%.3f)",
+            Device.dwPrecacheFrame, render_world ? 1 : 0, clear_target ? 1 : 0, level.has_water() ? 1 : 0,
+            last_ui_draw_calls_, level_draws_.size(), model_draws_.size(), particle_draws_.size(),
+            light.direction_ambient[3], light.color[0], light.color[1], light.color[2]);
     screenshot_ready_ = false;
     if (screenshot_requested_ && readback_enabled_)
     {
@@ -992,17 +654,18 @@ bool VulkanGameDevice::render(const GpuLevel& level, const float (&mvp)[16],
         const VkDeviceSize bytes = VkDeviceSize(screenshot_extent_.width) * screenshot_extent_.height * 4;
         if (screenshot_buffer_.size() < bytes)
         {
-            if (!window_.frame().wait_idle() || !screenshot_buffer_.initialize(window_.device(), bytes,
-                    VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, window_.physical().memory,
-                    buffer_upload_.buffer, error)) return false;
+            if (!wait_idle() || !screenshot_buffer_.initialize(
+                                    window_.device(), bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                    window_.physical().memory, buffer_upload_.buffer, error))
+                return false;
         }
     }
     SunShadowUniform sun_uniform{};
     if (render_world && Core.Params)
     {
         // The old argument remains accepted for existing custom launchers.
-        const char* mode = strstr(Core.Params, "-vk-light-debug=");
+        const char *mode = strstr(Core.Params, "-vk-light-debug=");
         if (mode)
         {
             const char value = mode[16]; // one ASCII digit after the '='
@@ -1015,25 +678,26 @@ bool VulkanGameDevice::render(const GpuLevel& level, const float (&mvp)[16],
     for (int channel = 0; channel < 3; ++channel)
     {
         const auto valid = [](float value) { return std::isfinite(value) ? std::max(value, 0.f) : 0.f; };
-        const float ambient = environment ? valid(environment->ambient_color[channel]) :
-            valid(light.direction_ambient[3]);
+        const float ambient =
+            environment ? valid(environment->ambient_color[channel]) : valid(light.direction_ambient[3]);
         // Match the R2 combine constants, including the floor before the
         // default ambient scale. The raw weather ambient is half of
         // the value passed to hmodel on the desktop renderer.
         sun_uniform.ambient_color[channel] = std::max(ambient * 2.f * ambient_scale, .001f);
-        sun_uniform.hemi_color[channel] =
-            environment ? valid(environment->hemi_color[channel]) :
-                valid(light.grade[3]);
+        sun_uniform.hemi_color[channel] = environment ? valid(environment->hemi_color[channel]) : valid(light.grade[3]);
         sun_uniform.hemi_color[channel] *= hemisphere_scale;
     }
     if (sun_uniform.options[1] > .5f && (Device.dwFrame < 3 || Device.dwFrame % 300 == 0))
-        Msg("[renderer-vulkan] lighting.diagnostic frame=%u mode=%u panels=1:base,sun,baked,albedo;6:env,hemi-one,sun-one,both;7:old-flat shadow-size=%u bias=%.4f forward=single-base-only quad=opaque-only",
+        Msg("[renderer-vulkan] lighting.diagnostic frame=%u mode=%u "
+            "panels=1:base,sun,baked,albedo;6:env,hemi-one,sun-one,both;7:old-flat shadow-size=%u bias=%.4f "
+            "forward=single-base-only quad=opaque-only",
             Device.dwFrame, unsigned(sun_uniform.options[1]), SunShadowTargets::Size, sun_uniform.options[0]);
     if (render_world && Device.dwFrame % 300 == 0)
-        Msg("[renderer-vulkan] lighting.rgb frame=%u ambient=(%.4f,%.4f,%.4f) hemi=(%.4f,%.4f,%.4f) sun=(%.4f,%.4f,%.4f) combine=%s diagnostic=%.0f",
+        Msg("[renderer-vulkan] lighting.rgb frame=%u ambient=(%.4f,%.4f,%.4f) hemi=(%.4f,%.4f,%.4f) "
+            "sun=(%.4f,%.4f,%.4f) combine=%s diagnostic=%.0f",
             Device.dwFrame, sun_uniform.ambient_color[0], sun_uniform.ambient_color[1], sun_uniform.ambient_color[2],
-            sun_uniform.hemi_color[0], sun_uniform.hemi_color[1], sun_uniform.hemi_color[2],
-            light.color[0], light.color[1], light.color[2], weather_set_ ? "weather" : "plain", sun_uniform.options[1]);
+            sun_uniform.hemi_color[0], sun_uniform.hemi_color[1], sun_uniform.hemi_color[2], light.color[0],
+            light.color[1], light.color[2], weather_set_ ? "weather" : "plain", sun_uniform.options[1]);
     WaterSceneUniform water_uniform{};
     {
         Fmatrix camera, inverse, sun_view, sun_projection, sun_vp;
@@ -1051,52 +715,58 @@ bool VulkanGameDevice::render(const GpuLevel& level, const float (&mvp)[16],
         water_uniform.camera_position[2] = Device.vCameraPosition.z;
         water_uniform.camera_position[3] = 1.f;
         Fvector direction;
-        direction.set(light.direction_ambient[0], light.direction_ambient[1],
-            light.direction_ambient[2]);
-        if (direction.square_magnitude() < 0.0001f) direction.set(0.f, -1.f, 0.f);
+        direction.set(light.direction_ambient[0], light.direction_ambient[1], light.direction_ambient[2]);
+        if (direction.square_magnitude() < 0.0001f)
+            direction.set(0.f, -1.f, 0.f);
         direction.normalize_safe();
         Fvector up;
         up.set(0.f, 1.f, 0.f);
-        if (std::abs(direction.y) > .95f) up.set(0.f, 0.f, 1.f);
+        if (std::abs(direction.y) > .95f)
+            up.set(0.f, 0.f, 1.f);
         Fvector origin;
         origin.mad(Device.vCameraPosition, direction, -140.f);
         sun_view.build_camera_dir(origin, direction, up);
         const float shadow_span = sun_shadow_span(quality_preset);
         sun_projection.build_projection_ortho(shadow_span, shadow_span, 1.f, 320.f);
-        sun_uniform.options[2] = quality_preset <= 1 ? .08f : 0.f;
+        sun_uniform.options[2] = .08f;
 #if defined(XR_PLATFORM_ANDROID)
         if (Device.dwFrame % 300 == 0)
-            Msg("[renderer-vulkan] shadow.range frame=%u preset=%u span=%.1fm texel=%.4fm",
-                Device.dwFrame, quality_preset, shadow_span, shadow_span / SunShadowTargets::Size);
+            Msg("[renderer-vulkan] shadow.range frame=%u preset=%u span=%.1fm texel=%.4fm", Device.dwFrame,
+                quality_preset, shadow_span, shadow_span / SunShadowTargets::Size);
 #endif
         sun_vp.mul(sun_projection, sun_view);
-        stabilize_shadow_projection(reinterpret_cast<float*>(&sun_vp), SunShadowTargets::Size);
+        stabilize_shadow_projection(reinterpret_cast<float *>(&sun_vp), SunShadowTargets::Size);
         std::memcpy(sun_uniform.sun_view_projection, &sun_vp, sizeof(sun_vp));
     }
     render_lights(mvp, render_world, light, sun_uniform);
     deferred_.set_forward_weather(render_world ? weather_set_ : VK_NULL_HANDLE);
+    frame_.set_shadow_recorder(record_shadow_models, this);
     bool particle_refraction = false;
-    for (const auto& particle : particle_draws_)
-        if (particle.visual->getType() == 8 ?
-            static_cast<VulkanParticleEffect*>(particle.visual)->distortion() :
-            static_cast<VulkanParticleGroup*>(particle.visual)->has_distortion())
-        { particle_refraction = true; break; }
+    for (const auto &particle : particle_draws_)
+        if (particle.visual->getType() == 8 ? static_cast<VulkanParticleEffect *>(particle.visual)->distortion()
+                                            : static_cast<VulkanParticleGroup *>(particle.visual)->has_distortion())
+        {
+            particle_refraction = true;
+            break;
+        }
     // All gameplay texture requests for this frame have now been gathered.
     // The completed copy fences provide the Adreno transfer visibility before
     // any rendering command can sample a newly loaded image.
     if (!textures_.finish_uploads())
-    { error = "Vulkan gameplay texture batch did not complete"; reset_required_ = true; return false; }
-    if (!frame_.render(window_.frame(), targets_, level, deferred_, mvp,
-            light, status, error, record_ui, this, record_hud, this, record_models, this,
-            record_transparent, this,
-            scene_visibility_ ? record_level_visuals : nullptr, this, render_world, clear_target,
-            render_world ? weather_set_ : VK_NULL_HANDLE, &weather_lighting_,
-            screenshot_requested_ && readback_enabled_ ? record_readback : nullptr, this,
-            record_postprocess, this, &sun_shadows_, &sun_uniform,
-            &local_shadows_, &local_uniforms_, record_local_lights, this,
-            render_world && (level.has_water() || particle_refraction) ? &water_targets_ : nullptr, &water_uniform,
-            ui_.has_distortion() ? capture_ui : nullptr, this,
-            ui_.has_distortion() ? record_ui_distortion : nullptr, this))
+    {
+        error = "Vulkan gameplay texture batch did not complete";
+        reset_required_ = true;
+        return false;
+    }
+    if (!frame_.render(window_.frame(), targets_, level, deferred_, mvp, light, status, error, record_ui, this,
+                       record_hud, this, record_models, this, record_transparent, this,
+                       scene_visibility_ ? record_level_visuals : nullptr, this, render_world, clear_target,
+                       render_world ? weather_set_ : VK_NULL_HANDLE, &weather_lighting_,
+                       screenshot_requested_ && readback_enabled_ ? record_readback : nullptr, this, record_postprocess,
+                       this, &sun_shadows_, &sun_uniform, &local_shadows_, &local_uniforms_, record_local_lights, this,
+                       render_world && (level.has_water() || particle_refraction) ? &water_targets_ : nullptr,
+                       &water_uniform, ui_.has_distortion() ? capture_ui : nullptr, this,
+                       ui_.has_distortion() ? record_ui_distortion : nullptr, this))
     {
         if (!window_.frame().device_lost())
             reset_required_ = true;
@@ -1111,7 +781,7 @@ bool VulkanGameDevice::render(const GpuLevel& level, const float (&mvp)[16],
     if (status == FrameStatus::RecreateRequired)
         reset_required_ = true;
     else if (screenshot_requested_ && readback_enabled_)
-        screenshot_ready_ = window_.frame().wait_idle();
+        screenshot_ready_ = wait_idle();
     screenshot_requested_ = false;
     model_draws_.clear();
     particle_draws_.clear();
@@ -1144,14 +814,14 @@ bool VulkanGameDevice::render(const GpuLevel& level, const float (&mvp)[16],
     return true;
 }
 
-bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string& error, bool recreate_surface)
+bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error, bool recreate_surface)
 {
     if (!window_.device() || !extent.width || !extent.height)
     {
         error = "Vulkan swapchain reset requires a live device and nonzero drawable extent";
         return false;
     }
-    if (!window_.frame().wait_idle())
+    if (!wait_idle())
     {
         error = "could not wait for Vulkan device before renderer reset";
         return false;
@@ -1161,8 +831,9 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string& error,
     targets_.release_lighting(deferred_);
     deferred_.release_water_sets();
     release_ui_scene_sets();
-    for (auto& image : local_sets_)
-        for (auto& set : image) deferred_.release_gbuffer(set);
+    for (auto &image : local_sets_)
+        for (auto &set : image)
+            deferred_.release_gbuffer(set);
     local_sets_.clear();
     release_forward_targets();
     postprocess_passes_.clear();
@@ -1178,68 +849,73 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string& error,
         return false;
     extent = requested_android_extent_;
 #endif
-    if (!(replace_surface ? window_.recreate_surface(extent, error) :
-              window_.recreate_frame(extent, error)))
+    if (!(replace_surface ? window_.recreate_surface(extent, error) : window_.recreate_frame(extent, error)))
         return false;
 
-    auto& frame = window_.frame();
-    const auto& physical = window_.physical();
+    auto &frame = window_.frame();
+    const auto &physical = window_.physical();
 #if defined(XR_PLATFORM_ANDROID)
-    Msg("[renderer-vulkan] internal resolution reset requested=%ux%u swapchain=%ux%u",
-        requested_android_extent_.width, requested_android_extent_.height,
-        frame.extent().width, frame.extent().height);
+    Msg("[renderer-vulkan] internal resolution reset requested=%ux%u swapchain=%ux%u", requested_android_extent_.width,
+        requested_android_extent_.height, frame.extent().width, frame.extent().height);
 #endif
     if (!targets_.initialize(physical.handle, window_.device(), frame.extent(),
-            static_cast<uint32_t>(frame.image_count()), frame.depth_format(), physical.memory,
-            frame_dispatch_, create_sampler_, destroy_sampler_, error))
+                             static_cast<uint32_t>(frame.image_count()), frame.depth_format(), physical.memory,
+                             frame_dispatch_, create_sampler_, destroy_sampler_, error))
         return false;
     sun_shadows_.destroy();
     if (!sun_shadows_.initialize(window_.device(), frame.depth_format(), static_cast<uint32_t>(frame.image_count()),
-            physical.memory, frame_dispatch_, buffer_upload_.buffer,
-            create_sampler_, destroy_sampler_, error)) return false;
+                                 physical.memory, frame_dispatch_, buffer_upload_.buffer, create_sampler_,
+                                 destroy_sampler_, error))
+        return false;
     local_shadows_.destroy();
     if (!local_shadows_.initialize(window_.device(), frame.depth_format(), static_cast<uint32_t>(frame.image_count()),
-            physical.memory, frame_dispatch_, buffer_upload_.buffer,
-            create_sampler_, destroy_sampler_, error,
-            physical.properties.limits.minUniformBufferOffsetAlignment)) return false;
+                                   physical.memory, frame_dispatch_, buffer_upload_.buffer, create_sampler_,
+                                   destroy_sampler_, error, physical.properties.limits.minUniformBufferOffsetAlignment))
+        return false;
     local_sets_.resize(frame.image_count());
     {
         std::vector<VkImageView> depth_views;
         for (uint32_t i = 0; i < frame.image_count(); ++i)
             depth_views.push_back(targets_.depth_view(i));
-        if (!frame.attach_scene_depth(depth_views, error)) return false;
+        if (!frame.attach_scene_depth(depth_views, error))
+            return false;
     }
     if (!frame.enable_interpass(error) ||
         !water_targets_.initialize(physical.handle, window_.device(), frame.format(), frame.extent(),
-            static_cast<uint32_t>(frame.image_count()), physical.memory, frame_dispatch_,
-            buffer_upload_.buffer, error))
+                                   static_cast<uint32_t>(frame.image_count()), physical.memory, frame_dispatch_,
+                                   buffer_upload_.buffer, error))
         return false;
-    deferred_.rebind_compatible_render_passes(targets_.render_pass(), frame.render_pass(),
-        sun_shadows_.render_pass(), local_shadows_.render_pass(), frame.overlay_render_pass());
+    deferred_.rebind_compatible_render_passes(targets_.render_pass(), frame.render_pass(), sun_shadows_.render_pass(),
+                                              local_shadows_.render_pass(), frame.overlay_render_pass());
     ui_pass_.rebind_render_pass(frame.render_pass(), frame.overlay_render_pass());
-    if (!create_ui_scene_sets(error)) return false;
+    if (!create_ui_scene_sets(error))
+        return false;
     if (!targets_.bind_lighting(deferred_, error))
         return false;
     targets_.bind_sun_shadow(deferred_, sun_shadows_);
     for (uint32_t i = 0; i < frame.image_count(); ++i)
         if (!deferred_.water_set(i, water_targets_.refraction(i), water_targets_.reflection(i),
-                targets_.sampled_depth_view(i), textures_.sampler(), targets_.sampler(), water_targets_.uniform(i), error)) return false;
-    if (!create_forward_targets(error)) return false;
-    if (!create_postprocess(error)) return false;
+                                 targets_.sampled_depth_view(i), textures_.sampler(), targets_.sampler(),
+                                 water_targets_.uniform(i), error))
+            return false;
+    if (!create_forward_targets(error))
+        return false;
+    if (!create_postprocess(error))
+        return false;
 
     reset_required_ = false;
     error.clear();
     return true;
 }
 
-bool VulkanGameDevice::prepare_for_reset(std::string& error)
+bool VulkanGameDevice::prepare_for_reset(std::string &error)
 {
     if (!window_.device())
     {
         error = "Vulkan renderer reset requires a live device";
         return false;
     }
-    if (!window_.frame().wait_idle())
+    if (!wait_idle())
     {
         error = "could not wait for Vulkan device before renderer reset";
         return false;
@@ -1259,12 +935,13 @@ bool VulkanGameDevice::prepare_for_reset(std::string& error)
 
 void VulkanGameDevice::destroy()
 {
-    launch_settings_applied_=false;
+    launch_settings_applied_ = false;
     Msg("[renderer-vulkan] teardown game device begin");
-    if (window_.device() && frame_dispatch_.device_wait_idle)
-        frame_dispatch_.device_wait_idle(window_.device());
+    if (window_.device())
+        R_ASSERT2(wait_idle(), "Vulkan shutdown requires completed frames");
     Msg("[renderer-vulkan] teardown game device idle");
     ui_.DestroyUIGeom();
+    R_ASSERT2(wait_idle(), "Vulkan UI shutdown requires completed descriptor leases");
     screenshot_buffer_.destroy();
     screenshot_requested_ = screenshot_ready_ = readback_enabled_ = false;
     model_draws_.clear();
@@ -1274,7 +951,9 @@ void VulkanGameDevice::destroy()
     current_level_ = nullptr;
     scene_visibility_ = false;
     postprocess_passes_.clear();
-    for (auto view : color_map_views_) if (view) textures_.release_environment(view);
+    for (auto view : color_map_views_)
+        if (view)
+            textures_.release_environment(view);
     color_map_views_[0] = color_map_views_[1] = VK_NULL_HANDLE;
     active_map_names_[0].clear();
     active_map_names_[1].clear();
@@ -1286,11 +965,13 @@ void VulkanGameDevice::destroy()
     Msg("[renderer-vulkan] teardown textures begin");
     textures_.destroy();
     Msg("[renderer-vulkan] teardown textures end");
-    if (window_.device()) window_.frame().release_swapchain();
+    if (window_.device())
+        window_.frame().release_swapchain();
     targets_.destroy();
     water_targets_.destroy();
-    for (auto& image : local_sets_)
-        for (auto& set : image) deferred_.release_gbuffer(set);
+    for (auto &image : local_sets_)
+        for (auto &set : image)
+            deferred_.release_gbuffer(set);
     local_sets_.clear();
     local_shadows_.destroy();
     sun_shadows_.destroy();
@@ -1317,4 +998,4 @@ void VulkanGameDevice::destroy()
     destroy_sampler_ = nullptr;
     reset_required_ = false;
 }
-}
+} // namespace xray::render::vulkan

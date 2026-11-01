@@ -11,8 +11,8 @@
 
 namespace xray::render::vulkan
 {
-void VulkanUIRender::configure(VkDevice device, const VkPhysicalDeviceMemoryProperties &memory, const BufferResourceDispatch &dispatch, const ScenePass &pass,
-                               UiDescriptorLeases leases)
+void VulkanUIRender::configure(VkDevice device, const VkPhysicalDeviceMemoryProperties &memory,
+                               const BufferResourceDispatch &dispatch, const ScenePass &pass, UiDescriptorLeases leases)
 {
     DestroyUIGeom();
     device_ = device;
@@ -46,6 +46,7 @@ void VulkanUIRender::setup_states()
     reset_frame();
     texture_ = VK_NULL_HANDLE;
     shader_ = nullptr;
+    world_depth_override_ = false;
     scissor_ = {};
     has_scissor_ = false;
     alpha_ref_ = 0;
@@ -55,24 +56,23 @@ void VulkanUIRender::setup_states()
     world_.identity();
 }
 
-bool VulkanUIRender::ensure(BufferResource& buffer, VkDeviceSize bytes,
-    VkBufferUsageFlags usage, std::string& error)
+bool VulkanUIRender::ensure(BufferResource &buffer, VkDeviceSize bytes, VkBufferUsageFlags usage, std::string &error)
 {
-    if (buffer.size() >= bytes) return true;
+    if (buffer.size() >= bytes)
+        return true;
     const VkDeviceSize capacity = std::max<VkDeviceSize>(bytes, buffer.size() ? buffer.size() * 2 : 4096);
     return buffer.initialize(device_, capacity, usage,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        memory_, dispatch_, error);
+                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, memory_,
+                             dispatch_, error);
 }
 
 bool VulkanUIRender::has_distortion() const
 {
-    return std::any_of(batches_.begin(), batches_.end(),
-        [](const Batch& batch) { return batch.distortion; });
+    return std::any_of(batches_.begin(), batches_.end(), [](const Batch &batch) { return batch.distortion; });
 }
 
-bool VulkanUIRender::record(const FrameRecordingContext& frame, std::string& error,
-    bool distortion, VkDescriptorSet scene, VkDescriptorSet world_depth, bool world_only)
+bool VulkanUIRender::record(const FrameRecordingContext &frame, std::string &error, bool distortion,
+                            VkDescriptorSet scene, VkDescriptorSet world_depth, bool world_only)
 {
     if (primitive_ != ptNone || !pass_ || !device_ || frame.frame_index >= frames_.size())
     {
@@ -80,10 +80,15 @@ bool VulkanUIRender::record(const FrameRecordingContext& frame, std::string& err
         return false;
     }
     if (distortion && !scene)
-    { error = "UI distortion requires a captured menu image"; return false; }
-    if (indices_.empty() || std::none_of(batches_.begin(),batches_.end(),
-            [=](const Batch& batch) { return batch.distortion==distortion && batch.world_depth==world_only; })) return true;
-    FrameBuffers& buffers = frames_[frame.frame_index];
+    {
+        error = "UI distortion requires a captured menu image";
+        return false;
+    }
+    if (indices_.empty() || std::none_of(batches_.begin(), batches_.end(), [=](const Batch &batch) {
+            return batch.distortion == distortion && batch.world_depth == world_only;
+        }))
+        return true;
+    FrameBuffers &buffers = frames_[frame.frame_index];
     const VkDeviceSize vertex_bytes = vertices_.size() * sizeof(UiVertex);
     const VkDeviceSize index_bytes = indices_.size() * sizeof(uint32_t);
     if (buffers.revision != revision_)
@@ -91,25 +96,33 @@ bool VulkanUIRender::record(const FrameRecordingContext& frame, std::string& err
         if (!ensure(buffers.vertices, vertex_bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, error) ||
             !ensure(buffers.indices, index_bytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, error) ||
             !buffers.vertices.write(0, vertices_.data(), vertex_bytes, error) ||
-            !buffers.indices.write(0, indices_.data(), index_bytes, error)) return false;
-        buffers.revision=revision_;
+            !buffers.indices.write(0, indices_.data(), index_bytes, error))
+            return false;
+        buffers.revision = revision_;
     }
-    for (const Batch& batch : batches_)
+    for (const Batch &batch : batches_)
     {
-        if (batch.distortion != distortion || batch.world_depth != world_only) continue;
+        if (batch.distortion != distortion || batch.world_depth != world_only)
+            continue;
         if (batch.world_depth && !world_depth)
-        { error = "world UI primitive requires captured scene depth"; return false; }
+        {
+            error = "world UI primitive requires captured scene depth";
+            return false;
+        }
         RenderPassGraph graph;
-        if (!build_render_pass_graph({RenderConsumer::Ui, SurfaceMode::Transparent,
-                false, false, false, false, 0, batch.blend_mode}, graph, error)) return false;
+        if (!build_render_pass_graph(
+                {RenderConsumer::Ui, SurfaceMode::Transparent, false, false, false, false, 0, batch.blend_mode}, graph,
+                error))
+            return false;
         if (graph.passes[0].target != LevelPassTarget::Ui ||
-            !pass_->record_ui(frame, buffers.vertices.handle(), buffers.indices.handle(),
-                VK_INDEX_TYPE_UINT32, batch.count, batch.texture,
-                batch.has_scissor ? &batch.scissor : nullptr, 0,
-                VkDeviceSize(batch.first_index) * sizeof(uint32_t), batch.alpha_ref,
-                {Device.dwWidth, Device.dwHeight}, batch.distortion ? 1 : batch.blend_mode,
-                batch.distortion ? scene : batch.world_depth ? world_depth : VK_NULL_HANDLE,
-                batch.world_depth))
+            !pass_->record_ui(frame, buffers.vertices.handle(), buffers.indices.handle(), VK_INDEX_TYPE_UINT32,
+                              batch.count, batch.texture, batch.has_scissor ? &batch.scissor : nullptr, 0,
+                              VkDeviceSize(batch.first_index) * sizeof(uint32_t), batch.alpha_ref,
+                              {Device.dwWidth, Device.dwHeight}, batch.distortion ? 1 : batch.blend_mode,
+                              batch.distortion    ? scene
+                              : batch.world_depth ? world_depth
+                                                  : VK_NULL_HANDLE,
+                              batch.world_depth))
         {
             error = "Vulkan UI draw command recording failed";
             return false;
@@ -119,12 +132,15 @@ bool VulkanUIRender::record(const FrameRecordingContext& frame, std::string& err
     return true;
 }
 
-void VulkanUIRender::CreateUIGeom() { setup_states(); }
+void VulkanUIRender::CreateUIGeom()
+{
+    setup_states();
+}
 
 void VulkanUIRender::DestroyUIGeom()
 {
     // The device owner waits for idle before destroying or reconfiguring UI.
-    for (auto& buffers : frames_)
+    for (auto &buffers : frames_)
     {
         buffers.vertices.destroy();
         buffers.indices.destroy();
@@ -140,13 +156,14 @@ void VulkanUIRender::DestroyUIGeom()
     cull_ = cmNONE;
 }
 
-void VulkanUIRender::SetShader(IUIShader& shader)
+void VulkanUIRender::SetShader(IUIShader &shader)
 {
-    auto* vk_shader = dynamic_cast<VulkanUIShader*>(&shader);
+    auto *vk_shader = dynamic_cast<VulkanUIShader *>(&shader);
     if (vk_shader && !vk_shader->inited())
         Msg("! [renderer-vulkan] UI shader unavailable texture='%s'", vk_shader->texture_name().c_str());
     R_ASSERT2(vk_shader && vk_shader->inited(), "Vulkan UI requires a loaded Vulkan texture shader");
     shader_ = vk_shader;
+    world_depth_override_ = false;
     texture_ = vk_shader->current_descriptor(Device.dwTimeContinual);
     blend_mode_ = vk_shader->blend_mode();
     material_alpha_ref_ = vk_shader->alpha_ref();
@@ -156,29 +173,44 @@ void VulkanUIRender::SetTextureDescriptor(VkDescriptorSet descriptor)
 {
     R_ASSERT2(descriptor, "Vulkan UI requires a valid texture descriptor");
     shader_ = nullptr;
+    world_depth_override_ = false;
     texture_ = descriptor;
     blend_mode_ = 1;
     material_alpha_ref_ = 0;
 }
 
-void VulkanUIRender::SetAlphaRef(int aref) { alpha_ref_ = std::clamp(aref, 0, 255); }
+void VulkanUIRender::SetAlphaRef(int aref)
+{
+    alpha_ref_ = std::clamp(aref, 0, 255);
+}
 
-void VulkanUIRender::SetScissor(Irect* rect)
+void VulkanUIRender::SetWorldGlow(VkDescriptorSet descriptor)
+{
+    SetTextureDescriptor(descriptor);
+    world_depth_override_ = true;
+    blend_mode_ = 5;
+    alpha_ref_ = 0;
+    material_alpha_ref_ = 0;
+}
+
+void VulkanUIRender::SetScissor(Irect *rect)
 {
     has_scissor_ = rect != nullptr;
     if (rect)
     {
         const int x = std::max(rect->x1, 0), y = std::max(rect->y1, 0);
-        scissor_ = {{x, y}, {static_cast<uint32_t>(std::max(rect->x2 - x, 0)),
-            static_cast<uint32_t>(std::max(rect->y2 - y, 0))}};
+        scissor_ = {
+            {x, y},
+            {static_cast<uint32_t>(std::max(rect->x2 - x, 0)), static_cast<uint32_t>(std::max(rect->y2 - y, 0))}};
     }
 }
 
 void VulkanUIRender::StartPrimitive(u32 max_vertices, ePrimitiveType type, ePointType point_type)
 {
     R_ASSERT2(primitive_ == ptNone && max_vertices &&
-        (type == ptTriList || type == ptTriStrip || type == ptLineStrip || type == ptLineList) &&
-        (point_type == pttTL || point_type == pttLIT), "invalid Vulkan UI primitive");
+                  (type == ptTriList || type == ptTriStrip || type == ptLineStrip || type == ptLineList) &&
+                  (point_type == pttTL || point_type == pttLIT),
+              "invalid Vulkan UI primitive");
     R_ASSERT2(vertices_.size() <= UINT32_MAX - max_vertices, "Vulkan UI vertex limit exceeded");
     primitive_ = type;
     point_type_ = point_type;
@@ -190,12 +222,13 @@ void VulkanUIRender::StartPrimitive(u32 max_vertices, ePrimitiveType type, ePoin
 void VulkanUIRender::PushPoint(float x, float y, float z, u32 color, float u, float v)
 {
     R_ASSERT2(primitive_ != ptNone && vertices_.size() - first_vertex_ < limit_,
-        "Vulkan UI primitive exceeds its reserved vertex count");
+              "Vulkan UI primitive exceeds its reserved vertex count");
     // D3D's packed ARGB bytes are BGRA in memory; Vulkan's R8G8B8A8
     // vertex input expects RGBA bytes.
     const u32 rgba = (color & 0xff00ff00u) | ((color >> 16) & 0xffu) | ((color & 0xffu) << 16);
     R_ASSERT2(world_positions_.size() == vertices_.size(), "Vulkan UI position buffers diverged");
-    Fvector position; position.set(x, y, z);
+    Fvector position;
+    position.set(x, y, z);
     world_positions_.push_back(position);
     visible_.push_back(1);
     vertices_.push_back({{x, y}, {u, v}, rgba});
@@ -204,33 +237,40 @@ void VulkanUIRender::PushPoint(float x, float y, float z, u32 color, float u, fl
 
 void VulkanUIRender::add_line(uint32_t a, uint32_t b)
 {
-    if (!visible_[a] || !visible_[b]) return;
+    if (!visible_[a] || !visible_[b])
+        return;
     UiVertex va = vertices_[a], vb = vertices_[b];
-    const bool world = shader_ && shader_->world_depth();
+    const bool world = world_depth_override_ || (shader_ && shader_->world_depth());
     if (world)
     {
-        if (va.clip_w <= 1e-6f || vb.clip_w <= 1e-6f) return;
-        for (auto* v : {&va,&vb})
+        if (va.clip_w <= 1e-6f || vb.clip_w <= 1e-6f)
+            return;
+        for (auto *v : {&va, &vb})
         {
-            v->position[0]=(v->position[0]/v->clip_w+1.f)*.5f*Device.dwWidth;
-            v->position[1]=(1.f-v->position[1]/v->clip_w)*.5f*Device.dwHeight;
+            v->position[0] = (v->position[0] / v->clip_w + 1.f) * .5f * Device.dwWidth;
+            v->position[1] = (1.f - v->position[1] / v->clip_w) * .5f * Device.dwHeight;
         }
     }
     const float dx = vb.position[0] - va.position[0], dy = vb.position[1] - va.position[1];
     const float length = std::sqrt(dx * dx + dy * dy);
-    if (length < 0.0001f) return;
+    if (length < 0.0001f)
+        return;
     const float nx = -dy / (2 * length), ny = dx / (2 * length);
     const uint32_t base = static_cast<uint32_t>(vertices_.size());
     UiVertex a0 = va, a1 = va, b0 = vb, b1 = vb;
-    a0.position[0] += nx; a0.position[1] += ny;
-    a1.position[0] -= nx; a1.position[1] -= ny;
-    b0.position[0] += nx; b0.position[1] += ny;
-    b1.position[0] -= nx; b1.position[1] -= ny;
+    a0.position[0] += nx;
+    a0.position[1] += ny;
+    a1.position[0] -= nx;
+    a1.position[1] -= ny;
+    b0.position[0] += nx;
+    b0.position[1] += ny;
+    b1.position[0] -= nx;
+    b1.position[1] -= ny;
     if (world)
-        for (auto* v : {&a0,&a1,&b0,&b1})
+        for (auto *v : {&a0, &a1, &b0, &b1})
         {
-            v->position[0]=(v->position[0]/Device.dwWidth*2.f-1.f)*v->clip_w;
-            v->position[1]=(1.f-v->position[1]/Device.dwHeight*2.f)*v->clip_w;
+            v->position[0] = (v->position[0] / Device.dwWidth * 2.f - 1.f) * v->clip_w;
+            v->position[1] = (1.f - v->position[1] / Device.dwHeight * 2.f) * v->clip_w;
         }
     vertices_.insert(vertices_.end(), {a0, a1, b0, b1});
     indices_.insert(indices_.end(), {base, base + 1, base + 2, base + 2, base + 1, base + 3});
@@ -238,24 +278,24 @@ void VulkanUIRender::add_line(uint32_t a, uint32_t b)
 
 void VulkanUIRender::add_triangle(uint32_t a, uint32_t b, uint32_t c)
 {
-    if (!visible_[a] || !visible_[b] || !visible_[c]) return;
-    std::array<float,2> p{vertices_[a].position[0],vertices_[a].position[1]};
-    std::array<float,2> q{vertices_[b].position[0],vertices_[b].position[1]};
-    std::array<float,2> r{vertices_[c].position[0],vertices_[c].position[1]};
-    const bool world = shader_ && shader_->world_depth();
-    const bool crosses_camera = world && (vertices_[a].clip_w <= 0 ||
-        vertices_[b].clip_w <= 0 || vertices_[c].clip_w <= 0);
+    if (!visible_[a] || !visible_[b] || !visible_[c])
+        return;
+    std::array<float, 2> p{vertices_[a].position[0], vertices_[a].position[1]};
+    std::array<float, 2> q{vertices_[b].position[0], vertices_[b].position[1]};
+    std::array<float, 2> r{vertices_[c].position[0], vertices_[c].position[1]};
+    const bool world = world_depth_override_ || (shader_ && shader_->world_depth());
+    const bool crosses_camera =
+        world && (vertices_[a].clip_w <= 0 || vertices_[b].clip_w <= 0 || vertices_[c].clip_w <= 0);
     if (world && !crosses_camera)
-        for (auto item : {std::pair{&p,a},std::pair{&q,b},std::pair{&r,c}})
+        for (auto item : {std::pair{&p, a}, std::pair{&q, b}, std::pair{&r, c}})
         {
             (*item.first)[0] /= vertices_[item.second].clip_w;
             (*item.first)[1] /= -vertices_[item.second].clip_w;
         }
-    const float signed_area = (q[0] - p[0]) * (r[1] - p[1]) -
-        (q[1] - p[1]) * (r[0] - p[0]);
+    const float signed_area = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
     // Engine UI coordinates increase downwards: positive signed area is CW.
-    if (!crosses_camera && ((cull_ == cmCW && signed_area > 0) ||
-        (cull_ == cmCCW && signed_area < 0))) return;
+    if (!crosses_camera && ((cull_ == cmCW && signed_area > 0) || (cull_ == cmCCW && signed_area < 0)))
+        return;
     indices_.insert(indices_.end(), {a, b, c});
 }
 
@@ -264,9 +304,9 @@ void VulkanUIRender::FlushPrimitive()
     ++revision_;
     R_ASSERT2(primitive_ != ptNone && texture_, "Vulkan UI primitive has no texture");
     const uint32_t count = static_cast<uint32_t>(vertices_.size()) - first_vertex_;
-    const bool world_depth = shader_ && shader_->world_depth();
+    const bool world_depth = world_depth_override_ || (shader_ && shader_->world_depth());
     R_ASSERT2(!world_depth || (point_type_ == pttLIT && !distortion_),
-        "depth-tested UI materials require world-space primitives");
+              "depth-tested UI materials require world-space primitives");
     if (point_type_ == pttLIT)
         for (uint32_t i = first_vertex_; i < first_vertex_ + count; ++i)
         {
@@ -282,17 +322,22 @@ void VulkanUIRender::FlushPrimitive()
                 vertices_[i].position[1] = clip.y;
                 vertices_[i].depth = clip.z;
                 vertices_[i].clip_w = clip.w;
-                visible_[i] = std::isfinite(clip.x) && std::isfinite(clip.y) &&
-                    std::isfinite(clip.z) && std::isfinite(clip.w);
+                visible_[i] =
+                    std::isfinite(clip.x) && std::isfinite(clip.y) && std::isfinite(clip.z) && std::isfinite(clip.w);
                 continue;
             }
             if (std::isfinite(clip.w) && std::abs(clip.w) > 1.e-6f)
             {
-                if (clip.w <= 0.f) { visible_[i] = 0; continue; }
+                if (clip.w <= 0.f)
+                {
+                    visible_[i] = 0;
+                    continue;
+                }
                 vertices_[i].position[0] = (clip.x / clip.w + 1.f) * .5f * Device.dwWidth;
                 vertices_[i].position[1] = (1.f - clip.y / clip.w) * .5f * Device.dwHeight;
             }
-            else visible_[i] = 0;
+            else
+                visible_[i] = 0;
         }
     const uint32_t first_index = static_cast<uint32_t>(indices_.size());
     if (primitive_ == ptTriList)
@@ -300,22 +345,25 @@ void VulkanUIRender::FlushPrimitive()
             add_triangle(first_vertex_ + i, first_vertex_ + i + 1, first_vertex_ + i + 2);
     else if (primitive_ == ptTriStrip)
         for (uint32_t i = 0; i + 2 < count; ++i)
-            if (i & 1) add_triangle(first_vertex_ + i + 1, first_vertex_ + i, first_vertex_ + i + 2);
-            else add_triangle(first_vertex_ + i, first_vertex_ + i + 1, first_vertex_ + i + 2);
+            if (i & 1)
+                add_triangle(first_vertex_ + i + 1, first_vertex_ + i, first_vertex_ + i + 2);
+            else
+                add_triangle(first_vertex_ + i, first_vertex_ + i + 1, first_vertex_ + i + 2);
     else if (primitive_ == ptLineStrip)
-        for (uint32_t i = 0; i + 1 < count; ++i) add_line(first_vertex_ + i, first_vertex_ + i + 1);
+        for (uint32_t i = 0; i + 1 < count; ++i)
+            add_line(first_vertex_ + i, first_vertex_ + i + 1);
     else
         for (uint32_t i = 0; i + 1 < count; i += 2)
             add_line(first_vertex_ + i, first_vertex_ + i + 1);
     if (indices_.size() != first_index)
     {
         R_ASSERT2(!leases_.retain || leases_.retain(texture_), "Vulkan UI batch references an unleased texture");
-        const bool alpha_test = blend_mode_ == 1 || blend_mode_ == 5 ||
-            blend_mode_ == 7 || blend_mode_ == 8 || blend_mode_ == 9;
-        batches_.push_back({first_index, static_cast<uint32_t>(indices_.size()) - first_index,
-            texture_, scissor_, has_scissor_,
-            alpha_test ? float(std::max(alpha_ref_, blend_mode_ == 7 ? 0 : material_alpha_ref_)) / 255.0f : 0.f,
-            blend_mode_, distortion_, world_depth});
+        const bool alpha_test =
+            blend_mode_ == 1 || blend_mode_ == 5 || blend_mode_ == 7 || blend_mode_ == 8 || blend_mode_ == 9;
+        batches_.push_back(
+            {first_index, static_cast<uint32_t>(indices_.size()) - first_index, texture_, scissor_, has_scissor_,
+             alpha_test ? float(std::max(alpha_ref_, blend_mode_ == 7 ? 0 : material_alpha_ref_)) / 255.0f : 0.f,
+             blend_mode_, distortion_, world_depth});
     }
     primitive_ = ptNone;
     world_positions_.resize(vertices_.size());
@@ -323,25 +371,26 @@ void VulkanUIRender::FlushPrimitive()
     point_type_ = pttNone;
 }
 
-void VulkanUIRender::append_imgui(ImDrawData* data)
+void VulkanUIRender::append_imgui(ImDrawData *data)
 {
-    if (!data || !data->Valid || data->DisplaySize.x <= 0 || data->DisplaySize.y <= 0) return;
+    if (!data || !data->Valid || data->DisplaySize.x <= 0 || data->DisplaySize.y <= 0)
+        return;
     ++revision_;
     R_ASSERT2(primitive_ == ptNone, "ImGui cannot interrupt an unfinished UI primitive");
     const ImVec2 origin = data->DisplayPos;
     const ImVec2 scale = data->FramebufferScale;
     for (int list_index = 0; list_index < data->CmdListsCount; ++list_index)
     {
-        const ImDrawList* list = data->CmdLists[list_index];
+        const ImDrawList *list = data->CmdLists[list_index];
         const size_t first_vertex = vertices_.size();
         vertices_.reserve(first_vertex + list->VtxBuffer.Size);
-        for (const ImDrawVert& vertex : list->VtxBuffer)
-            vertices_.push_back({{(vertex.pos.x - origin.x) * scale.x,
-                (vertex.pos.y - origin.y) * scale.y},
-                {vertex.uv.x, vertex.uv.y}, vertex.col});
+        for (const ImDrawVert &vertex : list->VtxBuffer)
+            vertices_.push_back({{(vertex.pos.x - origin.x) * scale.x, (vertex.pos.y - origin.y) * scale.y},
+                                 {vertex.uv.x, vertex.uv.y},
+                                 vertex.col});
         world_positions_.resize(vertices_.size());
         visible_.resize(vertices_.size(), 1);
-        for (const ImDrawCmd& command : list->CmdBuffer)
+        for (const ImDrawCmd &command : list->CmdBuffer)
         {
             if (command.UserCallback)
             {
@@ -357,12 +406,14 @@ void VulkanUIRender::append_imgui(ImDrawData* data)
             const int32_t y = std::max(0, static_cast<int32_t>(std::floor(y1)));
             const int32_t right = std::min<int32_t>(Device.dwWidth, static_cast<int32_t>(std::ceil(x2)));
             const int32_t bottom = std::min<int32_t>(Device.dwHeight, static_cast<int32_t>(std::ceil(y2)));
-            if (right <= x || bottom <= y || !command.ElemCount) continue;
+            if (right <= x || bottom <= y || !command.ElemCount)
+                continue;
             VkDescriptorSet descriptor{};
             const ImTextureID id = command.GetTexID();
             static_assert(sizeof(descriptor) <= sizeof(id));
             std::memcpy(&descriptor, &id, sizeof(descriptor));
-            if (!descriptor) continue;
+            if (!descriptor)
+                continue;
             const uint32_t begin = static_cast<uint32_t>(indices_.size());
             for (unsigned i = 0; i < command.ElemCount; ++i)
             {
@@ -373,8 +424,13 @@ void VulkanUIRender::append_imgui(ImDrawData* data)
                 indices_.push_back(static_cast<uint32_t>(vertex));
             }
             R_ASSERT2(!leases_.retain || leases_.retain(descriptor), "Vulkan ImGui references an unleased texture");
-            batches_.push_back(
-                {begin, command.ElemCount, descriptor, {{x, y}, {static_cast<uint32_t>(right - x), static_cast<uint32_t>(bottom - y)}}, true, 0.f, 1});
+            batches_.push_back({begin,
+                                command.ElemCount,
+                                descriptor,
+                                {{x, y}, {static_cast<uint32_t>(right - x), static_cast<uint32_t>(bottom - y)}},
+                                true,
+                                0.f,
+                                1});
         }
     }
 }
@@ -384,6 +440,12 @@ LPCSTR VulkanUIRender::UpdateShaderName(LPCSTR texture, LPCSTR shader)
     string_path path;
     return texture && FS.exist(path, "$game_textures$", texture, ".ogm") ? "hud\\movie" : shader;
 }
-void VulkanUIRender::CacheSetXformWorld(const Fmatrix& matrix) { world_ = matrix; }
-void VulkanUIRender::CacheSetCullMode(CullMode mode) { cull_ = mode; }
+void VulkanUIRender::CacheSetXformWorld(const Fmatrix &matrix)
+{
+    world_ = matrix;
+}
+void VulkanUIRender::CacheSetCullMode(CullMode mode)
+{
+    cull_ = mode;
+}
 } // namespace xray::render::vulkan

@@ -73,6 +73,18 @@ if [ -n "$qemu_i386" ] && [ -x "$qemu_i386" ]; then
 fi
 cp -a "$repo_dir/android/." "$kit_dir/harness/"
 
+if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/javac" ]; then
+    mkdir -p "$kit_dir/toolchain/java-17"
+    cp -aL "$JAVA_HOME/." "$kit_dir/toolchain/java-17/"
+fi
+if command -v glslc >/dev/null 2>&1; then
+    mkdir -p "$kit_dir/toolchain/host-tools/bin" "$kit_dir/toolchain/host-tools/lib"
+    cp -L "$(command -v glslc)" "$kit_dir/toolchain/host-tools/bin/glslc"
+    # Keep the shader compiler's non-system dependencies beside it.
+    ldd "$(command -v glslc)" | awk '/=> \/.*(shaderc|glslang|SPIRV)/ { print $3 }' | while IFS= read -r dependency; do
+        cp -L "$dependency" "$kit_dir/toolchain/host-tools/lib/"
+    done
+fi
 cp "$repo_dir/android/build-kit-env.sh" "$kit_dir/build-kit-env.sh"
 chmod +x "$kit_dir/build-kit-env.sh" "$kit_dir/harness/"*.sh
 
@@ -95,6 +107,16 @@ chmod +x "$kit_dir/build-kit-env.sh" "$kit_dir/harness/"*.sh
     fi
 } > "$kit_dir/BUILD-MANIFEST.txt"
 
+python3 - "$kit_dir" <<'PYHASH'
+import hashlib, sys
+from pathlib import Path
+root=Path(sys.argv[1])
+with (root/"SHA256SUMS").open("w") as out:
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.name=="SHA256SUMS": continue
+        digest=hashlib.file_digest(path.open("rb"),"sha256").hexdigest()
+        out.write(f"{digest}  {path.relative_to(root)}\n")
+PYHASH
 mkdir -p "$(dirname "$output")"
 tar -C "$stage" -I 'zstd -T0 -10' -cf "$output" "openxray-android-build-kit-v$kit_version"
 sha256sum "$output"

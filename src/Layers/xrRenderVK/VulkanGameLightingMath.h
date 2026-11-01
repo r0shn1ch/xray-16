@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <vector>
+#include <string>
 
 namespace xray::render::vulkan
 {
@@ -25,8 +26,12 @@ struct VulkanLightSnapshot
     std::array<float, 3> color{1.f, 1.f, 1.f};
     float range{1.f};
     float cone{0.785398163f};
+    std::array<float, 3> right{1, 0, 0};
+    std::string texture;
+    uint64_t id{};
+    float visibility{1.f};
     bool hemi_only{};
-    std::array<float,4> attenuation{1.f,0.f,0.f,0.f}; // constant, linear, quadratic, falloff
+    std::array<float, 4> attenuation{1.f, 0.f, 0.f, 0.f}; // constant, linear, quadratic, falloff
 };
 
 struct VulkanObjectLighting
@@ -48,7 +53,9 @@ enum VulkanObjectLightingMode : uint32_t
     VulkanTraceAll = VulkanTraceLights | VulkanTraceSun | VulkanTraceHemi
 };
 
-VulkanObjectLighting evaluate_object_lighting(const std::array<float, 3>& position,
-    const float* ambient, const float* hemi, const float* sun, uint32_t mode,
-    const std::vector<VulkanLightSnapshot>& lights);
-}
+VulkanObjectLighting evaluate_object_lighting(const std::array<float, 3> &position, const float *ambient,
+                                              const float *hemi, const float *sun, uint32_t mode,
+                                              const std::vector<VulkanLightSnapshot> &lights,
+                                              const std::array<float, 6> *sky_faces = nullptr, float light_scale = .2f,
+                                              float light_flow = .1f);
+} // namespace xray::render::vulkan

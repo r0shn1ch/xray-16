@@ -3,6 +3,7 @@
 
 #include "ScenePass.h"
 #include "TextureQuality.h"
+#include "VulkanSettings.h"
 
 #include <algorithm>
 #include <cctype>
@@ -14,32 +15,35 @@ namespace xray::render::vulkan
 {
 namespace
 {
-bool retirement_idle(VkDevice device, PFN_vkDeviceWaitIdle wait)
-{
-    const VkResult result = wait(device);
-    return result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST;
-}
-std::string trim_texture_name(const std::string& name)
+std::string trim_texture_name(const std::string &name)
 {
     const size_t first = name.find_first_not_of(" \t");
-    if (first == std::string::npos) return {};
+    if (first == std::string::npos)
+        return {};
     const size_t last = name.find_last_not_of(" \t");
     return name.substr(first, last - first + 1);
 }
+} // namespace
+bool GameTextureFactory::retirement_idle() const
+{
+    if (retirement_safe_)
+        return true;
+    const auto result = wait_idle_(device_);
+    return result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST;
 }
+
 bool GameTextureFactory::initialize(VkDevice device, VkQueue queue, VkCommandPool pool,
-    const VkPhysicalDeviceMemoryProperties& memory, bool bc_supported,
-    const VkPhysicalDeviceFeatures& features, const VkPhysicalDeviceProperties& properties,
-    float requested_anisotropy,
-    const TextureUploadDispatch& dispatch, PFN_vkCreateSampler create_sampler,
-    PFN_vkDestroySampler destroy_sampler, PFN_vkDeviceWaitIdle wait_idle,
-    std::string& error)
+                                    const VkPhysicalDeviceMemoryProperties &memory, bool bc_supported,
+                                    const VkPhysicalDeviceFeatures &features,
+                                    const VkPhysicalDeviceProperties &properties, float requested_anisotropy,
+                                    const TextureUploadDispatch &dispatch, PFN_vkCreateSampler create_sampler,
+                                    PFN_vkDestroySampler destroy_sampler, PFN_vkDeviceWaitIdle wait_idle,
+                                    std::string &error)
 {
     destroy();
-    if (!device || !queue || !pool || !create_sampler || !destroy_sampler || !wait_idle ||
-        !dispatch.create_image || !dispatch.create_buffer || !dispatch.queue_submit ||
-        !dispatch.destroy_image || !dispatch.destroy_image_view || !dispatch.free_memory ||
-        !dispatch.wait_for_fences || !dispatch.free_command_buffers)
+    if (!device || !queue || !pool || !create_sampler || !destroy_sampler || !wait_idle || !dispatch.create_image ||
+        !dispatch.create_buffer || !dispatch.queue_submit || !dispatch.destroy_image || !dispatch.destroy_image_view ||
+        !dispatch.free_memory || !dispatch.wait_for_fences || !dispatch.free_command_buffers)
     {
         error = "game texture factory needs a Vulkan device and upload procedures";
         return false;
@@ -62,8 +66,7 @@ bool GameTextureFactory::initialize(VkDevice device, VkQueue queue, VkCommandPoo
     if (features.samplerAnisotropy && properties.limits.maxSamplerAnisotropy > 1.f)
     {
         info.anisotropyEnable = VK_TRUE;
-        info.maxAnisotropy = std::clamp(requested_anisotropy, 1.f,
-            properties.limits.maxSamplerAnisotropy);
+        info.maxAnisotropy = std::clamp(requested_anisotropy, 1.f, properties.limits.maxSamplerAnisotropy);
     }
     if (create_sampler(device_, &info, nullptr, &sampler_) != VK_SUCCESS)
     {
@@ -81,13 +84,17 @@ bool GameTextureFactory::initialize(VkDevice device, VkQueue queue, VkCommandPoo
         return false;
     }
     info.maxLod = 0.f;
-    if(create_sampler(device_, &info, nullptr, &lightmap_sampler_) != VK_SUCCESS)
-    { error = "could not create lightmap sampler"; destroy(); return false; }
+    if (create_sampler(device_, &info, nullptr, &lightmap_sampler_) != VK_SUCCESS)
+    {
+        error = "could not create lightmap sampler";
+        destroy();
+        return false;
+    }
     error.clear();
     return true;
 }
 
-bool GameTextureFactory::load(const std::string& name, Asset*& asset, std::string& error)
+bool GameTextureFactory::load(const std::string &name, Asset *&asset, std::string &error)
 {
     asset = nullptr;
     if (!device_ || !sampler_ || name.empty())
@@ -102,7 +109,7 @@ bool GameTextureFactory::load(const std::string& name, Asset*& asset, std::strin
     {
         std::string extension = normalized.substr(normalized.size() - 4);
         std::transform(extension.begin(), extension.end(), extension.begin(),
-            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
         if (extension == ".dds" || extension == ".bmp" || extension == ".tga" || extension == ".png")
             normalized.resize(normalized.size() - 4);
     }
@@ -123,8 +130,8 @@ bool GameTextureFactory::load(const std::string& name, Asset*& asset, std::strin
         error.clear();
         return true;
     }
-    const auto load_begin=std::chrono::steady_clock::now();
-    IReader* reader = FS.r_open(path);
+    const auto load_begin = std::chrono::steady_clock::now();
+    IReader *reader = FS.r_open(path);
     if (!reader)
     {
         error = "game DDS cannot be opened: " + normalized;
@@ -133,14 +140,16 @@ bool GameTextureFactory::load(const std::string& name, Asset*& asset, std::strin
     UploadedTexture texture;
     VkExtent3D extent{};
     bool cube = false;
-    const uint32_t maximum_dimension=world_texture_limit(normalized,Core.Params?Core.Params:"");
-    const bool uploaded = upload_engine_texture(device_, queue_, pool_, memory_, dispatch_,
-        reader->pointer(), reader->length(), bc_supported_, texture, pending_, states_, error, &extent, &cube,
-        maximum_dimension);
+    const uint32_t maximum_dimension = world_texture_limit(normalized, quality_preset);
+    const bool uploaded =
+        upload_engine_texture(device_, queue_, pool_, memory_, dispatch_, reader->pointer(), reader->length(),
+                              bc_supported_, texture, pending_, states_, error, &extent, &cube, maximum_dimension);
     FS.r_close(reader);
-    const auto elapsed=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-load_begin).count();
-    if (elapsed>20.) Msg("[renderer-vulkan] texture.slow name='%s' ms=%.2f limit=%u extent=%ux%u success=%d",
-        normalized.c_str(),elapsed,maximum_dimension,extent.width,extent.height,uploaded);
+    const auto elapsed =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - load_begin).count();
+    if (elapsed > 20.)
+        Msg("[renderer-vulkan] texture.slow name='%s' ms=%.2f limit=%u extent=%ux%u success=%d", normalized.c_str(),
+            elapsed, maximum_dimension, extent.width, extent.height, uploaded);
     if (!uploaded)
     {
         error = "texture '" + normalized + "': " + error;
@@ -158,8 +167,8 @@ bool GameTextureFactory::load(const std::string& name, Asset*& asset, std::strin
     return true;
 }
 
-bool GameTextureFactory::material(const std::string& texture_list, DeferredPass& pass,
-    VkDescriptorSet& result, std::string& error, bool clamp)
+bool GameTextureFactory::material(const std::string &texture_list, DeferredPass &pass, VkDescriptorSet &result,
+                                  std::string &error, bool clamp)
 {
     result = VK_NULL_HANDLE;
     const size_t comma = texture_list.find(',');
@@ -167,24 +176,27 @@ bool GameTextureFactory::material(const std::string& texture_list, DeferredPass&
     while (!diffuse.empty() && std::isspace(static_cast<unsigned char>(diffuse.back())))
         diffuse.pop_back();
     const size_t first = diffuse.find_first_not_of(" \t");
-    if (first != std::string::npos) diffuse.erase(0, first);
-    Asset* asset;
-    if (!load(diffuse, asset, error)) return false;
+    if (first != std::string::npos)
+        diffuse.erase(0, first);
+    Asset *asset;
+    if (!load(diffuse, asset, error))
+        return false;
     if (asset->cube)
     {
         error = "base texture slot 0 requires 2D DDS: " + diffuse;
         return false;
     }
-    VkDescriptorSet& set = clamp ? asset->clamp_material_set : asset->material_set;
+    VkDescriptorSet &set = clamp ? asset->clamp_material_set : asset->material_set;
     if (!set && !pass.material(asset->texture.view, clamp ? ui_sampler_ : sampler_, set, error))
     {
-        const auto it = std::find_if(assets_.begin(), assets_.end(),
-            [asset](const auto& entry) { return &entry.second == asset; });
-        if (it != assets_.end()) evict_if_unused(it->first);
+        const auto it =
+            std::find_if(assets_.begin(), assets_.end(), [asset](const auto &entry) { return &entry.second == asset; });
+        if (it != assets_.end())
+            evict_if_unused(it->first);
         return false;
     }
     R_ASSERT2(!asset->material_pass || asset->material_pass == &pass,
-        "Vulkan material descriptor belongs to a different pass");
+              "Vulkan material descriptor belongs to a different pass");
     asset->material_pass = &pass;
     ++(clamp ? asset->clamp_material_refs : asset->material_refs);
     result = set;
@@ -192,31 +204,31 @@ bool GameTextureFactory::material(const std::string& texture_list, DeferredPass&
     return true;
 }
 
-bool GameTextureFactory::lightmapped_material(const std::string& diffuse_name,
-    const std::string& lightmap_name, DeferredPass& pass, VkDescriptorSet& result, std::string& error)
+bool GameTextureFactory::lightmapped_material(const std::string &diffuse_name, const std::string &lightmap_name,
+                                              DeferredPass &pass, VkDescriptorSet &result, std::string &error)
 {
     result = VK_NULL_HANDLE;
-    const auto trim = [](std::string text)
-    {
+    const auto trim = [](std::string text) {
         const size_t first = text.find_first_not_of(" \t");
-        if (first == std::string::npos) return std::string{};
+        if (first == std::string::npos)
+            return std::string{};
         const size_t last = text.find_last_not_of(" \t");
         return text.substr(first, last - first + 1);
     };
-    Asset* diffuse = nullptr;
-    Asset* lightmap = nullptr;
+    Asset *diffuse = nullptr;
+    Asset *lightmap = nullptr;
     if (!load(trim(diffuse_name), diffuse, error) || !load(trim(lightmap_name), lightmap, error))
         return false;
     if (diffuse->cube || lightmap->cube)
     {
-        error = std::string("lightmapped texture slot ") + (diffuse->cube ? "0 (base): " + diffuse_name :
-            "1 (lightmap): " + lightmap_name) + " requires 2D DDS";
+        error = std::string("lightmapped texture slot ") +
+                (diffuse->cube ? "0 (base): " + diffuse_name : "1 (lightmap): " + lightmap_name) + " requires 2D DDS";
         return false;
     }
-    const auto diffuse_it = std::find_if(assets_.begin(), assets_.end(),
-        [diffuse](const auto& entry) { return &entry.second == diffuse; });
+    const auto diffuse_it =
+        std::find_if(assets_.begin(), assets_.end(), [diffuse](const auto &entry) { return &entry.second == diffuse; });
     const auto lightmap_it = std::find_if(assets_.begin(), assets_.end(),
-        [lightmap](const auto& entry) { return &entry.second == lightmap; });
+                                          [lightmap](const auto &entry) { return &entry.second == lightmap; });
     R_ASSERT(diffuse_it != assets_.end() && lightmap_it != assets_.end());
     std::string key = diffuse_it->first;
     key.push_back('\0');
@@ -225,8 +237,9 @@ bool GameTextureFactory::lightmapped_material(const std::string& diffuse_name,
     if (found == lightmapped_.end())
     {
         VkDescriptorSet descriptor{};
-        if (!pass.lightmapped_material(diffuse->texture.view, lightmap->texture.view,
-                sampler_, descriptor, error, lightmap_sampler_)) return false;
+        if (!pass.lightmapped_material(diffuse->texture.view, lightmap->texture.view, sampler_, descriptor, error,
+                                       lightmap_sampler_))
+            return false;
         LightmappedMaterial pair;
         pair.set = descriptor;
         pair.diffuse = diffuse;
@@ -236,7 +249,8 @@ bool GameTextureFactory::lightmapped_material(const std::string& diffuse_name,
         pair.lightmap_path = lightmap_it->first;
         found = lightmapped_.emplace(std::move(key), std::move(pair)).first;
         ++diffuse->lightmap_refs;
-        if (diffuse != lightmap) ++lightmap->lightmap_refs;
+        if (diffuse != lightmap)
+            ++lightmap->lightmap_refs;
     }
     R_ASSERT2(found->second.pass == &pass, "Vulkan lightmap belongs to another pass");
     ++found->second.refs;
@@ -245,52 +259,65 @@ bool GameTextureFactory::lightmapped_material(const std::string& diffuse_name,
     return true;
 }
 
-void GameTextureFactory::release_lightmapped_material(VkDescriptorSet set, DeferredPass& pass)
+void GameTextureFactory::release_lightmapped_material(VkDescriptorSet set, DeferredPass &pass)
 {
-    if (!set) return;
+    if (!set)
+        return;
     for (auto it = lightmapped_.begin(); it != lightmapped_.end(); ++it)
     {
-        auto& pair = it->second;
-        if (pair.set != set) continue;
+        auto &pair = it->second;
+        if (pair.set != set)
+            continue;
         R_ASSERT2(pair.pass == &pass && pair.refs, "unknown Vulkan lightmap lease");
-        if (--pair.refs) return;
-        R_ASSERT2(retirement_idle(device_, wait_idle_), "Vulkan lightmap retirement requires idle GPU frames");
+        if (--pair.refs)
+            return;
+        R_ASSERT2(retirement_idle(), "Vulkan lightmap retirement requires idle GPU frames");
         pass.release_gbuffer(pair.set);
         --pair.diffuse->lightmap_refs;
-        if (pair.diffuse != pair.lightmap) --pair.lightmap->lightmap_refs;
+        if (pair.diffuse != pair.lightmap)
+            --pair.lightmap->lightmap_refs;
         const std::string diffuse_path = pair.diffuse_path, lightmap_path = pair.lightmap_path;
         lightmapped_.erase(it);
         evict_if_unused(diffuse_path);
-        if (lightmap_path != diffuse_path) evict_if_unused(lightmap_path);
+        if (lightmap_path != diffuse_path)
+            evict_if_unused(lightmap_path);
         return;
     }
     R_ASSERT2(false, "unknown Vulkan lightmap descriptor");
 }
 
-bool GameTextureFactory::terrain_material(const std::string& diffuse_name,
-    const std::string& lightmap_name, const TerrainMaterialTextures& channels,
-    DeferredPass& pass, VkDescriptorSet& result, std::string& error)
+bool GameTextureFactory::terrain_material(const std::string &diffuse_name, const std::string &lightmap_name,
+                                          const TerrainMaterialTextures &channels, DeferredPass &pass,
+                                          VkDescriptorSet &result, std::string &error)
 {
     result = VK_NULL_HANDLE;
-    if (!channels.enabled) { error = "terrain channels are missing"; return false; }
+    if (!channels.enabled)
+    {
+        error = "terrain channels are missing";
+        return false;
+    }
     TerrainMaterial item;
     const std::string diffuse = trim_texture_name(diffuse_name);
-    const std::array<std::string, 7> names{diffuse, trim_texture_name(lightmap_name),
-        diffuse + "_mask", channels.detail[0], channels.detail[1],
-        channels.detail[2], channels.detail[3]};
+    const std::array<std::string, 7> names{diffuse,
+                                           trim_texture_name(lightmap_name),
+                                           diffuse + "_mask",
+                                           channels.detail[0],
+                                           channels.detail[1],
+                                           channels.detail[2],
+                                           channels.detail[3]};
     std::string key;
     for (size_t i = 0; i < names.size(); ++i)
     {
-        if (!load(names[i], item.assets[i], error)) return false;
+        if (!load(names[i], item.assets[i], error))
+            return false;
         if (item.assets[i]->cube)
         {
-            constexpr const char* roles[]{"base", "lightmap", "mask", "R2-R", "R2-G", "R2-B", "R2-A"};
-            error = "terrain texture slot " + std::to_string(i) + " (" + roles[i] +
-                ") requires 2D DDS: " + names[i];
+            constexpr const char *roles[]{"base", "lightmap", "mask", "R2-R", "R2-G", "R2-B", "R2-A"};
+            error = "terrain texture slot " + std::to_string(i) + " (" + roles[i] + ") requires 2D DDS: " + names[i];
             return false;
         }
         const auto it = std::find_if(assets_.begin(), assets_.end(),
-            [asset = item.assets[i]](const auto& entry) { return &entry.second == asset; });
+                                     [asset = item.assets[i]](const auto &entry) { return &entry.second == asset; });
         R_ASSERT(it != assets_.end());
         item.paths[i] = it->first;
         key += it->first;
@@ -300,8 +327,10 @@ bool GameTextureFactory::terrain_material(const std::string& diffuse_name,
     if (found == terrain_.end())
     {
         std::array<VkImageView, 7> views{};
-        for (size_t i = 0; i < views.size(); ++i) views[i] = item.assets[i]->texture.view;
-        if (!pass.terrain_material(views, sampler_, item.set, error, lightmap_sampler_)) return false;
+        for (size_t i = 0; i < views.size(); ++i)
+            views[i] = item.assets[i]->texture.view;
+        if (!pass.terrain_material(views, sampler_, item.set, error, lightmap_sampler_))
+            return false;
         item.pass = &pass;
         for (size_t i = 0; i < item.count; ++i)
             if (std::find(item.assets.begin(), item.assets.begin() + i, item.assets[i]) == item.assets.begin() + i)
@@ -315,31 +344,33 @@ bool GameTextureFactory::terrain_material(const std::string& diffuse_name,
     return true;
 }
 
-bool GameTextureFactory::detail_material(const std::string& diffuse_name,
-    const std::string& lightmap_name, const std::string& detail_name,
-    DeferredPass& pass, VkDescriptorSet& result, std::string& error)
+bool GameTextureFactory::detail_material(const std::string &diffuse_name, const std::string &lightmap_name,
+                                         const std::string &detail_name, DeferredPass &pass, VkDescriptorSet &result,
+                                         std::string &error)
 {
     result = VK_NULL_HANDLE;
     TerrainMaterial item;
-    const std::array<std::string, 7> names{
-        trim_texture_name(diffuse_name), trim_texture_name(lightmap_name),
-        trim_texture_name(detail_name), trim_texture_name(detail_name),
-        trim_texture_name(detail_name), trim_texture_name(detail_name),
-        trim_texture_name(detail_name)};
+    const std::array<std::string, 7> names{trim_texture_name(diffuse_name), trim_texture_name(lightmap_name),
+                                           trim_texture_name(detail_name),  trim_texture_name(detail_name),
+                                           trim_texture_name(detail_name),  trim_texture_name(detail_name),
+                                           trim_texture_name(detail_name)};
     std::string key = "single-detail";
     key.push_back('\0');
     for (size_t i = 0; i < names.size(); ++i)
     {
-        if (!load(names[i], item.assets[i], error)) return false;
+        if (!load(names[i], item.assets[i], error))
+            return false;
         if (item.assets[i]->cube)
         {
             error = "single detail texture slot " + std::to_string(i) +
-                (i == 0 ? " (base)" : i == 1 ? " (lightmap)" : " (detail)") +
-                " requires 2D DDS: " + names[i];
+                    (i == 0   ? " (base)"
+                     : i == 1 ? " (lightmap)"
+                              : " (detail)") +
+                    " requires 2D DDS: " + names[i];
             return false;
         }
         const auto it = std::find_if(assets_.begin(), assets_.end(),
-            [asset = item.assets[i]](const auto& entry) { return &entry.second == asset; });
+                                     [asset = item.assets[i]](const auto &entry) { return &entry.second == asset; });
         R_ASSERT(it != assets_.end());
         item.paths[i] = it->first;
         key += it->first;
@@ -349,8 +380,10 @@ bool GameTextureFactory::detail_material(const std::string& diffuse_name,
     if (found == terrain_.end())
     {
         std::array<VkImageView, 7> views{};
-        for (size_t i = 0; i < views.size(); ++i) views[i] = item.assets[i]->texture.view;
-        if (!pass.terrain_material(views, sampler_, item.set, error, lightmap_sampler_)) return false;
+        for (size_t i = 0; i < views.size(); ++i)
+            views[i] = item.assets[i]->texture.view;
+        if (!pass.terrain_material(views, sampler_, item.set, error, lightmap_sampler_))
+            return false;
         item.pass = &pass;
         for (size_t i = 0; i < item.count; ++i)
             if (std::find(item.assets.begin(), item.assets.begin() + i, item.assets[i]) == item.assets.begin() + i)
@@ -364,30 +397,29 @@ bool GameTextureFactory::detail_material(const std::string& diffuse_name,
     return true;
 }
 
-bool GameTextureFactory::environment_material(const std::string& diffuse_name,
-    const std::string& lightmap_name, const std::string& environment_name, bool cube,
-    DeferredPass& pass, VkDescriptorSet& result, std::string& error)
+bool GameTextureFactory::environment_material(const std::string &diffuse_name, const std::string &lightmap_name,
+                                              const std::string &environment_name, bool cube, DeferredPass &pass,
+                                              VkDescriptorSet &result, std::string &error)
 {
     result = VK_NULL_HANDLE;
     TerrainMaterial item;
     const std::string diffuse = trim_texture_name(diffuse_name);
     const std::string lightmap = lightmap_name.empty() ? diffuse : trim_texture_name(lightmap_name);
     const std::string environment = trim_texture_name(environment_name);
-    const std::array<std::string, 7> names{
-        diffuse, lightmap, environment, diffuse, diffuse, diffuse, diffuse};
+    const std::array<std::string, 7> names{diffuse, lightmap, environment, diffuse, diffuse, diffuse, diffuse};
     std::string key = "environment";
     key.push_back('\0');
     for (size_t i = 0; i < names.size(); ++i)
     {
-        if (!load(names[i], item.assets[i], error)) return false;
+        if (!load(names[i], item.assets[i], error))
+            return false;
         if (i < 2 && item.assets[i]->cube)
         {
-            error = "environment texture slot " + std::to_string(i) +
-                " requires 2D DDS: " + names[i];
+            error = "environment texture slot " + std::to_string(i) + " requires 2D DDS: " + names[i];
             return false;
         }
         const auto it = std::find_if(assets_.begin(), assets_.end(),
-            [asset = item.assets[i]](const auto& entry) { return &entry.second == asset; });
+                                     [asset = item.assets[i]](const auto &entry) { return &entry.second == asset; });
         R_ASSERT(it != assets_.end());
         item.paths[i] = it->first;
         key += it->first;
@@ -395,16 +427,17 @@ bool GameTextureFactory::environment_material(const std::string& diffuse_name,
     }
     if (item.assets[2]->cube != cube)
     {
-        error = "environment texture '" + environment_name +
-            (cube ? "' must be a cubemap DDS" : "' must be a 2D DDS");
+        error = "environment texture '" + environment_name + (cube ? "' must be a cubemap DDS" : "' must be a 2D DDS");
         return false;
     }
     auto found = terrain_.find(key);
     if (found == terrain_.end())
     {
         std::array<VkImageView, 7> views{};
-        for (size_t i = 0; i < views.size(); ++i) views[i] = item.assets[i]->texture.view;
-        if (!pass.terrain_material(views, sampler_, item.set, error, lightmap_sampler_)) return false;
+        for (size_t i = 0; i < views.size(); ++i)
+            views[i] = item.assets[i]->texture.view;
+        if (!pass.terrain_material(views, sampler_, item.set, error, lightmap_sampler_))
+            return false;
         item.pass = &pass;
         for (size_t i = 0; i < item.count; ++i)
             if (std::find(item.assets.begin(), item.assets.begin() + i, item.assets[i]) == item.assets.begin() + i)
@@ -418,31 +451,36 @@ bool GameTextureFactory::environment_material(const std::string& diffuse_name,
     return true;
 }
 
-void GameTextureFactory::release_terrain_material(VkDescriptorSet set, DeferredPass& pass)
+void GameTextureFactory::release_terrain_material(VkDescriptorSet set, DeferredPass &pass)
 {
-    if (!set) return;
+    if (!set)
+        return;
     for (auto it = terrain_.begin(); it != terrain_.end(); ++it)
     {
-        auto& item = it->second;
-        if (item.set != set) continue;
+        auto &item = it->second;
+        if (item.set != set)
+            continue;
         R_ASSERT2(item.pass == &pass && item.refs, "unknown Vulkan terrain lease");
-        if (--item.refs) return;
-        R_ASSERT2(retirement_idle(device_, wait_idle_), "Vulkan terrain retirement requires idle GPU frames");
+        if (--item.refs)
+            return;
+        R_ASSERT2(retirement_idle(), "Vulkan terrain retirement requires idle GPU frames");
         pass.release_gbuffer(set);
         for (size_t i = 0; i < item.count; ++i)
             if (std::find(item.assets.begin(), item.assets.begin() + i, item.assets[i]) == item.assets.begin() + i)
                 --item.assets[i]->lightmap_refs;
         const auto paths = item.paths;
         terrain_.erase(it);
-        for (const auto& path : paths) if (!path.empty()) evict_if_unused(path);
+        for (const auto &path : paths)
+            if (!path.empty())
+                evict_if_unused(path);
         return;
     }
     R_ASSERT2(false, "unknown Vulkan terrain descriptor");
 }
 
-bool GameTextureFactory::surface_material(const std::array<std::string, 20>& names,
-    const SurfaceParameters& parameters, DeferredPass& pass,
-    VkDescriptorSet& result, std::string& error, bool cube_environment, bool clamp)
+bool GameTextureFactory::surface_material(const std::array<std::string, 20> &names, const SurfaceParameters &parameters,
+                                          DeferredPass &pass, VkDescriptorSet &result, std::string &error,
+                                          bool cube_environment, bool clamp)
 {
     result = VK_NULL_HANDLE;
     TerrainMaterial item;
@@ -455,29 +493,37 @@ bool GameTextureFactory::surface_material(const std::array<std::string, 20>& nam
     {
         const std::string name = trim_texture_name(names[i].empty() ? names[0] : names[i]);
         if (!load(name, item.assets[i], error))
-        { error = "surface slot " + std::to_string(i) + " ('" + name + "'): " + error; return false; }
+        {
+            error = "surface slot " + std::to_string(i) + " ('" + name + "'): " + error;
+            return false;
+        }
         if (item.assets[i]->cube != (i == 2 && cube_environment))
-        { error = "surface slot " + std::to_string(i) +
-            (i == 2 && cube_environment ? " requires cube DDS: " : " requires 2D DDS: ") + name;
-          return false; }
+        {
+            error = "surface slot " + std::to_string(i) +
+                    (i == 2 && cube_environment ? " requires cube DDS: " : " requires 2D DDS: ") + name;
+            return false;
+        }
         const auto it = std::find_if(assets_.begin(), assets_.end(),
-            [asset = item.assets[i]](const auto& entry) { return &entry.second == asset; });
+                                     [asset = item.assets[i]](const auto &entry) { return &entry.second == asset; });
         R_ASSERT(it != assets_.end());
         item.paths[i] = it->first;
         key += it->first;
         key.push_back('\0');
     }
     // Surface data belongs to a descriptor and may differ for the same DDS.
-    key.append(reinterpret_cast<const char*>(&parameters), sizeof(parameters));
+    key.append(reinterpret_cast<const char *>(&parameters), sizeof(parameters));
     auto found = terrain_.find(key);
     if (found == terrain_.end())
     {
         std::array<VkImageView, 7> first{};
         std::array<VkImageView, 13> extra{};
-        for (size_t i = 0; i < first.size(); ++i) first[i] = item.assets[i]->texture.view;
-        for (size_t i = 0; i < extra.size(); ++i) extra[i] = item.assets[i + 7]->texture.view;
+        for (size_t i = 0; i < first.size(); ++i)
+            first[i] = item.assets[i]->texture.view;
+        for (size_t i = 0; i < extra.size(); ++i)
+            extra[i] = item.assets[i + 7]->texture.view;
         const VkSampler material_sampler = clamp ? ui_sampler_ : sampler_;
-        if (!pass.terrain_material(first, material_sampler, item.set, error, lightmap_sampler_)) return false;
+        if (!pass.terrain_material(first, material_sampler, item.set, error, lightmap_sampler_))
+            return false;
         pass.update_surface_textures(item.set, extra, material_sampler);
         pass.set_surface_parameters(item.set, parameters);
         item.pass = &pass;
@@ -493,69 +539,88 @@ bool GameTextureFactory::surface_material(const std::array<std::string, 20>& nam
     return true;
 }
 
-float GameTextureFactory::terrain_detail_scale(const std::string& diffuse) const
+float GameTextureFactory::terrain_detail_scale(const std::string &diffuse) const
 {
     // Same THM_CHUNK_DETAIL_EXT as STextureParams::Load. FS resolves archived
     // game data and loose mod overrides without requiring an extracted game.
     string_path path;
     const std::string name = trim_texture_name(diffuse);
-    const bool found = FS.exist(path, "$level$", name.c_str(), ".thm") ||
-        FS.exist(path, "$game_textures$", name.c_str(), ".thm");
-    if (!found) return 1.f;
-    IReader* reader = FS.r_open(path);
-    if (!reader) return 1.f;
+    const bool found =
+        FS.exist(path, "$level$", name.c_str(), ".thm") || FS.exist(path, "$game_textures$", name.c_str(), ".thm");
+    if (!found)
+        return 1.f;
+    IReader *reader = FS.r_open(path);
+    if (!reader)
+        return 1.f;
     float scale = 1.f;
-    const size_t chunk_size = std::min(reader->find_chunk(0x0815),
-        static_cast<size_t>(std::max<intptr_t>(0, reader->elapsed())));
+    const size_t chunk_size =
+        std::min(reader->find_chunk(0x0815), static_cast<size_t>(std::max<intptr_t>(0, reader->elapsed())));
     if (chunk_size)
     {
-        const auto* bytes = static_cast<const char*>(reader->pointer());
-        const auto* end = std::memchr(bytes, 0, chunk_size);
-        if (end && static_cast<size_t>(static_cast<const char*>(end) - bytes) +
-                1 + sizeof(float) <= chunk_size)
+        const auto *bytes = static_cast<const char *>(reader->pointer());
+        const auto *end = std::memchr(bytes, 0, chunk_size);
+        if (end && static_cast<size_t>(static_cast<const char *>(end) - bytes) + 1 + sizeof(float) <= chunk_size)
         {
             float value;
-            std::memcpy(&value, static_cast<const char*>(end) + 1, sizeof(value));
-            if (std::isfinite(value) && value > 0.f) scale = value;
+            std::memcpy(&value, static_cast<const char *>(end) + 1, sizeof(value));
+            if (std::isfinite(value) && value > 0.f)
+                scale = value;
         }
     }
     FS.r_close(reader);
     return scale;
 }
 
-bool GameTextureFactory::height_field(const std::string& bump_aux,
-    const HeightField*& result, std::string& error)
+bool GameTextureFactory::height_field(const std::string &bump_aux, const HeightField *&result, std::string &error)
 {
     result = nullptr;
     string_path path;
     if (!FS.exist(path, "$level$", bump_aux.c_str(), ".dds") &&
         !FS.exist(path, "$game_textures$", bump_aux.c_str(), ".dds"))
-    { error = "HM auxiliary DDS not found: " + bump_aux; return false; }
+    {
+        error = "HM auxiliary DDS not found: " + bump_aux;
+        return false;
+    }
     const auto cached = height_fields_.find(path);
     if (cached != height_fields_.end())
-    { result = &cached->second; error.clear(); return true; }
-    IReader* reader = FS.r_open(path);
-    if (!reader) { error = "HM auxiliary DDS cannot be opened: " + bump_aux; return false; }
+    {
+        result = &cached->second;
+        error.clear();
+        return true;
+    }
+    IReader *reader = FS.r_open(path);
+    if (!reader)
+    {
+        error = "HM auxiliary DDS cannot be opened: " + bump_aux;
+        return false;
+    }
     DdsTexture decoded;
     const bool valid = decode_dds(reader->pointer(), reader->length(), false, decoded, error);
     FS.r_close(reader);
-    if (!valid) { error = "HM auxiliary DDS '" + bump_aux + "': " + error; return false; }
-    if (decoded.cube || decoded.extent.width > 4096 || decoded.extent.height > 4096 ||
-        decoded.copies.empty() ||
-        (decoded.format != VK_FORMAT_R8G8B8A8_UNORM &&
-         decoded.format != VK_FORMAT_R8G8B8A8_SRGB &&
-         decoded.format != VK_FORMAT_B8G8R8A8_UNORM &&
-         decoded.format != VK_FORMAT_B8G8R8A8_SRGB))
-    { error = "HM auxiliary DDS requires a 2D RGBA height channel"; return false; }
+    if (!valid)
+    {
+        error = "HM auxiliary DDS '" + bump_aux + "': " + error;
+        return false;
+    }
+    if (decoded.cube || decoded.extent.width > 4096 || decoded.extent.height > 4096 || decoded.copies.empty() ||
+        (decoded.format != VK_FORMAT_R8G8B8A8_UNORM && decoded.format != VK_FORMAT_R8G8B8A8_SRGB &&
+         decoded.format != VK_FORMAT_B8G8R8A8_UNORM && decoded.format != VK_FORMAT_B8G8R8A8_SRGB))
+    {
+        error = "HM auxiliary DDS requires a 2D RGBA height channel";
+        return false;
+    }
     const size_t pixels = size_t(decoded.extent.width) * decoded.extent.height;
     const size_t offset = size_t(decoded.copies.front().bufferOffset);
     if (pixels > (decoded.pixels.size() - std::min(decoded.pixels.size(), offset)) / 4)
-    { error = "HM auxiliary DDS base mip is truncated"; return false; }
+    {
+        error = "HM auxiliary DDS base mip is truncated";
+        return false;
+    }
     HeightField field;
-    field.width = decoded.extent.width; field.height = decoded.extent.height;
+    field.width = decoded.extent.width;
+    field.height = decoded.extent.height;
     field.values.resize(pixels);
-    const size_t blue = decoded.format == VK_FORMAT_B8G8R8A8_UNORM ||
-        decoded.format == VK_FORMAT_B8G8R8A8_SRGB ? 0 : 2;
+    const size_t blue = decoded.format == VK_FORMAT_B8G8R8A8_UNORM || decoded.format == VK_FORMAT_B8G8R8A8_SRGB ? 0 : 2;
     for (size_t i = 0; i < pixels; ++i)
         field.values[i] = decoded.pixels[offset + i * 4 + blue];
     result = &height_fields_.emplace(path, std::move(field)).first->second;
@@ -563,147 +628,189 @@ bool GameTextureFactory::height_field(const std::string& bump_aux,
     return true;
 }
 
-bool GameTextureFactory::texture_detail_metadata(const std::string& diffuse,
-    DetailMetadata& detail, std::string& error) const
+bool GameTextureFactory::texture_detail_metadata(const std::string &diffuse, DetailMetadata &detail,
+                                                 std::string &error) const
 {
     detail = {};
     const std::string name = trim_texture_name(diffuse);
     string_path path;
-    if (!FS.exist(path, "$level$", name.c_str(), ".thm") &&
-        !FS.exist(path, "$game_textures$", name.c_str(), ".thm"))
-    { error.clear(); return true; } // Metadata is optional for implicit detail.
-    IReader* reader = FS.r_open(path);
-    if (!reader)
-    { error = std::string(path) + " / texture THM cannot be opened"; return false; }
-    const size_t parameter_size = reader->find_chunk(0x0812);
-    const auto* params = parameter_size && reader->elapsed() >= 0 ?
-        static_cast<const uint8_t*>(reader->pointer()) : nullptr;
-    const size_t bounded_params = params ? std::min(parameter_size,
-        static_cast<size_t>(reader->elapsed())) : 0;
-    const size_t extension_size = reader->find_chunk(0x0815);
-    const auto* extension = extension_size && reader->elapsed() >= 0 ?
-        static_cast<const uint8_t*>(reader->pointer()) : nullptr;
-    const size_t bounded_extension = extension ? std::min(extension_size,
-        static_cast<size_t>(reader->elapsed())) : 0;
-    const auto bounded_chunk = [reader](uint32_t id, size_t& length) -> const uint8_t*
+    if (!FS.exist(path, "$level$", name.c_str(), ".thm") && !FS.exist(path, "$game_textures$", name.c_str(), ".thm"))
     {
+        error.clear();
+        return true;
+    } // Metadata is optional for implicit detail.
+    IReader *reader = FS.r_open(path);
+    if (!reader)
+    {
+        error = std::string(path) + " / texture THM cannot be opened";
+        return false;
+    }
+    const size_t parameter_size = reader->find_chunk(0x0812);
+    const auto *params =
+        parameter_size && reader->elapsed() >= 0 ? static_cast<const uint8_t *>(reader->pointer()) : nullptr;
+    const size_t bounded_params = params ? std::min(parameter_size, static_cast<size_t>(reader->elapsed())) : 0;
+    const size_t extension_size = reader->find_chunk(0x0815);
+    const auto *extension =
+        extension_size && reader->elapsed() >= 0 ? static_cast<const uint8_t *>(reader->pointer()) : nullptr;
+    const size_t bounded_extension = extension ? std::min(extension_size, static_cast<size_t>(reader->elapsed())) : 0;
+    const auto bounded_chunk = [reader](uint32_t id, size_t &length) -> const uint8_t * {
         const size_t size = reader->find_chunk(id);
-        if (!size || reader->elapsed() < 0) { length = 0; return nullptr; }
+        if (!size || reader->elapsed() < 0)
+        {
+            length = 0;
+            return nullptr;
+        }
         length = std::min(size, static_cast<size_t>(reader->elapsed()));
-        return static_cast<const uint8_t*>(reader->pointer());
+        return static_cast<const uint8_t *>(reader->pointer());
     };
     MetadataExtras extras;
     extras.bump = bounded_chunk(0x0817, extras.bump_size);
     extras.material = bounded_chunk(0x0816, extras.material_size);
     extras.external_normal = bounded_chunk(0x0818, extras.external_normal_size);
-    const bool valid = decode_detail_metadata(params, bounded_params,
-        extension, bounded_extension, detail, error, extras);
+    const bool valid =
+        decode_detail_metadata(params, bounded_params, extension, bounded_extension, detail, error, extras);
     FS.r_close(reader);
-    if (!valid) { error = std::string(path) + " / " + error; return false; }
+    if (!valid)
+    {
+        error = std::string(path) + " / " + error;
+        return false;
+    }
     error.clear();
     return true;
 }
 
-bool GameTextureFactory::decode_detail_metadata(const uint8_t* params, size_t params_size,
-    const uint8_t* extension, size_t extension_size,
-    DetailMetadata& detail, std::string& error, const MetadataExtras& extras)
+bool GameTextureFactory::decode_detail_metadata(const uint8_t *params, size_t params_size, const uint8_t *extension,
+                                                size_t extension_size, DetailMetadata &detail, std::string &error,
+                                                const MetadataExtras &extras)
 {
     detail = {};
     if (!params || params_size < 8)
-    { error = "THM_CHUNK_TEXTUREPARAM is missing or truncated"; return false; }
+    {
+        error = "THM_CHUNK_TEXTUREPARAM is missing or truncated";
+        return false;
+    }
     constexpr uint32_t diffuse_detail = 1u << 23, bump_detail = 1u << 26;
-    const uint32_t flags = uint32_t(params[4]) | uint32_t(params[5]) << 8 |
-        uint32_t(params[6]) << 16 | uint32_t(params[7]) << 24;
+    const uint32_t flags =
+        uint32_t(params[4]) | uint32_t(params[5]) << 8 | uint32_t(params[6]) << 16 | uint32_t(params[7]) << 24;
     detail.diffuse = (flags & diffuse_detail) != 0;
     detail.normal = (flags & bump_detail) != 0;
     if (extension && extension_size)
     {
-        const auto* bytes = reinterpret_cast<const char*>(extension);
-        const auto* end = static_cast<const char*>(std::memchr(bytes, 0, extension_size));
+        const auto *bytes = reinterpret_cast<const char *>(extension);
+        const auto *end = static_cast<const char *>(std::memchr(bytes, 0, extension_size));
         if (!end || extension_size - (end - bytes) - 1 < sizeof(float))
-        { error = "THM_CHUNK_DETAIL_EXT is truncated"; return false; }
+        {
+            error = "THM_CHUNK_DETAIL_EXT is truncated";
+            return false;
+        }
         detail.texture.assign(bytes, end);
         std::memcpy(&detail.scale, end + 1, sizeof(float));
         if (!std::isfinite(detail.scale) || detail.scale <= 0.f)
-        { error = "THM_CHUNK_DETAIL_EXT has invalid scale"; return false; }
+        {
+            error = "THM_CHUNK_DETAIL_EXT has invalid scale";
+            return false;
+        }
     }
     // TextureDescrManager creates a detail association only when both the
     // usage bits and a nonempty detail name are present. Stock THMs can keep
     // the bits while leaving the name empty (or omitting this older chunk).
     // Keep decoding the other material channels, but do not request a detail
     // DDS that the original renderer would never bind.
-    if (detail.texture.empty()) detail.diffuse = detail.normal = false;
-    const auto bounded_name = [&error](const uint8_t* bytes, size_t length,
-        std::string& out, const char* chunk) -> bool
-    {
-        const auto* end = bytes ? static_cast<const uint8_t*>(std::memchr(bytes, 0, length)) : nullptr;
+    if (detail.texture.empty())
+        detail.diffuse = detail.normal = false;
+    const auto bounded_name = [&error](const uint8_t *bytes, size_t length, std::string &out,
+                                       const char *chunk) -> bool {
+        const auto *end = bytes ? static_cast<const uint8_t *>(std::memchr(bytes, 0, length)) : nullptr;
         if (!end)
-        { error = std::string(chunk) + " has an unterminated texture name"; return false; }
-        out.assign(reinterpret_cast<const char*>(bytes), reinterpret_cast<const char*>(end));
+        {
+            error = std::string(chunk) + " has an unterminated texture name";
+            return false;
+        }
+        out.assign(reinterpret_cast<const char *>(bytes), reinterpret_cast<const char *>(end));
         return true;
     };
-    const auto read32 = [](const uint8_t* bytes) -> uint32_t
-    { return uint32_t(bytes[0]) | uint32_t(bytes[1]) << 8 | uint32_t(bytes[2]) << 16 | uint32_t(bytes[3]) << 24; };
+    const auto read32 = [](const uint8_t *bytes) -> uint32_t {
+        return uint32_t(bytes[0]) | uint32_t(bytes[1]) << 8 | uint32_t(bytes[2]) << 16 | uint32_t(bytes[3]) << 24;
+    };
     if (extras.bump)
     {
         if (extras.bump_size < 9)
-        { error = "THM_CHUNK_BUMP is truncated"; return false; }
+        {
+            error = "THM_CHUNK_BUMP is truncated";
+            return false;
+        }
         std::memcpy(&detail.bump_height, extras.bump, sizeof(float));
         detail.bump_mode = read32(extras.bump + 4);
         if (!std::isfinite(detail.bump_height) || detail.bump_mode < 1 || detail.bump_mode > 3)
-        { error = "THM_CHUNK_BUMP has invalid height or mode"; return false; }
-        if (!bounded_name(extras.bump + 8, extras.bump_size - 8,
-                detail.bump_texture, "THM_CHUNK_BUMP")) return false;
+        {
+            error = "THM_CHUNK_BUMP has invalid height or mode";
+            return false;
+        }
+        if (!bounded_name(extras.bump + 8, extras.bump_size - 8, detail.bump_texture, "THM_CHUNK_BUMP"))
+            return false;
         if (detail.bump_mode >= 2 && detail.bump_texture.empty())
-        { error = "THM_CHUNK_BUMP mode requires a texture name"; return false; }
+        {
+            error = "THM_CHUNK_BUMP mode requires a texture name";
+            return false;
+        }
     }
     if (extras.material)
     {
         if (extras.material_size < 8)
-        { error = "THM_CHUNK_MATERIAL is truncated"; return false; }
+        {
+            error = "THM_CHUNK_MATERIAL is truncated";
+            return false;
+        }
         detail.material = read32(extras.material);
         std::memcpy(&detail.material_weight, extras.material + 4, sizeof(float));
         if (detail.material > 3 || !std::isfinite(detail.material_weight))
-        { error = "THM_CHUNK_MATERIAL has invalid material or weight"; return false; }
+        {
+            error = "THM_CHUNK_MATERIAL has invalid material or weight";
+            return false;
+        }
     }
-    if (extras.external_normal && !bounded_name(extras.external_normal,
-            extras.external_normal_size, detail.external_normal_texture,
-            "THM_CHUNK_EXT_NORMALMAP")) return false;
+    if (extras.external_normal && !bounded_name(extras.external_normal, extras.external_normal_size,
+                                                detail.external_normal_texture, "THM_CHUNK_EXT_NORMALMAP"))
+        return false;
     error.clear();
     return true;
 }
 
-bool GameTextureFactory::ui(const std::string& texture_name, ScenePass& pass,
-    VkDescriptorSet& result, std::string& error, VkExtent2D* extent, bool clamp)
+bool GameTextureFactory::ui(const std::string &texture_name, ScenePass &pass, VkDescriptorSet &result,
+                            std::string &error, VkExtent2D *extent, bool clamp)
 {
     result = VK_NULL_HANDLE;
-    Asset* asset;
-    if (!load(texture_name, asset, error)) return false;
-    VkDescriptorSet& set = clamp ? asset->ui_set : asset->wrap_ui_set;
-    if (!set && !pass.create_ui_texture_set(asset->texture.view,
-            clamp ? ui_sampler_ : sampler_, set, error))
+    Asset *asset;
+    if (!load(texture_name, asset, error))
+        return false;
+    VkDescriptorSet &set = clamp ? asset->ui_set : asset->wrap_ui_set;
+    if (!set && !pass.create_ui_texture_set(asset->texture.view, clamp ? ui_sampler_ : sampler_, set, error))
     {
-        const auto it = std::find_if(assets_.begin(), assets_.end(),
-            [asset](const auto& entry) { return &entry.second == asset; });
-        if (it != assets_.end()) evict_if_unused(it->first);
+        const auto it =
+            std::find_if(assets_.begin(), assets_.end(), [asset](const auto &entry) { return &entry.second == asset; });
+        if (it != assets_.end())
+            evict_if_unused(it->first);
         return false;
     }
-    R_ASSERT2(!asset->ui_pass || asset->ui_pass == &pass,
-        "Vulkan UI descriptor belongs to a different pass");
+    R_ASSERT2(!asset->ui_pass || asset->ui_pass == &pass, "Vulkan UI descriptor belongs to a different pass");
     asset->ui_pass = &pass;
     ++(clamp ? asset->ui_refs : asset->wrap_ui_refs);
     result = set;
-    if (extent) *extent = asset->extent;
+    if (extent)
+        *extent = asset->extent;
     error.clear();
     return true;
 }
 
-bool GameTextureFactory::ui_pixels(const uint8_t* rgba, uint32_t width, uint32_t height,
-    ScenePass& pass, VkDescriptorSet& result, std::string& error, bool clamp)
+bool GameTextureFactory::ui_pixels(const uint8_t *rgba, uint32_t width, uint32_t height, ScenePass &pass,
+                                   VkDescriptorSet &result, std::string &error, bool clamp)
 {
     result = VK_NULL_HANDLE;
     if (!device_ || !rgba || !width || !height || width > 8192 || height > 8192)
-    { error = "invalid dynamic UI texture"; return false; }
+    {
+        error = "invalid dynamic UI texture";
+        return false;
+    }
     DdsTexture pixels;
     pixels.format = VK_FORMAT_R8G8B8A8_UNORM;
     pixels.extent = {width, height, 1};
@@ -715,13 +822,12 @@ bool GameTextureFactory::ui_pixels(const uint8_t* rgba, uint32_t width, uint32_t
     copy.imageExtent = {width, height, 1};
     pixels.copies.push_back(copy);
     Asset asset;
-    if (!upload_texture(device_, queue_, pool_, memory_, dispatch_, pixels,
-            asset.texture, pending_, states_, error)) return false;
+    if (!upload_texture(device_, queue_, pool_, memory_, dispatch_, pixels, asset.texture, pending_, states_, error))
+        return false;
     if (!pass.create_ui_texture_set(asset.texture.view, clamp ? ui_sampler_ : sampler_,
-            clamp ? asset.ui_set : asset.wrap_ui_set, error))
+                                    clamp ? asset.ui_set : asset.wrap_ui_set, error))
     {
-        R_ASSERT2(wait_for_uploads(device_, pool_, dispatch_, pending_),
-            "dynamic UI upload did not finish");
+        R_ASSERT2(wait_for_uploads(device_, pool_, dispatch_, pending_), "dynamic UI upload did not finish");
         states_.forget_image(asset.texture.image);
         destroy_texture(device_, dispatch_, asset.texture);
         return false;
@@ -736,26 +842,66 @@ bool GameTextureFactory::ui_pixels(const uint8_t* rgba, uint32_t width, uint32_t
     return true;
 }
 
-void GameTextureFactory::evict_if_unused(const std::string& name)
+void GameTextureFactory::evict_if_unused(const std::string &name)
 {
     auto it = assets_.find(name);
-    if (it == assets_.end() || it->second.material_refs || it->second.clamp_material_refs ||
-        it->second.lightmap_refs || it->second.ui_refs || it->second.wrap_ui_refs ||
-        it->second.environment_refs)
+    if (it == assets_.end() || it->second.material_refs || it->second.clamp_material_refs || it->second.lightmap_refs ||
+        it->second.ui_refs || it->second.wrap_ui_refs || it->second.environment_refs)
         return;
     R_ASSERT2(wait_for_uploads(device_, pool_, dispatch_, pending_),
-        "Vulkan texture upload did not complete before release");
+              "Vulkan texture upload did not complete before release");
     states_.forget_image(it->second.texture.image);
     destroy_texture(device_, dispatch_, it->second.texture);
     assets_.erase(it);
 }
 
-bool GameTextureFactory::environment(const std::string& name, VkImageView& view,
-    std::string& error)
+bool GameTextureFactory::projection_texture(const std::string &name, VkImageView &view, std::string &error)
+{
+    if (!name.empty())
+    {
+        Asset *asset = nullptr;
+        if (!load(name, asset, error))
+            return false;
+        if (asset->cube)
+        {
+            error = "spot projection needs a 2D texture";
+            return false;
+        }
+        ++asset->environment_refs;
+        view = asset->texture.view;
+        return true;
+    }
+    auto found = assets_.find("$vulkan/white");
+    if (found == assets_.end())
+    {
+        DdsTexture source;
+        source.format = VK_FORMAT_R8G8B8A8_UNORM;
+        source.extent = {1, 1, 1};
+        source.mip_levels = source.layers = 1;
+        source.pixels = {255, 255, 255, 255};
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {1, 1, 1};
+        source.copies.push_back(copy);
+        Asset asset;
+        if (!upload_texture(device_, queue_, pool_, memory_, dispatch_, source, asset.texture, pending_, states_,
+                            error))
+            return false;
+        asset.environment_refs = 1;
+        asset.extent = {1, 1};
+        found = assets_.emplace("$vulkan/white", std::move(asset)).first;
+    }
+    view = found->second.texture.view;
+    error.clear();
+    return true;
+}
+
+bool GameTextureFactory::environment(const std::string &name, VkImageView &view, std::string &error)
 {
     view = VK_NULL_HANDLE;
-    Asset* asset = nullptr;
-    if (!load(name, asset, error)) return false;
+    Asset *asset = nullptr;
+    if (!load(name, asset, error))
+        return false;
     ++asset->environment_refs;
     view = asset->texture.view;
     return true;
@@ -763,37 +909,43 @@ bool GameTextureFactory::environment(const std::string& name, VkImageView& view,
 
 void GameTextureFactory::release_environment(VkImageView view)
 {
-    if (!view) return;
-    for (auto& [name, asset] : assets_)
+    if (!view)
+        return;
+    for (auto &[name, asset] : assets_)
     {
-        if (asset.texture.view != view) continue;
+        if (asset.texture.view != view)
+            continue;
         R_ASSERT2(asset.environment_refs, "Vulkan environment texture is not leased");
-        if (--asset.environment_refs) return;
-        R_ASSERT2(retirement_idle(device_, wait_idle_),
-            "Vulkan device did not become idle before environment texture release");
+        if (--asset.environment_refs)
+            return;
+        R_ASSERT2(retirement_idle(), "Vulkan device did not become idle before environment texture release");
         evict_if_unused(name);
         return;
     }
     R_ASSERT2(false, "unknown Vulkan environment texture");
 }
 
-void GameTextureFactory::release_material(VkDescriptorSet set, DeferredPass& pass)
+void GameTextureFactory::release_material(VkDescriptorSet set, DeferredPass &pass)
 {
-    if (!set) return;
-    for (auto& [name, asset] : assets_)
+    if (!set)
+        return;
+    for (auto &[name, asset] : assets_)
     {
         const bool clamp = asset.clamp_material_set == set;
-        if (asset.material_set != set && !clamp) continue;
-        size_t& refs = clamp ? asset.clamp_material_refs : asset.material_refs;
-        R_ASSERT2(refs && asset.material_pass == &pass,
-            "Vulkan material descriptor is not leased by this pass");
-        if (--refs) return;
-        R_ASSERT2(retirement_idle(device_, wait_idle_),
-            "Vulkan device did not become idle before material release");
+        if (asset.material_set != set && !clamp)
+            continue;
+        size_t &refs = clamp ? asset.clamp_material_refs : asset.material_refs;
+        R_ASSERT2(refs && asset.material_pass == &pass, "Vulkan material descriptor is not leased by this pass");
+        if (--refs)
+            return;
+        R_ASSERT2(retirement_idle(), "Vulkan device did not become idle before material release");
         pass.release_gbuffer(set);
-        if (clamp) asset.clamp_material_set = VK_NULL_HANDLE;
-        else asset.material_set = VK_NULL_HANDLE;
-        if (!asset.material_set && !asset.clamp_material_set) asset.material_pass = nullptr;
+        if (clamp)
+            asset.clamp_material_set = VK_NULL_HANDLE;
+        else
+            asset.material_set = VK_NULL_HANDLE;
+        if (!asset.material_set && !asset.clamp_material_set)
+            asset.material_pass = nullptr;
         evict_if_unused(name);
         return;
     }
@@ -805,8 +957,8 @@ bool GameTextureFactory::retain_ui(VkDescriptorSet set, ScenePass &pass)
     if (!set)
         return false;
     for (auto &[name, asset] : assets_)
-        if (((asset.ui_set == set && asset.ui_refs) ||
-                (asset.wrap_ui_set == set && asset.wrap_ui_refs)) && asset.ui_pass == &pass)
+        if (((asset.ui_set == set && asset.ui_refs) || (asset.wrap_ui_set == set && asset.wrap_ui_refs)) &&
+            asset.ui_pass == &pass)
         {
             ++(asset.ui_set == set ? asset.ui_refs : asset.wrap_ui_refs);
             return true;
@@ -818,18 +970,19 @@ void GameTextureFactory::release_ui(VkDescriptorSet set, ScenePass &pass)
 {
     if (!set)
         return;
-    for (auto& [name, asset] : assets_)
+    for (auto &[name, asset] : assets_)
     {
         const bool clamp = asset.ui_set == set;
-        if (!clamp && asset.wrap_ui_set != set) continue;
-        size_t& refs = clamp ? asset.ui_refs : asset.wrap_ui_refs;
-        R_ASSERT2(refs && asset.ui_pass == &pass,
-            "Vulkan UI descriptor is not leased by this pass");
-        if (--refs) return;
-        R_ASSERT2(retirement_idle(device_, wait_idle_),
-            "Vulkan device did not become idle before UI texture release");
+        if (!clamp && asset.wrap_ui_set != set)
+            continue;
+        size_t &refs = clamp ? asset.ui_refs : asset.wrap_ui_refs;
+        R_ASSERT2(refs && asset.ui_pass == &pass, "Vulkan UI descriptor is not leased by this pass");
+        if (--refs)
+            return;
+        R_ASSERT2(retirement_idle(), "Vulkan device did not become idle before UI texture release");
         pass.release_ui_texture_set(clamp ? asset.ui_set : asset.wrap_ui_set);
-        if (!asset.ui_set && !asset.wrap_ui_set) asset.ui_pass = nullptr;
+        if (!asset.ui_set && !asset.wrap_ui_set)
+            asset.ui_pass = nullptr;
         evict_if_unused(name);
         return;
     }
@@ -840,13 +993,15 @@ void GameTextureFactory::destroy()
 {
     if (device_)
     {
-        R_ASSERT2(retirement_idle(device_, wait_idle_), "Vulkan device did not become idle before texture factory shutdown");
+        R_ASSERT2(retirement_idle(), "Vulkan device did not become idle before texture factory shutdown");
         wait_for_uploads(device_, pool_, dispatch_, pending_);
-        for (auto& [name, pair] : lightmapped_)
-            if (pair.set && pair.pass) pair.pass->release_gbuffer(pair.set);
-        for (auto& [name, item] : terrain_)
-            if (item.set && item.pass) item.pass->release_gbuffer(item.set);
-        for (auto& [name, asset] : assets_)
+        for (auto &[name, pair] : lightmapped_)
+            if (pair.set && pair.pass)
+                pair.pass->release_gbuffer(pair.set);
+        for (auto &[name, item] : terrain_)
+            if (item.set && item.pass)
+                item.pass->release_gbuffer(item.set);
+        for (auto &[name, asset] : assets_)
         {
             if (asset.material_set && asset.material_pass)
                 asset.material_pass->release_gbuffer(asset.material_set);
@@ -859,9 +1014,12 @@ void GameTextureFactory::destroy()
             states_.forget_image(asset.texture.image);
             destroy_texture(device_, dispatch_, asset.texture);
         }
-        if (sampler_ && destroy_sampler_) destroy_sampler_(device_, sampler_, nullptr);
-        if (ui_sampler_ && destroy_sampler_) destroy_sampler_(device_, ui_sampler_, nullptr);
-        if (lightmap_sampler_ && destroy_sampler_) destroy_sampler_(device_, lightmap_sampler_, nullptr);
+        if (sampler_ && destroy_sampler_)
+            destroy_sampler_(device_, sampler_, nullptr);
+        if (ui_sampler_ && destroy_sampler_)
+            destroy_sampler_(device_, ui_sampler_, nullptr);
+        if (lightmap_sampler_ && destroy_sampler_)
+            destroy_sampler_(device_, lightmap_sampler_, nullptr);
     }
     assets_.clear();
     lightmapped_.clear();
@@ -888,14 +1046,17 @@ bool GameTextureFactory::finish_uploads()
 
 void GameTextureFactory::retire_unused()
 {
-    if (!device_) return;
-    R_ASSERT2(retirement_idle(device_, wait_idle_), "Vulkan texture retirement requires idle frames");
+    if (!device_)
+        return;
+    R_ASSERT2(retirement_idle(), "Vulkan texture retirement requires idle frames");
     for (auto it = assets_.begin(); it != assets_.end();)
     {
-        if (it->second.material_refs || it->second.clamp_material_refs ||
-            it->second.lightmap_refs || it->second.ui_refs ||
-            it->second.wrap_ui_refs || it->second.environment_refs)
-        { ++it; continue; }
+        if (it->second.material_refs || it->second.clamp_material_refs || it->second.lightmap_refs ||
+            it->second.ui_refs || it->second.wrap_ui_refs || it->second.environment_refs)
+        {
+            ++it;
+            continue;
+        }
         auto name = it->first;
         ++it;
         evict_if_unused(name);
@@ -909,40 +1070,51 @@ void GameTextureFactory::invalidate_unused()
     retire_unused();
 }
 
-bool GameTextureFactory::reload_assets(std::string& error,
-    const std::function<void()>& before_rebind, const std::function<void()>& after_rebind)
+bool GameTextureFactory::reload_assets(std::string &error, const std::function<void()> &before_rebind,
+                                       const std::function<void()> &after_rebind)
 {
-    if (!device_) { error = "Vulkan asset reload needs a device"; return false; }
+    if (!device_)
+    {
+        error = "Vulkan asset reload needs a device";
+        return false;
+    }
     if (wait_idle_(device_) != VK_SUCCESS || !finish_uploads())
-    { error = "Vulkan asset reload needs idle frames and completed uploads"; return false; }
+    {
+        error = "Vulkan asset reload needs idle frames and completed uploads";
+        return false;
+    }
     struct Staged
     {
-        Asset* asset{};
+        Asset *asset{};
         UploadedTexture texture;
         VkExtent3D extent{};
     };
     std::vector<Staged> staged;
-    auto discard = [&]
-    {
+    auto discard = [&] {
         if (!finish_uploads())
             R_ASSERT2(wait_idle_(device_) == VK_SUCCESS, "Vulkan reload staging needs an idle device");
-        for (auto& item : staged)
+        for (auto &item : staged)
         {
             states_.forget_image(item.texture.image);
             destroy_texture(device_, dispatch_, item.texture);
         }
     };
-    for (auto& [path, asset] : assets_)
+    for (auto &[path, asset] : assets_)
     {
-        if (path[0] == '#') continue;
-        IReader* source = FS.r_open(path.c_str());
+        if (path[0] == '#')
+            continue;
+        IReader *source = FS.r_open(path.c_str());
         if (!source)
-        { error = "cannot reopen texture during asset reload: " + path; discard(); return false; }
+        {
+            error = "cannot reopen texture during asset reload: " + path;
+            discard();
+            return false;
+        }
         UploadedTexture replacement;
         VkExtent3D extent{};
-        const bool loaded = upload_engine_texture(device_, queue_, pool_, memory_, dispatch_,
-            source->pointer(), source->length(), bc_supported_, replacement, pending_, states_,
-            error, &extent, nullptr, asset.maximum_dimension);
+        const bool loaded = upload_engine_texture(device_, queue_, pool_, memory_, dispatch_, source->pointer(),
+                                                  source->length(), bc_supported_, replacement, pending_, states_,
+                                                  error, &extent, nullptr, asset.maximum_dimension);
         FS.r_close(source);
         if (!loaded)
         {
@@ -953,20 +1125,27 @@ bool GameTextureFactory::reload_assets(std::string& error,
         staged.push_back({&asset, replacement, extent});
     }
     if (!finish_uploads())
-    { error = "texture reload uploads failed"; discard(); return false; }
+    {
+        error = "texture reload uploads failed";
+        discard();
+        return false;
+    }
     // Keep environment entries alive while their old view leases are dropped.
     // The callback clears the weather descriptor before any old view is freed.
-    std::vector<Asset*> environment_assets;
+    std::vector<Asset *> environment_assets;
     if (before_rebind)
     {
-        for (auto& [path, asset] : assets_)
+        for (auto &[path, asset] : assets_)
             if (asset.environment_refs)
-            { ++asset.environment_refs; environment_assets.push_back(&asset); }
+            {
+                ++asset.environment_refs;
+                environment_assets.push_back(&asset);
+            }
         before_rebind();
     }
-    for (auto& item : staged)
+    for (auto &item : staged)
     {
-        Asset& asset = *item.asset;
+        Asset &asset = *item.asset;
         if (asset.material_set && asset.material_pass)
             asset.material_pass->update_material(asset.material_set, item.texture.view, sampler_);
         if (asset.clamp_material_set && asset.material_pass)
@@ -981,19 +1160,21 @@ bool GameTextureFactory::reload_assets(std::string& error,
         asset.extent = {item.extent.width, item.extent.height};
         asset.bytes = uint64_t(item.extent.width) * item.extent.height * 4;
     }
-    for (auto& [name, pair] : lightmapped_)
-        pair.pass->update_lightmapped_material(pair.set, pair.diffuse->texture.view,
-            pair.lightmap->texture.view, sampler_, lightmap_sampler_);
-    for (auto& [name, item] : terrain_)
+    for (auto &[name, pair] : lightmapped_)
+        pair.pass->update_lightmapped_material(pair.set, pair.diffuse->texture.view, pair.lightmap->texture.view,
+                                               sampler_, lightmap_sampler_);
+    for (auto &[name, item] : terrain_)
     {
         std::array<VkImageView, 7> views{};
-        for (size_t i = 0; i < views.size(); ++i) views[i] = item.assets[i]->texture.view;
+        for (size_t i = 0; i < views.size(); ++i)
+            views[i] = item.assets[i]->texture.view;
         const VkSampler material_sampler = item.clamp ? ui_sampler_ : sampler_;
         item.pass->update_terrain_material(item.set, views, material_sampler, lightmap_sampler_);
         if (item.count == 20)
         {
             std::array<VkImageView, 13> extra{};
-            for (size_t i = 0; i < extra.size(); ++i) extra[i] = item.assets[i + 7]->texture.view;
+            for (size_t i = 0; i < extra.size(); ++i)
+                extra[i] = item.assets[i + 7]->texture.view;
             item.pass->update_surface_textures(item.set, extra, material_sampler);
         }
         else
@@ -1003,8 +1184,9 @@ bool GameTextureFactory::reload_assets(std::string& error,
             item.pass->update_surface_textures(item.set, fallback, sampler_);
         }
     }
-    if (after_rebind) after_rebind();
-    for (auto* asset : environment_assets)
+    if (after_rebind)
+        after_rebind();
+    for (auto *asset : environment_assets)
     {
         R_ASSERT2(asset->environment_refs, "Vulkan weather reload lost its staging lease");
         --asset->environment_refs;
@@ -1017,7 +1199,8 @@ bool GameTextureFactory::reload_assets(std::string& error,
 uint64_t GameTextureFactory::resident_bytes() const
 {
     uint64_t bytes = 0;
-    for (const auto& [name, asset] : assets_) bytes += asset.bytes;
+    for (const auto &[name, asset] : assets_)
+        bytes += asset.bytes;
     return bytes;
 }
-}
+} // namespace xray::render::vulkan

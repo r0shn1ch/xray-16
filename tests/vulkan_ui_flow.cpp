@@ -1,4 +1,5 @@
 #include "src/xrEngine/stdafx.h"
+#include "src/Layers/xrRenderVK/VulkanGameDevice.h"
 #include "src/Layers/xrRenderVK/VulkanFramePhaseState.h"
 #include "src/Layers/xrRenderVK/VulkanUIRender.h"
 #include <cassert>
@@ -40,7 +41,8 @@ void VKAPI_PTR requirements(VkDevice, VkBuffer b, VkMemoryRequirements *out)
     out->alignment = 16;
     out->memoryTypeBits = 1;
 }
-VkResult VKAPI_PTR allocate(VkDevice, const VkMemoryAllocateInfo *info, const VkAllocationCallbacks *, VkDeviceMemory *out)
+VkResult VKAPI_PTR allocate(VkDevice, const VkMemoryAllocateInfo *info, const VkAllocationCallbacks *,
+                            VkDeviceMemory *out)
 {
     *out = handle<VkDeviceMemory>(next_handle++);
     allocations[*out].resize(info->allocationSize);
@@ -62,7 +64,8 @@ VkResult VKAPI_PTR map(VkDevice, VkDeviceMemory m, VkDeviceSize, VkDeviceSize, V
 void VKAPI_PTR unmap(VkDevice, VkDeviceMemory)
 {
 }
-VkResult VKAPI_PTR layout(VkDevice, const VkPipelineLayoutCreateInfo *, const VkAllocationCallbacks *, VkPipelineLayout *out)
+VkResult VKAPI_PTR layout(VkDevice, const VkPipelineLayoutCreateInfo *, const VkAllocationCallbacks *,
+                          VkPipelineLayout *out)
 {
     *out = handle<VkPipelineLayout>(next_handle++);
     return VK_SUCCESS;
@@ -70,7 +73,8 @@ VkResult VKAPI_PTR layout(VkDevice, const VkPipelineLayoutCreateInfo *, const Vk
 void VKAPI_PTR destroy_layout(VkDevice, VkPipelineLayout, const VkAllocationCallbacks *)
 {
 }
-VkResult VKAPI_PTR pipeline(VkDevice, VkPipelineCache, uint32_t, const VkGraphicsPipelineCreateInfo *info, const VkAllocationCallbacks *, VkPipeline *out)
+VkResult VKAPI_PTR pipeline(VkDevice, VkPipelineCache, uint32_t, const VkGraphicsPipelineCreateInfo *info,
+                            const VkAllocationCallbacks *, VkPipeline *out)
 {
     assert(info->stageCount == 2);
     *out = handle<VkPipeline>(next_handle++);
@@ -108,7 +112,8 @@ void VKAPI_PTR draw(VkCommandBuffer, uint32_t count, uint32_t instances, uint32_
     ++draws;
     total_indices += count;
 }
-VkResult VKAPI_PTR descriptor_layout(VkDevice, const VkDescriptorSetLayoutCreateInfo *, const VkAllocationCallbacks *, VkDescriptorSetLayout *out)
+VkResult VKAPI_PTR descriptor_layout(VkDevice, const VkDescriptorSetLayoutCreateInfo *, const VkAllocationCallbacks *,
+                                     VkDescriptorSetLayout *out)
 {
     *out = handle<VkDescriptorSetLayout>(next_handle++);
     return VK_SUCCESS;
@@ -116,7 +121,8 @@ VkResult VKAPI_PTR descriptor_layout(VkDevice, const VkDescriptorSetLayoutCreate
 void VKAPI_PTR destroy_descriptor_layout(VkDevice, VkDescriptorSetLayout, const VkAllocationCallbacks *)
 {
 }
-VkResult VKAPI_PTR pool(VkDevice, const VkDescriptorPoolCreateInfo *, const VkAllocationCallbacks *, VkDescriptorPool *out)
+VkResult VKAPI_PTR pool(VkDevice, const VkDescriptorPoolCreateInfo *, const VkAllocationCallbacks *,
+                        VkDescriptorPool *out)
 {
     *out = handle<VkDescriptorPool>(next_handle++);
     return VK_SUCCESS;
@@ -136,11 +142,12 @@ VkResult VKAPI_PTR free_descriptor(VkDevice, VkDescriptorPool, uint32_t, const V
 void VKAPI_PTR update(VkDevice, uint32_t, const VkWriteDescriptorSet *, uint32_t, const VkCopyDescriptorSet *)
 {
 }
-void VKAPI_PTR bind_descriptor(VkCommandBuffer, VkPipelineBindPoint, VkPipelineLayout, uint32_t first, uint32_t count, const VkDescriptorSet *set, uint32_t,
-                               const uint32_t *)
+void VKAPI_PTR bind_descriptor(VkCommandBuffer, VkPipelineBindPoint, VkPipelineLayout, uint32_t first, uint32_t count,
+                               const VkDescriptorSet *set, uint32_t, const uint32_t *)
 {
     assert(count == 1 && refs.at(*set) > 0);
-    if (first == 0) bound_textures.push_back(*set);
+    if (first == 0)
+        bound_textures.push_back(*set);
 }
 
 void quad(VulkanUIRender &ui, VkDescriptorSet texture, float x)
@@ -157,17 +164,39 @@ void quad(VulkanUIRender &ui, VkDescriptorSet texture, float x)
 
 int main()
 {
-    ScenePassDispatch scene{
-        layout,         destroy_layout, pipeline,          destroy_pipeline,          bind_pipeline, viewport,     scissor,    bind_vertices,   bind_indices,
-        push,           draw,           descriptor_layout, destroy_descriptor_layout, pool,          destroy_pool, descriptor, free_descriptor, update,
-        bind_descriptor};
+    {
+        VulkanGameDevice empty;
+        assert(empty.wait_idle());
+        empty.destroy();
+        empty.destroy();
+    }
+    ScenePassDispatch scene{layout,
+                            destroy_layout,
+                            pipeline,
+                            destroy_pipeline,
+                            bind_pipeline,
+                            viewport,
+                            scissor,
+                            bind_vertices,
+                            bind_indices,
+                            push,
+                            draw,
+                            descriptor_layout,
+                            destroy_descriptor_layout,
+                            pool,
+                            destroy_pool,
+                            descriptor,
+                            free_descriptor,
+                            update,
+                            bind_descriptor};
     const auto device = handle<VkDevice>(1);
     const auto render_pass = handle<VkRenderPass>(2);
     ScenePass pass;
     std::string error;
-    assert(pass.initialize(device, render_pass, handle<VkShaderModule>(3), handle<VkShaderModule>(4), handle<VkShaderModule>(5), handle<VkShaderModule>(6),
-                           scene, error, true));
-    BufferResourceDispatch buffer{create_buffer, destroy_buffer, requirements, allocate, free_memory, bind_memory, map, unmap};
+    assert(pass.initialize(device, render_pass, handle<VkShaderModule>(3), handle<VkShaderModule>(4),
+                           handle<VkShaderModule>(5), handle<VkShaderModule>(6), scene, error, true));
+    BufferResourceDispatch buffer{create_buffer, destroy_buffer, requirements, allocate,
+                                  free_memory,   bind_memory,    map,          unmap};
     VkPhysicalDeviceMemoryProperties memory{};
     memory.memoryTypeCount = 1;
     memory.memoryTypes[0].propertyFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;

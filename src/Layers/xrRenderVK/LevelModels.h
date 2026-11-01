@@ -19,13 +19,15 @@ enum class SurfaceMode : uint8_t
     Transparent
 };
 inline bool use_fast_depth_proxy(SurfaceMode mode, uint8_t tessellation)
-{ return mode == SurfaceMode::Opaque && tessellation == 0; }
+{
+    return mode == SurfaceMode::Opaque && tessellation == 0;
+}
 
 // Decoded static subset of level.geom and the level's OGF visual table. The
 // caller supplies decompressed chunk payloads from the engine's IReader.
 struct LevelBytes
 {
-    const uint8_t* data{};
+    const uint8_t *data{};
     size_t size{};
 };
 
@@ -53,6 +55,7 @@ struct LevelVertex
     float uv[2]{};
     float lightmap_uv[2]{};
     float baked[4]{1.f, 1.f, 1.f, 1.f};
+    int8_t tangent[4]{}, bitangent[4]{};
 };
 
 struct LevelModel
@@ -66,13 +69,13 @@ struct LevelModel
     std::shared_ptr<LevelModel> fast;
 };
 
-inline void offset_level_wallmark(LevelModel& model)
+inline void offset_level_wallmark(LevelModel &model)
 {
     // shared/wmark.h: NORMAL_SHIFT, in world-space metres. Keep this in the
     // uploaded decal geometry so coplanar precision does not depend only on
     // the hardware's depth-bias units. UVs and baked channels stay unchanged.
-    for (auto& vertex : model.vertices)
-        for (unsigned axis=0;axis<3;++axis)
+    for (auto &vertex : model.vertices)
+        for (unsigned axis = 0; axis < 3; ++axis)
             vertex.position[axis] += vertex.normal[axis] * .007f;
 }
 
@@ -116,17 +119,18 @@ struct LevelModelData
 
 // Main geometry must decode completely. Incompatible optional fast geometry
 // can be omitted, leaving the full quality level.geom models available.
-bool load_level_models(LevelBytes shaders, LevelBytes vertex_buffers, LevelBytes index_buffers, LevelBytes visuals, LevelModelData &result, std::string &error,
-                       LevelBytes fast_vertex_buffers = {}, LevelBytes fast_index_buffers = {}, LevelBytes tree_windows = {},
-                       bool* skipped_fast_geometry = nullptr,
-                       std::string* fast_fallback_reason = nullptr);
-bool load_game_level_models(LevelGameProfile profile, LevelBytes header, LevelBytes shaders, LevelBytes vertex_buffers, LevelBytes index_buffers,
-                            LevelBytes visuals, LevelModelData &result, std::string &error, LevelBytes fast_vertex_buffers = {},
-                            LevelBytes fast_index_buffers = {}, LevelBytes tree_windows = {});
+bool load_level_models(LevelBytes shaders, LevelBytes vertex_buffers, LevelBytes index_buffers, LevelBytes visuals,
+                       LevelModelData &result, std::string &error, LevelBytes fast_vertex_buffers = {},
+                       LevelBytes fast_index_buffers = {}, LevelBytes tree_windows = {},
+                       bool *skipped_fast_geometry = nullptr, std::string *fast_fallback_reason = nullptr);
+bool load_game_level_models(LevelGameProfile profile, LevelBytes header, LevelBytes shaders, LevelBytes vertex_buffers,
+                            LevelBytes index_buffers, LevelBytes visuals, LevelModelData &result, std::string &error,
+                            LevelBytes fast_vertex_buffers = {}, LevelBytes fast_index_buffers = {},
+                            LevelBytes tree_windows = {});
 // Resolve a standalone visual's GCONTAINER against level.geom, using the
 // same bounds and index validation as the level visual table.
-bool load_container_model(LevelBytes vertex_buffers, LevelBytes index_buffers, const VisualRecord &visual, LevelModel &result, std::string &error,
-                          LevelBytes tree_windows = {}, bool depth_only = false);
-bool parse_level_visibility(LevelBytes portals, LevelBytes sectors,
-    LevelModelData& result, std::string& error);
-}
+bool load_container_model(LevelBytes vertex_buffers, LevelBytes index_buffers, const VisualRecord &visual,
+                          LevelModel &result, std::string &error, LevelBytes tree_windows = {},
+                          bool depth_only = false);
+bool parse_level_visibility(LevelBytes portals, LevelBytes sectors, LevelModelData &result, std::string &error);
+} // namespace xray::render::vulkan

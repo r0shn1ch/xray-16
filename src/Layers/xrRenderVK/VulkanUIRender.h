@@ -22,34 +22,47 @@ struct UiDescriptorLeases
 class VulkanUIRender final : public IUIRender
 {
   public:
-    void configure(VkDevice device, const VkPhysicalDeviceMemoryProperties &memory, const BufferResourceDispatch &dispatch, const ScenePass &pass,
-                   UiDescriptorLeases leases = {});
+    void configure(VkDevice device, const VkPhysicalDeviceMemoryProperties &memory,
+                   const BufferResourceDispatch &dispatch, const ScenePass &pass, UiDescriptorLeases leases = {});
     void setup_states();
     void reset_frame();
-    bool record(const FrameRecordingContext &frame, std::string &error,
-        bool distortion = false, VkDescriptorSet scene = VK_NULL_HANDLE,
-        VkDescriptorSet world_depth = VK_NULL_HANDLE, bool world_only = false);
-    void set_distortion(bool enabled) { distortion_ = enabled; }
+    bool record(const FrameRecordingContext &frame, std::string &error, bool distortion = false,
+                VkDescriptorSet scene = VK_NULL_HANDLE, VkDescriptorSet world_depth = VK_NULL_HANDLE,
+                bool world_only = false);
+    void set_distortion(bool enabled)
+    {
+        distortion_ = enabled;
+    }
     bool has_distortion() const;
-    void append_imgui(ImDrawData* data);
-    VulkanUIShader* current_shader() const { return shader_; }
-    uint32_t draw_calls() const { return static_cast<uint32_t>(batches_.size()); }
-    uint32_t triangles() const { return static_cast<uint32_t>(indices_.size() / 3); }
+    void append_imgui(ImDrawData *data);
+    VulkanUIShader *current_shader() const
+    {
+        return shader_;
+    }
+    uint32_t draw_calls() const
+    {
+        return static_cast<uint32_t>(batches_.size());
+    }
+    uint32_t triangles() const
+    {
+        return static_cast<uint32_t>(indices_.size() / 3);
+    }
 
     void CreateUIGeom() override;
     void DestroyUIGeom() override;
-    void SetShader(IUIShader& shader) override;
+    void SetShader(IUIShader &shader) override;
     void SetTextureDescriptor(VkDescriptorSet descriptor);
+    void SetWorldGlow(VkDescriptorSet descriptor);
     void SetAlphaRef(int aref) override;
-    void SetScissor(Irect* rect = nullptr) override;
+    void SetScissor(Irect *rect = nullptr) override;
     void PushPoint(float x, float y, float z, u32 color, float u, float v) override;
     void StartPrimitive(u32 max_vertices, ePrimitiveType type, ePointType point_type) override;
     void FlushPrimitive() override;
     LPCSTR UpdateShaderName(LPCSTR texture, LPCSTR shader) override;
-    void CacheSetXformWorld(const Fmatrix& matrix) override;
+    void CacheSetXformWorld(const Fmatrix &matrix) override;
     void CacheSetCullMode(CullMode mode) override;
 
-private:
+  private:
     struct Batch
     {
         uint32_t first_index{}, count{};
@@ -66,8 +79,7 @@ private:
         BufferResource vertices, indices;
         uint64_t revision{};
     };
-    bool ensure(BufferResource& buffer, VkDeviceSize bytes, VkBufferUsageFlags usage,
-        std::string& error);
+    bool ensure(BufferResource &buffer, VkDeviceSize bytes, VkBufferUsageFlags usage, std::string &error);
     void add_line(uint32_t a, uint32_t b);
     void add_triangle(uint32_t a, uint32_t b, uint32_t c);
 
@@ -84,7 +96,7 @@ private:
     std::vector<Batch> batches_;
     uint64_t revision_{};
     VkDescriptorSet texture_{};
-    VulkanUIShader* shader_{};
+    VulkanUIShader *shader_{};
     VkRect2D scissor_{};
     bool has_scissor_{};
     ePrimitiveType primitive_{ptNone};
@@ -92,6 +104,7 @@ private:
     uint32_t first_vertex_{}, limit_{};
     int alpha_ref_{};
     int blend_mode_{1};
+    bool world_depth_override_{};
     bool distortion_{};
     int material_alpha_ref_{};
     CullMode cull_{cmNONE};

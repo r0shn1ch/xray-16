@@ -12,11 +12,12 @@ int main()
     VulkanFrameMetrics metrics;
     for (int i = 0; i < 100; ++i)
         metrics.record({40., i < 94 ? 10. : 60., i % 2 ? std::optional<double>{5.} : std::nullopt,
-            static_cast<uint64_t>(i + 1), 200, 3});
+                        static_cast<uint64_t>(i + 1), 200, 3});
     const auto summary = metrics.summary();
     assert(summary.frames == 100 && summary.fps == 25.);
     assert(summary.cpu_p95_ms == 60. && summary.gpu_p95_ms.value() == 5.);
     assert(summary.gpu_unavailable_frames == 50);
+    assert(summary.cpu_p50_ms == 10. && summary.cpu_p99_ms == 60. && summary.gpu_p99_ms.value() == 5.);
     assert(summary.texture_bytes == 100 && summary.peak_texture_bytes == 100);
     assert(metrics.write_json("vulkan-frame-metrics-test.json"));
     std::ifstream input("vulkan-frame-metrics-test.json");

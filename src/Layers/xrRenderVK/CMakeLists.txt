@@ -148,6 +148,8 @@ target_sources(xrRenderVK PRIVATE
     Light_DB.cpp
     Light_DB.h
     r__render_lights.cpp
+    r__render_draw.cpp
+    r__model_pool.cpp
     VulkanGameDevice.cpp
     VulkanGameDevice.h
 )

@@ -12,85 +12,93 @@ float safe_nonnegative(float value)
     return std::isfinite(value) ? std::max(value, 0.f) : 0.f;
 }
 
-float luminance(const float* color)
+float luminance(const float *color)
 {
-    return 0.2126f * safe_nonnegative(color[0]) +
-        0.7152f * safe_nonnegative(color[1]) +
-        0.0722f * safe_nonnegative(color[2]);
+    return 0.2126f * safe_nonnegative(color[0]) + 0.7152f * safe_nonnegative(color[1]) +
+           0.0722f * safe_nonnegative(color[2]);
 }
 
-bool finite3(const std::array<float, 3>& value)
+bool finite3(const std::array<float, 3> &value)
 {
     return std::isfinite(value[0]) && std::isfinite(value[1]) && std::isfinite(value[2]);
 }
-}
+} // namespace
 
-VulkanObjectLighting evaluate_object_lighting(const std::array<float, 3>& position,
-    const float* ambient, const float* hemi, const float* sun, uint32_t mode,
-    const std::vector<VulkanLightSnapshot>& lights)
+VulkanObjectLighting evaluate_object_lighting(const std::array<float, 3> &position, const float *ambient,
+                                              const float *hemi, const float *sun, uint32_t mode,
+                                              const std::vector<VulkanLightSnapshot> &lights,
+                                              const std::array<float, 6> *sky_faces, float light_scale,
+                                              float light_flow)
 {
     const float ambient_light = mode & VulkanTraceHemi ? luminance(hemi) : 0.f;
     const float sun_light = mode & VulkanTraceSun ? 0.2f * luminance(sun) : 0.f;
-    const float environment_light = (mode & VulkanTraceHemi ? luminance(ambient) : 0.f) +
-        ambient_light + sun_light;
+    const float environment_light = (mode & VulkanTraceHemi ? luminance(ambient) : 0.f) + ambient_light + sun_light;
     float local_light = 0.f;
-    constexpr std::array<std::array<float, 3>, 6> face_directions{{
-        {{1.f, 0.f, 0.f}}, {{0.f, 1.f, 0.f}}, {{0.f, 0.f, 1.f}},
-        {{-1.f, 0.f, 0.f}}, {{0.f, -1.f, 0.f}}, {{0.f, 0.f, -1.f}}
-    }};
+    constexpr std::array<std::array<float, 3>, 6> face_directions{{{{1.f, 0.f, 0.f}},
+                                                                   {{0.f, 1.f, 0.f}},
+                                                                   {{0.f, 0.f, 1.f}},
+                                                                   {{-1.f, 0.f, 0.f}},
+                                                                   {{0.f, -1.f, 0.f}},
+                                                                   {{0.f, 0.f, -1.f}}}};
     VulkanObjectLighting result;
     // The shader consumes visibility, then applies the weather's RGB hemi.
     // Feeding radiance here multiplies the sky intensity a second time. Until
     // sky ray tracing is implemented, keep the same neutral 0.5 visibility as
     // an untraced desktop ROS, independent of weather color/intensity.
     result.hemi_cube.fill(mode & VulkanTraceHemi ? .5f : 0.f);
+    if (sky_faces && (mode & VulkanTraceHemi))
+        result.hemi_cube = *sky_faces;
     if ((mode & VulkanTraceLights) && finite3(position))
     {
-        for (const VulkanLightSnapshot& light : lights)
+        for (const VulkanLightSnapshot &light : lights)
         {
-            if (!light.active || light.type == VulkanLightType::Direct ||
-                !std::isfinite(light.range) || light.range <= 1e-5f || !finite3(light.position))
+            if (!light.active || light.type == VulkanLightType::Direct || !std::isfinite(light.range) ||
+                light.range <= 1e-5f || !finite3(light.position))
                 continue;
-            float to_light[3]{light.position[0] - position[0],
-                light.position[1] - position[1], light.position[2] - position[2]};
-            const float distance_squared=to_light[0]*to_light[0]+to_light[1]*to_light[1]+to_light[2]*to_light[2];
-            if (!std::isfinite(distance_squared) || distance_squared>=light.range*light.range)
+            float to_light[3]{light.position[0] - position[0], light.position[1] - position[1],
+                              light.position[2] - position[2]};
+            const float distance_squared =
+                to_light[0] * to_light[0] + to_light[1] * to_light[1] + to_light[2] * to_light[2];
+            if (!std::isfinite(distance_squared) || distance_squared >= light.range * light.range)
                 continue;
-            const float distance=std::sqrt(distance_squared);
+            const float distance = std::sqrt(distance_squared);
             const float inverse_distance = distance > 1e-6f ? 1.f / distance : 0.f;
-            for (float& component : to_light) component *= inverse_distance;
+            for (float &component : to_light)
+                component *= inverse_distance;
             const float normalized_distance = distance / light.range;
             float attenuation = 1.f - normalized_distance * normalized_distance;
-            if(light.hemi_only)
+            if (light.hemi_only)
             {
-                const auto& a=light.attenuation;
-                const float denominator=a[0]+a[1]*distance+a[2]*distance_squared;
-                if(!std::isfinite(denominator) || denominator<=1e-6f) continue;
-                attenuation=std::max(1.f/denominator-distance*a[3],0.f);
-                if(!std::isfinite(attenuation)) continue;
+                const auto &a = light.attenuation;
+                const float denominator = a[0] + a[1] * distance + a[2] * distance_squared;
+                if (!std::isfinite(denominator) || denominator <= 1e-6f)
+                    continue;
+                attenuation = std::max(1.f / denominator - distance * a[3], 0.f);
+                if (!std::isfinite(attenuation))
+                    continue;
             }
             if (light.type == VulkanLightType::Spot)
             {
                 if (!finite3(light.direction))
                     continue;
-                const float direction_dot = -(light.direction[0] * to_light[0] +
-                    light.direction[1] * to_light[1] + light.direction[2] * to_light[2]);
+                const float direction_dot = -(light.direction[0] * to_light[0] + light.direction[1] * to_light[1] +
+                                              light.direction[2] * to_light[2]);
                 const float cutoff = std::cos(std::clamp(light.cone, 0.f, 2.f) * 0.5f);
                 if (!std::isfinite(direction_dot) || direction_dot <= cutoff)
                     continue;
-                attenuation *= std::clamp((direction_dot - cutoff) /
-                    std::max(1.f - cutoff, 1e-4f), 0.f, 1.f);
+                attenuation *= std::clamp((direction_dot - cutoff) / std::max(1.f - cutoff, 1e-4f), 0.f, 1.f);
             }
-            const float local_energy = luminance(light.color.data()) * attenuation;
+            const float local_energy =
+                luminance(light.color.data()) * attenuation * std::clamp(light.visibility, 0.f, 1.f);
             local_light += local_energy;
             // LightTrack.cpp defaults: ps_r2_dhemi_light_scale=.2,
             // ps_r2_dhemi_light_flow=.1. Keep gameplay luminocity separate.
-            const float energy=local_energy*(light.hemi_only?.2f:1.f);
+            const float energy = local_energy * light_scale * (light.hemi_only ? 1.f : 2.f);
             for (size_t face = 0; face < face_directions.size(); ++face)
             {
-                const auto& normal = face_directions[face];
-                const float dot=normal[0]*to_light[0]+normal[1]*to_light[1]+normal[2]*to_light[2];
-                const float facing=light.hemi_only ? .9f*std::max(0.f,dot)+.1f*std::max(0.f,-dot) : std::max(0.f,dot);
+                const auto &normal = face_directions[face];
+                const float dot = normal[0] * to_light[0] + normal[1] * to_light[1] + normal[2] * to_light[2];
+                const float facing = (1.f - light_flow) * std::max(0.f, dot) + light_flow * std::max(0.f, -dot);
                 result.hemi_cube[face] += energy * facing;
             }
         }
@@ -98,8 +106,8 @@ VulkanObjectLighting evaluate_object_lighting(const std::array<float, 3>& positi
 
     result.hemi_luminocity = std::clamp(ambient_light + local_light, 0.f, 1.f);
     result.luminocity = std::clamp(environment_light + local_light, 0.f, 1.f);
-    for (float& value : result.hemi_cube)
+    for (float &value : result.hemi_cube)
         value = std::clamp(value, 0.f, 1.f);
     return result;
 }
-}
+} // namespace xray::render::vulkan
