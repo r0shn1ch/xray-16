@@ -38,6 +38,7 @@ public:
 void register_vulkan_options()
 {
     static VulkanPreset preset;
+    static CCC_Integer detail_updates("r_vk_detail_update_cells", &detail_update_cells, 1, 256);
     static CCC_Integer details("r__detail_radius", &detail_radius, 0, 80);
     static CCC_Float ambient("r2_sun_lumscale_amb", &ambient_scale, 0.f, 3.f);
     static CCC_Float hemisphere("r2_sun_lumscale_hemi", &hemisphere_scale, 0.f, 3.f);
@@ -46,36 +47,10 @@ void register_vulkan_options()
     static CCC_Integer tone_switch("r2_tonemap", &tonemap_enabled, 0, 1);
     static CCC_Float tone_gray("r2_tonemap_middlegray", &tonemap_middlegray, 0.f, 2.f);
     static CCC_Float tone_amount("r2_tonemap_amount", &tonemap_amount, 0.f, 1.f);
-    if (Core.Params)
-    {
-        tonemap_enabled = std::strstr(Core.Params, "-vk-no-tonemap") ? 0 : 1;
-        if (std::strstr(Core.Params, "-android-mobile-preset Minimum")) quality_preset = 0;
-        else if (std::strstr(Core.Params, "-android-mobile-preset Low")) quality_preset = 1;
-        else if (std::strstr(Core.Params, "-android-mobile-preset High")) quality_preset = 3;
-        else if (std::strstr(Core.Params, "-android-mobile-preset Extreme")) quality_preset = 4;
-        static constexpr int distances[]{0, 20, 40, 60, 80};
-        detail_radius = distances[quality_preset];
-        const auto read_scale = [](const char* key, float& target)
-        {
-            if (const char* option = std::strstr(Core.Params, key))
-            {
-                float requested = target;
-                if (std::sscanf(option + std::strlen(key), "%f", &requested) == 1 &&
-                    std::isfinite(requested)) target = std::clamp(requested, 0.f, 3.f);
-            }
-        };
-        read_scale("-vk-ambient-scale ", ambient_scale);
-        read_scale("-vk-hemi-scale ", hemisphere_scale);
-        read_scale("-vk-sun-scale ", sun_scale);
-        if (const char* option = std::strstr(Core.Params, "-vk-detail-distance "))
-        {
-            int requested = detail_radius;
-            if (std::sscanf(option + sizeof("-vk-detail-distance ") - 1, "%d", &requested) == 1)
-                detail_radius = std::clamp(requested, 0, 80);
-        }
-    }
+    apply_vulkan_launch_settings(Core.Params);
     Console->AddCommand(&preset);
     Console->AddCommand(&details);
+    Console->AddCommand(&detail_updates);
     Console->AddCommand(&ambient);
     Console->AddCommand(&hemisphere);
     Console->AddCommand(&sun);

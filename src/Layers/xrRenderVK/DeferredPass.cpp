@@ -28,7 +28,7 @@ bool make_pipeline(VkDevice device, VkRenderPass pass, VkPipelineLayout layout,
     bool alpha_additive = false, bool multiply = false, bool multiply_2x = false,
     bool particle_set = false, bool water_depth_write = false, bool wallmark = false,
     bool legacy_multiply = false, bool replace_no_depth = false,
-    bool hud_set_no_depth_write = false)
+    bool hud_set_no_depth_write = false, bool cutout = false)
 {
     VkPipelineShaderStageCreateInfo stages[2]{};
     stages[0].sType = stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -71,9 +71,10 @@ bool make_pipeline(VkDevice device, VkRenderPass pass, VkPipelineLayout layout,
     // Depth precision on shallow terrain slopes otherwise produces long,
     // repeating self-shadow bands. Apply bias while writing shadow depth,
     // in addition to the small receiver bias used by the lighting shader.
-    raster.depthBiasEnable = shadow || wallmark ? VK_TRUE : VK_FALSE;
-    raster.depthBiasConstantFactor = shadow ? 1.25f : wallmark ? -1.f : 0.f;
-    raster.depthBiasSlopeFactor = shadow ? 1.5f : wallmark ? -1.f : 0.f;
+    const auto bias = geometry_depth_bias(shadow, wallmark, gbuffer && cutout);
+    raster.depthBiasEnable = bias.enabled;
+    raster.depthBiasConstantFactor = bias.constant;
+    raster.depthBiasSlopeFactor = bias.slope;
     VkPipelineMultisampleStateCreateInfo multi{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     multi.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
     VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
@@ -445,7 +446,7 @@ bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRen
     if (!make_pipeline(device, geometry_pass, geometry_layout_, geometry_vertex,
             geometry_fragment, true, true, false, false, false, vk_, geometry_, error, "geometry") ||
         !make_pipeline(device, geometry_pass, geometry_layout_, geometry_vertex,
-            alpha_test_fragment, true, true, false, false, false, vk_, alpha_test_, error, "alpha test") ||
+            alpha_test_fragment, true, true, false, false, false, vk_, alpha_test_, error, "alpha test", false, false, false, false, false, false, false, false, false, false, false, true) ||
         !make_pipeline(device, light_pass, geometry_layout_, geometry_vertex,
             transparent_fragment, true, false, true, false, false, vk_, transparent_, error, "transparent") ||
         !make_pipeline(device, light_pass, geometry_layout_, geometry_vertex,
@@ -731,7 +732,7 @@ bool DeferredPass::create_game_pipeline(const std::string& vertex_name, const st
             particle_multiply, particle_multiply_2x || wallmark_multiply_2x,
             particle_set || world_set_depth_write,
             false, wallmark_multiply_2x, legacy_multiply, world_set_replace,
-            hud_set_no_depth_write))
+            hud_set_no_depth_write, mode == SurfaceMode::AlphaTest))
     {
         error += ": " + vertex_name + " / " + fragment_name;
         return false;

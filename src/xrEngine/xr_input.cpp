@@ -842,6 +842,7 @@ void CInput::TouchUpdate()
         { kUSE, SDL_SCANCODE_F },
         { kWPN_FIRE, MOUSE_1 },
         { kQUIT, SDL_SCANCODE_ESCAPE },
+        { kTORCH, SDL_SCANCODE_L },
     };
 
     // A complete tap can happen while Vulkan is recording a slow frame.

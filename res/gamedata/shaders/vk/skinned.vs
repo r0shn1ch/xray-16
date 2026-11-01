@@ -1,5 +1,4 @@
-// GPU skinning variant. Its input and pose-buffer layout is separate from the
-// current CPU-skinned LevelVertex path until skeletal GPU pipelines are bound.
+// Bone matrices are followed by one object matrix carrying rotation and hemi faces.
 #ifndef SKIN_WEIGHTS
 #error SKIN_WEIGHTS must be in the range 1..4
 #endif

@@ -6,7 +6,7 @@
 #include "VulkanDeviceResourceState.h"
 #include "VulkanFramePhaseState.h"
 #include "VulkanGameLighting.h"
-#include "LevelLights.h"
+#include "Light_DB.h"
 #include "VulkanRenderContextState.h"
 #include "VulkanSurfaceLifecycle.h"
 #include "VulkanFrameMetrics.h"
@@ -29,9 +29,7 @@ class GpuModel;
 class VulkanParticleEffect;
 class VulkanParticleGroup;
 struct ParticleCatalog;
-// Shared IRender level contract for the Vulkan gameplay renderer. Its caller
-// must have created a device, deferred pass and texture factory first. Other
-// IRender operations remain abstract until their Vulkan implementations exist.
+// IRender adapter for the Vulkan device, level geometry and model resources.
 class VulkanLevelRender : public IRender
 {
 public:
@@ -172,8 +170,8 @@ private:
   std::unique_ptr<VulkanGameDevice> owned_game_device_;
   VulkanGameDevice *external_game_device_{};
   std::vector<VulkanLight *> lights_;
-  std::vector<VulkanLightSnapshot> level_lights_;
-  VulkanHemiLightGrid level_hemi_lights_;
+  std::unordered_map<IRenderVisual*, std::pair<const VulkanModelVisual*, const void*>> model_visual_index_;
+  CLight_DB Lights;
   std::vector<VulkanGlow *> glows_;
   // World glows use screen-space UI quads. Cache static-geometry visibility
   // briefly so they do not shine through walls without a ray test per frame.

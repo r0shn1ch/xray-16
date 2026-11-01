@@ -35,8 +35,8 @@ VulkanObjectLighting evaluate_object_lighting(const std::array<float, 3>& positi
         ambient_light + sun_light;
     float local_light = 0.f;
     constexpr std::array<std::array<float, 3>, 6> face_directions{{
-        {{1.f, 0.f, 0.f}}, {{-1.f, 0.f, 0.f}}, {{0.f, 1.f, 0.f}},
-        {{0.f, -1.f, 0.f}}, {{0.f, 0.f, 1.f}}, {{0.f, 0.f, -1.f}}
+        {{1.f, 0.f, 0.f}}, {{0.f, 1.f, 0.f}}, {{0.f, 0.f, 1.f}},
+        {{-1.f, 0.f, 0.f}}, {{0.f, -1.f, 0.f}}, {{0.f, 0.f, -1.f}}
     }};
     VulkanObjectLighting result;
     // The shader consumes visibility, then applies the weather's RGB hemi.

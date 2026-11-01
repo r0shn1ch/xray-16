@@ -1,6 +1,7 @@
 #include "xrEngine/stdafx.h"
 #include "GpuLevel.h"
 #include "LevelLightmap.h"
+#include "VulkanSettings.h"
 #include "PackedLevelGeometry.h"
 #include "LevelVisibility.h"
 #include "VulkanVisual.h"
@@ -824,10 +825,20 @@ void GpuLevel::prepare_details(const Fvector& camera, float max_distance)
     const int cz = static_cast<int>(std::floor(camera.z / 2.f)) + details_.offset_z;
     const int radius = static_cast<int>(max_distance / 2.f) + 1;
     CDB::COLLIDER collider;
+    std::vector<size_t> cells;
     for (int z = std::max(0, cz - radius); z <= std::min(int(details_.height) - 1, cz + radius); ++z)
         for (int x = std::max(0, cx - radius); x <= std::min(int(details_.width) - 1, cx + radius); ++x)
+            cells.push_back(size_t(z) * details_.width + x);
+    const auto distance = [&](size_t index) {
+        const float x = float(int(index % details_.width) - details_.offset_x) * 2.f + 1.f - camera.x;
+        const float z = float(int(index / details_.width) - details_.offset_z) * 2.f + 1.f - camera.z;
+        return x*x + z*z;
+    };
+    std::stable_sort(cells.begin(), cells.end(), [&](size_t a, size_t b) { return distance(a) < distance(b); });
+    int updated = 0;
+    for (size_t index : cells)
         {
-            const size_t index = size_t(z) * details_.width + x;
+            const int x = int(index % details_.width), z = int(index / details_.width);
             const DetailCell& cell = details_.cells[index];
             const float slot_x = float(x - details_.offset_x) * 2.f;
             const float slot_z = float(z - details_.offset_z) * 2.f;
@@ -838,6 +849,8 @@ void GpuLevel::prepare_details(const Fvector& camera, float max_distance)
             auto found = detail_cache_.find(index);
             if (found == detail_cache_.end())
             {
+                if (updated >= detail_update_cells) continue;
+                ++updated;
                 std::vector<DetailPlacement> placements;
                 // Query the slot once, then test its triangles for every
                 // placement. A ray query per blade causes long frame stalls
@@ -906,8 +919,19 @@ void GpuLevel::prepare_details(const Fvector& camera, float max_distance)
                     }
                 found = detail_cache_.emplace(index, std::move(placements)).first;
             }
-            visible_details_.insert(visible_details_.end(), found->second.begin(), found->second.end());
         }
+    // Keep draw order independent of generation priority, so camera motion
+    // does not invalidate the cached detail vertex buffers by reordering cells.
+    std::sort(cells.begin(), cells.end());
+    for (size_t index : cells)
+    {
+        const auto& cell = details_.cells[index];
+        if (distance(index) > max_distance * max_distance ||
+            std::abs(cell.ground - camera.y) > max_distance + cell.height) continue;
+        const auto found = detail_cache_.find(index);
+        if (found != detail_cache_.end())
+            visible_details_.insert(visible_details_.end(), found->second.begin(), found->second.end());
+    }
     if (detail_cache_.size() > 4096)
     {
         for (auto it = detail_cache_.begin(); it != detail_cache_.end(); )

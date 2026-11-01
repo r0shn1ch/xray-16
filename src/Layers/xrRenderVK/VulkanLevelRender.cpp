@@ -31,7 +31,6 @@
 #include "xrMaterialSystem/GameMtlLib.h"
 
 #include <SDL.h>
-#include "Common/LevelStructure.hpp"
 #include <SDL_vulkan.h>
 
 #include <algorithm>
@@ -890,17 +889,12 @@ void VulkanLevelRender::Calculate()
     // The game queries ROS from simulation, AI, rain and HUD code. Refresh its
     // environment and local-light values before the frame's render callbacks.
     const DeferredEnvironment environment = current_environment();
-    std::vector<VulkanLightSnapshot> light_snapshots;
-    light_snapshots.reserve(lights_.size());
-    for (const VulkanLight* light : lights_)
-        if (light && light->snapshot().active) light_snapshots.push_back(light->snapshot());
-    auto scene_lights=light_snapshots;
-    scene_lights.insert(scene_lights.end(),level_lights_.begin(),level_lights_.end());
-    game_device_->queue_lights(std::move(scene_lights));
+    Lights.Update(lights_);
+    game_device_->queue_lights(Lights.SceneLights());
     for (VulkanObjectSpecific* object : object_specifics_)
         if (object)
             object->update(environment.ambient_color, environment.hemi_color,
-                environment.sun_color, light_snapshots, &level_hemi_lights_);
+                environment.sun_color, Lights.DynamicLights(), &Lights.HemiLights());
 
     std::vector<uint32_t> visible_roots;
     IGameObject* view_entity = g_pGameLevel ? g_pGameLevel->CurrentViewEntity() : nullptr;
@@ -1231,36 +1225,14 @@ void VulkanLevelRender::level_Load(IReader* reader)
         Msg("! [renderer-vulkan] level.load file=$level$/level failed: %s", error.c_str());
         xrDebug::Fatal(DEBUG_INFO, "Vulkan level load file=$level$/level failed: %s", error.c_str());
     }
-    level_lights_.clear();level_hemi_lights_.reset();
-    if(IReader* chunk=reader->open_chunk(fsL_LIGHT_DYNAMIC))
-    {
-        if(!decode_level_lights({static_cast<const uint8_t*>(chunk->pointer()),chunk->length()},false,level_lights_,error))
-            Msg("! [renderer-vulkan] level.lights chunk=6 rejected: %s",error.c_str());
-        chunk->close();
-    }
-    if(FS.exist("$level$","build.lights"))
-    {
-        if(IReader* file=FS.r_open("$level$","build.lights"))
-        {
-            if(IReader* chunk=file->open_chunk(fsL_HEADER))
-            {
-                std::vector<VulkanLightSnapshot> hemi;
-                if(decode_level_lights({static_cast<const uint8_t*>(chunk->pointer()),chunk->length()},true,hemi,error))
-                    level_hemi_lights_.reset(std::move(hemi));
-                else Msg("! [renderer-vulkan] level.hemi build.lights rejected: %s",error.c_str());
-                chunk->close();
-            }
-            FS.r_close(file);
-        }
-    }
-    Msg("[renderer-vulkan] level.lights direct=%zu hemi=%zu",level_lights_.size(),level_hemi_lights_.size());
+    Lights.Load(*reader);
     Msg("[renderer-vulkan] level.load ready visuals=%zu models=%zu textures=%zu",
         level_.visual_count(), level_.model_count(), textures_->resident_count());
 }
 
 void VulkanLevelRender::level_Unload()
 {
-    level_lights_.clear();level_hemi_lights_.reset();
+    Lights.Unload();
     flush_render_failures();
     flush_resource_failures();
     if (device_ && (level_.visual_count() || !models_.empty()))
@@ -1435,16 +1407,6 @@ std::unique_ptr<VulkanModelVisual> VulkanLevelRender::load_model_base(pcstr name
     const bool parsed = data ? load_engine_model_reader(*data, name, record, error) : load_engine_model_visual(name, record, error);
     if (!parsed)
         return nullptr;
-    if (name && (std::strstr(name,"kitchen_") || std::strstr(name,"door_")))
-    {
-        const auto describe = [&](const auto& self, const VisualRecord& node, unsigned depth) -> void
-        {
-            Msg("[renderer-vulkan] model.material name='%s' child-depth=%u type=%u shader='%s' texture='%s'",
-                name,depth,node.type,node.shader.c_str(),node.texture.c_str());
-            for (const auto& child:node.embedded_children) self(self,child,depth+1);
-        };
-        describe(describe,record,0);
-    }
     auto result = create_model_tree(record, "", cache_name, error, skeletal_child);
     if (!result)
         error = std::string(name && *name ? name : "<reader>.ogf") + " / type=" + std::to_string(record.type) +
@@ -1682,6 +1644,7 @@ void VulkanLevelRender::model_Delete(IRenderVisual*& visual, bool discard)
     }
     auto found = models_.find(visual);
     R_ASSERT2(found != models_.end(), "Vulkan model deletion received an unknown visual");
+    model_visual_index_.clear();
     if (game_device_)
         game_device_->discard_model_draws(visual);
     const bool pooled = !discard && !found->second->cache_name().empty();
@@ -1733,6 +1696,7 @@ void VulkanLevelRender::models_Clear(bool)
 
 void VulkanLevelRender::destroy_all_models()
 {
+    model_visual_index_.clear();
     if (models_.empty() && model_pool_.empty() && model_bases_.empty() &&
         particle_effects_.empty() && particle_groups_.empty())
     {
@@ -1780,12 +1744,22 @@ void VulkanLevelRender::add_Visual(u32, IRenderable* root, IRenderVisual* visual
         model=direct_model->second.get();
         model_owner=direct_model->first;
     }
-    else if (visual_index < 0) for (const auto& entry : models_)
-        if ((model = entry.second->find(visual)))
+    else if (visual_index < 0)
+    {
+        const auto cached = model_visual_index_.find(visual);
+        if (cached != model_visual_index_.end())
         {
-            model_owner = entry.first;
-            break;
+            model = cached->second.first;
+            model_owner = cached->second.second;
         }
+        else for (const auto& entry : models_)
+            if ((model = entry.second->find(visual)))
+            {
+                model_owner = entry.first;
+                model_visual_index_.emplace(visual, std::make_pair(model, model_owner));
+                break;
+            }
+    }
     R_ASSERT2(visual_index >= 0 || model, "Vulkan scene submission received a visual outside this renderer");
     const bool hud = root && root->renderable_HUD();
     const Fmatrix view_projection = hud ? hud_view_projection() : current_view_projection();
