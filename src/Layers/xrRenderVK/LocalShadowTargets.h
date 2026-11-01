@@ -3,6 +3,7 @@
 #include "BufferResource.h"
 #include "FrameContext.h"
 #include "VulkanGameLightingMath.h"
+#include "LightingLimits.h"
 
 #include <array>
 #include <vector>
@@ -12,7 +13,8 @@ namespace xray::render::vulkan
 constexpr uint32_t LocalShadowSlots = 4;
 constexpr uint32_t LocalShadowFaces = 6;
 constexpr uint32_t LocalShadowSize = 512;
-constexpr uint32_t LocalLightCapacity = 64;
+constexpr float LocalShadowReceiverOffset = .005f; // metres toward the light
+constexpr uint32_t LocalLightCapacity = XRAY_VK_MAX_LOCAL_LIGHTS;
 
 struct alignas(16) LocalLightUniform
 {
@@ -21,7 +23,7 @@ struct alignas(16) LocalLightUniform
     float position_range[4]{};
     float direction_cone[4]{};
     float color_type[4]{};
-    float shadow_params[4]{}; // base array layer, bias, enabled, projection enabled
+    float shadow_params[4]{}; // base array layer, world-space bias, enabled, projection enabled
     float spot_right[4]{};    // right.xyz, tan(cone/2)
     float debug_mode[4]{};    // 1: remap the four-pane base view into the upper-left quadrant
 };

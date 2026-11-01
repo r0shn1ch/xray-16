@@ -110,6 +110,7 @@ void VulkanGameDevice::record_transparent(const FrameRecordingContext &frame, vo
 {
     auto &owner = *static_cast<VulkanGameDevice *>(user);
     PassCpuSample timing{"transparent", owner.deferred_, owner.deferred_.draw_calls()};
+    auto command_batch = owner.deferred_.geometry_batch();
     if (frame.image_index >= owner.forward_buffers_.size() ||
         !owner.forward_buffers_[frame.image_index].write(0, &owner.forward_lighting_, sizeof(owner.forward_lighting_),
                                                          owner.model_error_))
@@ -300,6 +301,22 @@ void VulkanGameDevice::record_transparent(const FrameRecordingContext &frame, vo
         true);
 }
 
+void VulkanGameDevice::prepare_light_grid(const FrameRecordingContext &frame, void *user)
+{
+    auto &owner = *static_cast<VulkanGameDevice *>(user);
+    if (!use_light_grid)
+    {
+        owner.light_grid_.discard_frame(frame.image_index);
+        return;
+    }
+    if (!owner.light_grid_.prepare(frame, owner.local_uniforms_, owner.local_scissors_, owner.model_error_))
+    {
+        owner.light_grid_.discard_frame(frame.image_index);
+        if (Device.dwFrame % 300 == 0)
+            Msg("! [renderer-vulkan] light grid frame fallback: %s", owner.model_error_.c_str());
+    }
+}
+
 void VulkanGameDevice::record_local_lights(const FrameRecordingContext &frame, void *user)
 {
     auto &owner = *static_cast<VulkanGameDevice *>(user);
@@ -311,8 +328,21 @@ void VulkanGameDevice::record_local_lights(const FrameRecordingContext &frame, v
     }
     if (owner.local_bound_projections_.size() != owner.local_sets_.size())
         owner.local_bound_projections_.resize(owner.local_sets_.size());
+    if (!owner.local_lights_recorded_ ||
+        !owner.light_grid_.record(frame, owner.targets_.lighting_set(frame.image_index)))
+    {
+        owner.local_lights_recorded_ = false;
+        return;
+    }
+    if (owner.light_grid_.count(frame.image_index))
+        owner.deferred_.account_light_grid_draw();
+    if (Device.dwFrame % 300 == 0)
+        Msg("[renderer-vulkan] light.grid frame=%u point-lights=%u total=%zu", Device.dwFrame,
+            owner.light_grid_.count(frame.image_index), owner.local_uniforms_.size());
     for (uint32_t i = 0; i < owner.local_uniforms_.size(); ++i)
     {
+        if (owner.light_grid_.contains(frame.image_index, i))
+            continue;
         VkDescriptorSet &set = owner.local_sets_[frame.image_index][i];
         auto &bound = owner.local_bound_projections_[frame.image_index][i];
         if (!set)
@@ -430,7 +460,7 @@ void VulkanGameDevice::record_shadow_models(const FrameRecordingContext &frame, 
     PassCpuSample timing{"shadow-models", owner.deferred_, owner.deferred_.draw_calls()};
     Fmatrix light;
     std::memcpy(&light, vp, sizeof(light));
-    for (auto &draw : owner.model_draws_)
+    for (auto &draw : owner.shadow_model_draws_)
     {
         if (draw.hud)
             continue;

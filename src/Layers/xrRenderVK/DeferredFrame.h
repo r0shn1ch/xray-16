@@ -19,6 +19,11 @@ class DeferredFrame
         shadow_models_ = recorder;
         shadow_models_data_ = user;
     }
+    void set_light_grid_recorder(FrameRecorder recorder, void *user)
+    {
+        light_grid_ = recorder;
+        light_grid_data_ = user;
+    }
     bool render(FrameContext &frame, GBufferTargets &targets, const GpuLevel &level, const DeferredPass &pass,
                 const float (&mvp)[16], const DeferredLight &light, FrameStatus &status, std::string &error,
                 FrameRecorder ui = nullptr, void *ui_data = nullptr, FrameRecorder hud = nullptr,
@@ -37,6 +42,8 @@ class DeferredFrame
                 void *final_overlay_data = nullptr);
 
   private:
+    FrameRecorder light_grid_{};
+    void *light_grid_data_{};
     ShadowRecorder shadow_models_{};
     void *shadow_models_data_{};
     static void geometry(const FrameRecordingContext &frame, void *user_data);

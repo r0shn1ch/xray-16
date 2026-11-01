@@ -182,6 +182,15 @@ class DeferredPass
             model_hemi_negative_[i] = faces ? faces[i] : 0.f;
     }
     void release_forward_sets();
+    VkDescriptorSetLayout gbuffer_layout() const
+    {
+        return gbuffer_layout_;
+    }
+    void account_light_grid_draw() const
+    {
+        ++draw_calls_;
+        ++triangles_;
+    }
     void rebind_compatible_render_passes(VkRenderPass geometry_pass, VkRenderPass light_pass,
                                          VkRenderPass shadow_pass = VK_NULL_HANDLE,
                                          VkRenderPass local_shadow_pass = VK_NULL_HANDLE,

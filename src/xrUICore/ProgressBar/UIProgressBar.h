@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include "xrUICore/Windows/UIWindow.h"
 #include "xrUICore/Buttons/UIButton.h"
 
@@ -30,6 +31,8 @@ protected:
     float m_MaxPos{ 1.0f + EPS };
 
     float m_CurrentLength{};
+    unsigned m_segments{};
+    float m_segment_gap{};
 
     Fcolor m_minColor{};
     Fcolor m_middleColor{};
@@ -68,6 +71,12 @@ public:
     [[nodiscard]]
     bool IsShownBackground() const { return m_UIBackgroundItem.GetVisible(); }
     void ShowBackground(bool status) { m_UIBackgroundItem.SetVisible(status); }
+
+    void SetSegments(unsigned count, float gap_fraction = .25f)
+    {
+        m_segments = count;
+        m_segment_gap = std::clamp(gap_fraction, 0.f, .9f);
+    }
 
     void UseGradient(bool status) { m_bUseGradient = status; }
 

@@ -43,6 +43,8 @@ void register_vulkan_options()
     static VulkanPreset preset;
     static CCC_Float detail_time("r_vk_detail_prepare_ms", &detail_prepare_ms, 0.1f, 20.f);
     Console->AddCommand(&detail_time);
+    static CCC_Integer light_grid("r_vk_light_grid", &use_light_grid, 0, 1);
+    Console->AddCommand(&light_grid);
     static CCC_Integer detail_updates("r_vk_detail_update_cells", &detail_update_cells, 1, 256);
     static CCC_Integer point_shadows("r_vk_point_shadows", &point_shadow_budget, 0, 2);
     static CCC_Integer spot_shadows("r_vk_spot_shadows", &spot_shadow_budget, 0, 4);

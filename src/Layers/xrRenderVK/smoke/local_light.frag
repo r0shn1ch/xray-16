@@ -34,6 +34,12 @@ float visibility(vec3 world, vec3 delta)
     vec2 uv = projected.xy * 0.5 + 0.5;
     if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) ||
         projected.z <= 0.0 || projected.z >= 1.0) return 1.0;
+    // Bias in world units: a fixed 0..1 perspective-depth offset erases
+    // shadows at distance because depth precision scales with 1/z squared.
+    vec3 receiver = world - normalize(delta) * light.shadow_params.y;
+    vec4 receiver_clip = light.shadow_matrices[face] * vec4(receiver, 1.0);
+    if (receiver_clip.w <= 0.0) return 1.0;
+    float reference_depth = receiver_clip.z / receiver_clip.w;
     float layer = light.shadow_params.x + float(face);
     ivec2 size = textureSize(shadow_array, 0).xy;
     vec2 grid = uv * vec2(size) - 0.5;
@@ -46,7 +52,7 @@ float visibility(vec3 world, vec3 delta)
             vec2 weight = max(vec2(1.5) - abs(vec2(x,y) - fraction), vec2(0.0));
             float w = weight.x * weight.y;
             ivec2 pixel = clamp(center + ivec2(x,y), ivec2(0), size - 1);
-            lit += (projected.z - light.shadow_params.y <=
+            lit += (reference_depth <=
                 texelFetch(shadow_array, ivec3(pixel, int(layer)), 0).r ? 1.0 : 0.0) * w;
             total += w;
         }

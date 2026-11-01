@@ -131,6 +131,15 @@ void main()
         vec4 albedo = texture(albedo_buffer, screen_uv);
         vec4 encoded_normal = texture(normal_buffer, screen_uv);
         vec4 surface = texture(surface_buffer, screen_uv);
+        vec4 world_clip = shadow.inverse_view_projection *
+            vec4(screen_uv.x * 2.0 - 1.0, 1.0 - screen_uv.y * 2.0, depth, 1.0);
+        vec3 world_position = world_clip.xyz / world_clip.w;
+        // Perspective eye: clip z is nonzero and clip w is zero at the eye.
+        // Using the centre of the near plane shifts close-object reflections.
+        vec4 eye_clip = shadow.inverse_view_projection * vec4(0.0, 0.0, 1.0, 0.0);
+        if (abs(eye_clip.w) < 1e-6)
+            eye_clip = shadow.inverse_view_projection * vec4(0.0, 0.0, 0.0, 1.0);
+        vec3 camera_position = eye_clip.xyz / eye_clip.w;
         vec3 normal = normalize(encoded_normal.rgb * 2.0 - 1.0);
         float diffuse = max(dot(normal, normalize(-weather.direction_ambient.xyz)), 0.0);
         bool static_lightmap = encoded_normal.a < 0.8;
@@ -172,11 +181,7 @@ void main()
         vec3 lit = albedo.rgb * (shadow.ambient_color.rgb + indirect + sunlight);
         if (surface.r > 0.0 && comparison_mode != 4)
         {
-            vec4 world_clip = shadow.inverse_view_projection *
-                vec4(screen_uv.x * 2.0 - 1.0, 1.0 - screen_uv.y * 2.0, depth, 1.0);
-            vec3 world_position = world_clip.xyz / world_clip.w;
-            vec4 camera_clip = shadow.inverse_view_projection * vec4(0.0, 0.0, 0.0, 1.0);
-            vec3 incident = normalize(world_position - camera_clip.xyz / camera_clip.w);
+            vec3 incident = normalize(world_position - camera_position);
             vec3 reflection = reflect(incident, normal);
             float angle = 0.5 + 0.5 * dot(reflection, incident);
             reflection.y = reflection.y * 2.0 - 1.0;
@@ -189,11 +194,7 @@ void main()
         }
         if (surface.r > 0.0 && sun_scale > 0.0)
         {
-            vec4 world_clip = shadow.inverse_view_projection *
-                vec4(screen_uv.x * 2.0 - 1.0, 1.0 - screen_uv.y * 2.0, depth, 1.0);
-            vec4 near_clip = shadow.inverse_view_projection *
-                vec4(screen_uv.x * 2.0 - 1.0, 1.0 - screen_uv.y * 2.0, 0.0, 1.0);
-            vec3 view_ray = normalize(near_clip.xyz / near_clip.w - world_clip.xyz / world_clip.w);
+            vec3 view_ray = normalize(camera_position - world_position);
             vec3 half_dir = normalize(view_ray - normalize(weather.direction_ambient.xyz));
             float specular = pow(max(dot(normal, half_dir), 0.0),
                 mix(4.0, 64.0, surface.r));
@@ -204,13 +205,7 @@ void main()
         vec2 fog_rg = unpackHalf2x16(floatBitsToUint(weather.ray_base.w));
         vec2 fog_b_near = unpackHalf2x16(floatBitsToUint(weather.ray_dx.w));
         vec2 fog_far_projection = unpackHalf2x16(floatBitsToUint(weather.ray_dy.w));
-        const float camera_near = 0.2;
-        float projection_far = max(fog_far_projection.y, camera_near + 1.0);
-        float view_distance = camera_near * projection_far /
-            max(projection_far - depth * (projection_far - camera_near), 0.01);
-        vec3 ray = weather.ray_base.xyz + screen_uv.x * weather.ray_dx.xyz +
-            screen_uv.y * weather.ray_dy.xyz;
-        view_distance *= length(ray) / projection_far;
+        float view_distance = length(world_position - camera_position);
         float fog = clamp((view_distance - fog_b_near.y) /
             max(fog_far_projection.x - fog_b_near.y, 0.01), 0.0, 1.0);
         lit = mix(lit, vec3(fog_rg, fog_b_near.x), fog);

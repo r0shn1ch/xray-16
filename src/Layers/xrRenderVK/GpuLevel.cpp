@@ -385,7 +385,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                     "': cutout detail requires lightmap texture slot 1";
             return false;
         }
-        if (!lightmap.empty() && !model.lightmap_uv)
+        if (!lightmap.empty() && !model.lightmap_uv && !terrain.enabled)
         {
             error = "level lightmap material has no TEXCOORD1: " + material.textures;
             return false;

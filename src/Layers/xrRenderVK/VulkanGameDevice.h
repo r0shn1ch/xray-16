@@ -10,6 +10,7 @@
 #include "VulkanFontRender.h"
 #include "ScreenCopyPass.h"
 #include "LocalShadowTargets.h"
+#include "LightGrid.h"
 #include "WaterTargets.h"
 
 #include <array>
@@ -65,7 +66,7 @@ class VulkanGameDevice
 
     void queue_model(GpuModel &model, IKinematics *skeleton, const float (&mvp)[16], bool hud = false,
                      float sort_distance = 0.f, const void *instance = nullptr, float lod = 1.f,
-                     const Fmatrix *world = nullptr, const float *hemi_faces = nullptr);
+                     const Fmatrix *world = nullptr, const float *hemi_faces = nullptr, bool shadow_only = false);
     void queue_level_visual(uint32_t index, const float (&mvp)[16], bool hud = false, float sort_distance = 0.f,
                             const void *instance = nullptr, float lod = 1.f);
     void queue_particle(IRenderVisual *visual, const float (&mvp)[16], const Fvector &right, const Fvector &up,
@@ -164,6 +165,7 @@ class VulkanGameDevice
     static void record_shadow_models(const FrameRecordingContext &frame, const float (&vp)[16], void *user);
     static void record_models(const FrameRecordingContext &frame, void *user);
     static void record_transparent(const FrameRecordingContext &frame, void *user);
+    static void prepare_light_grid(const FrameRecordingContext &frame, void *user);
     static void record_local_lights(const FrameRecordingContext &frame, void *user);
     static void record_level_visuals(const FrameRecordingContext &frame, void *user);
     static void record_readback(VkCommandBuffer command, VkImage image, VkExtent2D extent, void *user);
@@ -250,7 +252,10 @@ class VulkanGameDevice
     bool ui_recorded_{true};
     bool launch_settings_applied_{};
     std::string ui_error_;
+    LightGrid light_grid_;
     std::vector<ModelDraw> model_draws_;
+    std::vector<ModelDraw> shadow_model_draws_;
+    std::unordered_multimap<const GpuModel *, size_t> shadow_draw_lookup_;
     std::vector<ParticleDraw> particle_draws_;
     std::vector<VulkanRainRender *> rain_draws_;
     std::vector<VulkanThunderboltRender *> thunderbolt_draws_;

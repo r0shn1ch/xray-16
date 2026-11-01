@@ -979,7 +979,7 @@ bool DeferredPass::record_skinned(const FrameRecordingContext &frame, VkBuffer v
                                   const float *normal_rows, float detail_scale, const float *environment_camera,
                                   const TextureMatrixSet *matrices) const
 {
-    command_cache_.end();
+    command_cache_.invalidate();
     const auto *pair = game_pipeline(vertex_name, fragment_name);
     if (!pair || !pair->skinned || pair->mode != mode || pair->hud != hud ||
         (hud || mode == SurfaceMode::Transparent ? !lighting_compatible(frame) : frame.render_pass != geometry_pass_) ||
@@ -1506,7 +1506,7 @@ bool DeferredPass::record_hud(const FrameRecordingContext &frame, VkBuffer verti
                               uint32_t first_index, const char *vertex_name, const char *fragment_name, float alpha_ref,
                               const float *normal_rows, int32_t vertex_base, const TextureMatrixSet *matrices) const
 {
-    command_cache_.end();
+    command_cache_.invalidate();
     VkPipeline pipeline = hud_;
     if (vertex_name || fragment_name)
     {
@@ -1550,7 +1550,7 @@ bool DeferredPass::record_lighting(const FrameRecordingContext &frame, VkDescrip
                                    const DeferredLight &light, VkDescriptorSet weather_set,
                                    const WeatherLighting *weather) const
 {
-    command_cache_.end();
+    command_cache_.invalidate();
     if (!lighting_ || frame.render_pass != light_pass_ || !frame.command_buffer || !frame.extent.width ||
         !frame.extent.height || !gbuffer_set || !vk_.cmd_draw)
         return false;
@@ -1574,7 +1574,7 @@ bool DeferredPass::record_lighting(const FrameRecordingContext &frame, VkDescrip
 bool DeferredPass::record_local_light(const FrameRecordingContext &frame, VkDescriptorSet gbuffer_set,
                                       VkDescriptorSet local_set, const VkRect2D &scissor) const
 {
-    command_cache_.end();
+    command_cache_.invalidate();
     if (!local_light_pipeline_ || frame.render_pass != light_pass_ || !frame.command_buffer || !gbuffer_set ||
         !local_set)
         return false;
@@ -1605,7 +1605,7 @@ bool DeferredPass::initialize_distortion(VkShaderModule vertex, VkShaderModule f
 bool DeferredPass::record_distortion(const FrameRecordingContext &frame, VkBuffer vertices, VkBuffer indices,
                                      uint32_t index_count, const float (&mvp)[16], VkDescriptorSet material) const
 {
-    command_cache_.end();
+    command_cache_.invalidate();
     if (!distortion_pipeline_ || !lighting_compatible(frame) || !frame.command_buffer ||
         frame.image_index >= water_sets_.size() || !water_sets_[frame.image_index] || !vertices || !indices ||
         !index_count || !material || !frame.extent.width || !frame.extent.height)
@@ -1632,7 +1632,7 @@ bool DeferredPass::record_water(const FrameRecordingContext &frame, VkBuffer ver
                                 uint32_t index_count, const float (&mvp)[16], VkDescriptorSet material,
                                 uint32_t first_index, float time, float opacity, int32_t vertex_base) const
 {
-    command_cache_.end();
+    command_cache_.invalidate();
     if (!water_pipeline_ || !lighting_compatible(frame) || !frame.command_buffer ||
         frame.image_index >= water_sets_.size() || !water_sets_[frame.image_index] || !vertices || !indices ||
         !index_count || !material || !frame.extent.width || !frame.extent.height)
@@ -1658,7 +1658,7 @@ bool DeferredPass::record_water(const FrameRecordingContext &frame, VkBuffer ver
 void DeferredPass::destroy()
 {
     pipeline_lookup_cache_.clear();
-    command_cache_.end();
+    command_cache_.invalidate();
     game_pipeline_request_ = {};
     release_forward_sets();
     release_water_sets();

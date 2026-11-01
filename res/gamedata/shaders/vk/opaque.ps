@@ -1,5 +1,9 @@
+#include "LightingLimits.h"
 [[vk::binding(0, 0)]] Texture2D<float4> diffuse : register(t0);
-[[vk::binding(1, 0)]] SamplerState diffuse_sampler : register(s1);
+// Material maps repeat and select mip levels independently of the clamped,
+// level-zero lightmap sampler carried by binding 1.
+[[vk::binding(0, 0)]] SamplerState diffuse_sampler : register(s0);
+[[vk::binding(1, 0)]] SamplerState lightmap_sampler : register(s1);
 #if defined(VK_LIGHTMAP)
 [[vk::binding(1, 0)]] Texture2D<float4> lightmap : register(t1);
 #endif
@@ -146,12 +150,21 @@ float3 unpack_bump(float4 main_map, float4 auxiliary)
 
 float3 model_surface_normal(Fragment fragment, float2 uv, float3 tangent_normal)
 {
-    float3 geometric = normalize(fragment.normal);
-    // OGF tangent frames are independent of camera position and pixel derivatives.
-    if (dot(fragment.tangent, fragment.tangent) > 1e-12 &&
-        dot(fragment.bitangent, fragment.bitangent) > 1e-12)
-        return normalize(fragment.tangent * tangent_normal.x +
-            fragment.bitangent * tangent_normal.y + fragment.normal * tangent_normal.z);
+    float3 geometric = finite_normal(fragment.normal, float3(0, 1, 0));
+    float3 tangent = fragment.tangent - geometric * dot(geometric, fragment.tangent);
+    float3 bitangent = fragment.bitangent - geometric * dot(geometric, fragment.bitangent);
+    float t2 = dot(tangent, tangent), b2 = dot(bitangent, bitangent);
+    float determinant = dot(cross(geometric, tangent), bitangent);
+    // Finite but collapsed authored frames are just as invalid as missing
+    // frames. Preserve UV handedness and remove interpolation/scale skew.
+    if (t2 > 1e-12 && b2 > 1e-12 && t2 < 1e20 && b2 < 1e20 &&
+        determinant * determinant > t2 * b2 * 1e-6)
+    {
+        tangent *= rsqrt(t2);
+        bitangent = cross(geometric, tangent) * (determinant < 0 ? -1.0 : 1.0);
+        return finite_normal(tangent * tangent_normal.x + bitangent * tangent_normal.y +
+            geometric * tangent_normal.z, geometric);
+    }
     return surface_normal(geometric, fragment.world_position, uv, tangent_normal);
 }
 
@@ -178,7 +191,7 @@ cbuffer ForwardLighting
     float4 fog_end_camera;
     float4 ambient_color;
     float4 hemi_color;
-    LocalLight local_lights[16];
+    LocalLight local_lights[XRAY_VK_MAX_LOCAL_LIGHTS];
 };
 #if defined(VK_SKINNED)
 [[vk::binding(4, 3)]] TextureCube<float4> weather_environment_a : register(t20);
@@ -305,7 +318,7 @@ float4 main(Fragment fragment) : SV_Target0
     // CoP's regular dynamic-sun renderer uses the lightmap alpha for hemi.
     // The green channel is only used with USE_R2_STATIC_SUN, which this
     // renderer does not enable.
-    float4 baked_light = lightmap.Sample(diffuse_sampler, fragment.lightmap_uv);
+    float4 baked_light = lightmap.Sample(lightmap_sampler, fragment.lightmap_uv);
     hemisphere = baked_light.a;
 #endif
     float3 illumination = ambient_color.rgb + hemi_color.rgb * hemisphere +
@@ -341,7 +354,7 @@ float4 main(Fragment fragment) : SV_Target0
                 environment_specular_factor(hemisphere, angle, material) * gloss;
         }
     }
-    for (int i = 0; i < min(int(sun_color_count.w), 16); ++i)
+    for (int i = 0; i < min(int(sun_color_count.w), XRAY_VK_MAX_LOCAL_LIGHTS); ++i)
     {
         float3 delta = world - local_lights[i].position_range.xyz;
         float distance = length(delta);
@@ -432,7 +445,7 @@ GBuffer main(Fragment fragment, bool front_face : SV_IsFrontFace)
                dot(float4(normalize(fragment.normal), 1.0), environment_matrix_v)) :
         matrix_uv(fragment.uv, environment_matrix_u, environment_matrix_v);
     float3 env = environment_2d.Sample(diffuse_sampler, environment_uv).rgb;
-    output.albedo.rgb = saturate(lightmap.Sample(diffuse_sampler, fragment.lightmap_uv).rgb +
+    output.albedo.rgb = saturate(lightmap.Sample(lightmap_sampler, fragment.lightmap_uv).rgb +
         env * environment_factor.rgb);
 #endif
 #if defined(VK_TERRAIN)
@@ -521,9 +534,17 @@ GBuffer main(Fragment fragment, bool front_face : SV_IsFrontFace)
     if (surface_modes.x >= 2.0 || surface_modes.y > 0.5 || surface_modes.z > 0.5 || surface_factors.w > 0.0)
         fragment.normal = model_surface_normal(fragment, base_uv, mapped_normal);
 #if defined(VK_LIGHTMAP)
-    float4 indirect = lightmap.Sample(diffuse_sampler, fragment.lightmap_uv);
+#if defined(VK_TERRAIN)
+    // Original deffer_impl_flat stores terrain hemi in D.w (base alpha).
+    // Its s_lmap uses base UV, not the level lightmap-atlas coordinates.
+    float4 indirect = lightmap.Sample(lightmap_sampler, base_uv);
+    float hemisphere = saturate(output.albedo.a);
+#else
+    float4 indirect = lightmap.Sample(lightmap_sampler, fragment.lightmap_uv);
+    float hemisphere = indirect.a;
+#endif
     output.albedo.a = indirect.g;
-    output.normal = float4(normalize(fragment.normal) * 0.5 + 0.5, indirect.a * 0.75);
+    output.normal = float4(finite_normal(fragment.normal, float3(0,1,0)) * 0.5 + 0.5, hemisphere * 0.75);
 #else
     // Encode unlightmapped hemi above the static-lightmap alpha range.
     output.normal = float4(normalize(fragment.normal) * 0.5 + 0.5,

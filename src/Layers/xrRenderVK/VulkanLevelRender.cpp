@@ -1,6 +1,7 @@
 #include "xrEngine/stdafx.h"
 #include "VulkanLevelRender.h"
 #include "VulkanSettings.h"
+#include "ShadowStability.h"
 #include "VulkanGameDevice.h"
 #include "VulkanModelVisual.h"
 #include "SpecialVisuals.h"
@@ -1051,6 +1052,31 @@ void VulkanLevelRender::Calculate()
             renderable->renderable_Render(0, renderable);
         }
     }
+    // Casters are selected independently of the camera visibility pass. In
+    // first person the actor body and NPCs behind the camera never submit a
+    // color draw, but must still cast shadows into the visible scene.
+    if (g_pGamePersistent && psDeviceFlags.test(rsDrawDynamic))
+    {
+        xr_vector<ISpatial *> casters;
+        g_pGamePersistent->SpatialSpace.q_sphere(casters, 0, STYPE_RENDERABLE, camera_position,
+                                                 sun_shadow_span(quality_preset));
+        const auto submit_caster = [&](IRenderable *object) {
+            if (!object || !object->renderable_ShadowGenerate())
+                return;
+            auto &data = object->GetRenderData();
+            if (data.visual)
+                queue_visual(object, data.visual, data.xform, true);
+        };
+        for (ISpatial *spatial : casters)
+            submit_caster(spatial ? spatial->dcast_Renderable() : nullptr);
+        // CActor::setVisible(!HUDview()) also removes STYPE_RENDERABLE, so a
+        // spatial query alone cannot find the first-person body.
+        if (g_pGameLevel)
+        {
+            submit_caster(g_pGameLevel->CurrentEntity());
+            submit_caster(g_pGameLevel->CurrentViewEntity());
+        }
+    }
     if (g_pGameLevel && g_pGameLevel->pHUD)
         g_pGameLevel->pHUD->Render_Last(IRender::PrimaryContext);
 
@@ -1739,10 +1765,17 @@ IRenderVisual *VulkanLevelRender::model_CreateChild(pcstr name, IReader *data)
 
 void VulkanLevelRender::add_Visual(u32, IRenderable *root, IRenderVisual *visual, Fmatrix &world)
 {
+    queue_visual(root, visual, world, false);
+}
+
+void VulkanLevelRender::queue_visual(IRenderable *root, IRenderVisual *visual, Fmatrix &world, bool shadow_only)
+{
     R_ASSERT2(game_device_, "Vulkan level visuals require a bound gameplay device");
+    if (shadow_only && (particle_effects_.count(visual) || particle_groups_.count(visual)))
+        return;
     if (particle_effects_.count(visual) || particle_groups_.count(visual))
     {
-        const bool hud = root && root->renderable_HUD();
+        const bool hud = !shadow_only && root && root->renderable_HUD();
         const Fmatrix view_projection = hud ? hud_view_projection() : current_view_projection();
         Fvector camera_position;
         if (camera_state_.has_camera_position())
@@ -1784,7 +1817,7 @@ void VulkanLevelRender::add_Visual(u32, IRenderable *root, IRenderVisual *visual
                 }
     }
     R_ASSERT2(visual_index >= 0 || model, "Vulkan scene submission received a visual outside this renderer");
-    const bool hud = root && root->renderable_HUD();
+    const bool hud = !shadow_only && root && root->renderable_HUD();
     const Fmatrix view_projection = hud ? hud_view_projection() : current_view_projection();
     Fmatrix mvp;
     mvp.mul(view_projection, world);
@@ -1816,7 +1849,7 @@ void VulkanLevelRender::add_Visual(u32, IRenderable *root, IRenderVisual *visual
                                                                                    IKinematics *skeleton) {
             if (node.skeleton())
                 skeleton = node.skeleton();
-            if (node.has_lod() && lod < .33f)
+            if (!shadow_only && node.has_lod() && lod < .33f)
             {
                 std::array<std::array<float, 3>, 8> normals = node.lod_normals();
                 for (auto &normal : normals)
@@ -1832,15 +1865,15 @@ void VulkanLevelRender::add_Visual(u32, IRenderable *root, IRenderVisual *visual
                     select_lod_facet(normals, {center.x - camera_position.x, center.y - camera_position.y,
                                                center.z - camera_position.z});
                 game_device_->queue_model(node.lod_gpu(facet), skeleton, transform, hud, sort_distance, model_owner,
-                                          lod, &world, hemi_faces);
+                                          lod, &world, hemi_faces, shadow_only);
                 return;
             }
             if (node.has_gpu())
                 game_device_->queue_model(node.gpu(), skeleton, transform, hud, sort_distance, model_owner, lod, &world,
-                                          hemi_faces);
+                                          hemi_faces, shadow_only);
             for (const auto &child : node.children())
                 submit(*child, skeleton);
-            if (!node.linked().empty())
+            if (!shadow_only && !node.linked().empty())
             {
                 R_ASSERT2(node.linked_valid(), "Vulkan model has level references from an unloaded level");
                 for (uint32_t index : node.linked())
@@ -1849,7 +1882,7 @@ void VulkanLevelRender::add_Visual(u32, IRenderable *root, IRenderVisual *visual
         };
         submit(*model, nullptr);
     }
-    else
+    else if (!shadow_only)
         game_device_->queue_level_visual(static_cast<uint32_t>(visual_index), transform, hud, sort_distance, nullptr,
                                          lod);
 }

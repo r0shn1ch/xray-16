@@ -18,6 +18,10 @@ target_sources(xrRenderVK PRIVATE
     DetailAssets.h
     DeferredPass.cpp
     DeferredPass.h
+    LightGrid.cpp
+    LightingLimits.h
+    LightGrid.h
+    LightGridShaders.h
     DeferredFrame.cpp
     DeferredFrame.h
     ForwardLighting.h
