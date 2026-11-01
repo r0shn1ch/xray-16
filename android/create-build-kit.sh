@@ -10,6 +10,7 @@ output=${1:-"$repo_dir/build/openxray-android-build-kit-v$kit_version.tar.zst"}
 ndk_dir=${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}
 sdk_dir=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}
 deps_dir=${ANDROID_DEPS_PREFIX:-}
+deps_dir_arm64=${ANDROID_DEPS_PREFIX_ARM64:-}
 sdl_dir=${SDL2_ANDROID_HOME:-}
 gradle_bin=${GRADLE_BIN:-}
 gradle_cache_source=${XRAY_GRADLE_CACHE_SOURCE:-${GRADLE_USER_HOME:-}}
@@ -31,6 +32,10 @@ done
 [ -f "$ndk_dir/build/cmake/android.toolchain.cmake" ] || { echo "NDK is invalid: $ndk_dir" >&2; exit 2; }
 [ -x "$sdk_dir/platform-tools/adb" ] || { echo "SDK is invalid: $sdk_dir" >&2; exit 2; }
 [ -f "$deps_dir/lib/cmake/SDL2/SDL2Config.cmake" ] || { echo "dependency prefix is invalid: $deps_dir" >&2; exit 2; }
+if [ -n "$deps_dir_arm64" ] && [ ! -f "$deps_dir_arm64/lib/cmake/SDL2/SDL2Config.cmake" ]; then
+    echo "ARM64 dependency prefix is invalid: $deps_dir_arm64" >&2
+    exit 2
+fi
 [ -f "$sdl_dir/android-project/gradlew" ] || { echo "SDL2 source is invalid: $sdl_dir" >&2; exit 2; }
 [ -x "$gradle_bin" ] || { echo "Gradle is invalid: $gradle_bin" >&2; exit 2; }
 [ -d "$gradle_cache_source/caches/modules-2" ] || {
@@ -49,6 +54,10 @@ mkdir -p "$kit_dir/toolchain/android-sdk"
 cp -a "$sdk_dir/." "$kit_dir/toolchain/android-sdk/"
 mkdir -p "$kit_dir/toolchain/android-deps-armv7"
 cp -a "$deps_dir/." "$kit_dir/toolchain/android-deps-armv7/"
+if [ -n "$deps_dir_arm64" ]; then
+    mkdir -p "$kit_dir/toolchain/android-deps-arm64"
+    cp -a "$deps_dir_arm64/." "$kit_dir/toolchain/android-deps-arm64/"
+fi
 mkdir -p "$kit_dir/toolchain/SDL"
 cp -a "$sdl_dir/." "$kit_dir/toolchain/SDL/"
 gradle_dir=$(CDPATH= cd -- "$(dirname -- "$gradle_bin")/.." && pwd)
@@ -64,11 +73,23 @@ if [ -n "$qemu_i386" ] && [ -x "$qemu_i386" ]; then
 fi
 cp -a "$repo_dir/android/." "$kit_dir/harness/"
 
+if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/javac" ]; then
+    mkdir -p "$kit_dir/toolchain/java-17"
+    cp -aL "$JAVA_HOME/." "$kit_dir/toolchain/java-17/"
+fi
+if command -v glslc >/dev/null 2>&1; then
+    mkdir -p "$kit_dir/toolchain/host-tools/bin" "$kit_dir/toolchain/host-tools/lib"
+    cp -L "$(command -v glslc)" "$kit_dir/toolchain/host-tools/bin/glslc"
+    # Keep the shader compiler's non-system dependencies beside it.
+    ldd "$(command -v glslc)" | awk '/=> \/.*(shaderc|glslang|SPIRV)/ { print $3 }' | while IFS= read -r dependency; do
+        cp -L "$dependency" "$kit_dir/toolchain/host-tools/lib/"
+    done
+fi
 cp "$repo_dir/android/build-kit-env.sh" "$kit_dir/build-kit-env.sh"
 chmod +x "$kit_dir/build-kit-env.sh" "$kit_dir/harness/"*.sh
 
 {
-    echo "OpenXRay Android ARMv7 build kit"
+    echo "OpenXRay Android build kit"
     echo "kit_version=$kit_version"
     echo "source_commit=$(git -C "$repo_dir" rev-parse HEAD)"
     echo "source_branch=$(git -C "$repo_dir" rev-parse --abbrev-ref HEAD)"
@@ -76,6 +97,7 @@ chmod +x "$kit_dir/build-kit-env.sh" "$kit_dir/harness/"*.sh
     echo "ndk=$(basename "$ndk_dir")"
     echo "sdk=$(basename "$sdk_dir")"
     echo "dependencies=$(basename "$deps_dir")"
+    if [ -n "$deps_dir_arm64" ]; then echo "dependencies_arm64=$(basename "$deps_dir_arm64")"; fi
     echo "sdl=$(basename "$sdl_dir")"
     echo "gradle=$(basename "$gradle_dir")"
     echo "gradle_dependency_cache=embedded (offline mode enabled)"
@@ -85,6 +107,16 @@ chmod +x "$kit_dir/build-kit-env.sh" "$kit_dir/harness/"*.sh
     fi
 } > "$kit_dir/BUILD-MANIFEST.txt"
 
+python3 - "$kit_dir" <<'PYHASH'
+import hashlib, sys
+from pathlib import Path
+root=Path(sys.argv[1])
+with (root/"SHA256SUMS").open("w") as out:
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.name=="SHA256SUMS": continue
+        digest=hashlib.file_digest(path.open("rb"),"sha256").hexdigest()
+        out.write(f"{digest}  {path.relative_to(root)}\n")
+PYHASH
 mkdir -p "$(dirname "$output")"
 tar -C "$stage" -I 'zstd -T0 -10' -cf "$output" "openxray-android-build-kit-v$kit_version"
 sha256sum "$output"

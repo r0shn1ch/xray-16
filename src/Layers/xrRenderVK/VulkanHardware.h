@@ -16,6 +16,7 @@ struct HardwareDispatch
     PFN_vkGetPhysicalDeviceProperties get_physical_properties{};
     PFN_vkGetPhysicalDeviceFeatures get_physical_features{};
     PFN_vkGetPhysicalDeviceMemoryProperties get_memory_properties{};
+    PFN_vkGetPhysicalDeviceFormatProperties get_format_properties{};
 };
 
 struct PhysicalDevice
@@ -25,6 +26,7 @@ struct PhysicalDevice
     VkPhysicalDeviceFeatures features{};
     VkPhysicalDeviceMemoryProperties memory{};
     uint32_t graphics_present_family = UINT32_MAX;
+    VkQueueFlags graphics_queue_flags{};
     uint64_t local_memory_bytes{};
     int64_t score{};
 };
@@ -39,4 +41,7 @@ bool select_physical_device(VkInstance instance, VkSurfaceKHR surface,
     const HardwareDispatch& vk, PhysicalDevice& selected, std::string& error);
 bool create_logical_device(const PhysicalDevice& physical_device, const DeviceDispatch& vk,
     VkDevice& device, VkQueue& graphics_queue, std::string& error);
+// Requirements shared by the capability probe and gameplay device selection.
+bool supports_game_formats(VkPhysicalDevice device, PFN_vkGetPhysicalDeviceFormatProperties get,
+    const VkPhysicalDeviceProperties& properties, std::string& error);
 }

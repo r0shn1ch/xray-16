@@ -13,6 +13,8 @@
 
 #include "UIHelper.h"
 #include "xrUICore/XML/UITextureMaster.h"
+#include "xrEngine/device.h"
+#include "Include/xrRender/UIShader.h"
 
 UILoadingScreen::UILoadingScreen()
     : CUIWindow("UILoadingScreen"),
@@ -74,6 +76,27 @@ void UILoadingScreen::Initialize()
     loadingHeader = UIHelper::CreateStatic(uiXml, "loading_header", this, false);
     loadingTipNumber = UIHelper::CreateStatic(uiXml, "loading_tip_number", this, false);
     loadingTip = UIHelper::CreateStatic(uiXml, "loading_tip", this, false);
+#if defined(XR_PLATFORM_ANDROID)
+    if (strstr(Core.Params, "-renderer-vulkan") && loadingProgress)
+    {
+        auto& foreground = loadingProgress->m_UIProgressItem;
+        auto& background = loadingProgress->m_UIBackgroundItem;
+        Fvector2 foregroundSize{}, backgroundSize{};
+        const bool foregroundReady = foreground.GetShader() &&
+            foreground.GetShader()->GetBaseTextureResolution(foregroundSize);
+        const bool backgroundReady = background.GetShader() &&
+            background.GetShader()->GetBaseTextureResolution(backgroundSize);
+        const Frect& foregroundRect = foreground.GetTextureRect();
+        const Frect& backgroundRect = background.GetTextureRect();
+        Msg("[renderer-vulkan] loading.progress xml=%d ui=(%.1f,%.1f) size=(%.1f,%.1f) front=%d atlas=(%.0f,%.0f) rect=(%.0f,%.0f)-(%.0f,%.0f) back=%d atlas=(%.0f,%.0f) rect=(%.0f,%.0f)-(%.0f,%.0f)",
+            loaded ? 1 : 0, loadingProgress->GetWndPos().x, loadingProgress->GetWndPos().y,
+            loadingProgress->GetWidth(), loadingProgress->GetHeight(), foregroundReady ? 1 : 0,
+            foregroundSize.x, foregroundSize.y, foregroundRect.x1, foregroundRect.y1,
+            foregroundRect.x2, foregroundRect.y2, backgroundReady ? 1 : 0,
+            backgroundSize.x, backgroundSize.y, backgroundRect.x1, backgroundRect.y1,
+            backgroundRect.x2, backgroundRect.y2);
+    }
+#endif
 }
 
 void UILoadingScreen::Update(const int stagesCompleted, const int stagesTotal)
@@ -96,6 +119,10 @@ void UILoadingScreen::Update(const int stagesCompleted, const int stagesTotal)
 void UILoadingScreen::Draw()
 {
     ScopeLock scope(&loadingLock);
+    if (Device.dwPrecacheFrame && Device.dwPrecacheFrame % 10 == 0 && loadingProgress)
+        Msg("[load-trace] ui.loading.draw frame=%u precache=%u progress=%.1f shown=%d logo=%d",
+            Device.dwFrame, Device.dwPrecacheFrame, loadingProgress->GetProgressPos(),
+            IsShown() ? 1 : 0, loadingLogo && loadingLogo->IsShown() ? 1 : 0);
     CUIWindow::Draw();
 }
 

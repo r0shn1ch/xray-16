@@ -1,0 +1,44 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "../LightingLimits.h"
+layout(local_size_x = XRAY_VK_MAX_LOCAL_LIGHTS) in;
+struct PointLight
+{
+    vec4 position_range;
+    vec4 color;
+    ivec4 rectangle;
+};
+layout(set = 1, binding = 0, std430) readonly buffer Lights
+{
+    mat4 inverse_vp;
+    uvec4 shape;
+    PointLight lights[];
+}
+data;
+layout(set = 1, binding = 1, std430) writeonly buffer Tiles
+{
+    uint values[];
+}
+tiles;
+shared uint count;
+void main()
+{
+    uint lane = gl_LocalInvocationID.x;
+    if (lane == 0)
+        count = 0;
+    barrier();
+    ivec2 lo = ivec2(gl_WorkGroupID.xy) * XRAY_VK_LIGHT_TILE_SIZE, hi = lo + ivec2(XRAY_VK_LIGHT_TILE_SIZE);
+    uint base = (gl_WorkGroupID.y * data.shape.z + gl_WorkGroupID.x) * (XRAY_VK_MAX_LOCAL_LIGHTS + 1);
+    for (uint i = lane; i < data.shape.w; i += XRAY_VK_MAX_LOCAL_LIGHTS)
+    {
+        ivec4 r = data.lights[i].rectangle;
+        if (all(lessThan(lo, r.zw)) && all(lessThan(r.xy, hi)))
+        {
+            uint slot = atomicAdd(count, 1);
+            tiles.values[base + 1 + slot] = i;
+        }
+    }
+    barrier();
+    if (lane == 0)
+        tiles.values[base] = count;
+}

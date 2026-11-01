@@ -1,0 +1,30 @@
+#pragma once
+#include <array>
+#include <cmath>
+namespace xray::render::vulkan {
+struct ParticleSpriteCorner { float right, up, u, v; };
+struct ParticleSpriteBasis { std::array<float,3> right,up; };
+inline ParticleSpriteBasis particle_path_basis(std::array<float,3> direction,
+    const std::array<float,3>& camera_direction)
+{
+    const auto cross=[](const auto& a,const auto& b) { return std::array<float,3>{a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]}; };
+    const auto unit=[](auto& v) { const float n=std::sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);if(!std::isfinite(n)||n<1e-6f)return false;for(float& x:v)x/=n;return true; };
+    if(!unit(direction)) direction={0,1,0};
+    auto right=cross(direction,camera_direction);
+    if(!unit(right))
+    {
+        const std::array<float,3> axis=std::abs(direction[2])<.9f?std::array<float,3>{0,0,1}:std::array<float,3>{1,0,0};
+        right=cross(direction,axis);unit(right);
+    }
+    return {right,direction};
+}
+inline ParticleSpriteCorner particle_sprite_corner(unsigned corner, float sx, float sy, float angle)
+{
+    const float x = corner == 0 || corner == 3 ? -sx : sx;
+    const float y = corner < 2 ? -sy : sy;
+    const float sine = std::sin(angle), cosine = std::cos(angle);
+    // Match FillSprite_fpu: texture V=0 belongs to +CameraTop.
+    return {cosine*x-sine*y, sine*x+cosine*y,
+        corner == 0 || corner == 3 ? 0.f : 1.f, corner < 2 ? 1.f : 0.f};
+}
+}

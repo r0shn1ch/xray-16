@@ -1,0 +1,136 @@
+#pragma once
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+#include "SlidingWindows.h"
+
+namespace xray::render::vulkan
+{
+struct VisualRecord;
+enum class SurfaceMode : uint8_t
+{
+    Unresolved,
+    Opaque,
+    AlphaTest,
+    Transparent
+};
+inline bool use_fast_depth_proxy(SurfaceMode mode, uint8_t tessellation)
+{
+    return mode == SurfaceMode::Opaque && tessellation == 0;
+}
+
+// Decoded static subset of level.geom and the level's OGF visual table. The
+// caller supplies decompressed chunk payloads from the engine's IReader.
+struct LevelBytes
+{
+    const uint8_t *data{};
+    size_t size{};
+};
+
+enum class LevelGameProfile : uint8_t
+{
+    SoC,
+    CS,
+    CoP,
+    Unknown
+};
+const char *level_profile_name(LevelGameProfile profile);
+bool validate_level_header(LevelGameProfile profile, LevelBytes header, std::string &error);
+
+struct LevelMaterial
+{
+    std::string shader;
+    std::string textures;
+    SurfaceMode mode{SurfaceMode::Unresolved};
+};
+
+struct LevelVertex
+{
+    float position[3]{};
+    float normal[3]{};
+    float uv[2]{};
+    float lightmap_uv[2]{};
+    float baked[4]{1.f, 1.f, 1.f, 1.f};
+    int8_t tangent[4]{}, bitangent[4]{};
+};
+
+struct LevelModel
+{
+    uint16_t material{};
+    bool lightmap_uv{};
+    bool depth_only{}; // geomX may contain POSITION0 without shading attributes
+    std::vector<LevelVertex> vertices;
+    std::vector<uint32_t> indices;
+    std::vector<SlideWindow> windows;
+    std::shared_ptr<LevelModel> fast;
+};
+
+inline void offset_level_wallmark(LevelModel &model)
+{
+    // shared/wmark.h: NORMAL_SHIFT, in world-space metres. Keep this in the
+    // uploaded decal geometry so coplanar precision does not depend only on
+    // the hardware's depth-bias units. UVs and baked channels stay unchanged.
+    for (auto &vertex : model.vertices)
+        for (unsigned axis = 0; axis < 3; ++axis)
+            vertex.position[axis] += vertex.normal[axis] * .007f;
+}
+
+// The index of a visual in the level OGF table is stable. Hierarchies keep
+// their child references instead of duplicating every child as a scene draw.
+struct LevelVisual
+{
+    uint8_t type{};
+    int32_t mesh{-1};
+    std::array<float, 10> bounds{}; // OGF box min/max, sphere center/radius
+    std::vector<uint32_t> children;
+    std::array<int32_t, 8> lod_facets{-1, -1, -1, -1, -1, -1, -1, -1};
+    std::array<std::array<float, 3>, 8> lod_normals{};
+};
+
+struct LevelPortal
+{
+    uint16_t sector_front{};
+    uint16_t sector_back{};
+    std::vector<std::array<float, 3>> vertices;
+    std::array<float, 3> center{};
+    float radius{};
+};
+
+struct LevelSector
+{
+    uint32_t root{};
+    std::vector<uint16_t> portals;
+};
+
+struct LevelModelData
+{
+    LevelGameProfile profile{LevelGameProfile::Unknown};
+    std::vector<LevelMaterial> materials;
+    std::vector<LevelModel> models;
+    std::vector<LevelVisual> visuals;
+    std::vector<uint32_t> roots;
+    std::vector<LevelSector> sectors;
+    std::vector<LevelPortal> portals;
+};
+
+// Main geometry must decode completely. Incompatible optional fast geometry
+// can be omitted, leaving the full quality level.geom models available.
+bool load_level_models(LevelBytes shaders, LevelBytes vertex_buffers, LevelBytes index_buffers, LevelBytes visuals,
+                       LevelModelData &result, std::string &error, LevelBytes fast_vertex_buffers = {},
+                       LevelBytes fast_index_buffers = {}, LevelBytes tree_windows = {},
+                       bool *skipped_fast_geometry = nullptr, std::string *fast_fallback_reason = nullptr);
+bool load_game_level_models(LevelGameProfile profile, LevelBytes header, LevelBytes shaders, LevelBytes vertex_buffers,
+                            LevelBytes index_buffers, LevelBytes visuals, LevelModelData &result, std::string &error,
+                            LevelBytes fast_vertex_buffers = {}, LevelBytes fast_index_buffers = {},
+                            LevelBytes tree_windows = {});
+// Resolve a standalone visual's GCONTAINER against level.geom, using the
+// same bounds and index validation as the level visual table.
+bool load_container_model(LevelBytes vertex_buffers, LevelBytes index_buffers, const VisualRecord &visual,
+                          LevelModel &result, std::string &error, LevelBytes tree_windows = {},
+                          bool depth_only = false);
+bool parse_level_visibility(LevelBytes portals, LevelBytes sectors, LevelModelData &result, std::string &error);
+} // namespace xray::render::vulkan
