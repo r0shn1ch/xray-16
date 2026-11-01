@@ -20,7 +20,7 @@ int main()
     const VkSampler sampler = vk_mock::handle<VkSampler>(19);
     assert(pass.material(image, sampler, material, error));
     assert(pass.local_light_set(image, sampler, vk_mock::handle<VkBuffer>(20),
-        1024, 512, local, error));
+        1024, 512, local, error, image));
     assert(pass.water_set(0, image, image, image, sampler, sampler,
         vk_mock::handle<VkBuffer>(20), error));
     VkDescriptorSet gbuffer{};

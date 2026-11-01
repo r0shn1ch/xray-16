@@ -219,8 +219,7 @@ bool GpuModel::add_meshes(ModelGeometry &&geometry, const std::string &inherited
                 for (unsigned i = 0; i < mesh.geometry.skin_weights; ++i)
                     if (vertex.weights[i] > 0)
                         mesh.max_bone_index = std::max(mesh.max_bone_index, vertex.bones[i]);
-            if (mesh.gpu_skinning &&
-                !upload_buffer(device, queue, pool, memory, upload, mesh.geometry.vertices.data(),
+            if (!upload_buffer(device, queue, pool, memory, upload, mesh.geometry.vertices.data(),
                                mesh.geometry.vertices.size() * sizeof(ModelVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                                mesh.skinned_vertices, pending_, error))
                 return false;
@@ -514,50 +513,69 @@ bool GpuModel::record_shadow(const FrameRecordingContext &frame, const DeferredP
         if (mesh.geometry.mode == SurfaceMode::Transparent)
             continue;
         const bool skinned = mesh.geometry.type == 4 || mesh.geometry.type == 5;
-        BufferResource *vertices = &mesh.vertices[0];
+        VkDescriptorSet descriptor = VK_NULL_HANDLE;
+        VkBuffer vertices = mesh.vertices[0].handle();
         if (skinned)
         {
-            if (!skeleton)
+            if (!skeleton || !mesh.skinned_vertices.handle())
             {
-                error = "shadow skinning needs its skeleton";
+                error = "shadow requires GPU skinning vertices and a skeleton";
                 return false;
             }
-            auto &state = mesh.shadow_vertices[skeleton];
+            auto &state = mesh.poses[skeleton];
             auto &buffer = state.buffers[frame.frame_index];
-            if (!buffer.handle())
-                if (!buffer.initialize(device_, mesh.geometry.vertices.size() * sizeof(LevelVertex),
-                                       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                                       memory_, upload_.buffer, error))
-                    return false;
-            if (state.frames[frame.frame_index] != Device.dwFrame)
+            descriptor = state.descriptors[frame.frame_index];
+            if (state.shadow_frames[frame.frame_index] != Device.dwFrame)
             {
                 if (pose.empty())
                 {
                     skeleton->CalculateBones();
                     const size_t bones = skeleton->LL_BoneCount();
-                    if (!bones || bones > 256)
+                    if (!bones || bones > 256 || mesh.max_bone_index >= bones)
                     {
                         error = "invalid shadow skeleton";
                         return false;
                     }
-                    pose.resize(bones * 16);
+                    pose.resize((bones + 1) * 16, 0);
                     for (size_t i = 0; i < bones; ++i)
-                        std::memcpy(pose.data() + i * 16, &skeleton->LL_GetBoneInstance(u16(i)).mRenderTransform,
-                                    16 * sizeof(float));
+                        std::memcpy(pose.data() + i * 16, &skeleton->LL_GetBoneInstance(u16(i)).mRenderTransform, 64);
                 }
-                if (!skin_model_mesh(mesh.geometry, pose.data(), pose.size() / 16, state.scratch, error) ||
-                    !buffer.write(0, state.scratch.data(), state.scratch.size() * sizeof(LevelVertex), error))
+                if (mesh.max_bone_index >= pose.size() / 16 - 1)
+                {
+                    error = "shadow mesh bone is outside its pose";
                     return false;
-                state.frames[frame.frame_index] = Device.dwFrame;
+                }
+                const size_t bytes = pose.size() * sizeof(float);
+                if (!buffer.handle() &&
+                    !buffer.initialize(device_, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                       memory_, upload_.buffer, error))
+                    return false;
+                if (!state.descriptors[frame.frame_index] &&
+                    !pass_->pose_descriptor(buffer.handle(), bytes, state.descriptors[frame.frame_index], error))
+                    return false;
+                if (buffer.size() < bytes)
+                {
+                    error = "shadow pose grew after allocation";
+                    return false;
+                }
+                if (!buffer.write(0, pose.data(), bytes, error))
+                    return false;
+                state.shadow_frames[frame.frame_index] = Device.dwFrame;
+                descriptor = state.descriptors[frame.frame_index];
             }
-            vertices = &buffer;
+            vertices = mesh.skinned_vertices.handle();
         }
         const auto window = select_slide_window(mesh.geometry.windows, lod, mesh.geometry.indices.size());
-        if (!pass.record_sun_shadow(frame, vertices->handle(), mesh.indices.handle(), window.index_count, mvp,
-                                    mesh.material, mesh.geometry.mode == SurfaceMode::AlphaTest, window.offset,
-                                    float(mesh.alpha_ref) / 255.f))
+        if (!pass.record_sun_shadow(frame, vertices, mesh.indices.handle(), window.index_count, mvp, mesh.material,
+                                    mesh.geometry.mode == SurfaceMode::AlphaTest, window.offset,
+                                    float(mesh.alpha_ref) / 255.f, 0, descriptor))
+        {
+            if (error.empty())
+                error = "shadow pipeline/buffer mismatch type=" + std::to_string(mesh.geometry.type) +
+                        " skinned=" + std::to_string(skinned);
             return false;
+        }
     }
     return true;
 }
@@ -606,7 +624,6 @@ void GpuModel::release_instance(const IKinematics *skeleton)
             mesh.poses.erase(it);
         }
         mesh.instance_vertices.erase(skeleton);
-        mesh.shadow_vertices.erase(skeleton);
     }
 }
 

@@ -11,6 +11,7 @@
 #include "../src/Layers/xrRenderVK/DeferredShaders.h"
 #include "../src/Layers/xrRenderVK/LocalLightShaders.h"
 #include "../src/Layers/xrRenderVK/LocalShadowTargets.h"
+#include "../src/Layers/xrRenderVK/DetailInstance.h"
 #include <array>
 #include <algorithm>
 #include <cassert>
@@ -699,6 +700,32 @@ int main(int argc, char **argv)
                 write.pImageInfo = &local_images[i == 0 ? 0 : 1];
         }
         vkUpdateDescriptorSets(device, 3, local_writes, 0, nullptr);
+        const auto instanced_vertex = module("level_detail_instanced.vs.spv");
+        const DetailInstance detail_instances[]{detail_instance(-.5f, 0, .5f, 0, .6f),
+                                                detail_instance(.5f, 0, .5f, 3.14159265359f, .6f)};
+        buffer_info.size = sizeof(detail_instances);
+        buffer_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        VkBuffer instance_buffer{};
+        check(vkCreateBuffer(device, &buffer_info, nullptr, &instance_buffer));
+        vkGetBufferMemoryRequirements(device, instance_buffer, &required);
+        auto instance_memory =
+            memory.allocate(required, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        check(vkBindBufferMemory(device, instance_buffer, instance_memory, 0));
+        check(vkMapMemory(device, instance_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
+        std::memcpy(mapped, detail_instances, sizeof(detail_instances));
+        vkUnmapMemory(device, instance_memory);
+        const VkVertexInputBindingDescription instance_bindings[]{
+            vertex_binding, {1, sizeof(DetailInstance), VK_VERTEX_INPUT_RATE_INSTANCE}};
+        const VkVertexInputAttributeDescription instance_attributes[]{
+            attributes[0],
+            attributes[1],
+            attributes[2],
+            attributes[3],
+            attributes[4],
+            attributes[5],
+            attributes[6],
+            {9, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(DetailInstance, position_scale)},
+            {10, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(DetailInstance, rotation)}};
         bool inputs_initialized = false;
         bool cube_initialized = false;
         auto execute = [&](VkShaderModule fragment, const Push &push, bool use_cube = false,
@@ -723,6 +750,7 @@ int main(int argc, char **argv)
             const bool ui = custom_vertex == ui_vs;
             const bool weather = fragment == weather_ps;
             const bool local = fragment == local_fragment;
+            const bool instanced = custom_vertex == instanced_vertex;
             const bool wide = ui || weather;
             viewport.width = wide ? 128.f : sprite ? 2.f : 1.f;
             scissor.extent.width = wide ? 128 : sprite ? 2 : 1;
@@ -732,8 +760,13 @@ int main(int argc, char **argv)
                                    : weather ? weather_pipeline_layout
                                    : skinned ? skinned_pipeline_layout
                                              : pipeline_layout;
-            vertex_input.vertexAttributeDescriptionCount = ui ? 4 : 7;
-            vertex_input.pVertexAttributeDescriptions = ui ? ui_attributes : skinned ? skinned_attributes : attributes;
+            vertex_input.vertexAttributeDescriptionCount = instanced ? 9 : ui ? 4 : 7;
+            vertex_input.vertexBindingDescriptionCount = instanced ? 2 : 1;
+            vertex_input.pVertexBindingDescriptions = instanced ? instance_bindings : &vertex_binding;
+            vertex_input.pVertexAttributeDescriptions = instanced ? instance_attributes
+                                                        : ui      ? ui_attributes
+                                                        : skinned ? skinned_attributes
+                                                                  : attributes;
             depth.depthTestEnable = coplanar;
             depth.depthWriteEnable = coplanar;
             depth.depthCompareOp = xray::render::vulkan::geometry_depth_compare(false);
@@ -831,7 +864,9 @@ int main(int argc, char **argv)
             VkDeviceSize offset{};
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertices, &offset);
             vkCmdPushConstants(cmd, pipeline_info.layout, range.stageFlags, 0, weather ? 128 : sizeof(push), &push);
-            vkCmdDraw(cmd, sprite ? 6 : 3, 1, 0, 0);
+            if (instanced)
+                vkCmdBindVertexBuffers(cmd, 1, 1, &instance_buffer, &offset);
+            vkCmdDraw(cmd, sprite ? 6 : 3, instanced ? 2 : 1, 0, 0);
             vkCmdEndRenderPass(cmd);
             std::array<VkBufferImageCopy, 3> copies{};
             for (uint32_t i = 0; i < 3; ++i)
@@ -1517,6 +1552,45 @@ int main(int argc, char **argv)
         near(execute(local_fragment, push, false, weather_vs)[0][0], .1f, "local shadow blocks receiver");
         fill(memory, cube, {.75f, 0, 0, 1}, 6);
         near(execute(local_fragment, push, false, weather_vs)[0][0], lamp_value, "local shadow keeps visible receiver");
+        std::array<Vertex, 6> grass_quad{};
+        const float quad_positions[6][2]{{-1, -1}, {1, -1}, {-1, 1}, {-1, 1}, {1, -1}, {1, 1}};
+        for (unsigned i = 0; i < 6; ++i)
+        {
+            auto &v = grass_quad[i];
+            v.position[0] = quad_positions[i][0];
+            v.position[1] = quad_positions[i][1];
+            v.normal[2] = 1;
+            v.uv[0] = v.uv[1] = .5f;
+            v.lightmap_uv[0] = v.lightmap_uv[1] = .5f;
+            v.baked[3] = 1;
+        }
+        check(vkMapMemory(device, vertex_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
+        std::memcpy(mapped, grass_quad.data(), sizeof(grass_quad));
+        vkUnmapMemory(device, vertex_memory);
+        Push grass_push{};
+        for (unsigned i = 0; i < 16; i += 5)
+            grass_push.mvp[i] = 1;
+        fill(memory, input[0], {.7f, .3f, .2f, 1});
+        fill(memory, input[1], {.2f, .2f, .2f, .5f});
+        const auto grass_result = execute(flat, grass_push, false, instanced_vertex, true);
+        for (const auto &pixel : sprite_pixels)
+            near(pixel[0], .7f, "both grass instances retain prototype albedo");
+        near(grass_result[1][2], 1, "first grass normal uses instance yaw");
+        check(vkMapMemory(device, readback_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
+        float right_normal[4];
+        std::memcpy(right_normal, static_cast<char *>(mapped) + 256 * 16 + 16, 16);
+        vkUnmapMemory(device, readback_memory);
+        near(right_normal[2], 0, "second grass normal rotates independently");
+        fill(memory, input[0], {.7f, .3f, .2f, 0});
+        grass_push.threshold = .5f;
+        const auto grass_cutout = module("level_cutout.ps.spv");
+        execute(grass_cutout, grass_push, false, instanced_vertex, true);
+        for (const auto &pixel : sprite_pixels)
+            near(pixel[0], 0, "instanced cutout discards transparent grass texels");
+        vkDestroyShaderModule(device, grass_cutout, nullptr);
+        vkDestroyShaderModule(device, instanced_vertex, nullptr);
+        vkDestroyBuffer(device, instance_buffer, nullptr);
+        vkFreeMemory(device, instance_memory, nullptr);
         vkDestroyShaderModule(device, local_fragment, nullptr);
         vkDestroyBuffer(device, local_buffer, nullptr);
         vkFreeMemory(device, local_memory, nullptr);

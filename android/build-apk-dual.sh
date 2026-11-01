@@ -75,7 +75,8 @@ for generator in \
     embed_vulkan_weather_shader.py \
     embed_vulkan_water_shader.py \
     embed_vulkan_distortion_shaders.py \
-    embed_vulkan_local_light_shader.py; do
+    embed_vulkan_local_light_shader.py \
+    embed_vulkan_shadow_shaders.py; do
     python3 "$repo_dir/tools/$generator" --glslc "$glslc_bin"
 done
 if [ "$arm64_only" != ON ]; then

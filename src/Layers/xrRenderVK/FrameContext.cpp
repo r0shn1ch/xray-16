@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <limits>
 
 namespace xray::render::vulkan
@@ -933,6 +934,11 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
     FrameInterpassRecorder final_capture, void* final_capture_data,
     FrameRecorder final_overlay, void* final_overlay_data)
 {
+    using Clock = std::chrono::steady_clock;
+    const auto milliseconds = [](Clock::time_point begin) {
+        return std::chrono::duration<double, std::milli>(Clock::now() - begin).count();
+    };
+    m_cpu_timing = {};
     status = FrameStatus::Presented;
     if (!m_device || !m_swapchain)
     {
@@ -950,6 +956,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
     { error = "water overlay pass requires capture and overlay recorders"; return false; }
 
     crash_stage("vulkan frame: wait fence");
+    const auto fence_begin = Clock::now();
     VkFence frame_fence = m_frame_fences[m_current_frame];
     const VkResult fence_wait = m_vk.wait_for_fences(m_device, 1, &frame_fence, VK_TRUE, UINT64_MAX);
     if (fence_wait != VK_SUCCESS)
@@ -958,6 +965,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
         error = "could not wait for Vulkan frame fence";
         return false;
     }
+    m_cpu_timing.fence_ms = milliseconds(fence_begin);
     if (m_timestamp_pool && m_timestamp_submitted[m_current_frame])
     {
         uint64_t ticks[2]{};
@@ -973,9 +981,11 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
     }
 
     crash_stage("vulkan frame: acquire image");
+    const auto acquire_begin = Clock::now();
     uint32_t image_index = 0;
     const VkResult acquire = m_vk.acquire_next_image(m_device, m_swapchain, UINT64_MAX,
         m_image_available[m_current_frame], VK_NULL_HANDLE, &image_index);
+    m_cpu_timing.acquire_ms = milliseconds(acquire_begin);
     if (acquire == VK_ERROR_OUT_OF_DATE_KHR)
     {
         status = FrameStatus::RecreateRequired;
@@ -999,6 +1009,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
         return false;
     }
 
+    const auto image_fence_begin = Clock::now();
     VkFence image_fence = m_image_fences[image_index];
     if (image_fence && image_fence != frame_fence)
     {
@@ -1011,6 +1022,8 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
             return false;
         }
     }
+    m_cpu_timing.fence_ms += milliseconds(image_fence_begin);
+    const auto record_begin = Clock::now();
     crash_stage("vulkan frame: begin command buffer");
     VkCommandBuffer command = m_commands[image_index];
     const VkResult reset_command = m_vk.reset_command_buffer(command, 0);
@@ -1204,6 +1217,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
         error = "vkEndCommandBuffer failed";
         return false;
     }
+    m_cpu_timing.record_ms = milliseconds(record_begin);
     const VkResult reset_fence = m_vk.reset_fences(m_device, 1, &frame_fence);
     if (reset_fence != VK_SUCCESS)
     {
@@ -1223,7 +1237,9 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &m_render_finished[image_index];
     crash_stage("vulkan frame: queue submit");
+    const auto submit_begin = Clock::now();
     const VkResult submit_result = m_vk.queue_submit(m_queue, 1, &submit, frame_fence);
+    m_cpu_timing.submit_ms = milliseconds(submit_begin);
     if (submit_result != VK_SUCCESS)
     {
         m_device_lost = submit_result == VK_ERROR_DEVICE_LOST;
@@ -1241,7 +1257,9 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
     present.pSwapchains = &m_swapchain;
     present.pImageIndices = &image_index;
     crash_stage("vulkan frame: queue present");
+    const auto present_begin = Clock::now();
     const VkResult result = m_vk.queue_present(m_queue, &present);
+    m_cpu_timing.present_ms = milliseconds(present_begin);
     crash_stage("vulkan frame: presented");
     m_current_frame = (m_current_frame + 1) % FramesInFlight;
     if (mark_surface_lost(result, m_surface_lost, status))

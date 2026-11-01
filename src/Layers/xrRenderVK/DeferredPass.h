@@ -95,7 +95,7 @@ class DeferredPass
                     VkShaderModule shadow_vertex = VK_NULL_HANDLE, VkShaderModule shadow_opaque = VK_NULL_HANDLE,
                     VkShaderModule shadow_cutout = VK_NULL_HANDLE, VkRenderPass local_shadow_pass = VK_NULL_HANDLE,
                     VkShaderModule local_light_fragment = VK_NULL_HANDLE,
-                    VkShaderModule water_fragment = VK_NULL_HANDLE);
+                    VkShaderModule water_fragment = VK_NULL_HANDLE, VkShaderModule shadow_skin = VK_NULL_HANDLE);
     bool material(VkImageView albedo, VkSampler sampler, VkDescriptorSet &set, std::string &error);
     bool lightmapped_material(VkImageView albedo, VkImageView lightmap, VkSampler sampler, VkDescriptorSet &set,
                               std::string &error, VkSampler lightmap_sampler = VK_NULL_HANDLE);
@@ -201,10 +201,12 @@ class DeferredPass
                          const char *fragment_name = nullptr, float alpha_ref = 128.f / 255.f,
                          const float *normal_rows = nullptr, float terrain_scale = 1.f,
                          const float *environment_camera = nullptr, const float *environment_factor = nullptr,
-                         int32_t vertex_base = 0, const TextureMatrixSet *matrices = nullptr) const;
+                         int32_t vertex_base = 0, const TextureMatrixSet *matrices = nullptr,
+                         VkBuffer instances = VK_NULL_HANDLE, uint32_t instance_count = 1) const;
     bool record_sun_shadow(const FrameRecordingContext &frame, VkBuffer vertices, VkBuffer indices,
                            uint32_t index_count, const float (&mvp)[16], VkDescriptorSet material, bool alpha_test,
-                           uint32_t first_index = 0, float alpha_ref = 128.f / 255.f, int32_t vertex_base = 0) const;
+                           uint32_t first_index = 0, float alpha_ref = 128.f / 255.f, int32_t vertex_base = 0,
+                           VkDescriptorSet pose = VK_NULL_HANDLE) const;
     bool record_hud(const FrameRecordingContext &frame, VkBuffer vertices, VkBuffer indices, uint32_t index_count,
                     const float (&mvp)[16], VkDescriptorSet material_set, uint32_t first_index = 0,
                     const char *vertex_name = nullptr, const char *fragment_name = nullptr, float alpha_ref = 0.f,
@@ -263,6 +265,7 @@ class DeferredPass
     {
         return frame.render_pass == light_pass_ || (overlay_pass_ && frame.render_pass == overlay_pass_);
     }
+    VkPipeline shadow_skin_opaque_{}, shadow_skin_cutout_{};
     VkPipeline geometry_{}, alpha_test_{}, transparent_{}, hud_{}, lighting_{}, weather_pipeline_{}, shadow_opaque_{},
         shadow_cutout_{}, local_light_pipeline_{}, water_pipeline_{}, distortion_pipeline_{};
     std::unordered_map<std::string, GamePipeline> game_pipelines_;

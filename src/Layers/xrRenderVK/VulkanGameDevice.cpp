@@ -778,6 +778,12 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         ui_.reset_frame();
         return false;
     }
+    if (Device.dwFrame % 300 == 0)
+    {
+        const auto &timing = window_.frame().cpu_timing();
+        Msg("[renderer-vulkan] frame.cpu frame=%u fence=%.3f acquire=%.3f record=%.3f submit=%.3f present=%.3f",
+            Device.dwFrame, timing.fence_ms, timing.acquire_ms, timing.record_ms, timing.submit_ms, timing.present_ms);
+    }
     if (status == FrameStatus::RecreateRequired)
         reset_required_ = true;
     else if (screenshot_requested_ && readback_enabled_)
@@ -798,7 +804,7 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
     }
     if (!models_recorded_)
     {
-        error = model_error_;
+        error = model_error_.empty() ? "Vulkan model/shadow recording failed" : model_error_;
         return false;
     }
     if (!local_lights_recorded_)

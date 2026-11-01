@@ -17,7 +17,7 @@ def generate(compiler):
              "namespace xray::render::vulkan::shadow_shaders", "{"]
     with tempfile.TemporaryDirectory() as temporary:
         for name, file in (("Vertex", "shadow.vert"), ("Opaque", "shadow_opaque.frag"),
-                           ("Cutout", "shadow_cutout.frag")):
+                           ("Cutout", "shadow_cutout.frag"), ("SkinVertex", "shadow_skinned.vert")):
             output = Path(temporary) / (file + ".spv")
             subprocess.run([compiler, "--target-env=vulkan1.0", "-o", str(output),
                             str(SOURCE / file)], check=True, capture_output=True)

@@ -15,6 +15,10 @@
 
 struct Vertex
 {
+#if defined(VK_INSTANCED_DETAIL)
+    [[vk::location(9)]] float4 instance_position_scale : TEXCOORD9;
+    [[vk::location(10)]] float2 instance_rotation : TEXCOORD10;
+#endif
     [[vk::location(0)]] float3 position : POSITION;
     [[vk::location(1)]] float3 normal : NORMAL;
     [[vk::location(2)]] float2 uv : TEXCOORD0;
@@ -50,6 +54,15 @@ float3 rotate_object(float3 value)
 Fragment main(Vertex vertex)
 {
     Fragment fragment;
+#if defined(VK_INSTANCED_DETAIL)
+    float c = vertex.instance_rotation.x, s = vertex.instance_rotation.y;
+    float3 p = vertex.position * vertex.instance_position_scale.w;
+    vertex.position = float3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z) + vertex.instance_position_scale.xyz;
+    float3 n = vertex.normal, t = vertex.tangent, b = vertex.bitangent;
+    vertex.normal = float3(c * n.x + s * n.z, n.y, -s * n.x + c * n.z);
+    vertex.tangent = float3(c * t.x + s * t.z, t.y, -s * t.x + c * t.z);
+    vertex.bitangent = float3(c * b.x + s * b.z, b.y, -s * b.x + c * b.z);
+#endif
     // VK_TREE_STATIC is the D_TREE Object LOD (tree_s) route. Unlike an
     // animated tree, the decoded geometry is already in world space; leave
     // the position, normal and UV untouched for every sliding window.

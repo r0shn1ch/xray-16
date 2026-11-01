@@ -611,7 +611,7 @@ int main()
         false, false, true, false, nullptr, nullptr, nullptr, true) &&
         error.find("invalid Tessellation token") != std::string::npos);
     assert(library.resolve("models\\glass", mode, error) && mode == SurfaceMode::Transparent);
-    assert(library.resolve("detail\\solid", mode, error) && mode == SurfaceMode::Opaque);
+    assert(library.resolve("detail\\solid", mode, error) && mode == SurfaceMode::AlphaTest);
     assert(library.resolve("mod\\plain_vertex", mode, error) && mode == SurfaceMode::Opaque);
     MaterialDefinition lightmapped_detail_definition;
     assert(library.resolve("mod\\lightmapped_detail", mode, error, nullptr, nullptr,

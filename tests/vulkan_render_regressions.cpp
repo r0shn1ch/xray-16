@@ -9,12 +9,19 @@
 #include "src/Layers/xrRenderVK/ResourceRetirement.h"
 #include "src/Layers/xrRenderVK/ObjectVisibility.h"
 #include "src/Layers/xrRenderVK/TangentBasis.h"
+#include "src/Layers/xrRenderVK/DetailInstance.h"
 #include <cassert>
 #include <array>
 #include <cmath>
 using namespace xray::render::vulkan;
 int main()
 {
+    const auto blade = detail_instance(10, 2, 3, 1.57079632679f, 2);
+    const float point[]{1, 0, 0};
+    const auto transformed = detail_transform(blade, point);
+    assert(std::abs(transformed[0] - 10) < 1e-5f && std::abs(transformed[1] - 2) < 1e-5f &&
+           std::abs(transformed[2] - 1) < 1e-5f);
+    assert(sizeof(DetailInstance) * 10000 < sizeof(LevelVertex) * 4 * 10000);
     struct Retired
     {
         int *count;

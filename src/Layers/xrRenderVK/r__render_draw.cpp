@@ -10,6 +10,9 @@
 #include "TransparentDrawOrder.h"
 #include "VulkanGameLightingMath.h"
 #include "VulkanSettings.h"
+#include "Include/xrRender/Kinematics.h"
+#include "Include/xrRender/RenderVisual.h"
+#include "xrCDB/Frustum.h"
 #include "xrEngine/x_ray.h"
 
 #include <algorithm>
@@ -424,6 +427,7 @@ void VulkanGameDevice::record_hud(const FrameRecordingContext &frame, void *user
 void VulkanGameDevice::record_shadow_models(const FrameRecordingContext &frame, const float (&vp)[16], void *user)
 {
     auto &owner = *static_cast<VulkanGameDevice *>(user);
+    PassCpuSample timing{"shadow-models", owner.deferred_, owner.deferred_.draw_calls()};
     Fmatrix light;
     std::memcpy(&light, vp, sizeof(light));
     for (auto &draw : owner.model_draws_)
@@ -433,6 +437,18 @@ void VulkanGameDevice::record_shadow_models(const FrameRecordingContext &frame, 
         Fmatrix world, mvp;
         std::memcpy(&world, draw.world.data(), sizeof(world));
         mvp.mul(light, world);
+        if (draw.skeleton)
+        {
+            draw.skeleton->CalculateBones();
+            const auto &sphere = draw.skeleton->dcast_RenderVisual()->getVisData().sphere;
+            if (std::isfinite(sphere.R) && sphere.R > 0)
+            {
+                CFrustum frustum;
+                frustum.CreateFromMatrix(mvp, FRUSTUM_P_LRTB | FRUSTUM_P_NEAR | FRUSTUM_P_FAR);
+                if (!frustum.testSphere_dirty(sphere.P, sphere.R))
+                    continue;
+            }
+        }
         float transform[16];
         std::memcpy(transform, &mvp, sizeof(mvp));
         if (!draw.model->record_shadow(frame, owner.deferred_, transform, draw.skeleton, owner.model_error_, draw.lod))

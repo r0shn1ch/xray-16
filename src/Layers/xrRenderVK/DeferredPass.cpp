@@ -5,6 +5,7 @@
 #include "ModelGeometry.h"
 #include "ModelPoseConstants.h"
 #include "GeometryDepth.h"
+#include "DetailInstance.h"
 #include "xrEngine/device.h"
 #if defined(XR_PLATFORM_ANDROID)
 #include "xrEngine/x_ray.h"
@@ -40,6 +41,7 @@ enum class PipelineFlag : uint32_t
     ReplaceNoDepth = 1u << 14,
     HudSetNoDepthWrite = 1u << 15,
     Cutout = 1u << 16,
+    Instanced = 1u << 17,
 };
 constexpr PipelineFlag operator|(PipelineFlag a, PipelineFlag b)
 {
@@ -106,11 +108,27 @@ bool make_pipeline(VkDevice device, VkRenderPass pass, VkPipelineLayout layout, 
         attributes[6],
         {7, 0, VK_FORMAT_R8G8B8A8_SNORM, offsetof(LevelVertex, tangent)},
         {8, 0, VK_FORMAT_R8G8B8A8_SNORM, offsetof(LevelVertex, bitangent)}};
+    const bool instanced = has(options, PipelineFlag::Instanced);
+    const VkVertexInputBindingDescription instance_bindings[]{
+        binding, {1, sizeof(DetailInstance), VK_VERTEX_INPUT_RATE_INSTANCE}};
+    const VkVertexInputAttributeDescription instance_attributes[]{
+        static_attributes[0],
+        static_attributes[1],
+        static_attributes[2],
+        static_attributes[3],
+        static_attributes[4],
+        static_attributes[5],
+        static_attributes[6],
+        {9, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(DetailInstance, position_scale)},
+        {10, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(DetailInstance, rotation)}};
     VkPipelineVertexInputStateCreateInfo inputs{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-    inputs.vertexBindingDescriptionCount = geometry_input ? 1 : 0;
-    inputs.pVertexBindingDescriptions = geometry_input ? &binding : nullptr;
-    inputs.vertexAttributeDescriptionCount = geometry_input ? 7 : 0;
-    inputs.pVertexAttributeDescriptions = geometry_input ? (skinned ? skinned_attributes : static_attributes) : nullptr;
+    inputs.vertexBindingDescriptionCount = geometry_input ? (instanced ? 2 : 1) : 0;
+    inputs.pVertexBindingDescriptions = geometry_input ? (instanced ? instance_bindings : &binding) : nullptr;
+    inputs.vertexAttributeDescriptionCount = geometry_input ? (instanced ? 9 : 7) : 0;
+    inputs.pVertexAttributeDescriptions = geometry_input ? (instanced ? instance_attributes
+                                                            : skinned ? skinned_attributes
+                                                                      : static_attributes)
+                                                         : nullptr;
     VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     VkPipelineViewportStateCreateInfo viewport{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
@@ -123,8 +141,8 @@ bool make_pipeline(VkDevice device, VkRenderPass pass, VkPipelineLayout layout, 
     // Depth precision on shallow terrain slopes otherwise produces long,
     // repeating self-shadow bands. Apply bias while writing shadow depth,
     // in addition to the small receiver bias used by the lighting shader.
-    const auto bias = geometry_depth_bias(shadow, wallmark,
-                                          (gbuffer && cutout) || (transparent && geometry_input && !water_depth_write));
+    const auto bias = geometry_depth_bias(
+        shadow, wallmark, (gbuffer && cutout && !instanced) || (transparent && geometry_input && !water_depth_write));
     raster.depthBiasEnable = bias.enabled;
     raster.depthBiasConstantFactor = bias.constant;
     raster.depthBiasSlopeFactor = bias.slope;
@@ -342,7 +360,8 @@ bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRen
                               VkShaderModule weather_fragment, const ScenePassDispatch &dispatch, std::string &error,
                               VkRenderPass shadow_pass, VkShaderModule shadow_vertex, VkShaderModule shadow_opaque,
                               VkShaderModule shadow_cutout, VkRenderPass local_shadow_pass,
-                              VkShaderModule local_light_fragment, VkShaderModule water_fragment)
+                              VkShaderModule local_light_fragment, VkShaderModule water_fragment,
+                              VkShaderModule shadow_skin)
 {
     destroy();
     if (!device || !geometry_pass || !light_pass || !geometry_vertex || !geometry_fragment || !alpha_test_fragment ||
@@ -538,6 +557,17 @@ bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRen
          !make_pipeline(device, light_pass, local_light_layout_, light_vertex, local_light_fragment,
                         PipelineFlag::Additive, vk_, local_light_pipeline_, error, "local light")))
         goto failed;
+    if (shadow_pass && shadow_skin &&
+        (!make_pipeline(device, shadow_pass, skinned_layout_, shadow_skin, shadow_opaque,
+                        PipelineFlag::Geometry | PipelineFlag::Shadow | PipelineFlag::Skinned, vk_, shadow_skin_opaque_,
+                        error, "GPU skinned shadow") ||
+         !make_pipeline(device, shadow_pass, skinned_layout_, shadow_skin, shadow_cutout,
+                        PipelineFlag::Geometry | PipelineFlag::Shadow | PipelineFlag::Skinned, vk_, shadow_skin_cutout_,
+                        error, "GPU skinned cutout shadow")))
+    {
+        destroy();
+        return false;
+    }
     if (water_fragment &&
         !make_pipeline(device, light_pass, water_layout_, geometry_vertex, water_fragment,
                        PipelineFlag::Geometry | PipelineFlag::Transparent | PipelineFlag::WaterDepthWrite, vk_,
@@ -811,7 +841,8 @@ bool DeferredPass::create_game_pipeline(const std::string &vertex_name, const st
     if (!make_pipeline(
             device_, transparent || hud ? light_pass_ : geometry_pass_, skinned ? skinned_layout_ : geometry_layout_,
             vertex, fragment,
-            PipelineFlag::Geometry | (!transparent && !hud ? PipelineFlag::GBuffer : PipelineFlag::None) |
+            (vertex_name == "vk\\level_detail_instanced.vs" ? PipelineFlag::Instanced : PipelineFlag::None) |
+                PipelineFlag::Geometry | (!transparent && !hud ? PipelineFlag::GBuffer : PipelineFlag::None) |
                 (transparent ? PipelineFlag::Transparent : PipelineFlag::None) |
                 (hud ? PipelineFlag::Hud : PipelineFlag::None) |
                 (skinned ? PipelineFlag::Skinned : PipelineFlag::None) |
@@ -1310,8 +1341,11 @@ bool DeferredPass::record_geometry(const FrameRecordingContext &frame, VkBuffer 
                                    const char *fragment_name, float alpha_ref, const float *normal_rows,
                                    float terrain_scale, const float *environment_camera,
                                    const float *environment_factor, int32_t vertex_base,
-                                   const TextureMatrixSet *matrices) const
+                                   const TextureMatrixSet *matrices, VkBuffer instances, uint32_t instance_count) const
 {
+    const bool instanced = vertex_name && std::strcmp(vertex_name, "vk\\level_detail_instanced.vs") == 0;
+    if (instanced != bool(instances) || !instance_count)
+        return false;
     if (mode == SurfaceMode::Transparent)
         return false;
     VkPipeline pipeline = mode == SurfaceMode::AlphaTest ? alpha_test_ : geometry_;
@@ -1354,28 +1388,39 @@ bool DeferredPass::record_geometry(const FrameRecordingContext &frame, VkBuffer 
                                 environment_factor);
     }
     push_texture_matrices(frame, geometry_layout_, matrices, normal_rows);
-    vk_.cmd_draw_indexed(frame.command_buffer, index_count, 1, first_index, vertex_base, 0);
+    if (instances)
+    {
+        const VkDeviceSize offset = 0;
+        vk_.cmd_bind_vertex_buffers(frame.command_buffer, 1, 1, &instances, &offset);
+    }
+    vk_.cmd_draw_indexed(frame.command_buffer, index_count, instance_count, first_index, vertex_base, 0);
     ++draw_calls_;
-    triangles_ += index_count / 3;
+    triangles_ += index_count / 3 * instance_count;
     return true;
 }
 
 bool DeferredPass::record_sun_shadow(const FrameRecordingContext &frame, VkBuffer vertices, VkBuffer indices,
                                      uint32_t index_count, const float (&mvp)[16], VkDescriptorSet material,
-                                     bool alpha_test, uint32_t first_index, float alpha_ref, int32_t vertex_base) const
+                                     bool alpha_test, uint32_t first_index, float alpha_ref, int32_t vertex_base,
+                                     VkDescriptorSet pose) const
 {
-    const VkPipeline pipeline = alpha_test ? shadow_cutout_ : shadow_opaque_;
+    const VkPipeline pipeline = pose ? (alpha_test ? shadow_skin_cutout_ : shadow_skin_opaque_)
+                                     : (alpha_test ? shadow_cutout_ : shadow_opaque_);
+    const auto layout = pose ? skinned_layout_ : geometry_layout_;
     if (!pipeline || !frame.command_buffer ||
         (frame.render_pass != shadow_pass_ && frame.render_pass != local_shadow_pass_) || !vertices || !indices ||
         !material || !index_count)
         return false;
-    command_cache_.bind(vk_, frame, pipeline, geometry_layout_, vertices, indices, material);
-    command_cache_.push(vk_, frame.command_buffer, geometry_layout_,
-                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(mvp), mvp);
+    command_cache_.bind(vk_, frame, pipeline, layout, vertices, indices, material);
+    command_cache_.push(vk_, frame.command_buffer, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                        sizeof(mvp), mvp);
     if (alpha_test)
-        command_cache_.push(vk_, frame.command_buffer, geometry_layout_,
+        command_cache_.push(vk_, frame.command_buffer, layout,
                             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(mvp), sizeof(alpha_ref),
                             &alpha_ref);
+    if (pose)
+        vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 1, 1, &pose, 0,
+                                     nullptr);
     vk_.cmd_draw_indexed(frame.command_buffer, index_count, 1, first_index, vertex_base, 0);
     ++draw_calls_;
     triangles_ += index_count / 3;
@@ -1635,6 +1680,10 @@ void DeferredPass::destroy()
             vk_.destroy_pipeline(device_, lighting_, nullptr);
         if (weather_pipeline_)
             vk_.destroy_pipeline(device_, weather_pipeline_, nullptr);
+        if (shadow_skin_opaque_)
+            vk_.destroy_pipeline(device_, shadow_skin_opaque_, nullptr);
+        if (shadow_skin_cutout_)
+            vk_.destroy_pipeline(device_, shadow_skin_cutout_, nullptr);
         if (shadow_opaque_)
             vk_.destroy_pipeline(device_, shadow_opaque_, nullptr);
         if (shadow_cutout_)
@@ -1685,6 +1734,7 @@ void DeferredPass::destroy()
     device_ = VK_NULL_HANDLE;
     geometry_pass_ = light_pass_ = shadow_pass_ = local_shadow_pass_ = overlay_pass_ = VK_NULL_HANDLE;
     geometry_ = alpha_test_ = transparent_ = hud_ = lighting_ = weather_pipeline_ = VK_NULL_HANDLE;
+    shadow_skin_opaque_ = shadow_skin_cutout_ = VK_NULL_HANDLE;
     shadow_opaque_ = shadow_cutout_ = VK_NULL_HANDLE;
     local_light_pipeline_ = VK_NULL_HANDLE;
     water_pipeline_ = VK_NULL_HANDLE;

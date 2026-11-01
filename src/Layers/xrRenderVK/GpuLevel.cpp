@@ -1,6 +1,7 @@
 #include "xrEngine/stdafx.h"
 #include "GpuLevel.h"
 #include "TangentBasis.h"
+#include "DetailInstance.h"
 #include "LevelLightmap.h"
 #include "VulkanSettings.h"
 #include "PackedLevelGeometry.h"
@@ -171,7 +172,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
     prepared.meshes_.reserve(models.models.size());
     const auto upload_start = std::chrono::steady_clock::now();
     size_t uploaded_models = 0;
-    bool direct_upload = true;
+    [[maybe_unused]] bool direct_upload = true;
     const auto upload_geometry = [&](const void *data, size_t bytes, VkBufferUsageFlags usage,
                                      BufferResource &destination) -> bool {
 #if defined(XR_PLATFORM_ANDROID)
@@ -653,6 +654,8 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
             error = "level.details / " + prototype.shader + ": " + error;
             return false;
         }
+        if (mesh.mode != SurfaceMode::Transparent)
+            mesh.pass_graph.passes[0].vertex = "vk\\level_detail_instanced.vs";
         const auto &node = mesh.pass_graph.passes[0];
         bool material_ready = false;
         if (surface_roles)
@@ -813,9 +816,13 @@ bool GpuLevel::record_sun_shadow(const FrameRecordingContext &frame, const Defer
                                  const float (&sun_mvp)[16]) const
 {
     auto command_batch = pass.geometry_batch();
+    std::vector<uint8_t> visited(visuals_.size(), 0);
     const auto draw = [&](const auto &self, uint32_t index) -> bool {
         if (index >= visuals_.size())
             return false;
+        if (visited[index])
+            return true;
+        visited[index] = 1;
         const LevelVisual &visual = visuals_[index];
         if (index < cull_bounds_.size())
         {
@@ -889,6 +896,9 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
         return x * x + z * z;
     };
     std::stable_sort(cells.begin(), cells.end(), [&](size_t a, size_t b) { return distance(a) < distance(b); });
+#if defined(XR_PLATFORM_ANDROID)
+    const auto prepare_begin = std::chrono::steady_clock::now();
+#endif
     int updated = 0;
     for (size_t index : cells)
     {
@@ -907,6 +917,12 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
         {
             if (updated >= detail_update_cells)
                 continue;
+#if defined(XR_PLATFORM_ANDROID)
+            if (updated &&
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - prepare_begin).count() >=
+                    detail_prepare_ms)
+                break;
+#endif
             ++updated;
             std::vector<DetailPlacement> placements;
             // Query the slot once, then test its triangles for every
@@ -1010,119 +1026,57 @@ bool GpuLevel::record_details(const FrameRecordingContext &frame, const Deferred
 {
     if (frame.frame_index >= detail_batches_.size())
         return false;
-    // Geometry is in world space. If the same placements survive frustum
-    // culling, re-use the frame slot's upload even when the camera moves.
-    uint64_t signature = 14695981039346656037ull;
-    for (size_t i = 0; i < visible_details_.size(); ++i)
-    {
-        const DetailPlacement &p = visible_details_[i];
-        if (!visible_sphere(mvp, p.x, p.y, p.z, 6.f))
-            continue;
-        signature = (signature ^ (uint64_t(i) << 8 | p.model)) * 1099511628211ull;
-        // Include coordinates: the visible list can start at another cell
-        // while retaining the same number and model ordering.
-        uint32_t bits{};
-        std::memcpy(&bits, &p.x, sizeof(bits));
-        signature = (signature ^ bits) * 1099511628211ull;
-        std::memcpy(&bits, &p.z, sizeof(bits));
-        signature = (signature ^ bits) * 1099511628211ull;
-    }
     auto &buffers = detail_batches_[frame.frame_index];
-    if (detail_signatures_[frame.frame_index] == signature && !buffers.empty())
+    if (buffers.size() != detail_meshes_.size())
+        buffers.resize(detail_meshes_.size());
+    uint64_t signature = 14695981039346656037ull;
+    std::vector<std::vector<DetailInstance>> grouped(detail_meshes_.size());
+    for (const auto &p : visible_details_)
     {
-        for (size_t model = 0; model < buffers.size(); ++model)
-        {
-            const DetailBatch &buffer = buffers[model];
-            if (!buffer.index_count)
-                continue;
-            const Mesh &mesh = detail_meshes_[model];
-            if (mesh.mode == SurfaceMode::Transparent)
-                continue;
-            const auto &node = mesh.pass_graph.passes[0];
-            if (!pass.record_geometry(frame, buffer.vertices.handle(), buffer.indices.handle(), buffer.index_count, mvp,
-                                      mesh.material, mesh.mode, 0, node.vertex.c_str(), node.fragment.c_str(),
-                                      float(mesh.alpha_ref) / 255.f, nullptr, mesh.terrain_scale, nullptr, nullptr, 0,
-                                      &mesh.matrices))
-                return false;
-        }
-        return true;
+        if (p.model >= detail_meshes_.size())
+            return false;
+        if (detail_meshes_[p.model].mode == SurfaceMode::Transparent || !visible_sphere(mvp, p.x, p.y, p.z, 6.f))
+            continue;
+        auto instance = detail_instance(p.x, p.y, p.z, p.yaw, p.scale);
+        const auto *bytes = reinterpret_cast<const uint8_t *>(&instance);
+        for (size_t i = 0; i < sizeof(instance); ++i)
+            signature = (signature ^ bytes[i]) * 1099511628211ull;
+        signature = (signature ^ p.model) * 1099511628211ull;
+        grouped[p.model].push_back(instance);
     }
-    struct Geometry
+    const bool changed = detail_signatures_[frame.frame_index] != signature;
+    for (size_t i = 0; i < grouped.size(); ++i)
     {
-        std::vector<LevelVertex> vertices;
-        std::vector<uint32_t> indices;
-    };
-    std::vector<Geometry> grouped(details_.prototypes.size());
-    for (const DetailPlacement &placement : visible_details_)
-    {
-        if (placement.model >= detail_meshes_.size())
-            return false;
-        if (detail_meshes_[placement.model].mode == SurfaceMode::Transparent)
-            continue;
-        if (!visible_sphere(mvp, placement.x, placement.y, placement.z, 6.f))
-            continue;
-        const DetailPrototype &prototype = details_.prototypes[placement.model];
-        Geometry &batch = grouped[placement.model];
-        if (batch.vertices.size() > UINT32_MAX - prototype.vertices.size())
-            return false;
-        const uint32_t first = static_cast<uint32_t>(batch.vertices.size());
-        Fmatrix rotation, scale, world;
-        Fvector position;
-        position.set(placement.x, placement.y, placement.z);
-        rotation.rotateY(placement.yaw);
-        rotation.translate_over(position);
-        scale.scale(placement.scale, placement.scale, placement.scale);
-        world.mul_43(rotation, scale);
-        for (const LevelVertex &original : prototype.vertices)
+        auto &buffer = buffers[i];
+        const auto &instances = grouped[i];
+        const auto &mesh = detail_meshes_[i];
+        if (changed)
         {
-            LevelVertex vertex = original;
-            Fvector local, transformed, normal;
-            local.set(original.position[0], original.position[1], original.position[2]);
-            world.transform_tiny(transformed, local);
-            local.set(original.normal[0], original.normal[1], original.normal[2]);
-            rotation.transform_dir(normal, local);
-            normal.normalize_safe();
-            std::copy_n(&transformed.x, 3, vertex.position);
-            std::copy_n(&normal.x, 3, vertex.normal);
-            batch.vertices.push_back(vertex);
+            buffer.instance_count = uint32_t(instances.size());
+            if (!instances.empty())
+            {
+                std::string error;
+                const size_t bytes = instances.size() * sizeof(DetailInstance);
+                if ((buffer.vertices.size() < bytes &&
+                     !buffer.vertices.initialize(
+                         device_, std::max<VkDeviceSize>(bytes, buffer.vertices.size() * 2 + 4096),
+                         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, memory_,
+                         upload_.buffer, error)) ||
+                    !buffer.vertices.write(0, instances.data(), bytes, error))
+                {
+                    Msg("! [renderer-vulkan] detail instances: %s", error.c_str());
+                    return false;
+                }
+            }
         }
-        for (uint32_t index : prototype.indices)
-            batch.indices.push_back(first + index);
-    }
-    if (buffers.size() != grouped.size())
-        buffers.resize(grouped.size());
-    const auto write_buffer = [this](BufferResource &buffer, const void *data, size_t bytes, VkBufferUsageFlags usage,
-                                     std::string &error) {
-        if (buffer.size() < bytes &&
-            !buffer.initialize(device_, std::max<VkDeviceSize>(bytes, buffer.size() ? buffer.size() * 2 : 4096), usage,
-                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, memory_,
-                               upload_.buffer, error))
-            return false;
-        return buffer.write(0, data, bytes, error);
-    };
-    for (size_t model = 0; model < grouped.size(); ++model)
-    {
-        const Geometry &batch = grouped[model];
-        buffers[model].index_count = 0;
-        if (batch.indices.empty())
+        if (!buffer.instance_count)
             continue;
-        DetailBatch &buffer = buffers[model];
-        std::string error;
-        if (!write_buffer(buffer.vertices, batch.vertices.data(), batch.vertices.size() * sizeof(LevelVertex),
-                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, error) ||
-            !write_buffer(buffer.indices, batch.indices.data(), batch.indices.size() * sizeof(uint32_t),
-                          VK_BUFFER_USAGE_INDEX_BUFFER_BIT, error))
-        {
-            Msg("! [renderer-vulkan] detail batch upload: %s", error.c_str());
-            return false;
-        }
-        buffer.index_count = static_cast<uint32_t>(batch.indices.size());
-        const Mesh &mesh = detail_meshes_[model];
         const auto &node = mesh.pass_graph.passes[0];
-        if (!pass.record_geometry(frame, buffer.vertices.handle(), buffer.indices.handle(),
-                                  static_cast<uint32_t>(batch.indices.size()), mvp, mesh.material, mesh.mode, 0,
-                                  node.vertex.c_str(), node.fragment.c_str(), float(mesh.alpha_ref) / 255.f, nullptr,
-                                  mesh.terrain_scale, nullptr, nullptr, 0, &mesh.matrices))
+        if (!pass.record_geometry(frame, mesh.vertex_buffer(), mesh.index_buffer(), mesh.index_count, mvp,
+                                  mesh.material, mesh.mode, 0, node.vertex.c_str(), node.fragment.c_str(),
+                                  float(mesh.alpha_ref) / 255.f, nullptr, mesh.terrain_scale, nullptr, nullptr, 0,
+                                  &mesh.matrices, buffer.vertices.handle(), buffer.instance_count))
             return false;
     }
     detail_signatures_[frame.frame_index] = signature;
