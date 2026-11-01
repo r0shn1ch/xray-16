@@ -107,7 +107,7 @@ bool make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout l
     info.pDynamicState = &dynamics;
     info.layout = layout;
     info.renderPass = render_pass;
-    return vk.create_graphics_pipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &result) == VK_SUCCESS;
+    return vk.create_graphics_pipelines(device, vk.pipeline_cache, 1, &info, nullptr, &result) == VK_SUCCESS;
 }
 }
 

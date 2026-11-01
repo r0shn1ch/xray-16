@@ -1,18 +1,19 @@
-#include "src/Layers/xrRenderVK/ParticleSprite.h"
-#include "src/Layers/xrRenderVK/LevelModels.h"
-#include "src/Layers/xrRenderVK/ShadowStability.h"
-#include "src/Layers/xrRenderVK/TextureQuality.h"
-#include "src/Layers/xrRenderVK/LevelLightmap.h"
-#include "src/Layers/xrRenderVK/ModelPoseConstants.h"
-#include "src/Layers/xrRenderVK/ShaderPairCache.h"
-#include "src/Layers/xrRenderVK/VulkanSettings.h"
-#include "src/Layers/xrRenderVK/ResourceRetirement.h"
-#include "src/Layers/xrRenderVK/ObjectVisibility.h"
-#include "src/Layers/xrRenderVK/TangentBasis.h"
 #include "src/Layers/xrRenderVK/DetailInstance.h"
-#include <cassert>
+#include "src/Layers/xrRenderVK/LevelLightmap.h"
+#include "src/Layers/xrRenderVK/LevelModels.h"
+#include "src/Layers/xrRenderVK/ModelPoseConstants.h"
+#include "src/Layers/xrRenderVK/ObjectVisibility.h"
+#include "src/Layers/xrRenderVK/ParticleSprite.h"
+#include "src/Layers/xrRenderVK/ResourceRetirement.h"
+#include "src/Layers/xrRenderVK/ShaderPairCache.h"
+#include "src/Layers/xrRenderVK/ShadowStability.h"
+#include "src/Layers/xrRenderVK/TangentBasis.h"
+#include "src/Layers/xrRenderVK/TextureQuality.h"
+#include "src/Layers/xrRenderVK/VulkanSettings.h"
 #include <array>
+#include <cassert>
 #include <cmath>
+#include <cstring>
 using namespace xray::render::vulkan;
 int main()
 {
@@ -88,6 +89,25 @@ int main()
     prepare_tangent_basis(frame_vertices, {0, 1, 2});
     for (const auto &v : frame_vertices)
         assert(v.tangent[0] == -127 && v.bitangent[1] == 127);
+    // Nonzero authored vectors can still be parallel to the geometric normal.
+    // Keeping them forces a camera-derivative fallback at grazing angles.
+    for (auto &v : frame_vertices)
+    {
+        v.normal[0] = v.normal[1] = 0;
+        v.normal[2] = 1;
+        for (unsigned k = 0; k < 3; ++k)
+            v.tangent[k] = v.bitangent[k] = k == 2 ? 127 : 0;
+    }
+    prepare_tangent_basis(frame_vertices, {0, 1, 2});
+    for (const auto &v : frame_vertices)
+    {
+        assert(valid_tangent_basis(v));
+        assert(v.tangent[0] == -127 && v.bitangent[1] == 127);
+    }
+    const auto valid_frames = frame_vertices;
+    prepare_tangent_basis(frame_vertices, {0, 1, 2});
+    assert(std::memcmp(frame_vertices.data(), valid_frames.data(), frame_vertices.size() * sizeof(LevelVertex)) ==
+           0);
     assert(render_quality(0).texture_limit < render_quality(2).texture_limit);
     assert(render_quality(4).point_shadows == 2 && render_quality(0).point_shadows == 0);
 

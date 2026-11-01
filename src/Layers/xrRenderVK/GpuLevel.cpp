@@ -313,7 +313,6 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
             mesh.windows = model.windows;
             return true;
         }
-        prepare_tangent_basis(model.vertices, model.indices);
         SurfaceMode mode;
         int blend_mode = -1;
         uint32_t material_flags = 0;
@@ -326,6 +325,10 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                     material.textures + "): " + error;
             return false;
         }
+        Msg("[renderer-vulkan] level.material id=%u shader='%s' textures='%s' mode=%u priority=%u blend=%d "
+            "flags=0x%x lightmap-uv=%d",
+            model.material, material.shader.c_str(), material.textures.c_str(), unsigned(mode),
+            definition.priority, blend_mode, material_flags, model.lightmap_uv);
         if ((blend_mode == 3 || blend_mode == 4 || blend_mode == 6) && reported_multiply.insert(model.material).second)
             Msg("[renderer-vulkan] level.multiply material=%u shader='%s' textures='%s' blend=%d flags=0x%x",
                 model.material, material.shader.c_str(), material.textures.c_str(), blend_mode, material_flags);

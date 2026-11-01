@@ -3,14 +3,15 @@
 #include "DeferredFrame.h"
 #include "DeferredShaderFactory.h"
 #include "GameTextureFactory.h"
+#include "GpuModel.h"
+#include "LightGrid.h"
+#include "LocalShadowTargets.h"
+#include "PipelineCache.h"
+#include "ScreenCopyPass.h"
+#include "VulkanFontRender.h"
 #include "VulkanUIRender.h"
 #include "VulkanUIShader.h"
 #include "VulkanWindowDevice.h"
-#include "GpuModel.h"
-#include "VulkanFontRender.h"
-#include "ScreenCopyPass.h"
-#include "LocalShadowTargets.h"
-#include "LightGrid.h"
 #include "WaterTargets.h"
 
 #include <array>
@@ -78,6 +79,7 @@ class VulkanGameDevice
         scene_visibility_ = enabled;
     }
     void destroy();
+    void save_pipeline_cache();
     bool reset_required() const
     {
         return reset_required_;
@@ -253,6 +255,7 @@ class VulkanGameDevice
     bool launch_settings_applied_{};
     std::string ui_error_;
     LightGrid light_grid_;
+    PipelineCache pipeline_cache_;
     std::vector<ModelDraw> model_draws_;
     std::vector<ModelDraw> shadow_model_draws_;
     std::unordered_multimap<const GpuModel *, size_t> shadow_draw_lookup_;

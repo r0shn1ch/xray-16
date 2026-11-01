@@ -235,7 +235,7 @@ bool make_pipeline(VkDevice device, VkRenderPass pass, VkPipelineLayout layout, 
     std::snprintf(context, sizeof(context), "vulkan pipeline: %s", label ? label : "unknown");
     android_set_load_context(context);
 #endif
-    const VkResult result = vk.create_graphics_pipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline);
+    const VkResult result = vk.create_graphics_pipelines(device, vk.pipeline_cache, 1, &info, nullptr, &pipeline);
 #if defined(XR_PLATFORM_ANDROID)
     android_set_load_context("vulkan pipeline: created");
 #endif

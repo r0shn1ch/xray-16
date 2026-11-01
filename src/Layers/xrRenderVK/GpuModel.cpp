@@ -162,6 +162,10 @@ bool GpuModel::add_meshes(ModelGeometry &&geometry, const std::string &inherited
                 return false;
             }
         }
+        Msg("[renderer-vulkan] model.material shader='%s' texture='%s' mode=%u priority=%u weights=%u bump=%u "
+            "material=%u",
+            mesh.geometry.shader.c_str(), texture.c_str(), unsigned(mesh.geometry.mode), mesh.priority,
+            mesh.geometry.skin_weights, metadata.bump_mode, metadata.material);
         mesh.detail_scale = metadata.scale;
         bool surface_ready = false;
         if (mesh.surface)

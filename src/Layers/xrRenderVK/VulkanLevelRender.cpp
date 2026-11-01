@@ -997,7 +997,7 @@ void VulkanLevelRender::Calculate()
         auto *object = object_specifics_[(i + Device.dwFrame) % object_specifics_.size()];
         if (object)
             object->update(environment.ambient_color, environment.hemi_color, environment.sun_color,
-                           Lights.DynamicLights(), &Lights.HemiLights(), &ray_budget);
+                           Lights.SceneLights(), &Lights.HemiLights(), &ray_budget);
     }
 
     std::vector<uint32_t> visible_roots;

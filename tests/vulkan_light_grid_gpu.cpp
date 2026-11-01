@@ -1,5 +1,5 @@
 #include "src/Layers/xrRenderVK/LightGrid.h"
-#include <vulkan/vulkan.h>
+#include "src/Layers/xrRenderVK/PipelineCache.h"
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -7,6 +7,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+#include <vulkan/vulkan.h>
 using namespace xray::render::vulkan;
 static void check(VkResult value)
 {
@@ -206,6 +207,11 @@ int main()
     std::string error;
     assert(load_scene_pass_dispatch(device, vkGetDeviceProcAddr, graphics, error));
     ShaderModuleDispatch shaders{vkCreateShaderModule, vkDestroyShaderModule};
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physical[0], &properties);
+    PipelineCache pipeline_cache;
+    assert(pipeline_cache.initialize(device, vkGetDeviceProcAddr, properties, {}));
+    graphics.pipeline_cache = pipeline_cache.handle();
     LightGrid grid;
     assert(grid.initialize(device, vkGetDeviceProcAddr, pass, layout, memory, bd, graphics, shaders,
                            vkCmdPipelineBarrier, error));
@@ -330,7 +336,16 @@ int main()
             }
         }
     }
+    const auto persisted = pipeline_cache.snapshot();
+    assert(PipelineCache::compatible(persisted, properties));
     grid.destroy();
+    assert(pipeline_cache.initialize(device, vkGetDeviceProcAddr, properties, persisted));
+    assert(pipeline_cache.loaded_bytes() != 0);
+    graphics.pipeline_cache = pipeline_cache.handle();
+    assert(grid.initialize(device, vkGetDeviceProcAddr, pass, layout, memory, bd, graphics, shaders,
+                           vkCmdPipelineBarrier, error));
+    grid.destroy();
+    pipeline_cache.destroy();
     readback.destroy();
     vkDestroyCommandPool(device, commands, nullptr);
     vkDestroyFramebuffer(device, framebuffer, nullptr);
