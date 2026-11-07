@@ -82,14 +82,8 @@ class GpuModel
         {
             std::array<BufferResource, FrameContext::FramesInFlight> buffers;
             std::array<VkDescriptorSet, FrameContext::FramesInFlight> descriptors{};
+            std::array<uint32_t, FrameContext::FramesInFlight> shadow_frames{UINT32_MAX, UINT32_MAX};
         };
-        struct ShadowInstance
-        {
-            std::vector<LevelVertex> scratch;
-            std::array<BufferResource, FrameContext::FramesInFlight> buffers;
-            std::array<uint32_t, FrameContext::FramesInFlight> frames{UINT32_MAX, UINT32_MAX};
-        };
-        std::unordered_map<const IKinematics *, ShadowInstance> shadow_vertices;
         ModelGeometry geometry;
         BufferResource skinned_vertices;
         std::array<BufferResource, FrameContext::FramesInFlight> vertices;

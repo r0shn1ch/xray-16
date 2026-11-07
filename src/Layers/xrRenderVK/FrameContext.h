@@ -127,6 +127,11 @@ public:
         FrameRecorder final_overlay = nullptr, void* final_overlay_data = nullptr);
     void destroy();
 
+    struct CpuTiming
+    {
+        double fence_ms{}, acquire_ms{}, record_ms{}, submit_ms{}, present_ms{};
+    };
+    const CpuTiming& cpu_timing() const { return m_cpu_timing; }
     VkExtent2D extent() const { return m_extent; }
     VkFormat format() const { return m_format; }
     VkRenderPass render_pass() const { return m_render_pass; }
@@ -168,6 +173,7 @@ private:
     uint32_t m_timestamp_valid_bits{};
     std::array<bool, FramesInFlight> m_timestamp_submitted{};
     std::optional<double> m_last_gpu_ms;
+    CpuTiming m_cpu_timing{};
     VkExtent2D m_extent{};
     VkFormat m_format = VK_FORMAT_UNDEFINED;
     VkColorSpaceKHR m_color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;

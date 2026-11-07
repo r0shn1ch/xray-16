@@ -2,6 +2,8 @@
 #include "DeferredFrame.h"
 
 #include <cstring>
+#include <chrono>
+#include "xrEngine/device.h"
 
 namespace xray::render::vulkan
 {
@@ -9,6 +11,7 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
 {
     auto &context = *static_cast<DeferredFrame *>(user_data);
     context.pass_->notify_frame_ready(frame.frame_index);
+    const auto shadow_begin = std::chrono::steady_clock::now();
     if (context.shadows_)
     {
         FrameRecordingContext shadow_frame;
@@ -84,6 +87,9 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
                 break;
         }
     }
+    if (Device.dwFrame % 300 == 0)
+        Msg("[renderer-vulkan] pass.cpu frame=%u pass=shadow-total ms=%.3f", Device.dwFrame,
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - shadow_begin).count());
     FrameRecordingContext geometry_frame;
     if (!context.targets_->begin(frame, geometry_frame))
     {

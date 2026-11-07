@@ -147,6 +147,7 @@ class GpuLevel
     {
         BufferResource vertices, indices;
         uint32_t index_count{};
+        uint32_t instance_count{};
     };
     VkDevice device_{};
     LevelGameProfile profile_{LevelGameProfile::Unknown};

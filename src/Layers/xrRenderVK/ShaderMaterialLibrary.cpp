@@ -200,7 +200,7 @@ bool parse_record(const uint8_t* bytes, size_t size, std::string& name,
         (cls == "MODEL   " && blend && !model_cutout))
         mode = SurfaceMode::Transparent;
     else if ((cls == "PARTICLE" && blending == 0) || cls == "LM_AREF " || cls == "V_AREF  " || cls == "D_TREE  " ||
-        (cls == "D_STILL " && blend) || model_cutout)
+        cls == "D_STILL " || model_cutout)
         mode = SurfaceMode::AlphaTest;
     else
         mode = SurfaceMode::Opaque;

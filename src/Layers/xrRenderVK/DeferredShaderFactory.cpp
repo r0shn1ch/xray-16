@@ -40,7 +40,7 @@ bool DeferredShaderFactory::create(VkDevice device, const ShaderModuleDispatch &
                                    VkRenderPass shadow_pass, VkRenderPass local_shadow_pass)
 {
     ShaderModule vertex, fragment, alpha_test_fragment, transparent_fragment, light_vertex, light_fragment, weather_fragment;
-    ShaderModule shadow_vertex, shadow_opaque, shadow_cutout;
+    ShaderModule shadow_vertex, shadow_opaque, shadow_cutout, shadow_skin;
     ShaderModule local_light;
     ShaderModule water;
     if (!vertex.initialize(device, shader_dispatch, deferred_shaders::GBufferVertex, sizeof(deferred_shaders::GBufferVertex), error) ||
@@ -54,6 +54,8 @@ bool DeferredShaderFactory::create(VkDevice device, const ShaderModuleDispatch &
         (shadow_pass && (!shadow_vertex.initialize(device, shader_dispatch, shadow_shaders::Vertex, sizeof(shadow_shaders::Vertex), error) ||
             !shadow_opaque.initialize(device, shader_dispatch, shadow_shaders::Opaque, sizeof(shadow_shaders::Opaque), error) ||
             !shadow_cutout.initialize(device, shader_dispatch, shadow_shaders::Cutout, sizeof(shadow_shaders::Cutout), error))) ||
+        (shadow_pass && !shadow_skin.initialize(device, shader_dispatch, shadow_shaders::SkinVertex,
+            sizeof(shadow_shaders::SkinVertex), error)) ||
         (local_shadow_pass && !local_light.initialize(device, shader_dispatch,
             local_light_shaders::Fragment, sizeof(local_light_shaders::Fragment), error)) ||
         !water.initialize(device, shader_dispatch, water_shaders::Fragment,
@@ -62,7 +64,7 @@ bool DeferredShaderFactory::create(VkDevice device, const ShaderModuleDispatch &
     if (!pass.initialize(device, geometry_pass, light_pass, vertex.handle(), fragment.handle(), alpha_test_fragment.handle(), transparent_fragment.handle(),
                          light_vertex.handle(), light_fragment.handle(), weather_fragment.handle(), pass_dispatch, error,
                          shadow_pass, shadow_vertex.handle(), shadow_opaque.handle(), shadow_cutout.handle(),
-                         local_shadow_pass, local_light.handle(), water.handle()))
+                         local_shadow_pass, local_light.handle(), water.handle(), shadow_skin.handle()))
         return false;
     ShaderModule distortion_vertex, distortion_fragment;
     if (!distortion_vertex.initialize(device, shader_dispatch, distortion_shaders::Vertex,
