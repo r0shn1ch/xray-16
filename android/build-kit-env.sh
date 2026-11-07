@@ -54,3 +54,12 @@ for cmake_bin in "$ANDROID_SDK_ROOT"/cmake/*/bin; do
     fi
 done
 export PATH="$kit_path:$PATH"
+
+if [ -x "$kit_root/toolchain/java-17/bin/java" ]; then
+    export JAVA_HOME="$kit_root/toolchain/java-17"
+    export PATH="$JAVA_HOME/bin:$PATH"
+fi
+if [ -x "$kit_root/toolchain/host-tools/bin/glslc" ]; then
+    export PATH="$kit_root/toolchain/host-tools/bin:$PATH"
+    export LD_LIBRARY_PATH="$kit_root/toolchain/host-tools/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi

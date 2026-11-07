@@ -16,62 +16,66 @@ namespace xray::render::vulkan
 // animated pose may change while an earlier frame still reads its vertices.
 class GpuModel
 {
-public:
-    ~GpuModel() { destroy(); }
-    GpuModel(const GpuModel&) = delete;
-    GpuModel& operator=(const GpuModel&) = delete;
+  public:
+    ~GpuModel()
+    {
+        destroy();
+    }
+    GpuModel(const GpuModel &) = delete;
+    GpuModel &operator=(const GpuModel &) = delete;
     GpuModel() = default;
 
-    bool load(const char* name, IReader* source, VkDevice device, VkQueue queue,
-        VkCommandPool pool, const VkPhysicalDeviceMemoryProperties& memory,
-        const BufferUploadDispatch& upload, GameTextureFactory& textures,
-        DeferredPass& pass, std::string& error);
-    bool load_record(const VisualRecord& record, const std::string& inherited_texture,
-        VkDevice device, VkQueue queue, VkCommandPool pool,
-        const VkPhysicalDeviceMemoryProperties& memory, const BufferUploadDispatch& upload,
-        GameTextureFactory& textures, DeferredPass& pass, std::string& error);
-    bool load_decoded(ModelGeometry&& geometry, VkDevice device, VkQueue queue,
-        VkCommandPool pool, const VkPhysicalDeviceMemoryProperties& memory,
-        const BufferUploadDispatch& upload, GameTextureFactory& textures,
-        DeferredPass& pass, std::string& error)
+    bool load(const char *name, IReader *source, VkDevice device, VkQueue queue, VkCommandPool pool,
+              const VkPhysicalDeviceMemoryProperties &memory, const BufferUploadDispatch &upload,
+              GameTextureFactory &textures, DeferredPass &pass, std::string &error);
+    bool load_record(const VisualRecord &record, const std::string &inherited_texture, VkDevice device, VkQueue queue,
+                     VkCommandPool pool, const VkPhysicalDeviceMemoryProperties &memory,
+                     const BufferUploadDispatch &upload, GameTextureFactory &textures, DeferredPass &pass,
+                     std::string &error);
+    bool load_decoded(ModelGeometry &&geometry, VkDevice device, VkQueue queue, VkCommandPool pool,
+                      const VkPhysicalDeviceMemoryProperties &memory, const BufferUploadDispatch &upload,
+                      GameTextureFactory &textures, DeferredPass &pass, std::string &error)
     {
-        return load_geometry(std::move(geometry), device, queue, pool, memory,
-            upload, textures, pass, error);
+        return load_geometry(std::move(geometry), device, queue, pool, memory, upload, textures, pass, error);
     }
     // Call from the acquired frame's geometry recorder. Pose matrices have
     // the same layout as Fmatrix and include inverse bind transforms.
-    bool record(const FrameRecordingContext& frame, const DeferredPass& pass, const float (&mvp)[16], const float* pose, size_t bones, std::string& error,
-        GeometryPhase phase = GeometryPhase::OpaqueAndAlphaTest, float lod = 1.f,
-        const IKinematics* instance = nullptr, const float* normal_rows = nullptr,
-        int priority_filter = -1);
-    bool record_animated(const FrameRecordingContext& frame, const DeferredPass& pass,
-        const float (&mvp)[16], IKinematics& skeleton, std::string& error,
-        GeometryPhase phase = GeometryPhase::OpaqueAndAlphaTest, float lod = 1.f,
-        const float* normal_rows = nullptr, int priority_filter = -1);
+    bool record(const FrameRecordingContext &frame, const DeferredPass &pass, const float (&mvp)[16], const float *pose,
+                size_t bones, std::string &error, GeometryPhase phase = GeometryPhase::OpaqueAndAlphaTest,
+                float lod = 1.f, const IKinematics *instance = nullptr, const float *normal_rows = nullptr,
+                int priority_filter = -1);
+    bool record_animated(const FrameRecordingContext &frame, const DeferredPass &pass, const float (&mvp)[16],
+                         IKinematics &skeleton, std::string &error,
+                         GeometryPhase phase = GeometryPhase::OpaqueAndAlphaTest, float lod = 1.f,
+                         const float *normal_rows = nullptr, int priority_filter = -1);
+    bool record_shadow(const FrameRecordingContext &frame, const DeferredPass &pass, const float (&mvp)[16],
+                       IKinematics *skeleton, std::string &error, float lod = 1.f);
     bool has_secondary_priority() const;
     bool has_transparent_priority(uint8_t priority) const;
     void destroy(); // Caller waits for all submitted frames first.
     uint64_t geometry_bytes() const
     {
         uint64_t bytes = 0;
-        for (const auto& mesh : meshes_)
+        for (const auto &mesh : meshes_)
         {
             bytes += mesh.skinned_vertices.size() + mesh.indices.size();
-            for (const auto& buffer : mesh.vertices) bytes += buffer.size();
-            for (const auto& [instance, buffers] : mesh.instance_vertices)
-                for (const auto& buffer : buffers) bytes += buffer.size();
-            for (const auto& [instance, pose] : mesh.poses)
-                for (const auto& buffer : pose.buffers) bytes += buffer.size();
+            for (const auto &buffer : mesh.vertices)
+                bytes += buffer.size();
+            for (const auto &[instance, buffers] : mesh.instance_vertices)
+                for (const auto &buffer : buffers)
+                    bytes += buffer.size();
+            for (const auto &[instance, pose] : mesh.poses)
+                for (const auto &buffer : pose.buffers)
+                    bytes += buffer.size();
         }
         return bytes;
     }
-    void release_instance(const IKinematics* skeleton); // Caller waits for submitted frames first.
+    void release_instance(const IKinematics *skeleton); // Caller waits for submitted frames first.
 
-private:
-    bool load_geometry(ModelGeometry&& decoded, VkDevice device, VkQueue queue,
-        VkCommandPool pool, const VkPhysicalDeviceMemoryProperties& memory,
-        const BufferUploadDispatch& upload, GameTextureFactory& textures,
-        DeferredPass& pass, std::string& error);
+  private:
+    bool load_geometry(ModelGeometry &&decoded, VkDevice device, VkQueue queue, VkCommandPool pool,
+                       const VkPhysicalDeviceMemoryProperties &memory, const BufferUploadDispatch &upload,
+                       GameTextureFactory &textures, DeferredPass &pass, std::string &error);
     struct Mesh
     {
         struct PoseInstance
@@ -79,11 +83,19 @@ private:
             std::array<BufferResource, FrameContext::FramesInFlight> buffers;
             std::array<VkDescriptorSet, FrameContext::FramesInFlight> descriptors{};
         };
+        struct ShadowInstance
+        {
+            std::vector<LevelVertex> scratch;
+            std::array<BufferResource, FrameContext::FramesInFlight> buffers;
+            std::array<uint32_t, FrameContext::FramesInFlight> frames{UINT32_MAX, UINT32_MAX};
+        };
+        std::unordered_map<const IKinematics *, ShadowInstance> shadow_vertices;
         ModelGeometry geometry;
         BufferResource skinned_vertices;
         std::array<BufferResource, FrameContext::FramesInFlight> vertices;
-        std::unordered_map<const IKinematics*, std::array<BufferResource, FrameContext::FramesInFlight>> instance_vertices;
-        std::unordered_map<const IKinematics*, PoseInstance> poses;
+        std::unordered_map<const IKinematics *, std::array<BufferResource, FrameContext::FramesInFlight>>
+            instance_vertices;
+        std::unordered_map<const IKinematics *, PoseInstance> poses;
         BufferResource indices;
         VkDescriptorSet material{};
         int alpha_ref{128};
@@ -100,19 +112,18 @@ private:
         bool tree_surface{};
         RenderPassGraph pass_graph;
     };
-    bool add_meshes(ModelGeometry&& geometry, const std::string& inherited_texture,
-        VkDevice device, VkQueue queue, VkCommandPool pool,
-        const VkPhysicalDeviceMemoryProperties& memory,
-        const BufferUploadDispatch& upload, GameTextureFactory& textures,
-        DeferredPass& pass, std::string& error);
+    bool add_meshes(ModelGeometry &&geometry, const std::string &inherited_texture, VkDevice device, VkQueue queue,
+                    VkCommandPool pool, const VkPhysicalDeviceMemoryProperties &memory,
+                    const BufferUploadDispatch &upload, GameTextureFactory &textures, DeferredPass &pass,
+                    std::string &error);
 
     VkDevice device_{};
     VkCommandPool pool_{};
     VkPhysicalDeviceMemoryProperties memory_{};
     BufferUploadDispatch upload_{};
-    GameTextureFactory* textures_{};
-    DeferredPass* pass_{};
+    GameTextureFactory *textures_{};
+    DeferredPass *pass_{};
     std::vector<PendingBufferUpload> pending_;
     std::vector<Mesh> meshes_;
 };
-}
+} // namespace xray::render::vulkan

@@ -11,8 +11,10 @@ layout(set = 1, binding = 1, std140) uniform LocalLight {
     vec4 direction_cone;
     vec4 color_type;
     vec4 shadow_params;
+    vec4 spot_right;
     vec4 debug_mode;
 } light;
+layout(set=1,binding=2) uniform sampler2D spot_projection;
 layout(location = 0) in vec2 texcoord;
 layout(location = 0) out vec4 pixel_color;
 
@@ -76,6 +78,17 @@ void main()
     if (light.color_type.w >= 0.5)
         attenuation *= smoothstep(light.direction_cone.w, min(1.0, light.direction_cone.w + 0.05),
             dot(normalize(delta), normalize(light.direction_cone.xyz)));
+    if(light.shadow_params.w>0.5)
+    {
+        vec3 direction=normalize(light.direction_cone.xyz);
+        vec3 right=normalize(light.spot_right.xyz-direction*dot(light.spot_right.xyz,direction));
+        vec3 up=cross(direction,right);
+        float z=dot(delta,direction);
+        vec2 projection_uv=vec2(dot(delta,right),-dot(delta,up))/max(z*light.spot_right.w,1e-6)*.5+.5;
+        if(z<=0.0 || any(lessThan(projection_uv,vec2(0))) || any(greaterThan(projection_uv,vec2(1))))
+        {pixel_color=vec4(0);return;}
+        attenuation*=texture(spot_projection,projection_uv).r;
+    }
     vec3 color = texture(albedo_buffer, screen_uv).rgb * light.color_type.rgb * diffuse;
     if (surface.r > 0.0)
     {

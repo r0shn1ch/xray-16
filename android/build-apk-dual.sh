@@ -26,6 +26,11 @@ sdl_dir=${SDL2_ANDROID_HOME:-}
 gradle_bin=${GRADLE_BIN:-}
 android_lto=${XRAY_ANDROID_ENABLE_LTO:-OFF}
 arm64_only=${XRAY_ANDROID_ARM64_ONLY:-OFF}
+native_config=${XRAY_ANDROID_NATIVE_CONFIG:-ReleaseMasterGold}
+case "$native_config" in
+    Debug|ReleaseMasterGold) ;;
+    *) echo "XRAY_ANDROID_NATIVE_CONFIG must be Debug or ReleaseMasterGold" >&2; exit 2 ;;
+esac
 build_dir=${XRAY_ANDROID_APK_BUILD_DIR:-"$repo_dir/build/android-apk-dual"}
 
 remove_path()
@@ -78,18 +83,18 @@ ANDROID_NDK_HOME="$ndk_dir" \
 ANDROID_DEPS_PREFIX="$deps_prefix" \
 XRAY_ANDROID_BUILD_DIR="$native_build_dir" \
 XRAY_ANDROID_SHARED=ON \
-"$script_dir/build-armv7.sh" "-DXRAY_ENABLE_LTO=$android_lto" "$@"
+"$script_dir/build-armv7.sh" "-DXRAY_ENABLE_LTO=$android_lto" "$@" "-DCMAKE_BUILD_TYPE=$native_config"
 fi
 ANDROID_NDK_HOME="$ndk_dir" \
 ANDROID_DEPS_PREFIX="$deps_prefix64" \
 XRAY_ANDROID_BUILD_DIR="$build_dir/native-arm64" \
 XRAY_ANDROID_SHARED=ON \
 LUAJIT_HOST_EXECUTABLE_PREFIX= \
-"$script_dir/build-arm64.sh" "-DXRAY_ENABLE_LTO=$android_lto" "$@"
+"$script_dir/build-arm64.sh" "-DXRAY_ENABLE_LTO=$android_lto" "$@" "-DCMAKE_BUILD_TYPE=$native_config"
 fi
 
-native_lib="$repo_dir/bin/armv7-a/ReleaseMasterGold/libmain.so"
-native_lib64="$repo_dir/bin/aarch64/ReleaseMasterGold/libmain.so"
+native_lib="$repo_dir/bin/armv7-a/$native_config/libmain.so"
+native_lib64="$repo_dir/bin/aarch64/$native_config/libmain.so"
 if [ ! -f "$native_lib64" ] || { [ "$arm64_only" != ON ] && [ ! -f "$native_lib" ]; }; then
     echo "native APK library was not produced" >&2
     exit 1
@@ -376,6 +381,7 @@ printf '%s\n' "$output_apk"
 manifest="$build_dir/build-manifest.txt"
 {
     echo "repo_commit=${XRAY_SOURCE_COMMIT:-$(git -C "$repo_dir" rev-parse HEAD)}"
+    echo "native_config=$native_config"
     echo "version=$port_version"
     echo "version_code=$port_version_code"
     echo "ndk=$ndk_dir"

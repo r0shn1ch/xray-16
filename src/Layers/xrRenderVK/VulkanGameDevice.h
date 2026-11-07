@@ -13,6 +13,8 @@
 #include "WaterTargets.h"
 
 #include <array>
+#include "ResourceRetirement.h"
+#include <unordered_set>
 #include <memory>
 #include <unordered_map>
 
@@ -26,50 +28,88 @@ class VulkanThunderboltRender;
 // work before releasing descriptors, pipelines, images and the device.
 class VulkanGameDevice
 {
-public:
-    bool initialize(SDL_Window* window, VkExtent2D extent, std::string& error);
+  public:
+    bool initialize(SDL_Window *window, VkExtent2D extent, std::string &error);
     void begin_frame();
-    void queue_weather(VkDescriptorSet set, const WeatherLighting& lighting,
-        const float (&fog_color)[3], float fog_near, float fog_far);
-    void queue_lights(const std::vector<VulkanLightSnapshot>& lights) { light_snapshots_ = lights; }
-    VkDescriptorSet glow_texture(const std::string& name);
+    void queue_weather(VkDescriptorSet set, const WeatherLighting &lighting, const float (&fog_color)[3],
+                       float fog_near, float fog_far);
+    void queue_lights(const std::vector<VulkanLightSnapshot> &lights)
+    {
+        light_snapshots_ = lights;
+    }
+    VkDescriptorSet glow_texture(const std::string &name);
     void release_level_glows();
-    void queue_rain(VulkanRainRender& rain);
-    void queue_thunderbolt(VulkanThunderboltRender& bolt);
-    void discard_rain(const VulkanRainRender* rain);
-    void discard_thunderbolt(const VulkanThunderboltRender* bolt);
-    void request_screenshot() { screenshot_requested_ = true; }
-    bool take_screenshot(std::vector<uint8_t>& pixels, VkExtent2D& extent, VkFormat& format);
-    void set_postprocess(const PostProcessConstants& params, std::string first, std::string second);
-    bool render(const GpuLevel& level, const float (&mvp)[16],
-        const DeferredLight& light, FrameStatus& status, std::string& error,
-        bool render_world = true, bool clear_target = false,
-        const DeferredEnvironment* environment = nullptr);
-    bool recreate_swapchain(VkExtent2D extent, std::string& error, bool recreate_surface = false);
-    bool prepare_for_reset(std::string& error);
-    bool reload_game_shaders(std::string& error);
-    bool wait_idle() { return window_.frame().device_lost() || window_.frame().wait_idle(); }
+    VkImageView light_projection(const std::string &name);
+    void queue_rain(VulkanRainRender &rain);
+    void queue_thunderbolt(VulkanThunderboltRender &bolt);
+    void discard_rain(const VulkanRainRender *rain);
+    void discard_thunderbolt(const VulkanThunderboltRender *bolt);
+    void request_screenshot()
+    {
+        screenshot_requested_ = true;
+    }
+    bool take_screenshot(std::vector<uint8_t> &pixels, VkExtent2D &extent, VkFormat &format);
+    void set_postprocess(const PostProcessConstants &params, std::string first, std::string second);
+    bool render(const GpuLevel &level, const float (&mvp)[16], const DeferredLight &light, FrameStatus &status,
+                std::string &error, bool render_world = true, bool clear_target = false,
+                const DeferredEnvironment *environment = nullptr);
+    bool recreate_swapchain(VkExtent2D extent, std::string &error, bool recreate_surface = false);
+    bool prepare_for_reset(std::string &error);
+    bool reload_game_shaders(std::string &error);
+    bool wait_idle();
+    template <class T> void retire(std::unique_ptr<T> resource)
+    {
+        retired_.retire(std::move(resource));
+    }
+    void collect_retired(uint32_t slot);
 
-    void queue_model(GpuModel& model, IKinematics* skeleton, const float (&mvp)[16], bool hud = false,
-        float sort_distance = 0.f, const void* instance = nullptr, float lod = 1.f,
-        const Fmatrix* world = nullptr, const float* hemi_faces = nullptr);
-    void queue_level_visual(uint32_t index, const float (&mvp)[16],
-        bool hud = false, float sort_distance = 0.f, const void* instance = nullptr, float lod = 1.f);
-    void queue_particle(IRenderVisual* visual, const float (&mvp)[16],
-        const Fvector& right, const Fvector& up, bool hud, float distance);
+    void queue_model(GpuModel &model, IKinematics *skeleton, const float (&mvp)[16], bool hud = false,
+                     float sort_distance = 0.f, const void *instance = nullptr, float lod = 1.f,
+                     const Fmatrix *world = nullptr, const float *hemi_faces = nullptr);
+    void queue_level_visual(uint32_t index, const float (&mvp)[16], bool hud = false, float sort_distance = 0.f,
+                            const void *instance = nullptr, float lod = 1.f);
+    void queue_particle(IRenderVisual *visual, const float (&mvp)[16], const Fvector &right, const Fvector &up,
+                        bool hud, float distance);
     void discard_scene_draws();
-    void discard_model_draws(const void* instance);
-    void use_scene_visibility(bool enabled) { scene_visibility_ = enabled; }
+    void discard_model_draws(const void *instance);
+    void use_scene_visibility(bool enabled)
+    {
+        scene_visibility_ = enabled;
+    }
     void destroy();
-    bool reset_required() const { return reset_required_; }
-    bool device_lost() const { return window_.frame().device_lost(); }
-    bool surface_lost() const { return window_.frame().surface_lost(); }
-    void clear_reset_required() { reset_required_ = false; }
-    ~VulkanGameDevice() { destroy(); }
+    bool reset_required() const
+    {
+        return reset_required_;
+    }
+    bool device_lost() const
+    {
+        return window_.frame().device_lost();
+    }
+    bool surface_lost() const
+    {
+        return window_.frame().surface_lost();
+    }
+    void clear_reset_required()
+    {
+        reset_required_ = false;
+    }
+    ~VulkanGameDevice()
+    {
+        destroy();
+    }
 
-    VulkanUIRender& ui() { return ui_; }
-    uint32_t last_ui_draw_calls() const { return last_ui_draw_calls_; }
-    uint32_t last_ui_triangles() const { return last_ui_triangles_; }
+    VulkanUIRender &ui()
+    {
+        return ui_;
+    }
+    uint32_t last_ui_draw_calls() const
+    {
+        return last_ui_draw_calls_;
+    }
+    uint32_t last_ui_triangles() const
+    {
+        return last_ui_triangles_;
+    }
     std::unique_ptr<VulkanUIShader> create_ui_shader()
     {
         return std::make_unique<VulkanUIShader>(textures_, ui_pass_);
@@ -90,7 +130,8 @@ public:
     {
         return shader_resources_;
     }
-    bool request_shader_pair(const std::string &svs, const std::string &sps, SurfaceMode mode, bool hud, bool skinned, std::string &error)
+    bool request_shader_pair(const std::string &svs, const std::string &sps, SurfaceMode mode, bool hud, bool skinned,
+                             std::string &error)
     {
         return shader_resources_.pipeline(deferred_, svs, sps, mode, hud, skinned, error);
     }
@@ -106,26 +147,30 @@ public:
     {
         return buffer_upload_;
     }
-    PFN_vkDeviceWaitIdle device_wait_idle_proc() const { return frame_dispatch_.device_wait_idle; }
+    PFN_vkDeviceWaitIdle device_wait_idle_proc() const
+    {
+        return frame_dispatch_.device_wait_idle;
+    }
 
-private:
-    void render_lights(const float (&mvp)[16], bool render_world,
-        const DeferredLight& light, const SunShadowUniform& sun_uniform);
-    static void record_ui(const FrameRecordingContext& frame, void* user);
-    static void capture_ui(VkCommandBuffer command, VkImage image, uint32_t index, void* user);
-    static void record_ui_distortion(const FrameRecordingContext& frame, void* user);
-    bool create_ui_scene_sets(std::string& error);
+  private:
+    void render_lights(const float (&mvp)[16], bool render_world, const DeferredLight &light,
+                       const SunShadowUniform &sun_uniform);
+    static void record_ui(const FrameRecordingContext &frame, void *user);
+    static void capture_ui(VkCommandBuffer command, VkImage image, uint32_t index, void *user);
+    static void record_ui_distortion(const FrameRecordingContext &frame, void *user);
+    bool create_ui_scene_sets(std::string &error);
     void release_ui_scene_sets();
-    static void record_hud(const FrameRecordingContext& frame, void* user);
-    static void record_models(const FrameRecordingContext& frame, void* user);
-    static void record_transparent(const FrameRecordingContext& frame, void* user);
-    static void record_local_lights(const FrameRecordingContext& frame, void* user);
-    static void record_level_visuals(const FrameRecordingContext& frame, void* user);
-    static void record_readback(VkCommandBuffer command, VkImage image, VkExtent2D extent, void* user);
-    static void record_postprocess(const FrameRecordingContext& frame, void* user);
-    bool create_postprocess(std::string& error);
-    bool refresh_color_maps(std::string& error);
-    bool create_forward_targets(std::string& error);
+    static void record_hud(const FrameRecordingContext &frame, void *user);
+    static void record_shadow_models(const FrameRecordingContext &frame, const float (&vp)[16], void *user);
+    static void record_models(const FrameRecordingContext &frame, void *user);
+    static void record_transparent(const FrameRecordingContext &frame, void *user);
+    static void record_local_lights(const FrameRecordingContext &frame, void *user);
+    static void record_level_visuals(const FrameRecordingContext &frame, void *user);
+    static void record_readback(VkCommandBuffer command, VkImage image, VkExtent2D extent, void *user);
+    static void record_postprocess(const FrameRecordingContext &frame, void *user);
+    bool create_postprocess(std::string &error);
+    bool refresh_color_maps(std::string &error);
+    bool create_forward_targets(std::string &error);
     void release_forward_targets();
     struct LevelDraw
     {
@@ -134,15 +179,16 @@ private:
         float sort_distance{};
         float lod{1.f};
         bool hud{};
-        const void* instance{};
+        const void *instance{};
     };
     struct ModelDraw
     {
-        GpuModel* model{};
-        const void* instance{};
-        IKinematics* skeleton{};
+        GpuModel *model{};
+        const void *instance{};
+        IKinematics *skeleton{};
         std::array<float, 16> mvp{};
         std::array<float, 12> normal_rows{};
+        std::array<float, 16> world{};
         std::array<float, 3> hemi_negative{};
         float sort_distance{};
         float lod{1.f};
@@ -150,7 +196,7 @@ private:
     };
     struct ParticleDraw
     {
-        IRenderVisual* visual{};
+        IRenderVisual *visual{};
         std::array<float, 16> mvp{};
         Fvector right{}, up{};
         float sort_distance{};
@@ -158,7 +204,7 @@ private:
     };
     VulkanWindowDevice window_;
 #if defined(XR_PLATFORM_ANDROID)
-    SDL_Window* scaled_android_window_{};
+    SDL_Window *scaled_android_window_{};
     VkExtent2D requested_android_extent_{};
 #endif
     FrameDispatch frame_dispatch_{};
@@ -170,8 +216,18 @@ private:
     LocalShadowTargets local_shadows_;
     std::vector<std::array<VkDescriptorSet, LocalLightCapacity>> local_sets_;
     std::vector<VulkanLightSnapshot> light_snapshots_;
-    struct LightCandidate { const VulkanLightSnapshot* light; float distance; VkRect2D scissor; };
+    struct LightCandidate
+    {
+        const VulkanLightSnapshot *light;
+        float distance;
+        VkRect2D scissor;
+    };
     std::vector<LightCandidate> light_candidates_;
+    ResourceRetirement retired_{FrameContext::FramesInFlight};
+    std::unordered_set<std::string> failed_light_projections_;
+    std::unordered_map<std::string, VkImageView> light_projections_;
+    std::vector<VkImageView> local_projection_views_;
+    std::vector<std::array<VkImageView, LocalLightCapacity>> local_bound_projections_;
     std::vector<LocalLightUniform> local_uniforms_;
     std::vector<VkRect2D> local_scissors_;
     std::vector<BufferResource> forward_buffers_;
@@ -196,13 +252,13 @@ private:
     std::string ui_error_;
     std::vector<ModelDraw> model_draws_;
     std::vector<ParticleDraw> particle_draws_;
-    std::vector<VulkanRainRender*> rain_draws_;
-    std::vector<VulkanThunderboltRender*> thunderbolt_draws_;
+    std::vector<VulkanRainRender *> rain_draws_;
+    std::vector<VulkanThunderboltRender *> thunderbolt_draws_;
     std::vector<LevelDraw> level_draws_;
     // A visual can be submitted through several sector roots. Look up only
     // submissions for the same visual instead of scanning every draw.
     std::unordered_multimap<uint32_t, size_t> level_draw_lookup_;
-    const GpuLevel* current_level_{};
+    const GpuLevel *current_level_{};
     std::array<float, 16> scene_mvp_{};
     bool scene_visibility_{};
     bool level_recorded_{true};
@@ -219,4 +275,4 @@ private:
     uint32_t last_ui_draw_calls_{}, last_ui_triangles_{};
     VkExtent2D screenshot_extent_{};
 };
-}
+} // namespace xray::render::vulkan
