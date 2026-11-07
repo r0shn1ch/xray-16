@@ -144,6 +144,7 @@ private:
   void destroy_all_models();
   void create_wallmark(ModelGeometry &&geometry, const Fvector &center, IKinematics *skeleton = nullptr, const Fmatrix *transform = nullptr);
   Fmatrix current_view_projection() const;
+  void update_view_frustum();
   GpuLevel level_;
   std::string last_render_error_;
   uint32_t repeated_render_errors_{};

@@ -68,9 +68,13 @@ bool retirement_idle(VkDevice device, PFN_vkDeviceWaitIdle wait)
 }
 } // namespace
 static_assert(!std::is_abstract_v<VulkanLevelRender>, "Vulkan IRender implementation must be complete");
-VulkanLevelRender::VulkanLevelRender() = default;
-VulkanLevelRender::VulkanLevelRender(VulkanGameDevice &device) : external_game_device_(&device)
+VulkanLevelRender::VulkanLevelRender()
 {
+    ViewBase._clear();
+}
+VulkanLevelRender::VulkanLevelRender(VulkanGameDevice &device) : VulkanLevelRender()
+{
+    external_game_device_ = &device;
 }
 void VulkanLevelRender::create()
 {
@@ -133,7 +137,7 @@ bool VulkanLevelRender::occ_visible(vis_data &visual)
 }
 bool VulkanLevelRender::occ_visible(Fbox &bounds)
 {
-    u32 mask = FRUSTUM_P_ALL;
+    u32 mask = ViewBase.getMask();
     return ViewBase.testAABB(bounds.data(), mask) != fcvNone;
 }
 bool VulkanLevelRender::occ_visible(sPoly &polygon)
@@ -678,6 +682,7 @@ void VulkanLevelRender::Destroy()
     reset_in_progress_ = false;
     frame_phase_.reset();
     camera_state_.reset();
+    ViewBase._clear();
     context_state_.device_destroyed();
     R_ASSERT2(device_resource_state_.device_destroyed(),
               "Vulkan renderer device resources must be destroyed before the device");
@@ -815,11 +820,21 @@ void VulkanLevelRender::OnCameraUpdated()
 {
     camera_state_.on_camera_updated(Device.mFullTransform.m, Device.vCameraPosition.x, Device.vCameraPosition.y,
                                     Device.vCameraPosition.z);
+    update_view_frustum();
 }
 
 void VulkanLevelRender::SetCacheXform(Fmatrix &view, Fmatrix &project)
 {
     camera_state_.set_cache_xform(view.m, project.m);
+    update_view_frustum();
+}
+
+void VulkanLevelRender::update_view_frustum()
+{
+    // Tracers and shared visibility queries read IRender::ViewBase before
+    // Calculate. Keep it in sync with the camera, as the other renderers do.
+    Fmatrix transform = current_view_projection();
+    ViewBase.CreateFromMatrix(transform, FRUSTUM_P_LRTB | FRUSTUM_P_FAR);
 }
 
 IRender::RenderContext VulkanLevelRender::GetCurrentContext() const
@@ -1037,11 +1052,8 @@ void VulkanLevelRender::Calculate()
     // other gameplay renderers do, then let add_Visual enqueue each submission.
     if (g_pGamePersistent && psDeviceFlags.test(rsDrawDynamic))
     {
-        CFrustum frustum;
-        Fmatrix frustum_matrix = view_projection_matrix;
-        frustum.CreateFromMatrix(frustum_matrix, FRUSTUM_P_LRTB | FRUSTUM_P_FAR);
         xr_vector<ISpatial *> visible;
-        g_pGamePersistent->SpatialSpace.q_frustum(visible, 0, STYPE_RENDERABLE, frustum);
+        g_pGamePersistent->SpatialSpace.q_frustum(visible, 0, STYPE_RENDERABLE, ViewBase);
         for (ISpatial *spatial : visible)
         {
             if (!spatial)
