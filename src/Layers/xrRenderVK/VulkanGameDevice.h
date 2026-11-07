@@ -109,6 +109,8 @@ public:
     PFN_vkDeviceWaitIdle device_wait_idle_proc() const { return frame_dispatch_.device_wait_idle; }
 
 private:
+    void render_lights(const float (&mvp)[16], bool render_world,
+        const DeferredLight& light, const SunShadowUniform& sun_uniform);
     static void record_ui(const FrameRecordingContext& frame, void* user);
     static void capture_ui(VkCommandBuffer command, VkImage image, uint32_t index, void* user);
     static void record_ui_distortion(const FrameRecordingContext& frame, void* user);
@@ -168,6 +170,8 @@ private:
     LocalShadowTargets local_shadows_;
     std::vector<std::array<VkDescriptorSet, LocalLightCapacity>> local_sets_;
     std::vector<VulkanLightSnapshot> light_snapshots_;
+    struct LightCandidate { const VulkanLightSnapshot* light; float distance; VkRect2D scissor; };
+    std::vector<LightCandidate> light_candidates_;
     std::vector<LocalLightUniform> local_uniforms_;
     std::vector<VkRect2D> local_scissors_;
     std::vector<BufferResource> forward_buffers_;

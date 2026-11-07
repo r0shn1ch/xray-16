@@ -459,7 +459,7 @@ int main(int argc, char** argv)
         bool weather_initialized=false;
         bool inputs_initialized = false;
         bool cube_initialized = false;
-        auto execute = [&](VkShaderModule fragment, const Push& push, bool use_cube = false, VkShaderModule custom_vertex = VK_NULL_HANDLE, bool sprite = false, bool skinned = false, bool coplanar = false, bool multiply_decal = false) {
+        auto execute = [&](VkShaderModule fragment, const Push& push, bool use_cube = false, VkShaderModule custom_vertex = VK_NULL_HANDLE, bool sprite = false, bool skinned = false, bool coplanar = false, bool multiply_decal = false, bool cutout_bias = false) {
             VkPipelineShaderStageCreateInfo stages[2]{};
             for (auto& stage : stages) stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
             stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT; stages[0].module = custom_vertex ? custom_vertex : vs; stages[0].pName = "main";
@@ -481,6 +481,8 @@ int main(int argc, char** argv)
             vertex_input.pVertexAttributeDescriptions = ui ? ui_attributes : skinned ? skinned_attributes : attributes;
             depth.depthTestEnable=coplanar;depth.depthWriteEnable=coplanar;
             depth.depthCompareOp=xray::render::vulkan::geometry_depth_compare(false);
+            const auto bias=xray::render::vulkan::geometry_depth_bias(false,false,cutout_bias);
+            raster.depthBiasEnable=bias.enabled;raster.depthBiasConstantFactor=bias.constant;raster.depthBiasSlopeFactor=bias.slope;
             color_blends[0].blendEnable=multiply_decal;
             color_blends[0].colorWriteMask=multiply_decal?7:15;
             color_blends[0].srcColorBlendFactor=VK_BLEND_FACTOR_DST_COLOR;
@@ -537,7 +539,7 @@ int main(int argc, char** argv)
                     0, 0, nullptr, 0, nullptr, barriers.size(), barriers.data());
                 inputs_initialized = true;
             }
-            std::array<VkClearValue, 4> clear{}; clear[3].depthStencil={coplanar ? 0.f : 1.f,0};
+            std::array<VkClearValue, 4> clear{}; clear[3].depthStencil={cutout_bias ? .5f : coplanar ? 0.f : 1.f,0};
             if(multiply_decal) clear[0].color={{.2f,.3f,.4f,1.f}};
             VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
             rp.renderPass = render_pass; rp.framebuffer = framebuffer; rp.renderArea.extent = {1, 1};
@@ -628,6 +630,11 @@ int main(int argc, char** argv)
         auto paper=execute(paper_fragment,push,false,VK_NULL_HANDLE,false,false,true);
         near(paper[0][0],pixels[0][0]*triangle[0].baked[0],"coplanar paper decal survives floor depth");
         vkDestroyShaderModule(device,paper_fragment,nullptr);
+        auto cutout_paper=module("level_cutout.ps.spv");
+        auto paper_push=push;paper_push.mvp[14]=std::nextafter(.5f,1.f);
+        const auto cutout_result=execute(cutout_paper,paper_push,false,VK_NULL_HANDLE,false,false,true,false,true);
+        near(cutout_result[0][0],pixels[0][0],"cutout paper survives one ULP of floor-depth error");
+        vkDestroyShaderModule(device,cutout_paper,nullptr);
         // Static model rotation also lives outside fragment material bytes.
         auto object_vertex=module("object_opaque.vs.spv"),object_fragment=module("object_opaque.ps.spv");
         auto object_push=push;const auto object_quaternion=model_rotation_quaternion(rotated_rows);
@@ -653,7 +660,7 @@ int main(int argc, char** argv)
         const float no_environment[]{0,0,0};
         const auto object_light=xray::render::vulkan::evaluate_object_lighting({0,0,0},
             no_environment,no_environment,no_environment,xray::render::vulkan::VulkanTraceAll,baked_sources);
-        object_push.matrices[2]=pack_model_hemi(object_light.hemi_cube[0],object_light.hemi_cube[1]);
+        object_push.matrices[2]=pack_model_hemi(object_light.hemi_cube[0],object_light.hemi_cube[3]);
         for(float depth : {.1f,.8f}) {
             object_push.mvp[14]=depth;
             const auto lit_object=execute(object_fragment,object_push,false,object_vertex);
@@ -695,6 +702,11 @@ int main(int argc, char** argv)
         auto bump = execute(flat, push);
         near(bump[2][0], pixels[7][0] * pixels[7][0], "bump gloss red");
         near(bump[2][3], pixels[8][2], "bump auxiliary height blue");
+        fill(memory,input[7],{.5f,.5f,.5f,.5f});fill(memory,input[8],{.5f,.5f,.5f,.5f});
+        const auto neutral_bump=execute(flat,push);
+        near(neutral_bump[1][0],.5f,"degenerate bump retains geometric normal X");
+        near(neutral_bump[1][2],1.f,"degenerate bump retains geometric normal Z");
+        fill(memory,input[7],pixels[7]);fill(memory,input[8],pixels[8]);
         push.modes[2] = 1;
         auto normal = execute(flat, push);
         if (std::abs(normal[1][0] - bump[1][0]) < .02f)

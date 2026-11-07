@@ -38,7 +38,7 @@ int main()
     const float sun[]{0.5f, 0.5f, 0.5f};
     const std::array<float, 3> origin{0.f, 0.f, 0.f};
     const auto from_baked=evaluate_object_lighting(origin,ambient,hemi,sun,VulkanTraceAll,decoded);
-    assert(std::abs(from_baked.hemi_cube[4]-.563f)<1e-5f);
+    assert(std::abs(from_baked.hemi_cube[2]-.563f)<1e-5f);
     assert(std::abs(from_baked.hemi_cube[5]-.507f)<1e-5f);
 
     VulkanLightSnapshot point;
@@ -52,7 +52,7 @@ int main()
     // The original local-light attenuation is 1 - (distance / range)^2.
     assert(lit.luminocity > 0.77f && lit.luminocity < 0.78f);
     assert(lit.hemi_luminocity > 0.57f && lit.hemi_luminocity < 0.58f);
-    assert(lit.hemi_cube[4] > lit.hemi_cube[5]);
+    assert(lit.hemi_cube[2] > lit.hemi_cube[5]);
 
     point.active = false;
     const VulkanObjectLighting unlit = evaluate_object_lighting(origin, ambient, hemi, sun,

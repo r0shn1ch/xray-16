@@ -11,7 +11,7 @@
 
 namespace
 {
-constexpr int TouchControlCount = 8;
+constexpr int TouchControlCount = 9;
 std::atomic<std::uint32_t> g_touchControls{};
 std::atomic<std::uint32_t> g_touchPresses{};
 

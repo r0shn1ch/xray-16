@@ -13,6 +13,7 @@ namespace xray::render::vulkan
 // reads these every frame, so the UI and saved user config share one state.
 inline uint32_t quality_preset = 2;
 inline int detail_radius = 40;
+inline int detail_update_cells = 16;
 inline float ambient_scale = 1.f;
 inline float hemisphere_scale = 1.f;
 inline float sun_scale = 1.f;

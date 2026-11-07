@@ -145,6 +145,9 @@ target_sources(xrRenderVK PRIVATE
     VulkanGameLightingMath.h
     VulkanUIRender.cpp
     VulkanUIRender.h
+    Light_DB.cpp
+    Light_DB.h
+    r__render_lights.cpp
     VulkanGameDevice.cpp
     VulkanGameDevice.h
 )

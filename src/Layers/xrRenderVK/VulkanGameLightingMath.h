@@ -33,12 +33,12 @@ struct VulkanObjectLighting
 {
     float luminocity{};
     float hemi_luminocity{};
-    // ROS order: +X, -X, +Y, -Y, +Z, -Z.
+    // IRender_ObjectSpecific / CROS_impl order: +X, +Y, +Z, -X, -Y, -Z.
     std::array<float, 6> hemi_cube{};
 };
 
 // Vertex shaders consume the positive faces as xyz, followed by negative xyz.
-constexpr std::array<unsigned, 6> VulkanShaderHemiFaceOrder{0, 2, 4, 1, 3, 5};
+constexpr std::array<unsigned, 6> VulkanShaderHemiFaceOrder{0, 1, 2, 3, 4, 5};
 
 enum VulkanObjectLightingMode : uint32_t
 {

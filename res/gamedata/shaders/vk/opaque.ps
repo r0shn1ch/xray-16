@@ -135,7 +135,9 @@ float3 surface_normal(float3 geometric, float3 position, float2 uv, float3 tange
 }
 float3 unpack_bump(float4 main_map, float4 auxiliary)
 {
-    return normalize(main_map.wzy + auxiliary.xyz - 1.0);
+    float3 value = main_map.wzy + auxiliary.xyz - 1.0;
+    float length_squared = dot(value, value);
+    return length_squared > 1e-12 ? value * rsqrt(length_squared) : float3(0.0, 0.0, 1.0);
 }
 
 float3 model_surface_normal(Fragment fragment, float2 uv, float3 tangent_normal)
@@ -307,6 +309,10 @@ float4 main(Fragment fragment) : SV_Target0
     float3 illumination = ambient_color.rgb + hemi_color.rgb * hemisphere +
         sun_color_count.rgb *
         max(dot(normal, normalize(-sun_direction_ambient.xyz)), 0.0);
+    float2 uv = fragment.position.xy * viewport.xy;
+    float4 world_clip = mul(inverse_view_projection,
+        float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, fragment.position.z, 1.0));
+    float3 world = world_clip.xyz / max(abs(world_clip.w), 1e-6) * sign(world_clip.w);
     float3 environment_specular = 0.0;
     if (hemi_color.w > 0.5)
     {
@@ -321,7 +327,7 @@ float4 main(Fragment fragment) : SV_Target0
             hemi_color.rgb * hemisphere;
         if (gloss > 0.0)
         {
-            float3 incident = normalize(fragment.world_position - fog_end_camera.yzw);
+            float3 incident = normalize(world - fog_end_camera.yzw);
             float3 reflection = reflect(incident, env_normal);
             float angle = 0.5 + 0.5 * dot(reflection, incident);
             reflection.y = reflection.y * 2.0 - 1.0;
@@ -333,10 +339,6 @@ float4 main(Fragment fragment) : SV_Target0
                 environment_specular_factor(hemisphere, angle, material) * gloss;
         }
     }
-    float2 uv = fragment.position.xy * viewport.xy;
-    float4 world_clip = mul(inverse_view_projection,
-        float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, fragment.position.z, 1.0));
-    float3 world = world_clip.xyz / max(abs(world_clip.w), 1e-6) * sign(world_clip.w);
     for (int i = 0; i < min(int(sun_color_count.w), 16); ++i)
     {
         float3 delta = world - local_lights[i].position_range.xyz;
