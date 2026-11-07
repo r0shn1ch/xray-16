@@ -135,9 +135,27 @@ void CUIProgressBar::Draw()
         Fvector2 pos = m_UIProgressItem.GetWndPos();
         progress_rect.add(rect.left + pos.x, rect.top + pos.y);
 
-        UI().PushScissor(progress_rect);
-        m_UIProgressItem.Draw();
-        UI().PopScissor();
+        if (m_segments && m_orient_mode == om_horz)
+        {
+            const float step = GetWidth() / m_segments;
+            for (unsigned i = 0; i < m_segments; ++i)
+            {
+                Frect segment = progress_rect;
+                segment.x1 = rect.x1 + pos.x + i * step;
+                segment.x2 = _min(segment.x1 + step * (1.f - m_segment_gap), progress_rect.x2);
+                if (segment.x1 >= segment.x2)
+                    break;
+                UI().PushScissor(segment);
+                m_UIProgressItem.Draw();
+                UI().PopScissor();
+            }
+        }
+        else
+        {
+            UI().PushScissor(progress_rect);
+            m_UIProgressItem.Draw();
+            UI().PopScissor();
+        }
     }
 }
 

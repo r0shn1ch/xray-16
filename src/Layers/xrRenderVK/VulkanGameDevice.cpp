@@ -207,6 +207,14 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
         deferred_.rebind_compatible_render_passes(targets_.render_pass(), frame.render_pass(),
                                                   sun_shadows_.render_pass(), local_shadows_.render_pass(),
                                                   frame.overlay_render_pass());
+        if ((physical.graphics_queue_flags & VK_QUEUE_COMPUTE_BIT) &&
+            !light_grid_.initialize(device, get, frame.render_pass(), deferred_.gbuffer_layout(), physical.memory,
+                                    buffer_upload_.buffer, scene_dispatch, shaders,
+                                    frame_dispatch_.cmd_pipeline_barrier, error))
+        {
+            Msg("! [renderer-vulkan] light grid unavailable; using individual lights: %s", error.c_str());
+            error.clear();
+        }
         Msg("[renderer-vulkan] device.deferred ready");
         targets_.bind_sun_shadow(deferred_, sun_shadows_);
         if (!create_forward_targets(error))
@@ -405,7 +413,7 @@ bool VulkanGameDevice::refresh_color_maps(std::string &error)
 
 void VulkanGameDevice::queue_model(GpuModel &model, IKinematics *skeleton, const float (&mvp)[16], bool hud,
                                    float sort_distance, const void *instance, float lod, const Fmatrix *world,
-                                   const float *hemi_faces)
+                                   const float *hemi_faces, bool shadow_only)
 {
     ModelDraw draw;
     draw.model = &model;
@@ -427,7 +435,20 @@ void VulkanGameDevice::queue_model(GpuModel &model, IKinematics *skeleton, const
     draw.sort_distance = std::isfinite(sort_distance) ? std::max(sort_distance, 0.f) : 0.f;
     draw.lod = lod;
     draw.hud = hud;
-    model_draws_.push_back(draw);
+    if (!shadow_only)
+        model_draws_.push_back(draw);
+    if (!hud)
+    {
+        const auto range = shadow_draw_lookup_.equal_range(draw.model);
+        for (auto it = range.first; it != range.second; ++it)
+        {
+            const auto &other = shadow_model_draws_[it->second];
+            if (other.skeleton == draw.skeleton && other.world == draw.world)
+                return;
+        }
+        shadow_draw_lookup_.emplace(draw.model, shadow_model_draws_.size());
+        shadow_model_draws_.push_back(draw);
+    }
 }
 
 void VulkanGameDevice::queue_particle(IRenderVisual *visual, const float (&mvp)[16], const Fvector &right,
@@ -451,6 +472,12 @@ void VulkanGameDevice::discard_model_draws(const void *instance)
     model_draws_.erase(std::remove_if(model_draws_.begin(), model_draws_.end(),
                                       [instance](const ModelDraw &draw) { return draw.instance == instance; }),
                        model_draws_.end());
+    shadow_model_draws_.erase(std::remove_if(shadow_model_draws_.begin(), shadow_model_draws_.end(),
+                                             [instance](const ModelDraw &draw) { return draw.instance == instance; }),
+                              shadow_model_draws_.end());
+    shadow_draw_lookup_.clear();
+    for (size_t i = 0; i < shadow_model_draws_.size(); ++i)
+        shadow_draw_lookup_.emplace(shadow_model_draws_[i].model, i);
     const size_t previous_level_count = level_draws_.size();
     level_draws_.erase(std::remove_if(level_draws_.begin(), level_draws_.end(),
                                       [instance](const LevelDraw &draw) { return draw.instance == instance; }),
@@ -608,6 +635,8 @@ bool VulkanGameDevice::take_screenshot(std::vector<uint8_t> &pixels, VkExtent2D 
 void VulkanGameDevice::discard_scene_draws()
 {
     model_draws_.clear();
+    shadow_model_draws_.clear();
+    shadow_draw_lookup_.clear();
     particle_draws_.clear();
     rain_draws_.clear();
     thunderbolt_draws_.clear();
@@ -740,7 +769,11 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
     }
     render_lights(mvp, render_world, light, sun_uniform);
     deferred_.set_forward_weather(render_world ? weather_set_ : VK_NULL_HANDLE);
+    if (render_world && Device.dwFrame % 300 == 0)
+        Msg("[renderer-vulkan] shadow.casters visible-models=%zu caster-models=%zu", model_draws_.size(),
+            shadow_model_draws_.size());
     frame_.set_shadow_recorder(record_shadow_models, this);
+    frame_.set_light_grid_recorder(prepare_light_grid, this);
     bool particle_refraction = false;
     for (const auto &particle : particle_draws_)
         if (particle.visual->getType() == 8 ? static_cast<VulkanParticleEffect *>(particle.visual)->distortion()
@@ -771,6 +804,8 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         if (!window_.frame().device_lost())
             reset_required_ = true;
         model_draws_.clear();
+        shadow_model_draws_.clear();
+        shadow_draw_lookup_.clear();
         particle_draws_.clear();
         level_draws_.clear();
         level_draw_lookup_.clear();
@@ -790,6 +825,8 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         screenshot_ready_ = wait_idle();
     screenshot_requested_ = false;
     model_draws_.clear();
+    shadow_model_draws_.clear();
+    shadow_draw_lookup_.clear();
     particle_draws_.clear();
     level_draws_.clear();
     level_draw_lookup_.clear();
@@ -930,6 +967,8 @@ bool VulkanGameDevice::prepare_for_reset(std::string &error)
     // A reset starts between frames. Drop commands accumulated for a frame
     // that will no longer be submitted, while keeping device-owned UI buffers.
     model_draws_.clear();
+    shadow_model_draws_.clear();
+    shadow_draw_lookup_.clear();
     particle_draws_.clear();
     level_draws_.clear();
     level_draw_lookup_.clear();
@@ -951,6 +990,8 @@ void VulkanGameDevice::destroy()
     screenshot_buffer_.destroy();
     screenshot_requested_ = screenshot_ready_ = readback_enabled_ = false;
     model_draws_.clear();
+    shadow_model_draws_.clear();
+    shadow_draw_lookup_.clear();
     particle_draws_.clear();
     level_draws_.clear();
     level_draw_lookup_.clear();
@@ -982,6 +1023,7 @@ void VulkanGameDevice::destroy()
     local_shadows_.destroy();
     sun_shadows_.destroy();
     ui_pass_.destroy();
+    light_grid_.destroy();
     deferred_.destroy();
     shader_resources_.destroy();
     Msg("[renderer-vulkan] teardown window begin");

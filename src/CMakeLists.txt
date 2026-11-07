@@ -132,6 +132,16 @@ if (XRAY_BUILD_VULKAN_TESTS)
     # channels from a headless Vulkan device (Mesa Lavapipe is sufficient).
     find_package(Vulkan QUIET)
     if (Vulkan_FOUND AND NOT ANDROID)
+        add_executable(vulkan_light_grid_gpu_test
+            "${XRAY_SOURCE_DIR}/tests/vulkan_light_grid_gpu.cpp"
+            "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/LightGrid.cpp"
+            "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/BufferResource.cpp"
+            "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/ShaderModule.cpp"
+            "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/ScenePass.cpp")
+        target_include_directories(vulkan_light_grid_gpu_test PRIVATE "${XRAY_SOURCE_DIR}" "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include")
+        target_link_libraries(vulkan_light_grid_gpu_test PRIVATE Vulkan::Vulkan)
+        target_compile_options(vulkan_light_grid_gpu_test PRIVATE -UNDEBUG)
+        add_test(NAME vulkan_light_grid_gpu COMMAND vulkan_light_grid_gpu_test)
         add_executable(vulkan_local_shadow_gpu_test
             "${XRAY_SOURCE_DIR}/tests/vulkan_local_shadow_gpu.cpp"
             "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/LocalShadowTargets.cpp"

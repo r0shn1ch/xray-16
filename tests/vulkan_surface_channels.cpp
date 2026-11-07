@@ -12,6 +12,7 @@
 #include "../src/Layers/xrRenderVK/LocalLightShaders.h"
 #include "../src/Layers/xrRenderVK/LocalShadowTargets.h"
 #include "../src/Layers/xrRenderVK/DetailInstance.h"
+#include "../src/Layers/xrRenderVK/ForwardLighting.h"
 #include <array>
 #include <algorithm>
 #include <cassert>
@@ -224,6 +225,26 @@ int main(int argc, char **argv)
         pixels[8] = {.1f, .2f, .7f, .4f};
         for (size_t i = 0; i < input.size(); ++i)
             fill(memory, input[i], pixels[i]);
+        const Image material_mips =
+            image(memory, format, VK_IMAGE_TILING_LINEAR, VK_IMAGE_USAGE_SAMPLED_BIT,
+                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 1, 4, 3, 4);
+        void *material_data{};
+        check(vkMapMemory(device, material_mips.memory, 0, VK_WHOLE_SIZE, 0, &material_data));
+        for (unsigned mip = 0; mip < 3; ++mip)
+        {
+            VkImageSubresource sub{VK_IMAGE_ASPECT_COLOR_BIT, mip, 0};
+            VkSubresourceLayout sub_layout{};
+            vkGetImageSubresourceLayout(device, material_mips.image, &sub, &sub_layout);
+            for (unsigned y = 0; y < (4u >> mip); ++y)
+                for (unsigned x = 0; x < (4u >> mip); ++x)
+                {
+                    const float rgba[]{mip == 2 ? .9f : mip == 1 ? .6f : x < 2 ? .2f : .8f, .5f, 1.f, 1.f};
+                    std::memcpy(static_cast<uint8_t *>(material_data) + sub_layout.offset + y * sub_layout.rowPitch +
+                                    x * 16,
+                                rgba, 16);
+                }
+        }
+        vkUnmapMemory(device, material_mips.memory);
         const Image cube = image(memory, format, VK_IMAGE_TILING_LINEAR, VK_IMAGE_USAGE_SAMPLED_BIT,
                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 6);
         const std::array<float, 4> cube_pixel{.91f, .22f, .34f, .67f};
@@ -242,10 +263,10 @@ int main(int argc, char **argv)
         VkDescriptorSetLayout descriptor_layout{};
         check(vkCreateDescriptorSetLayout(device, &layout_info, nullptr, &descriptor_layout));
         const VkDescriptorPoolSize pool_sizes[]{{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 84},
-                                                {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2},
+                                                {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3},
                                                 {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}};
         VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        pool_info.maxSets = 6;
+        pool_info.maxSets = 7;
         pool_info.poolSizeCount = 3;
         pool_info.pPoolSizes = pool_sizes;
         VkDescriptorPool pool{};
@@ -727,7 +748,60 @@ int main(int argc, char **argv)
             {9, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(DetailInstance, position_scale)},
             {10, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(DetailInstance, rotation)}};
         bool inputs_initialized = false;
+        const auto forward_fragment = module("object_priority_opaque.ps.spv");
+        const auto forward_vertex = module("object_opaque.vs.spv");
+        ForwardLightUniform forward_data{};
+        for (unsigned i = 0; i < 16; i += 5)
+            forward_data.inverse_view_projection[i] = 1;
+        forward_data.sun_direction_ambient[2] = -1;
+        forward_data.sun_color_count[3] = ForwardLightCapacity;
+        forward_data.viewport[0] = forward_data.viewport[1] = 1;
+        for (unsigned i : {32u, 63u})
+        {
+            forward_data.local[i].position_range[2] = 2;
+            forward_data.local[i].position_range[3] = 10;
+        }
+        forward_data.local[32].color_type[0] = 1;
+        forward_data.local[63].color_type[1] = 1;
+        buffer_info.size = sizeof(forward_data);
+        buffer_info.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+        VkBuffer forward_buffer{};
+        check(vkCreateBuffer(device, &buffer_info, nullptr, &forward_buffer));
+        vkGetBufferMemoryRequirements(device, forward_buffer, &required);
+        auto forward_memory =
+            memory.allocate(required, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        check(vkBindBufferMemory(device, forward_buffer, forward_memory, 0));
+        check(vkMapMemory(device, forward_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
+        std::memcpy(mapped, &forward_data, sizeof(forward_data));
+        vkUnmapMemory(device, forward_memory);
+        const VkDescriptorSetLayoutBinding forward_binding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+                                                           VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+        VkDescriptorSetLayoutCreateInfo forward_layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        forward_layout_info.bindingCount = 1;
+        forward_layout_info.pBindings = &forward_binding;
+        VkDescriptorSetLayout forward_descriptor{};
+        check(vkCreateDescriptorSetLayout(device, &forward_layout_info, nullptr, &forward_descriptor));
+        auto forward_allocation = alloc;
+        forward_allocation.pSetLayouts = &forward_descriptor;
+        VkDescriptorSet forward_set{};
+        check(vkAllocateDescriptorSets(device, &forward_allocation, &forward_set));
+        VkDescriptorBufferInfo forward_info{forward_buffer, 0, sizeof(forward_data)};
+        VkWriteDescriptorSet forward_write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        forward_write.dstSet = forward_set;
+        forward_write.dstBinding = 0;
+        forward_write.descriptorCount = 1;
+        forward_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        forward_write.pBufferInfo = &forward_info;
+        vkUpdateDescriptorSets(device, 1, &forward_write, 0, nullptr);
+        const VkDescriptorSetLayout forward_layouts[]{descriptor_layout, forward_descriptor, descriptor_layout};
+        auto forward_pipeline_info = pipeline_layout_info;
+        forward_pipeline_info.setLayoutCount = 3;
+        forward_pipeline_info.pSetLayouts = forward_layouts;
+        forward_pipeline_info.pPushConstantRanges = &range;
+        VkPipelineLayout forward_pipeline_layout{};
+        check(vkCreatePipelineLayout(device, &forward_pipeline_info, nullptr, &forward_pipeline_layout));
         bool cube_initialized = false;
+        bool material_mips_initialized = false;
         auto execute = [&](VkShaderModule fragment, const Push &push, bool use_cube = false,
                            VkShaderModule custom_vertex = VK_NULL_HANDLE, bool sprite = false, bool skinned = false,
                            bool coplanar = false, bool multiply_decal = false, bool cutout_bias = false) {
@@ -750,13 +824,15 @@ int main(int argc, char **argv)
             const bool ui = custom_vertex == ui_vs;
             const bool weather = fragment == weather_ps;
             const bool local = fragment == local_fragment;
+            const bool forward = fragment == forward_fragment;
             const bool instanced = custom_vertex == instanced_vertex;
             const bool wide = ui || weather;
             viewport.width = wide ? 128.f : sprite ? 2.f : 1.f;
             scissor.extent.width = wide ? 128 : sprite ? 2 : 1;
             viewport.height = sprite ? 2.f : 1.f;
             scissor.extent.height = sprite ? 2 : 1;
-            pipeline_info.layout = local     ? local_pipeline_layout
+            pipeline_info.layout = forward   ? forward_pipeline_layout
+                                   : local   ? local_pipeline_layout
                                    : weather ? weather_pipeline_layout
                                    : skinned ? skinned_pipeline_layout
                                              : pipeline_layout;
@@ -785,7 +861,7 @@ int main(int argc, char **argv)
             check(vkResetCommandPool(device, commands, 0));
             VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
             check(vkBeginCommandBuffer(cmd, &begin));
-            if (weather && !weather_initialized)
+            if ((weather || forward) && !weather_initialized)
             {
                 VkImageMemoryBarrier barriers[3]{};
                 for (unsigned i = 0; i < 3; ++i)
@@ -839,6 +915,20 @@ int main(int argc, char **argv)
                                      nullptr, 0, nullptr, barriers.size(), barriers.data());
                 inputs_initialized = true;
             }
+            if (!material_mips_initialized)
+            {
+                VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                b.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+                b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                b.oldLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+                b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+                b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                b.image = material_mips.image;
+                b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 3, 0, 1};
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                                     nullptr, 0, nullptr, 1, &b);
+                material_mips_initialized = true;
+            }
             std::array<VkClearValue, 4> clear{};
             clear[3].depthStencil = {cutout_bias ? .5f : coplanar ? 0.f : 1.f, 0};
             if (multiply_decal)
@@ -859,8 +949,9 @@ int main(int argc, char **argv)
                                                                            : weather ? weather_environment_set
                                                                            : skinned ? pose_set
                                                                                      : scene_set};
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_info.layout, 0, 2, draw_sets, 0,
-                                    nullptr);
+            const VkDescriptorSet forward_sets[]{set, forward_set, weather_environment_set};
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_info.layout, 0, forward ? 3 : 2,
+                                    forward ? forward_sets : draw_sets, 0, nullptr);
             VkDeviceSize offset{};
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertices, &offset);
             vkCmdPushConstants(cmd, pipeline_info.layout, range.stageFlags, 0, weather ? 128 : sizeof(push), &push);
@@ -913,6 +1004,63 @@ int main(int argc, char **argv)
         push.scale = 1;
         push.modes[3] = 1;
         push.factors[1] = 1;
+        const auto forward_color = execute(forward_fragment, push, false, forward_vertex);
+        near(forward_color[0][0], pixels[0][0] * .96f,
+             "forward object receives light 32 beyond old camera-dependent first-16 cutoff");
+        near(forward_color[0][1], pixels[0][1] * .96f, "forward object receives light 63");
+        near(forward_color[0][2], 0.f, "forward object unlit channel");
+        // Binding 1 deliberately clamps lightmaps to mip zero; base and normal
+        // textures must still repeat and select coarse mips with distance.
+        {
+            const auto saved_triangle = triangle;
+            const auto saved_images = images;
+            auto sampler_config = sampler_info;
+            sampler_config.maxLod = VK_LOD_CLAMP_NONE;
+            VkSampler material_sampler{};
+            check(vkCreateSampler(device, &sampler_config, nullptr, &material_sampler));
+            sampler_config.maxLod = 0;
+            sampler_config.addressModeU = sampler_config.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            VkSampler lightmap_sampler{};
+            check(vkCreateSampler(device, &sampler_config, nullptr, &lightmap_sampler));
+            images[0] = {material_sampler, material_mips.view, VK_IMAGE_LAYOUT_GENERAL};
+            images[1].sampler = lightmap_sampler;
+            images[15] = {material_sampler, material_mips.view, VK_IMAGE_LAYOUT_GENERAL};
+            for (unsigned i : {3u, 4u, 5u, 6u})
+                images[i] = {material_sampler, material_mips.view, VK_IMAGE_LAYOUT_GENERAL};
+            for (unsigned i : {0u, 1u, 3u, 4u, 5u, 6u, 15u})
+                vkUpdateDescriptorSets(device, 1, &writes[i], 0, nullptr);
+            for (auto &v : triangle)
+                v.uv[0] = 1.125f, v.uv[1] = .125f;
+            check(vkMapMemory(device, vertex_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
+            std::memcpy(mapped, triangle.data(), sizeof(triangle));
+            vkUnmapMemory(device, vertex_memory);
+            near(execute(flat, push)[0][0], .2f, "base texture repeats independently of clamped lightmap");
+            near(execute(terrain, push)[0][0], .08f,
+                 "terrain base and four detail maps repeat instead of sampling black borders");
+            triangle = saved_triangle;
+            for (auto &v : triangle)
+            {
+                v.uv[0] *= 8;
+                v.uv[1] *= 8;
+            }
+            check(vkMapMemory(device, vertex_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
+            std::memcpy(mapped, triangle.data(), sizeof(triangle));
+            vkUnmapMemory(device, vertex_memory);
+            near(execute(flat, push)[0][0], .9f, "base texture uses coarse mip independently of lightmap mip zero");
+            auto normal_push = push;
+            normal_push.modes[2] = 1;
+            if (execute(flat, normal_push)[1][0] < .6f)
+                throw std::runtime_error("normal map incorrectly sampled lightmap mip zero");
+            images = saved_images;
+            for (unsigned i : {0u, 1u, 3u, 4u, 5u, 6u, 15u})
+                vkUpdateDescriptorSets(device, 1, &writes[i], 0, nullptr);
+            triangle = saved_triangle;
+            check(vkMapMemory(device, vertex_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
+            std::memcpy(mapped, triangle.data(), sizeof(triangle));
+            vkUnmapMemory(device, vertex_memory);
+            vkDestroySampler(device, material_sampler, nullptr);
+            vkDestroySampler(device, lightmap_sampler, nullptr);
+        }
         // An authored frame rotated relative to the UV gradients must survive
         // GPU skinning, world rotation and changes to fragment material data.
         auto character_push = push;
@@ -951,6 +1099,23 @@ int main(int argc, char **argv)
             near(fallback[1][0], .8f, "missing authored basis uses UV tangent X");
             near(fallback[1][1], .5f, "missing authored basis uses UV tangent Y");
             near(fallback[1][2], .9f, "missing authored basis preserves normal Z");
+            vkDestroyShaderModule(device, vertex, nullptr);
+        }
+        for (auto &v : triangle)
+        {
+            v.tangent[0] = v.tangent[1] = v.bitangent[0] = v.bitangent[1] = 0;
+            v.tangent[2] = 1;
+            v.bitangent[2] = 2;
+        }
+        check(vkMapMemory(device, vertex_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
+        std::memcpy(mapped, triangle.data(), sizeof(triangle));
+        vkUnmapMemory(device, vertex_memory);
+        for (unsigned links = 1; links <= 4; ++links)
+        {
+            auto vertex = module("skinned_" + std::to_string(links) + ".vs.spv");
+            auto fallback = execute(character_fragment, character_push, false, vertex, false, true);
+            near(fallback[1][0], .8f, "finite collapsed tangent frame falls back to UV basis");
+            near(fallback[1][2], .9f, "collapsed tangent frame keeps finite normal");
             vkDestroyShaderModule(device, vertex, nullptr);
         }
         triangle = authored_triangle;
@@ -1164,6 +1329,7 @@ int main(int argc, char **argv)
         }
         near(terrain_result[0][0], pixels[0][0] * 2.f * terrain_red, "terrain mask R/G/B/A slots");
         near(terrain_result[2][0], terrain_gloss, "terrain four bump gloss slots");
+        near(terrain_result[1][3], pixels[0][3] * .75f, "terrain hemi comes from base alpha, not atlas lightmap");
         float terrain_height = 0;
         for (int i = 0; i < 4; ++i)
             terrain_height += pixels[16 + i][2] * pixels[2][i] / weight_sum;
@@ -1552,6 +1718,25 @@ int main(int argc, char **argv)
         near(execute(local_fragment, push, false, weather_vs)[0][0], .1f, "local shadow blocks receiver");
         fill(memory, cube, {.75f, 0, 0, 1}, 6);
         near(execute(local_fragment, push, false, weather_vs)[0][0], lamp_value, "local shadow keeps visible receiver");
+        // At 50 m, a one-metre caster/receiver gap is only 0.00004 in
+        // perspective depth. A fixed 0.002 bias incorrectly removes the shadow.
+        local_uniform.inverse_view_projection[10] = 100;
+        local_uniform.position_range[3] = 100;
+        std::fill_n(local_uniform.shadow_matrices[0], 16, 0.f);
+        auto *projection = local_uniform.shadow_matrices[0];
+        projection[0] = projection[5] = 1;
+        projection[10] = 100.f / 99.9f;
+        projection[11] = 1;
+        projection[14] = -.1f * 100.f / 99.9f;
+        local_uniform.shadow_params[1] = LocalShadowReceiverOffset;
+        write_local();
+        const auto projected_depth = [&](float z) { return (projection[10] * z + projection[14]) / z; };
+        fill(memory, cube, {projected_depth(49), 0, 0, 1}, 6);
+        near(execute(local_fragment, push, false, weather_vs)[0][0], .1f,
+             "world-space bias preserves distant character shadows");
+        fill(memory, cube, {projected_depth(51), 0, 0, 1}, 6);
+        near(execute(local_fragment, push, false, weather_vs)[0][0], .4f,
+             "world-space bias preserves visible distant receivers");
         std::array<Vertex, 6> grass_quad{};
         const float quad_positions[6][2]{{-1, -1}, {1, -1}, {-1, 1}, {-1, 1}, {1, -1}, {1, 1}};
         for (unsigned i = 0; i < 6; ++i)
@@ -1644,6 +1829,15 @@ int main(int argc, char **argv)
             vkDestroyImage(device, slot.image, nullptr);
             vkFreeMemory(device, slot.memory, nullptr);
         }
+        vkDestroyImageView(device, material_mips.view, nullptr);
+        vkDestroyImage(device, material_mips.image, nullptr);
+        vkFreeMemory(device, material_mips.memory, nullptr);
+        vkDestroyShaderModule(device, forward_fragment, nullptr);
+        vkDestroyShaderModule(device, forward_vertex, nullptr);
+        vkDestroyPipelineLayout(device, forward_pipeline_layout, nullptr);
+        vkDestroyDescriptorSetLayout(device, forward_descriptor, nullptr);
+        vkDestroyBuffer(device, forward_buffer, nullptr);
+        vkFreeMemory(device, forward_memory, nullptr);
         vkDestroyImageView(device, cube.view, nullptr);
         vkDestroyImage(device, cube.image, nullptr);
         vkFreeMemory(device, cube.memory, nullptr);

@@ -75,6 +75,7 @@ public:
     void MakeContextCurrent(RenderContext context) override;
     void add_Visual(u32 context_id, IRenderable* root, IRenderVisual* visual,
         Fmatrix& world) override;
+    void queue_visual(IRenderable *root, IRenderVisual *visual, Fmatrix &world, bool shadow_only);
     IRender_ObjectSpecific* ros_create(IRenderable* parent) override;
     void ros_destroy(IRender_ObjectSpecific*& object) override;
     IRender_Light* light_create() override;

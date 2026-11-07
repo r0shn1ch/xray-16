@@ -11,6 +11,8 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
 {
     auto &context = *static_cast<DeferredFrame *>(user_data);
     context.pass_->notify_frame_ready(frame.frame_index);
+    if (context.render_world_ && context.light_grid_)
+        context.light_grid_(frame, context.light_grid_data_);
     const auto shadow_begin = std::chrono::steady_clock::now();
     if (context.shadows_)
     {

@@ -143,6 +143,7 @@ bool select_physical_device(VkInstance instance, VkSurfaceKHR surface, const Har
             PhysicalDevice candidate;
             candidate.handle = device;
             candidate.graphics_present_family = family;
+            candidate.graphics_queue_flags = families[family].queueFlags;
             vk.get_physical_properties(device, &candidate.properties);
             std::string requirements_error;
             if (!supports_game_formats(device, vk.get_format_properties, candidate.properties, requirements_error))

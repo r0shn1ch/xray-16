@@ -16,6 +16,7 @@ inline uint32_t quality_preset = 2;
 inline int detail_radius = 40;
 inline int detail_update_cells = 16;
 inline float detail_prepare_ms = 2.f;
+inline int use_light_grid = 1;
 inline int point_shadow_budget = 1;
 inline int spot_shadow_budget = 1;
 inline int ros_ray_budget = 128;

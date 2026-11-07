@@ -79,6 +79,16 @@ void UILoadingScreen::Initialize()
 #if defined(XR_PLATFORM_ANDROID)
     if (strstr(Core.Params, "-renderer-vulkan") && loadingProgress)
     {
+        if (!loaded && !ShadowOfChernobylMode && !ClearSkyMode)
+        {
+            // The fallback CoP atlas contains only a four-pixel strip. Make
+            // progress readable as discrete vertical ticks at every UI scale.
+            loadingProgress->SetHeight(16.f);
+            loadingProgress->m_UIProgressItem.SetHeight(16.f);
+            loadingProgress->m_UIProgressItem.SetStretchTexture(true);
+            loadingProgress->m_UIBackgroundItem.SetHeight(16.f);
+            loadingProgress->SetSegments(100);
+        }
         auto& foreground = loadingProgress->m_UIProgressItem;
         auto& background = loadingProgress->m_UIBackgroundItem;
         Fvector2 foregroundSize{}, backgroundSize{};

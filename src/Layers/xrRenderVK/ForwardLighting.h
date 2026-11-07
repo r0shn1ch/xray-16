@@ -1,10 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include "LightingLimits.h"
 
 namespace xray::render::vulkan
 {
-constexpr uint32_t ForwardLightCapacity = 16;
+constexpr uint32_t ForwardLightCapacity = XRAY_VK_MAX_LOCAL_LIGHTS;
 struct alignas(16) ForwardLightUniform
 {
     float inverse_view_projection[16]{};

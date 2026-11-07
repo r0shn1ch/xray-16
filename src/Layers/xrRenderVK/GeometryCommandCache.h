@@ -7,12 +7,18 @@
 
 namespace xray::render::vulkan
 {
-// Opt-in scope for consecutive level geometry draws. Any other recorder ends
-// the scope, so state set by a different pipeline is never assumed to survive.
+// Opt-in scope for consecutive geometry draws. Other recorders invalidate
+// cached state without disabling the surrounding batch.
 class GeometryCommandCache
 {
 public:
     void end() { enabled_ = false; }
+    void invalidate()
+    {
+        const bool active = enabled_;
+        *this = {};
+        enabled_ = active;
+    }
     class Batch
     {
     public:

@@ -26,6 +26,7 @@ struct PhysicalDevice
     VkPhysicalDeviceFeatures features{};
     VkPhysicalDeviceMemoryProperties memory{};
     uint32_t graphics_present_family = UINT32_MAX;
+    VkQueueFlags graphics_queue_flags{};
     uint64_t local_memory_bytes{};
     int64_t score{};
 };

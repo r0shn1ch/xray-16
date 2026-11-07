@@ -120,7 +120,7 @@ void VulkanGameDevice::render_lights(const float (&mvp)[16], bool render_world, 
                                     : point_slots < uint32_t(std::max(point_shadow_budget, 0))) &&
                               pixels * 20 >= screen_pixels;
             local.shadow_params[0] = float(shadow_slot * LocalShadowFaces);
-            local.shadow_params[1] = .002f;
+            local.shadow_params[1] = LocalShadowReceiverOffset;
             local.shadow_params[2] = cast ? 1.f : 0.f;
             const bool cookie = spot && !light_snapshot.texture.empty();
             local.shadow_params[3] = cookie ? 1.f : 0.f;
