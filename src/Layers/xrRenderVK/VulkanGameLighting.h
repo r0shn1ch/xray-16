@@ -10,6 +10,7 @@
 
 namespace xray::render::vulkan
 {
+class VulkanHemiLightGrid;
 class VulkanLight final : public IRender_Light
 {
 public:
@@ -83,7 +84,7 @@ public:
     float get_luminocity_hemi() override { return hemi_luminocity_; }
     float* get_luminocity_hemi_cube() override { return hemi_cube_.data(); }
     void update(const float* ambient, const float* hemi, const float* sun,
-        const std::vector<VulkanLightSnapshot>& lights);
+        const std::vector<VulkanLightSnapshot>& lights, const VulkanHemiLightGrid* baked=nullptr);
 
 private:
     IRenderable* parent_{};
@@ -91,5 +92,6 @@ private:
     float luminocity_{};
     float hemi_luminocity_{};
     std::array<float, 6> hemi_cube_{.5f,.5f,.5f,.5f,.5f,.5f};
+    std::vector<VulkanLightSnapshot> lighting_sources_;
 };
 }

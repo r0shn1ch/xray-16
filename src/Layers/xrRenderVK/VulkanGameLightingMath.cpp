@@ -53,14 +53,22 @@ VulkanObjectLighting evaluate_object_lighting(const std::array<float, 3>& positi
                 continue;
             float to_light[3]{light.position[0] - position[0],
                 light.position[1] - position[1], light.position[2] - position[2]};
-            const float distance = std::sqrt(to_light[0] * to_light[0] +
-                to_light[1] * to_light[1] + to_light[2] * to_light[2]);
-            if (!std::isfinite(distance) || distance >= light.range)
+            const float distance_squared=to_light[0]*to_light[0]+to_light[1]*to_light[1]+to_light[2]*to_light[2];
+            if (!std::isfinite(distance_squared) || distance_squared>=light.range*light.range)
                 continue;
+            const float distance=std::sqrt(distance_squared);
             const float inverse_distance = distance > 1e-6f ? 1.f / distance : 0.f;
             for (float& component : to_light) component *= inverse_distance;
             const float normalized_distance = distance / light.range;
             float attenuation = 1.f - normalized_distance * normalized_distance;
+            if(light.hemi_only)
+            {
+                const auto& a=light.attenuation;
+                const float denominator=a[0]+a[1]*distance+a[2]*distance_squared;
+                if(!std::isfinite(denominator) || denominator<=1e-6f) continue;
+                attenuation=std::max(1.f/denominator-distance*a[3],0.f);
+                if(!std::isfinite(attenuation)) continue;
+            }
             if (light.type == VulkanLightType::Spot)
             {
                 if (!finite3(light.direction))
@@ -73,13 +81,16 @@ VulkanObjectLighting evaluate_object_lighting(const std::array<float, 3>& positi
                 attenuation *= std::clamp((direction_dot - cutoff) /
                     std::max(1.f - cutoff, 1e-4f), 0.f, 1.f);
             }
-            const float energy = luminance(light.color.data()) * attenuation;
-            local_light += energy;
+            const float local_energy = luminance(light.color.data()) * attenuation;
+            local_light += local_energy;
+            // LightTrack.cpp defaults: ps_r2_dhemi_light_scale=.2,
+            // ps_r2_dhemi_light_flow=.1. Keep gameplay luminocity separate.
+            const float energy=local_energy*(light.hemi_only?.2f:1.f);
             for (size_t face = 0; face < face_directions.size(); ++face)
             {
                 const auto& normal = face_directions[face];
-                const float facing = std::max(0.f, normal[0] * to_light[0] +
-                    normal[1] * to_light[1] + normal[2] * to_light[2]);
+                const float dot=normal[0]*to_light[0]+normal[1]*to_light[1]+normal[2]*to_light[2];
+                const float facing=light.hemi_only ? .9f*std::max(0.f,dot)+.1f*std::max(0.f,-dot) : std::max(0.f,dot);
                 result.hemi_cube[face] += energy * facing;
             }
         }

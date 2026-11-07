@@ -127,6 +127,22 @@ bool effect(LevelBytes bytes, ParticleEffectDef& def)
         Cursor limit{find(parts, 8)};
         if (!limit.real(def.time_limit) || !limit.done() || def.time_limit < 0.f) return false;
     }
+    if(def.flags & (1u<<18))
+    {
+        Cursor scale{find(parts,0x22)};
+        for(float& value:def.velocity_scale) if(!scale.real(value)) return false;
+        if(!scale.done()) return false;
+    }
+    if(def.flags & (1u<<15))
+    {
+        const auto bytes=find(parts,0x25);
+        if(bytes.data)
+        {
+            Cursor align{bytes};
+            for(float& value:def.align_rotation) if(!align.real(value)) return false;
+            if(!align.done()) return false;
+        }
+    }
     return true;
 }
 

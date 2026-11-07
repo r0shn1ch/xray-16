@@ -133,7 +133,8 @@ if (XRAY_BUILD_VULKAN_TESTS)
     find_package(Vulkan QUIET)
     if (Vulkan_FOUND AND NOT ANDROID)
         add_executable(vulkan_surface_channels_test
-            "${XRAY_SOURCE_DIR}/tests/vulkan_surface_channels.cpp")
+            "${XRAY_SOURCE_DIR}/tests/vulkan_surface_channels.cpp"
+            "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/VulkanGameLightingMath.cpp")
         target_include_directories(vulkan_surface_channels_test PRIVATE
             "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include")
         target_link_libraries(vulkan_surface_channels_test PRIVATE Vulkan::Vulkan)

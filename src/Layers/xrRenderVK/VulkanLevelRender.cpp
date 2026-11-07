@@ -31,6 +31,7 @@
 #include "xrMaterialSystem/GameMtlLib.h"
 
 #include <SDL.h>
+#include "Common/LevelStructure.hpp"
 #include <SDL_vulkan.h>
 
 #include <algorithm>
@@ -893,11 +894,13 @@ void VulkanLevelRender::Calculate()
     light_snapshots.reserve(lights_.size());
     for (const VulkanLight* light : lights_)
         if (light && light->snapshot().active) light_snapshots.push_back(light->snapshot());
-    game_device_->queue_lights(light_snapshots);
+    auto scene_lights=light_snapshots;
+    scene_lights.insert(scene_lights.end(),level_lights_.begin(),level_lights_.end());
+    game_device_->queue_lights(std::move(scene_lights));
     for (VulkanObjectSpecific* object : object_specifics_)
         if (object)
             object->update(environment.ambient_color, environment.hemi_color,
-                environment.sun_color, light_snapshots);
+                environment.sun_color, light_snapshots, &level_hemi_lights_);
 
     std::vector<uint32_t> visible_roots;
     IGameObject* view_entity = g_pGameLevel ? g_pGameLevel->CurrentViewEntity() : nullptr;
@@ -1228,12 +1231,36 @@ void VulkanLevelRender::level_Load(IReader* reader)
         Msg("! [renderer-vulkan] level.load file=$level$/level failed: %s", error.c_str());
         xrDebug::Fatal(DEBUG_INFO, "Vulkan level load file=$level$/level failed: %s", error.c_str());
     }
+    level_lights_.clear();level_hemi_lights_.reset();
+    if(IReader* chunk=reader->open_chunk(fsL_LIGHT_DYNAMIC))
+    {
+        if(!decode_level_lights({static_cast<const uint8_t*>(chunk->pointer()),chunk->length()},false,level_lights_,error))
+            Msg("! [renderer-vulkan] level.lights chunk=6 rejected: %s",error.c_str());
+        chunk->close();
+    }
+    if(FS.exist("$level$","build.lights"))
+    {
+        if(IReader* file=FS.r_open("$level$","build.lights"))
+        {
+            if(IReader* chunk=file->open_chunk(fsL_HEADER))
+            {
+                std::vector<VulkanLightSnapshot> hemi;
+                if(decode_level_lights({static_cast<const uint8_t*>(chunk->pointer()),chunk->length()},true,hemi,error))
+                    level_hemi_lights_.reset(std::move(hemi));
+                else Msg("! [renderer-vulkan] level.hemi build.lights rejected: %s",error.c_str());
+                chunk->close();
+            }
+            FS.r_close(file);
+        }
+    }
+    Msg("[renderer-vulkan] level.lights direct=%zu hemi=%zu",level_lights_.size(),level_hemi_lights_.size());
     Msg("[renderer-vulkan] level.load ready visuals=%zu models=%zu textures=%zu",
         level_.visual_count(), level_.model_count(), textures_->resident_count());
 }
 
 void VulkanLevelRender::level_Unload()
 {
+    level_lights_.clear();level_hemi_lights_.reset();
     flush_render_failures();
     flush_resource_failures();
     if (device_ && (level_.visual_count() || !models_.empty()))

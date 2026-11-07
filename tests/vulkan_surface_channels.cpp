@@ -3,6 +3,7 @@
 #include <vulkan/vulkan.h>
 #include "../src/Layers/xrRenderVK/DistortionShaders.h"
 #include "../src/Layers/xrRenderVK/ParticleSprite.h"
+#include "../src/Layers/xrRenderVK/LevelLights.h"
 #include "../src/Layers/xrRenderVK/ModelPoseConstants.h"
 #include "../src/Layers/xrRenderVK/GeometryDepth.h"
 #include "../src/Layers/xrRenderVK/SceneShaders.h"
@@ -640,6 +641,24 @@ int main(int argc, char** argv)
         object_push.modes[3]=3;object_push.factors[0]=.8f;
         auto object_changed=execute(object_fragment,object_push,false,object_vertex);
         for(unsigned c=0;c<3;++c) near(object_changed[1][c],object_result[1][c],"static material data cannot alter rotation");
+        // Feed an authored build.lights record through the real object shader.
+        // Camera depth must not remove the same object's local hemi term.
+        std::array<uint8_t,104> baked_light{};
+        const auto put_float=[&](size_t offset,float value) { std::memcpy(baked_light.data()+offset,&value,4); };
+        baked_light[0]=1;for(unsigned axis=0;axis<3;++axis)put_float(4+4*axis,1);
+        put_float(16,5);put_float(40,10);put_float(48,.01f);put_float(52,2);put_float(56,.1f);
+        std::vector<xray::render::vulkan::VulkanLightSnapshot> baked_sources;std::string baked_error;
+        if(!xray::render::vulkan::decode_level_lights({baked_light.data(),baked_light.size()},true,baked_sources,baked_error))
+            throw std::runtime_error(baked_error);
+        const float no_environment[]{0,0,0};
+        const auto object_light=xray::render::vulkan::evaluate_object_lighting({0,0,0},
+            no_environment,no_environment,no_environment,xray::render::vulkan::VulkanTraceAll,baked_sources);
+        object_push.matrices[2]=pack_model_hemi(object_light.hemi_cube[0],object_light.hemi_cube[1]);
+        for(float depth : {.1f,.8f}) {
+            object_push.mvp[14]=depth;
+            const auto lit_object=execute(object_fragment,object_push,false,object_vertex);
+            near(lit_object[1][3],.875f+.125f*.563f,"authored local hemi reaches object at near/far camera depth");
+        }
         vkDestroyShaderModule(device,object_vertex,nullptr);vkDestroyShaderModule(device,object_fragment,nullptr);
         // GL level wallmarks sample their texture without baked vertex color.
         // A neutral 0.5 border must stay neutral even with black COLOR0 and
@@ -936,6 +955,23 @@ int main(int argc, char** argv)
         for(unsigned x=0;x<2;++x) {
             near(sprite_pixels[x][0],.9f,"upright particle: atlas top is camera-up");
             near(sprite_pixels[x+2][2],.9f,"upright particle: atlas bottom is camera-down");
+        }
+        for(float pitch : {.4f,1.2f}) {
+            const auto basis=particle_path_basis({0,1,0},{0,-std::sin(pitch),std::cos(pitch)});
+            for(unsigned i=0;i<6;++i) {
+                const auto c=particle_sprite_corner(order[i],1,1,0);
+                for(unsigned axis=0;axis<3;++axis)
+                    sprite_vertices[i].position[axis]=basis.right[axis]*c.right+basis.up[axis]*c.up;
+            }
+            check(vkMapMemory(device,vertex_memory,0,VK_WHOLE_SIZE,0,&mapped));
+            std::memcpy(mapped,sprite_vertices.data(),sizeof(sprite_vertices));vkUnmapMemory(device,vertex_memory);
+            // Normalize the projected height to the two-pixel readback target.
+            auto tilted_push=push;tilted_push.mvp[9]=std::tan(pitch);
+            execute(additive_particle,tilted_push,false,VK_NULL_HANDLE,true);
+            for(unsigned x=0;x<2;++x) {
+                near(sprite_pixels[x][0],.9f,"path-aligned flame keeps upper atlas at camera pitch");
+                near(sprite_pixels[x+2][2],.9f,"path-aligned flame keeps lower atlas at camera pitch");
+            }
         }
         // Run the actual weather combine. Rapidly varying normals must not
         // select dark lower cube mips: the original hmodel explicitly uses LOD 0.
