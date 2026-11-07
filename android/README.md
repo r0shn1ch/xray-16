@@ -249,7 +249,6 @@ Runtime data uses the normal desktop paths:
 The launcher can request the separate Vulkan gameplay module. `Auto` selects it
 only when the Vulkan probe and required game shaders pass, then selects GLES
 otherwise. Explicit Vulkan requests fail if those requirements are missing.
-Android hardware and representative gameplay have not yet been validated.
 
 The launcher can run GLES and Vulkan smoke tests without game data. The Vulkan
 test draws depth-tested indexed, lit geometry and a textured UI overlay, reads back one pixel
@@ -293,4 +292,5 @@ want automatic increments can enable the optional hook with
 dependency prefix, SDL source tree and Gradle cache. It does not create or
 download any of them.
 
-Launcher behavior is described in [apk/README.md](apk/README.md).
+Launcher behavior is described in [apk/README.md](apk/README.md). ARM64 build
+dependencies are listed in [ARM64_DEPS.md](ARM64_DEPS.md).

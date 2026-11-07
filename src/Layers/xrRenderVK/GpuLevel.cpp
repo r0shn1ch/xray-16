@@ -243,7 +243,9 @@ bool GpuLevel::load(IReader& level, VkDevice device, VkQueue queue, VkCommandPoo
                 { error = "level HM tessellation requires a bump auxiliary texture"; return false; }
                 if (!textures.height_field(mesh.bump_texture + "#", height, error)) return false;
             }
-            return tessellate_level(model, mesh.tessellation, height, mesh.bump_height, error);
+            if (!tessellate_level(model, mesh.tessellation, height, mesh.bump_height, error))
+                return false;
+            return true;
         };
         if (const auto cached = material_cache.find(model.material);
             cached != material_cache.end())
