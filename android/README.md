@@ -1,8 +1,17 @@
 # Building OpenXRay for Android
 
 The Android port is maintained in this fork and is not an upstream OpenXRay
-release target. It builds one debug APK containing the launcher and an ARMv7
+release target. It builds a debug APK containing the launcher and a native
 engine. It does not contain S.T.A.L.K.E.R. game data.
+
+For Vulkan on a 64-bit device, build with `XRAY_ANDROID_ARM64_ONLY=ON`
+and `./android/build-apk-dual.sh` using an ARM64 dependency prefix. ARMv7 gameplay
+can exhaust its 32-bit address space while loading a large level; switching
+the packaged engine to `arm64-v8a` removes that address-space ceiling. An APK
+with both ABIs can be built by omitting `XRAY_ANDROID_ARM64_ONLY`; Android
+selects the native ABI supported by the device, so a dual-ABI APK is not a
+reliable way to force the 64-bit Vulkan engine. The build kit can include an
+optional `ANDROID_DEPS_PREFIX_ARM64` alongside its ARMv7 prefix.
 
 ## Supported configuration
 
@@ -10,7 +19,7 @@ engine. It does not contain S.T.A.L.K.E.R. game data.
 |---|---|
 | Host | x86-64 Linux |
 | Android version | API 26 (Android 8.0) or newer |
-| ABI | `armeabi-v7a` only |
+| ABI | `armeabi-v7a`; optional `arm64-v8a` via `build-apk-dual.sh` |
 | Native API level | 26 |
 | Compile and target SDK | 36 |
 | NDK used by the current scripts | r30 (`30.0.16248370`) |
@@ -18,10 +27,9 @@ engine. It does not contain S.T.A.L.K.E.R. game data.
 | Java | JDK 17 |
 | Gameplay renderer | OpenGL ES 3.1 |
 
-A 64-bit device can run the APK only when its Android build still supports
-32-bit applications. The OpenGL ES driver must expose at least four draw
-buffers and four color attachments. The engine also remains subject to the
-32-bit address-space limit.
+An ARMv7-only APK requires device support for 32-bit applications. The OpenGL
+ES driver must expose at least four draw buffers and four color attachments.
+The ARMv7 engine remains subject to the 32-bit address-space limit.
 
 Call of Pripyat is the intended game profile. The SoC and CS entries in the
 launcher only pass `-soc` or `-cs`; they do not make those games supported by
@@ -236,13 +244,16 @@ Runtime data uses the normal desktop paths:
 
 ## Renderer selection
 
-Gameplay currently uses OpenGL ES. `Auto` and `OpenGL ES` select the same GLES
-backend. Selecting Vulkan runs the Vulkan probe and then falls back to GLES;
-there is no Vulkan gameplay renderer yet.
+The launcher can request the separate Vulkan gameplay module. `Auto` selects it
+only when the Vulkan probe and required game shaders pass, then selects GLES
+otherwise. Explicit Vulkan requests fail if those requirements are missing.
+Android hardware and representative gameplay have not yet been validated.
 
-The launcher can run GLES and Vulkan smoke tests without game data. A passing
-smoke test verifies context/device setup and a small render path only; it does
-not prove that a level can be loaded or rendered correctly.
+The launcher can run GLES and Vulkan smoke tests without game data. The Vulkan
+test draws depth-tested indexed, lit geometry and a textured UI overlay, reads back one pixel
+from each draw and presents three frames.
+A passing smoke test verifies a small render path only; it does not prove that
+a level can be loaded or rendered correctly.
 
 ## Diagnostics
 
