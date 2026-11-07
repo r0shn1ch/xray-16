@@ -551,7 +551,7 @@ void DeferredPass::push_surface(const FrameRecordingContext& frame,
     const auto found = surface_parameters_.find(material);
     const SurfaceParameters empty{};
     const auto& parameters = found == surface_parameters_.end() ? empty : found->second;
-    vk_.cmd_push_constants(frame.command_buffer, layout, VK_SHADER_STAGE_FRAGMENT_BIT,
+    command_cache_.push(vk_, frame.command_buffer, layout, VK_SHADER_STAGE_FRAGMENT_BIT,
         offset, sizeof(parameters), &parameters);
 }
 
@@ -786,7 +786,7 @@ void DeferredPass::push_texture_matrices(const FrameRecordingContext& frame,
     rows[2] = model_hemi_negative_[0];
     rows[6] = model_hemi_negative_[1];
     rows[10] = model_hemi_negative_[2];
-    vk_.cmd_push_constants(frame.command_buffer, layout,
+    command_cache_.push(vk_, frame.command_buffer, layout,
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
         128, sizeof(rows), rows);
 }
@@ -798,6 +798,7 @@ bool DeferredPass::record_skinned(const FrameRecordingContext& frame, VkBuffer v
     const float* normal_rows, float detail_scale, const float* environment_camera,
     const TextureMatrixSet* matrices) const
 {
+    command_cache_.end();
     const auto* pair = game_pipeline(vertex_name, fragment_name);
     if (!pair || !pair->skinned || pair->mode != mode || pair->hud != hud ||
         (hud || mode == SurfaceMode::Transparent ? !lighting_compatible(frame) :
@@ -812,10 +813,10 @@ bool DeferredPass::record_skinned(const FrameRecordingContext& frame, VkBuffer v
     const VkDescriptorSet sets[]{material_set, pose_set};
     vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
         skinned_layout_, 0, 2, sets, 0, nullptr);
-    vk_.cmd_push_constants(frame.command_buffer, skinned_layout_, VK_SHADER_STAGE_VERTEX_BIT,
+    command_cache_.push(vk_, frame.command_buffer, skinned_layout_, VK_SHADER_STAGE_VERTEX_BIT,
         0, sizeof(mvp), mvp);
     if (normal_rows)
-        vk_.cmd_push_constants(frame.command_buffer, skinned_layout_, VK_SHADER_STAGE_VERTEX_BIT,
+        command_cache_.push(vk_, frame.command_buffer, skinned_layout_, VK_SHADER_STAGE_VERTEX_BIT,
             80, sizeof(float) * 12, normal_rows);
     const bool opaque_environment = mode == SurfaceMode::Opaque && fragment_name &&
         std::strstr(fragment_name, "skinned_environment_opaque.ps");
@@ -823,11 +824,11 @@ bool DeferredPass::record_skinned(const FrameRecordingContext& frame, VkBuffer v
     if (opaque_environment)
     {
         const float origin[4]{};
-        vk_.cmd_push_constants(frame.command_buffer, skinned_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
+        command_cache_.push(vk_, frame.command_buffer, skinned_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
             64, sizeof(origin), environment_camera ? environment_camera : origin);
     }
     else
-        vk_.cmd_push_constants(frame.command_buffer, skinned_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
+        command_cache_.push(vk_, frame.command_buffer, skinned_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
             68, sizeof(detail_scale), &detail_scale);
     if (mode == SurfaceMode::AlphaTest || (fragment_name &&
             (std::strstr(fragment_name, "world_set_blended.ps") ||
@@ -840,7 +841,7 @@ bool DeferredPass::record_skinned(const FrameRecordingContext& frame, VkBuffer v
              std::strstr(fragment_name, "model_set_blend_4r.ps") ||
              std::strstr(fragment_name, "model_set_alpha_add.ps") ||
              std::strstr(fragment_name, "glow_alpha_add.ps"))))
-        vk_.cmd_push_constants(frame.command_buffer, skinned_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
+        command_cache_.push(vk_, frame.command_buffer, skinned_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
             sizeof(mvp), sizeof(alpha_ref), &alpha_ref);
     if (mode == SurfaceMode::Transparent && !hud)
     {
@@ -1142,17 +1143,11 @@ bool DeferredPass::record_geometry(const FrameRecordingContext& frame, VkBuffer 
     if (!pipeline || frame.render_pass != geometry_pass_ || !frame.command_buffer ||
         !frame.extent.width || !frame.extent.height || !vertices || !indices ||
         !index_count || !material_set) return false;
-    vk_.cmd_bind_pipeline(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-    viewport_scissor(frame, vk_);
-    const VkDeviceSize offset = 0;
-    vk_.cmd_bind_vertex_buffers(frame.command_buffer, 0, 1, &vertices, &offset);
-    vk_.cmd_bind_index_buffer(frame.command_buffer, indices, 0, VK_INDEX_TYPE_UINT32);
-    vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-        geometry_layout_, 0, 1, &material_set, 0, nullptr);
-    vk_.cmd_push_constants(frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_VERTEX_BIT,
+    command_cache_.bind(vk_, frame, pipeline, geometry_layout_, vertices, indices, material_set);
+    command_cache_.push(vk_, frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_VERTEX_BIT,
         0, sizeof(mvp), mvp);
     if (normal_rows)
-        vk_.cmd_push_constants(frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_VERTEX_BIT,
+        command_cache_.push(vk_, frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_VERTEX_BIT,
             80, sizeof(float) * 12, normal_rows);
     const bool environment_variant = fragment_name &&
         (std::strstr(fragment_name, "level_environment.ps") ||
@@ -1160,20 +1155,20 @@ bool DeferredPass::record_geometry(const FrameRecordingContext& frame, VkBuffer 
             std::strstr(fragment_name, "level_laemb_base.ps"));
     push_surface(frame, geometry_layout_, material_set, environment_variant ? 96 : 80);
     if (mode == SurfaceMode::AlphaTest)
-        vk_.cmd_push_constants(frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
+        command_cache_.push(vk_, frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
             sizeof(mvp), sizeof(alpha_ref), &alpha_ref);
     if (!environment_variant)
-        vk_.cmd_push_constants(frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
+        command_cache_.push(vk_, frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
             sizeof(mvp) + sizeof(alpha_ref), sizeof(terrain_scale), &terrain_scale);
     if (fragment_name && (std::strstr(fragment_name, "level_environment.ps") ||
             std::strstr(fragment_name, "object_environment_opaque.ps") ||
             std::strstr(fragment_name, "level_laemb_base.ps")))
     {
         const float zero_camera[4]{};
-        vk_.cmd_push_constants(frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
+        command_cache_.push(vk_, frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
             64, sizeof(zero_camera), environment_camera ? environment_camera : zero_camera);
         if (environment_factor)
-            vk_.cmd_push_constants(frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
+            command_cache_.push(vk_, frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
                 80, sizeof(float) * 4, environment_factor);
     }
     push_texture_matrices(frame, geometry_layout_, matrices);
@@ -1186,6 +1181,7 @@ bool DeferredPass::record_sun_shadow(const FrameRecordingContext& frame, VkBuffe
     VkBuffer indices, uint32_t index_count, const float (&mvp)[16], VkDescriptorSet material,
     bool alpha_test, uint32_t first_index, float alpha_ref, int32_t vertex_base) const
 {
+    command_cache_.end();
     const VkPipeline pipeline = alpha_test ? shadow_cutout_ : shadow_opaque_;
     if (!pipeline || !frame.command_buffer ||
         (frame.render_pass != shadow_pass_ && frame.render_pass != local_shadow_pass_) ||
@@ -1197,10 +1193,10 @@ bool DeferredPass::record_sun_shadow(const FrameRecordingContext& frame, VkBuffe
     vk_.cmd_bind_index_buffer(frame.command_buffer, indices, 0, VK_INDEX_TYPE_UINT32);
     vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
         geometry_layout_, 0, 1, &material, 0, nullptr);
-    vk_.cmd_push_constants(frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_VERTEX_BIT,
+    command_cache_.push(vk_, frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_VERTEX_BIT,
         0, sizeof(mvp), mvp);
     if (alpha_test)
-        vk_.cmd_push_constants(frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
+        command_cache_.push(vk_, frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
             sizeof(mvp), sizeof(alpha_ref), &alpha_ref);
     vk_.cmd_draw_indexed(frame.command_buffer, index_count, 1, first_index, vertex_base, 0);
     ++draw_calls_; triangles_ += index_count / 3;
@@ -1239,20 +1235,14 @@ bool DeferredPass::record_transparent(const FrameRecordingContext& frame, VkBuff
     if ((vertex_name || fragment_name) &&
         (frame.image_index >= forward_sets_.size() || !forward_sets_[frame.image_index]))
         return reject("missing forward lighting descriptor");
-    vk_.cmd_bind_pipeline(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-    viewport_scissor(frame, vk_);
-    const VkDeviceSize offset = 0;
-    vk_.cmd_bind_vertex_buffers(frame.command_buffer, 0, 1, &vertices, &offset);
-    vk_.cmd_bind_index_buffer(frame.command_buffer, indices, 0, VK_INDEX_TYPE_UINT32);
-    vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-        geometry_layout_, 0, 1, &material_set, 0, nullptr);
-    vk_.cmd_push_constants(frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_VERTEX_BIT,
+    command_cache_.bind(vk_, frame, pipeline, geometry_layout_, vertices, indices, material_set);
+    command_cache_.push(vk_, frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_VERTEX_BIT,
         0, sizeof(mvp), mvp);
     if (normal_rows)
-        vk_.cmd_push_constants(frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_VERTEX_BIT,
+        command_cache_.push(vk_, frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_VERTEX_BIT,
             80, sizeof(float) * 12, normal_rows);
     push_surface(frame, geometry_layout_, material_set);
-    vk_.cmd_push_constants(frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
+    command_cache_.push(vk_, frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
         68, sizeof(detail_scale), &detail_scale);
     if (fragment_name && ((std::strstr(fragment_name, "particle_") &&
             std::strstr(fragment_name, "_set.ps") &&
@@ -1268,7 +1258,7 @@ bool DeferredPass::record_transparent(const FrameRecordingContext& frame, VkBuff
             std::strstr(fragment_name, "model_set_alpha_add.ps") ||
             std::strstr(fragment_name, "level_fog.ps") ||
             std::strstr(fragment_name, "glow_alpha_add.ps")))
-        vk_.cmd_push_constants(frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
+        command_cache_.push(vk_, frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
             sizeof(mvp), sizeof(alpha_ref), &alpha_ref);
     if (vertex_name || fragment_name)
     {
@@ -1289,6 +1279,7 @@ bool DeferredPass::record_hud(const FrameRecordingContext& frame, VkBuffer verti
     uint32_t first_index, const char* vertex_name, const char* fragment_name, float alpha_ref,
     const float* normal_rows, int32_t vertex_base, const TextureMatrixSet* matrices) const
 {
+    command_cache_.end();
     VkPipeline pipeline = hud_;
     if (vertex_name || fragment_name)
     {
@@ -1306,10 +1297,10 @@ bool DeferredPass::record_hud(const FrameRecordingContext& frame, VkBuffer verti
     vk_.cmd_bind_index_buffer(frame.command_buffer, indices, 0, VK_INDEX_TYPE_UINT32);
     vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
         geometry_layout_, 0, 1, &material_set, 0, nullptr);
-    vk_.cmd_push_constants(frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_VERTEX_BIT,
+    command_cache_.push(vk_, frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_VERTEX_BIT,
         0, sizeof(mvp), mvp);
     if (normal_rows)
-        vk_.cmd_push_constants(frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_VERTEX_BIT,
+        command_cache_.push(vk_, frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_VERTEX_BIT,
             80, sizeof(float) * 12, normal_rows);
     if (fragment_name && ((std::strstr(fragment_name, "particle_") &&
             std::strstr(fragment_name, "_set.ps") &&
@@ -1323,7 +1314,7 @@ bool DeferredPass::record_hud(const FrameRecordingContext& frame, VkBuffer verti
             std::strstr(fragment_name, "glow_alpha_add.ps") ||
             std::strstr(fragment_name, "hud_particle_screen_blended.ps") ||
             std::strstr(fragment_name, "hud_particle_screen_alpha_add.ps")))
-        vk_.cmd_push_constants(frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
+        command_cache_.push(vk_, frame.command_buffer, geometry_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
             sizeof(mvp), sizeof(alpha_ref), &alpha_ref);
     push_texture_matrices(frame, geometry_layout_, matrices);
     vk_.cmd_draw_indexed(frame.command_buffer, index_count, 1, first_index, vertex_base, 0);
@@ -1335,6 +1326,7 @@ bool DeferredPass::record_lighting(const FrameRecordingContext& frame, VkDescrip
     const DeferredLight& light, VkDescriptorSet weather_set,
     const WeatherLighting* weather) const
 {
+    command_cache_.end();
     if (!lighting_ || frame.render_pass != light_pass_ || !frame.command_buffer ||
         !frame.extent.width || !frame.extent.height || !gbuffer_set || !vk_.cmd_draw)
         return false;
@@ -1346,7 +1338,7 @@ bool DeferredPass::record_lighting(const FrameRecordingContext& frame, VkDescrip
     const VkDescriptorSet sets[]{gbuffer_set, weather_set};
     vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
         layout, 0, has_weather ? 2 : 1, sets, 0, nullptr);
-    vk_.cmd_push_constants(frame.command_buffer, layout, VK_SHADER_STAGE_FRAGMENT_BIT,
+    command_cache_.push(vk_, frame.command_buffer, layout, VK_SHADER_STAGE_FRAGMENT_BIT,
         0, has_weather ? sizeof(WeatherLighting) : sizeof(light),
         has_weather ? static_cast<const void*>(weather) : static_cast<const void*>(&light));
     vk_.cmd_draw(frame.command_buffer, 3, 1, 0, 0);
@@ -1357,6 +1349,7 @@ bool DeferredPass::record_lighting(const FrameRecordingContext& frame, VkDescrip
 bool DeferredPass::record_local_light(const FrameRecordingContext& frame,
     VkDescriptorSet gbuffer_set, VkDescriptorSet local_set, const VkRect2D& scissor) const
 {
+    command_cache_.end();
     if (!local_light_pipeline_ || frame.render_pass != light_pass_ ||
         !frame.command_buffer || !gbuffer_set || !local_set) return false;
     vk_.cmd_bind_pipeline(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, local_light_pipeline_);
@@ -1381,6 +1374,7 @@ bool DeferredPass::initialize_distortion(VkShaderModule vertex, VkShaderModule f
 bool DeferredPass::record_distortion(const FrameRecordingContext& frame, VkBuffer vertices,
     VkBuffer indices, uint32_t index_count, const float (&mvp)[16], VkDescriptorSet material) const
 {
+    command_cache_.end();
     if (!distortion_pipeline_ || !lighting_compatible(frame) || !frame.command_buffer ||
         frame.image_index >= water_sets_.size() || !water_sets_[frame.image_index] ||
         !vertices || !indices || !index_count || !material ||
@@ -1393,10 +1387,10 @@ bool DeferredPass::record_distortion(const FrameRecordingContext& frame, VkBuffe
     const VkDescriptorSet sets[]{material, water_sets_[frame.image_index]};
     vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
         water_layout_, 0, 2, sets, 0, nullptr);
-    vk_.cmd_push_constants(frame.command_buffer, water_layout_, VK_SHADER_STAGE_VERTEX_BIT,
+    command_cache_.push(vk_, frame.command_buffer, water_layout_, VK_SHADER_STAGE_VERTEX_BIT,
         0, sizeof(mvp), mvp);
     const float params[]{0.f, 1.f / frame.extent.width, 1.f / frame.extent.height, 0.f};
-    vk_.cmd_push_constants(frame.command_buffer, water_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
+    command_cache_.push(vk_, frame.command_buffer, water_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
         sizeof(mvp), sizeof(params), params);
     vk_.cmd_draw_indexed(frame.command_buffer, index_count, 1, 0, 0, 0);
     ++draw_calls_; triangles_ += index_count / 3;
@@ -1408,6 +1402,7 @@ bool DeferredPass::record_water(const FrameRecordingContext& frame, VkBuffer ver
     VkDescriptorSet material, uint32_t first_index, float time, float opacity,
     int32_t vertex_base) const
 {
+    command_cache_.end();
     if (!water_pipeline_ || !lighting_compatible(frame) || !frame.command_buffer ||
         frame.image_index >= water_sets_.size() || !water_sets_[frame.image_index] ||
         !vertices || !indices || !index_count || !material ||
@@ -1420,10 +1415,10 @@ bool DeferredPass::record_water(const FrameRecordingContext& frame, VkBuffer ver
     const VkDescriptorSet sets[]{material, water_sets_[frame.image_index]};
     vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
         water_layout_, 0, 2, sets, 0, nullptr);
-    vk_.cmd_push_constants(frame.command_buffer, water_layout_, VK_SHADER_STAGE_VERTEX_BIT,
+    command_cache_.push(vk_, frame.command_buffer, water_layout_, VK_SHADER_STAGE_VERTEX_BIT,
         0, sizeof(mvp), mvp);
     const float params[]{time, 1.f / frame.extent.width, 1.f / frame.extent.height, opacity};
-    vk_.cmd_push_constants(frame.command_buffer, water_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
+    command_cache_.push(vk_, frame.command_buffer, water_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
         sizeof(mvp), sizeof(params), params);
     vk_.cmd_draw_indexed(frame.command_buffer, index_count, 1, first_index, vertex_base, 0);
     ++draw_calls_; triangles_ += index_count / 3;
@@ -1432,6 +1427,7 @@ bool DeferredPass::record_water(const FrameRecordingContext& frame, VkBuffer ver
 
 void DeferredPass::destroy()
 {
+    command_cache_.end();
     game_pipeline_request_ = {};
     release_forward_sets();
     release_water_sets();
