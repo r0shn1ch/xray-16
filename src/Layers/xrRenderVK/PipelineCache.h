@@ -12,6 +12,8 @@ class PipelineCache
 {
   public:
     static constexpr size_t MaximumBytes = 64u * 1024u * 1024u;
+    static constexpr size_t WrapperBytes = 32;
+    static constexpr size_t MaximumDiskBytes = MaximumBytes + WrapperBytes;
     ~PipelineCache()
     {
         destroy();
@@ -30,7 +32,9 @@ class PipelineCache
         if (!create || !destroy_ || !data_)
             return false;
         device_ = device;
-        VkPipelineCacheCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+        properties_ = properties;
+        VkPipelineCacheCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
         if (compatible(disk, properties))
         {
             info.initialDataSize = disk.size() - WrapperBytes;
@@ -68,22 +72,25 @@ class PipelineCache
         if (data_(device_, handle_, &size, nullptr) != VK_SUCCESS || size > MaximumBytes || size < 32)
             return {};
         std::vector<uint8_t> result(size + WrapperBytes);
-        if (data_(device_, handle_, &size, result.data() + WrapperBytes) != VK_SUCCESS)
+        if (data_(device_, handle_, &size, result.data() + WrapperBytes) != VK_SUCCESS || size > MaximumBytes ||
+            size < 32)
             return {};
         result.resize(size + WrapperBytes);
-        std::memcpy(result.data(), "XRAYVKC1", 8);
+        std::memcpy(result.data(), "XRAYVKC2", 8);
         store(result.data() + 8, size);
         store(result.data() + 16, hash(result.data() + WrapperBytes, size));
+        store(result.data() + 24, (uint64_t(properties_.apiVersion) << 32) | properties_.driverVersion);
         return result;
     }
     static bool compatible(const std::vector<uint8_t> &disk, const VkPhysicalDeviceProperties &p)
     {
-        if (disk.size() < WrapperBytes + 32 || disk.size() > WrapperBytes + MaximumBytes ||
-            std::memcmp(disk.data(), "XRAYVKC1", 8) != 0)
+        if (disk.size() < WrapperBytes + 32 || disk.size() > MaximumDiskBytes ||
+            std::memcmp(disk.data(), "XRAYVKC2", 8) != 0)
             return false;
         const size_t size = disk.size() - WrapperBytes;
         const auto *b = disk.data() + WrapperBytes;
-        if (load(disk.data() + 8) != size || load(disk.data() + 16) != hash(b, size))
+        if (load(disk.data() + 8) != size || load(disk.data() + 16) != hash(b, size) ||
+            load(disk.data() + 24) != ((uint64_t(p.apiVersion) << 32) | p.driverVersion))
             return false;
         uint32_t header[4];
         for (unsigned field = 0; field < 4; ++field)
@@ -99,10 +106,10 @@ class PipelineCache
         handle_ = VK_NULL_HANDLE;
         device_ = VK_NULL_HANDLE;
         loaded_bytes_ = 0;
+        properties_ = {};
     }
 
   private:
-    static constexpr size_t WrapperBytes = 24;
     static uint64_t hash(const uint8_t *bytes, size_t size)
     {
         uint64_t h = 14695981039346656037ull;
@@ -130,5 +137,6 @@ class PipelineCache
     PFN_vkDestroyPipelineCache destroy_{};
     PFN_vkGetPipelineCacheData data_{};
     size_t loaded_bytes_{};
+    VkPhysicalDeviceProperties properties_{};
 };
 } // namespace xray::render::vulkan

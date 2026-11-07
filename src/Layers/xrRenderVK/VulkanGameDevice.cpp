@@ -170,7 +170,7 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
         if (FS.path_exist("$app_data_root$") && FS.exist(cache_path, "$app_data_root$", "vulkan-pipelines.cache"))
             if (IReader *reader = FS.r_open(cache_path))
             {
-                if (reader->length() <= PipelineCache::MaximumBytes + 24)
+                if (reader->length() <= PipelineCache::MaximumDiskBytes)
                     cached.assign(static_cast<const uint8_t *>(reader->pointer()),
                                   static_cast<const uint8_t *>(reader->pointer()) + reader->length());
                 FS.r_close(reader);

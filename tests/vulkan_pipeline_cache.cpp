@@ -44,6 +44,8 @@ int main()
     VkPhysicalDeviceProperties p{};
     p.vendorID = 12;
     p.deviceID = 34;
+    p.apiVersion = VK_API_VERSION_1_1;
+    p.driverVersion = 78;
     p.pipelineCacheUUID[0] = 56;
     driver.resize(40, 0);
     const uint32_t header[]{32, 1, 12, 34};
@@ -57,6 +59,14 @@ int main()
     assert(cache.initialize((VkDevice)uintptr_t(1), get, p, disk));
     assert(seed_size == 40 && cache.loaded_bytes() == 40 && destroyed == 1);
     auto other = p;
+    other.driverVersion++;
+    assert(!PipelineCache::compatible(disk, other));
+    assert(cache.initialize((VkDevice)uintptr_t(1), get, other, disk));
+    assert(seed_size == 0 && cache.loaded_bytes() == 0);
+    other = p;
+    other.apiVersion++;
+    assert(!PipelineCache::compatible(disk, other));
+    other = p;
     other.pipelineCacheUUID[0]++;
     assert(!PipelineCache::compatible(disk, other));
     other = p;
@@ -71,6 +81,9 @@ int main()
     auto corrupt = disk;
     corrupt.back() ^= 1;
     assert(!PipelineCache::compatible(corrupt, p));
+    auto old_wrapper = disk;
+    std::memcpy(old_wrapper.data(), "XRAYVKC1", 8);
+    assert(!PipelineCache::compatible(old_wrapper, p));
     assert(cache.initialize((VkDevice)uintptr_t(1), get, p, corrupt) && seed_size == 0);
     reject_seed = true;
     assert(cache.initialize((VkDevice)uintptr_t(1), get, p, disk));
