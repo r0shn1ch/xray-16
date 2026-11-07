@@ -86,6 +86,7 @@ target_sources(xrRenderVK PRIVATE
     ScreenCopyPass.h
     PostProcessShaders.h
     smoke/postprocess.frag
+    smoke/fxaa.glsl
     ScenePass.cpp
     ScenePass.h
     ShaderModule.cpp

@@ -27,6 +27,7 @@ uint32_t descriptor_updates = 0;
 uint32_t color_map_updates = 0;
 uint32_t draw_calls = 0;
 uint32_t pushed_constants = 0;
+float expected_aa = 0.f;
 VkResult pipeline_result = VK_SUCCESS;
 
 VkResult VKAPI_CALL create_descriptor_set_layout(VkDevice, const VkDescriptorSetLayoutCreateInfo* info,
@@ -201,6 +202,7 @@ void VKAPI_CALL cmd_push_constants(VkCommandBuffer, VkPipelineLayout, VkShaderSt
     assert(stage == VK_SHADER_STAGE_FRAGMENT_BIT && offset == 0);
     assert(size == sizeof(xray::render::vulkan::PostProcessConstants));
     assert(static_cast<const xray::render::vulkan::PostProcessConstants*>(data)->effect[0] == 2.f);
+    assert(static_cast<const xray::render::vulkan::PostProcessConstants*>(data)->color_map[3] == expected_aa);
     ++pushed_constants;
 }
 
@@ -237,9 +239,17 @@ int main()
     pass.record(frame);
     assert(draw_calls == 1);
     assert(pushed_constants == 1);
+    // Toggle AA without allocating descriptors or recreating a pipeline.
+    expected_aa = params.color_map[3] = 1.f;
+    pass.set_constants(params);
+    pass.record(frame);
+    expected_aa = params.color_map[3] = 0.f;
+    pass.set_constants(params);
+    pass.record(frame);
+    assert(pushed_constants == 3 && created_pipelines == 1 && descriptor_updates == 3);
     pass.record({fake_handle<VkCommandBuffer>(12), VK_NULL_HANDLE, VK_NULL_HANDLE, {0, 480}, 0, 0});
     pass.record({fake_handle<VkCommandBuffer>(12), fake_handle<VkRenderPass>(14), VK_NULL_HANDLE, {640, 480}, 0, 0});
-    assert(draw_calls == 1);
+    assert(draw_calls == 3);
     pass.destroy();
     assert(destroyed_pipelines == 1);
     assert(destroyed_pipeline_layouts == 1);

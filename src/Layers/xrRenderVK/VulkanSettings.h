@@ -39,6 +39,8 @@ inline int sun_enabled = 1;
 inline int tonemap_enabled = 1;
 inline float tonemap_middlegray = 1.f;
 inline float tonemap_amount = .7f;
+// Independent of desktop MSAA: this selects the Vulkan fullscreen FXAA path.
+inline uint32_t antialiasing = 1;
 
 inline void set_vulkan_quality(unsigned preset)
 {

@@ -214,6 +214,18 @@
             </text_color>
         </combo_ssample>
 
+        <cap_vk_aa x="20" y="3" width="135" height="24">
+            <text r="170" g="170" b="170" font="letterica16" align="r" vert_align="c">ui_mm_supersample</text>
+        </cap_vk_aa>
+        <combo_vk_aa x="180" y="0" width="235" height="20" list_length="2" always_show_scroll="0">
+            <options_item entry="r_vk_aa" group="mm_opt_video_adv"/>
+            <list_font r="170" g="170" b="170" font="letterica16"/>
+            <text_color>
+	            <e r="170" g="170" b="170"/>
+	            <d r="70" g="70" b="70"/>
+            </text_color>
+        </combo_vk_aa>
+
         <cap_r2_sun x="20" y="3" width="135" height="24">
             <text r="170" g="170" b="170" font="letterica16" align="r" vert_align="c">ui_mm_r2_sun</text>
         </cap_r2_sun>

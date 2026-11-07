@@ -660,8 +660,12 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
     model_error_.clear();
     if (!refresh_color_maps(error))
         return false;
+    auto frame_postprocess = postprocess_params_;
+    // Resolve the saved console value each frame. Menus and loading screens
+    // bypass AA, and changing AA needs neither vid_restart nor a new pipeline.
+    frame_postprocess.color_map[3] = render_world && antialiasing == 1 ? 1.f : 0.f;
     for (auto &pass : postprocess_passes_)
-        pass->set_constants(postprocess_params_);
+        pass->set_constants(frame_postprocess);
     const float weather_blend = weather_lighting_.light.color[3];
     const float cloud_params = weather_lighting_.light.grade[3];
     weather_lighting_.light = light;

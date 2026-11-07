@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 layout(set = 0, binding = 0) uniform texture2D frame_image;
 layout(set = 0, binding = 1) uniform sampler frame_sampler;
 layout(set = 0, binding = 2) uniform texture2D color_map_a;
@@ -27,12 +28,23 @@ vec3 sample_source(vec2 uv)
     return texture(sampler2D(frame_image, frame_sampler), clamp(uv, border, 1.0 - border)).rgb;
 }
 
+vec3 aa_sample(vec2 uv)
+{
+    vec2 border = 0.5 / vec2(textureSize(sampler2D(frame_image, frame_sampler), 0));
+    return textureLod(sampler2D(frame_image, frame_sampler), clamp(uv, border, 1.0 - border), 0.0).rgb;
+}
+
+#include "fxaa.glsl"
+
 void main()
 {
     vec2 pixel = 1.0 / vec2(textureSize(sampler2D(frame_image, frame_sampler), 0));
     // The legacy duality values are normalized screen offsets.
     vec2 dual = settings.effect.yz * 0.5;
-    vec3 image = 0.5 * (sample_source(texcoord + dual) + sample_source(texcoord - dual));
+    vec3 image = fxaa(texcoord, pixel, settings.color_map.w);
+    if (any(notEqual(dual, vec2(0.0))))
+        image = 0.5 * (fxaa(texcoord + dual, pixel, settings.color_map.w) +
+                       fxaa(texcoord - dual, pixel, settings.color_map.w));
     if (settings.grade.w > 0.0 && textureQueryLevels(sampler2D(frame_image, frame_sampler)) > 1)
     {
         // The source image's last mip is the measured scene-wide average.

@@ -12,6 +12,33 @@ ENGINE = ROOT / "src/Layers/xrRenderVK"
 
 
 class AndroidMenuContractTest(unittest.TestCase):
+    def test_vulkan_fxaa_menu_has_live_persisted_token_in_all_shipped_layouts(self):
+        module = (ENGINE / "VulkanRendererModule.cpp").read_text()
+        device = (ENGINE / "VulkanGameDevice.cpp").read_text()
+        script = (ROOT / "res/gamedata/scripts/ui_mm_opt_video_adv.script").read_text()
+        self.assertIn('aa("r_vk_aa", &antialiasing, aa_tokens)', module)
+        self.assertIn('Console->AddCommand(&aa)', module)
+        self.assertIn('render_world && antialiasing == 1', device)
+        self.assertIn('pass->set_constants(frame_postprocess)', device)
+        self.assertIn('xml:HasNode("video_adv:combo_vk_aa")', script)
+        layouts = list((ROOT / "res/gamedata/configs/ui").rglob("ui_mm_opt*.xml"))
+        found = 0
+        for path in layouts:
+            # Some legacy style files contain comments that strict XML parsers
+            # reject. Check the added control as its own XML fragment.
+            text = path.read_bytes().decode("latin1")
+            if '<combo_ssample ' not in text:
+                continue
+            start = text.index('<combo_vk_aa ')
+            end = text.index('</combo_vk_aa>', start) + len('</combo_vk_aa>')
+            control = ET.fromstring(text[start:end])
+            option = control.find("options_item")
+            self.assertEqual(option.get("entry"), "r_vk_aa")
+            self.assertIsNone(option.get("depend"))
+            self.assertEqual(control.get("list_length"), "2")
+            found += 1
+        self.assertGreaterEqual(found, 4)
+
     def test_launcher_retains_display_controls_and_leaves_quality_to_the_game(self):
         launcher = (JAVA / "LauncherActivity.java").read_text()
         activity = (JAVA / "XRayActivity.java").read_text()

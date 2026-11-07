@@ -20,6 +20,7 @@ namespace xray::render::vulkan
 namespace
 {
 const xr_token quality_tokens[]{{"Minimum", 0}, {"Low", 1}, {"Default", 2}, {"High", 3}, {"Extreme", 4}, {nullptr, 0}};
+const xr_token aa_tokens[]{{"off", 0}, {"FXAA", 1}, {nullptr, 0}};
 
 class VulkanPreset final : public CCC_Token
 {
@@ -54,6 +55,8 @@ public:
 void register_vulkan_options()
 {
     static VulkanPreset preset;
+    static CCC_Token aa("r_vk_aa", &antialiasing, aa_tokens);
+    Console->AddCommand(&aa);
     static CCC_Float detail_time("r_vk_detail_prepare_ms", &detail_prepare_ms, 0.1f, 20.f);
     Console->AddCommand(&detail_time);
     static CCC_Integer light_grid("r_vk_light_grid", &use_light_grid, 0, 1);
