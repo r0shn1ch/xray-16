@@ -1,6 +1,7 @@
 add_library(xrRenderVK STATIC)
 
 target_sources(xrRenderVK PRIVATE
+    PipelineCache.h
     VulkanRendererModule.cpp
     VulkanProbe.cpp
     VulkanProbe.h

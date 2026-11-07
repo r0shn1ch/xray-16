@@ -165,6 +165,21 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
                 error = "Vulkan game procedures are incomplete";
             goto failed;
         }
+        std::vector<uint8_t> cached;
+        string_path cache_path;
+        if (FS.path_exist("$app_data_root$") && FS.exist(cache_path, "$app_data_root$", "vulkan-pipelines.cache"))
+            if (IReader *reader = FS.r_open(cache_path))
+            {
+                if (reader->length() <= PipelineCache::MaximumBytes + 24)
+                    cached.assign(static_cast<const uint8_t *>(reader->pointer()),
+                                  static_cast<const uint8_t *>(reader->pointer()) + reader->length());
+                FS.r_close(reader);
+            }
+        if (pipeline_cache_.initialize(device, get, physical.properties, cached))
+        {
+            scene_dispatch.pipeline_cache = pipeline_cache_.handle();
+            Msg("[renderer-vulkan] pipeline.cache loaded-bytes=%zu", pipeline_cache_.loaded_bytes());
+        }
         if (!targets_.initialize(physical.handle, device, frame.extent(), static_cast<uint32_t>(frame.image_count()),
                                  frame.depth_format(), physical.memory, frame_dispatch_, create_sampler,
                                  destroy_sampler, error))
@@ -824,6 +839,8 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
     else if (screenshot_requested_ && readback_enabled_)
         screenshot_ready_ = wait_idle();
     screenshot_requested_ = false;
+    if (Device.dwPrecacheFrame == 1)
+        save_pipeline_cache();
     model_draws_.clear();
     shadow_model_draws_.clear();
     shadow_draw_lookup_.clear();
@@ -978,6 +995,25 @@ bool VulkanGameDevice::prepare_for_reset(std::string &error)
     return true;
 }
 
+void VulkanGameDevice::save_pipeline_cache()
+{
+    if (!pipeline_cache_.handle() || !FS.path_exist("$app_data_root$"))
+        return;
+    const auto bytes = pipeline_cache_.snapshot();
+    if (bytes.empty())
+        return;
+    string_path destination, temporary;
+    FS.update_path(destination, "$app_data_root$", "vulkan-pipelines.cache");
+    FS.update_path(temporary, "$app_data_root$", "vulkan-pipelines.cache.tmp");
+    if (IWriter *writer = FS.w_open(temporary))
+    {
+        writer->w(bytes.data(), bytes.size());
+        FS.w_close(writer);
+        FS.file_rename(temporary, destination, true);
+        Msg("[renderer-vulkan] pipeline.cache saved-bytes=%zu", bytes.size());
+    }
+}
+
 void VulkanGameDevice::destroy()
 {
     launch_settings_applied_ = false;
@@ -985,6 +1021,7 @@ void VulkanGameDevice::destroy()
     if (window_.device())
         R_ASSERT2(wait_idle(), "Vulkan shutdown requires completed frames");
     Msg("[renderer-vulkan] teardown game device idle");
+    save_pipeline_cache();
     ui_.DestroyUIGeom();
     R_ASSERT2(wait_idle(), "Vulkan UI shutdown requires completed descriptor leases");
     screenshot_buffer_.destroy();
@@ -1025,6 +1062,7 @@ void VulkanGameDevice::destroy()
     ui_pass_.destroy();
     light_grid_.destroy();
     deferred_.destroy();
+    pipeline_cache_.destroy();
     shader_resources_.destroy();
     Msg("[renderer-vulkan] teardown window begin");
     window_.destroy();

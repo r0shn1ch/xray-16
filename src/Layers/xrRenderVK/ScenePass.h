@@ -56,6 +56,7 @@ struct ScenePassDispatch
     PFN_vkUpdateDescriptorSets update_descriptor_sets{};
     PFN_vkCmdBindDescriptorSets cmd_bind_descriptor_sets{};
     PFN_vkCmdDraw cmd_draw{};
+    VkPipelineCache pipeline_cache{};
 };
 
 bool load_scene_pass_dispatch(VkDevice device, PFN_vkGetDeviceProcAddr get_proc,

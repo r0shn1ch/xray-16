@@ -62,6 +62,8 @@ if (XRAY_BUILD_VULKAN_TESTS)
     target_include_directories(vulkan_geometry_command_cache_test PRIVATE
         "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include")
     xray_add_vulkan_state_test(vulkan_camera_state_test tests/vulkan_camera_state.cpp)
+    xray_add_vulkan_state_test(vulkan_pipeline_cache_test tests/vulkan_pipeline_cache.cpp)
+    target_include_directories(vulkan_pipeline_cache_test PRIVATE "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include")
     xray_add_vulkan_state_test(vulkan_game_lighting_test tests/vulkan_game_lighting.cpp)
     target_sources(vulkan_game_lighting_test PRIVATE
         "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/VulkanGameLightingMath.cpp")

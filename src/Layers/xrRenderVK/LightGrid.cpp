@@ -80,7 +80,7 @@ bool LightGrid::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, VkRende
                 "main",
                 nullptr};
     ci.layout = layout_;
-    if (create_compute(device_, VK_NULL_HANDLE, 1, &ci, nullptr, &cull_) != VK_SUCCESS)
+    if (create_compute(device_, vk_.pipeline_cache, 1, &ci, nullptr, &cull_) != VK_SUCCESS)
         return fail("light grid compute pipeline failed");
     const VkPipelineShaderStageCreateInfo stages[]{{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
                                                     VK_SHADER_STAGE_VERTEX_BIT, vertex.handle(), "main", nullptr},
@@ -123,7 +123,7 @@ bool LightGrid::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, VkRende
     gp.pDepthStencilState = &depth;
     gp.layout = layout_;
     gp.renderPass = pass;
-    if (vk_.create_graphics_pipelines(device_, VK_NULL_HANDLE, 1, &gp, nullptr, &shade_) != VK_SUCCESS)
+    if (vk_.create_graphics_pipelines(device_, vk_.pipeline_cache, 1, &gp, nullptr, &shade_) != VK_SUCCESS)
         return fail("light grid shade pipeline failed");
     error.clear();
     return true;
