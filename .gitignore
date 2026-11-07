@@ -8,6 +8,7 @@
 # exclude binaries and temporary files
 [Bb]in/
 [Bb]uild*/
+__pycache__/
 
 # User-specific files
 *.user

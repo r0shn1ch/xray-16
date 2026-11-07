@@ -8,6 +8,7 @@
 #include "xrEngine/device.h"
 #include "src/xrEngine/defines.h"
 #include "vulkan_mock_device.h"
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <gli/save_dds.hpp>
@@ -410,6 +411,8 @@ int main()
     mvp[0] = mvp[5] = mvp[10] = mvp[15] = 1;
     assert(pass.create_game_pipeline("vk\\level_opaque.vs", "vk\\level_opaque.ps", handle<VkShaderModule>(5), handle<VkShaderModule>(6), SurfaceMode::Opaque,
                                      false, error));
+    assert(pass.create_game_pipeline("vk\\level_lod.vs", "vk\\level_lod.ps", handle<VkShaderModule>(5), handle<VkShaderModule>(6), SurfaceMode::AlphaTest,
+                                     false, error));
     for (auto profile : {LevelGameProfile::SoC, LevelGameProfile::CS, LevelGameProfile::CoP})
     {
         ShadowOfChernobylMode = profile == LevelGameProfile::SoC;
@@ -472,7 +475,10 @@ int main()
             assert(pass.create_game_pipeline("vk\\level_lightmap.vs","vk\\level_lightmap.ps",
                 handle<VkShaderModule>(5),handle<VkShaderModule>(6),SurfaceMode::Opaque,false,error));
         GpuLevel gpu;
-        assert(gpu.load(reader, device, queue, pool_handle, memory, upload_dispatch(), textures, pass, error));
+        const bool level_loaded = gpu.load(reader, device, queue, pool_handle, memory, upload_dispatch(), textures, pass, error);
+        if (!level_loaded)
+            std::fprintf(stderr, "vulkan_asset_flow: GpuLevel::load failed: %s\n", error.c_str());
+        assert(level_loaded);
         assert(gpu.visual_count() == 1 && gpu.model_count() == 1 && textures.finish_uploads());
         if (profile == LevelGameProfile::SoC)
         {
