@@ -1,0 +1,6 @@
+#ifndef XRAY_VULKAN_LIGHTING_LIMITS
+#define XRAY_VULKAN_LIGHTING_LIMITS
+// Shared C++/GLSL/HLSL buffer-layout limits.
+#define XRAY_VK_MAX_LOCAL_LIGHTS 64
+#define XRAY_VK_LIGHT_TILE_SIZE 16
+#endif
