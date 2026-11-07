@@ -234,13 +234,11 @@ Runtime data uses the normal desktop paths:
 <STALKER>/_appdata_/logs/
 ```
 
-## Renderer status
+## Renderer selection
 
 Gameplay currently uses OpenGL ES. `Auto` and `OpenGL ES` select the same GLES
 backend. Selecting Vulkan runs the Vulkan probe and then falls back to GLES;
-there is no Vulkan gameplay renderer yet. See
-[VULKAN_RENDERER_PLAN.md](VULKAN_RENDERER_PLAN.md) for the implemented Vulkan
-pieces and remaining work.
+there is no Vulkan gameplay renderer yet.
 
 The launcher can run GLES and Vulkan smoke tests without game data. A passing
 smoke test verifies context/device setup and a small render path only; it does
@@ -282,5 +280,4 @@ want automatic increments can enable the optional hook with
 dependency prefix, SDL source tree and Gradle cache. It does not create or
 download any of them.
 
-Launcher behavior is described in [apk/README.md](apk/README.md). Port-specific
-resource and platform boundaries are recorded in [PORT_AUDIT.md](PORT_AUDIT.md).
+Launcher behavior is described in [apk/README.md](apk/README.md).
