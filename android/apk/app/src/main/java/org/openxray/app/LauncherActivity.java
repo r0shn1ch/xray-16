@@ -76,6 +76,7 @@ public final class LauncherActivity extends Activity {
     public static final String EXTRA_RENDER_WIDTH = "org.openxray.extra.RENDER_WIDTH";
     public static final String EXTRA_RENDER_HEIGHT = "org.openxray.extra.RENDER_HEIGHT";
     public static final String EXTRA_SHOW_FPS = "org.openxray.extra.SHOW_FPS";
+    public static final String EXTRA_LIGHT_DEBUG_MODE = "org.openxray.extra.LIGHT_DEBUG_MODE";
 
     private static final String PREFS = "openxray_launcher";
     private static final String PREF_GAME_PATH = "game_path";
@@ -94,6 +95,11 @@ public final class LauncherActivity extends Activity {
     private static final String PREF_GRAPHICS_PRESET = "graphics_preset";
     private static final String PREF_RENDER_RESOLUTION = "render_resolution";
     private static final String PREF_SHOW_FPS = "show_fps";
+    private static final String PREF_LIGHT_DIAGNOSTIC = "light_diagnostic"; // migration from the four-pane build
+    private static final String PREF_LIGHT_DEBUG_MODE = "light_debug_mode";
+    private static final String[] LIGHT_DEBUG_MODES = {"Выключено", "Четыре экрана",
+            "Один экран: освещение", "Один экран: солнечная тень",
+            "Один экран: запечённый свет", "Один экран: текстура без света"};
     private static final String PREF_ANDROID_CRASH_REPORTS = "android_crash_reports";
 
     public static final int RENDERER_AUTO = 0;
@@ -130,6 +136,7 @@ public final class LauncherActivity extends Activity {
     private CheckBox immersiveMode;
     private CheckBox touchControlsEnabled;
     private CheckBox showFps;
+    private Spinner lightDebugMode;
     private CheckBox androidCrashReports;
     private TextView accessStatus;
     private TextView gameInspection;
@@ -445,6 +452,17 @@ public final class LauncherActivity extends Activity {
         content.addView(immersiveMode, matchWrap());
         content.addView(showFps, matchWrap());
 
+        addSectionTitle(content, "Отладка Vulkan");
+        content.addView(bodyText("Сравните четыре вида одного кадра или разверните любой из них "
+                + "на весь экран. R — запечённое солнце, G — полусфера, B — модель без карты света. "
+                + "Режим применяется после перезапуска игры."), matchWrap());
+        lightDebugMode = new Spinner(this);
+        ArrayAdapter<String> lightDebugAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, LIGHT_DEBUG_MODES);
+        lightDebugAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        lightDebugMode.setAdapter(lightDebugAdapter);
+        content.addView(lightDebugMode, matchWrap());
+
         addSectionTitle(content, "Диагностика");
         androidCrashReports = makeCheckBox("Сохранять отчёты Android о завершении движка",
                 "Данные о завершении и системный tombstone после вылета сохраняются рядом с логами игры.");
@@ -700,6 +718,9 @@ public final class LauncherActivity extends Activity {
                 preferences.getInt(PREF_GRAPHICS_PRESET, GRAPHICS_AUTO)));
         selectStoredResolution(preferences.getString(PREF_RENDER_RESOLUTION, "auto"));
         showFps.setChecked(preferences.getBoolean(PREF_SHOW_FPS, true));
+        int previousDebugMode = preferences.getBoolean(PREF_LIGHT_DIAGNOSTIC, false) ? 1 : 0;
+        int debugMode = preferences.getInt(PREF_LIGHT_DEBUG_MODE, previousDebugMode);
+        lightDebugMode.setSelection(Math.max(0, Math.min(debugMode, LIGHT_DEBUG_MODES.length - 1)));
         androidCrashReports.setChecked(preferences.getBoolean(PREF_ANDROID_CRASH_REPORTS, true));
         showPage(preferences.getInt(PREF_ACTIVE_PAGE, PAGE_GAME));
     }
@@ -722,6 +743,7 @@ public final class LauncherActivity extends Activity {
                 .putInt(PREF_GRAPHICS_PRESET, graphicsPreset.getSelectedItemPosition())
                 .putString(PREF_RENDER_RESOLUTION, selectedRenderResolution().id)
                 .putBoolean(PREF_SHOW_FPS, showFps.isChecked())
+                .putInt(PREF_LIGHT_DEBUG_MODE, lightDebugMode.getSelectedItemPosition())
                 .putBoolean(PREF_ANDROID_CRASH_REPORTS, androidCrashReports.isChecked())
                 .putInt(PREF_ACTIVE_PAGE, activePage)
                 .apply();
@@ -1060,6 +1082,7 @@ public final class LauncherActivity extends Activity {
         intent.putExtra(EXTRA_RENDER_WIDTH, resolution.width);
         intent.putExtra(EXTRA_RENDER_HEIGHT, resolution.height);
         intent.putExtra(EXTRA_SHOW_FPS, showFps.isChecked());
+        intent.putExtra(EXTRA_LIGHT_DEBUG_MODE, lightDebugMode.getSelectedItemPosition());
         if (!vulkanSmoke) {
             intent.putExtra(EXTRA_GAME_PATH, gamePath.getText().toString().trim());
             intent.putExtra(EXTRA_GAME_VARIANT, activeGameVariant);

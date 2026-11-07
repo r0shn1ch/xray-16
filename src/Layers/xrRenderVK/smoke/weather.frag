@@ -7,7 +7,10 @@ layout(set = 0, binding = 4, std140) uniform ShadowConstants {
     mat4 inverse_view_projection;
     mat4 sun_view_projection;
     vec4 options;
+    vec4 ambient_color;
+    vec4 hemi_color;
 } shadow;
+layout(set = 0, binding = 5) uniform sampler2D surface_buffer;
 layout(set = 1, binding = 0) uniform samplerCube sky_a;
 layout(set = 1, binding = 1) uniform samplerCube sky_b;
 layout(set = 1, binding = 2) uniform sampler2D clouds_a;
@@ -25,10 +28,10 @@ layout(push_constant) uniform Weather {
 layout(location = 0) in vec2 texcoord;
 layout(location = 0) out vec4 pixel_color;
 
-float sun_visibility(float depth)
+float sun_visibility(float depth, vec2 screen_uv)
 {
     vec4 world = shadow.inverse_view_projection *
-        vec4(texcoord.x * 2.0 - 1.0, 1.0 - texcoord.y * 2.0, depth, 1.0);
+        vec4(screen_uv.x * 2.0 - 1.0, 1.0 - screen_uv.y * 2.0, depth, 1.0);
     if (abs(world.w) < 1e-6) return 1.0;
     vec4 projected = shadow.sun_view_projection * (world / world.w);
     if (projected.w <= 0.0) return 1.0;
@@ -54,23 +57,69 @@ float sun_visibility(float depth)
 
 void main()
 {
-    if (texture(depth_buffer, texcoord).r < 0.99999)
+    // The four-pane view repeats one G-buffer; modes 2..5 fill the screen
+    // with the corresponding panel at its native resolution.
+    bool diagnostic = shadow.options.y > 0.5;
+    bool four_panes = diagnostic && shadow.options.y < 1.5;
+    vec2 pane = four_panes ? floor(min(texcoord * 2.0, vec2(1.9999))) : vec2(0.0);
+    int panel = four_panes ? int(pane.x) + 2 * int(pane.y) :
+        diagnostic ? clamp(int(shadow.options.y) - 2, 0, 3) : 0;
+    vec2 screen_uv = four_panes ? fract(texcoord * 2.0) : texcoord;
+    if (texture(depth_buffer, screen_uv).r < 0.99999)
     {
-        float depth = texture(depth_buffer, texcoord).r;
-        vec4 albedo = texture(albedo_buffer, texcoord);
-        vec4 encoded_normal = texture(normal_buffer, texcoord);
+        float depth = texture(depth_buffer, screen_uv).r;
+        vec4 albedo = texture(albedo_buffer, screen_uv);
+        vec4 encoded_normal = texture(normal_buffer, screen_uv);
+        vec4 surface = texture(surface_buffer, screen_uv);
         vec3 normal = normalize(encoded_normal.rgb * 2.0 - 1.0);
         float diffuse = max(dot(normal, normalize(-weather.direction_ambient.xyz)), 0.0);
         bool static_lightmap = encoded_normal.a < 0.875;
-        float hemisphere = static_lightmap ? clamp(encoded_normal.a / 0.75, 0.0, 1.0) : 1.0;
-        float indirect = weather.direction_ambient.w + weather.grade.w * hemisphere;
+        float hemisphere = static_lightmap ? clamp(encoded_normal.a / 0.75, 0.0, 1.0) :
+            clamp(0.5 + 0.5 * normal.y, 0.0, 1.0);
+        float sun_scale = 0.0;
         vec3 sunlight = vec3(0.0);
         // Most rainy frames have no sun. Avoid nine depth fetches per pixel
         // when the result would be multiplied by black anyway.
+        if (diagnostic && panel == 1)
+        {
+            float visibility = sun_visibility(depth, screen_uv);
+            pixel_color = vec4(vec3(visibility), 1.0);
+            return;
+        }
+        if (diagnostic && panel == 2)
+        {
+            // R: baked sun (models use full visibility), G: hemisphere,
+            // B: blue denotes an object without a static lightmap.
+            pixel_color = vec4(static_lightmap ? albedo.a : 1.0,
+                hemisphere, static_lightmap ? 0.0 : 1.0, 1.0);
+            return;
+        }
+        if (diagnostic && panel == 3)
+        {
+            pixel_color = vec4(albedo.rgb, 1.0);
+            return;
+        }
         if (max(max(weather.light_color.r, weather.light_color.g), weather.light_color.b) > 0.0001)
-            sunlight = diffuse * sun_visibility(depth) * weather.light_color.rgb *
-                (static_lightmap ? albedo.a : 1.0);
-        vec3 lit = albedo.rgb * (indirect + sunlight);
+        {
+            sun_scale = sun_visibility(depth, screen_uv) * (static_lightmap ? albedo.a : 1.0);
+            sunlight = diffuse * sun_scale * weather.light_color.rgb;
+        }
+        vec3 lit = albedo.rgb * (shadow.ambient_color.rgb +
+            shadow.hemi_color.rgb * hemisphere + sunlight);
+        if (surface.r > 0.0 && sun_scale > 0.0)
+        {
+            vec4 world_clip = shadow.inverse_view_projection *
+                vec4(screen_uv.x * 2.0 - 1.0, 1.0 - screen_uv.y * 2.0, depth, 1.0);
+            vec4 near_clip = shadow.inverse_view_projection *
+                vec4(screen_uv.x * 2.0 - 1.0, 1.0 - screen_uv.y * 2.0, 0.0, 1.0);
+            vec3 view_ray = normalize(near_clip.xyz / near_clip.w - world_clip.xyz / world_clip.w);
+            vec3 half_dir = normalize(view_ray - normalize(weather.direction_ambient.xyz));
+            float specular = pow(max(dot(normal, half_dir), 0.0),
+                mix(4.0, 64.0, surface.r));
+            lit += specular * surface.r * mix(0.04, 0.2, surface.g) *
+                weather.light_color.rgb * sun_scale;
+        }
+        lit += albedo.rgb * surface.b;
         vec2 fog_rg = unpackHalf2x16(floatBitsToUint(weather.ray_base.w));
         vec2 fog_b_near = unpackHalf2x16(floatBitsToUint(weather.ray_dx.w));
         vec2 fog_far_projection = unpackHalf2x16(floatBitsToUint(weather.ray_dy.w));
@@ -78,8 +127,8 @@ void main()
         float projection_far = max(fog_far_projection.y, camera_near + 1.0);
         float view_distance = camera_near * projection_far /
             max(projection_far - depth * (projection_far - camera_near), 0.01);
-        vec3 ray = weather.ray_base.xyz + texcoord.x * weather.ray_dx.xyz +
-            texcoord.y * weather.ray_dy.xyz;
+        vec3 ray = weather.ray_base.xyz + screen_uv.x * weather.ray_dx.xyz +
+            screen_uv.y * weather.ray_dy.xyz;
         view_distance *= length(ray) / projection_far;
         float fog = clamp((view_distance - fog_b_near.y) /
             max(fog_far_projection.x - fog_b_near.y, 0.01), 0.0, 1.0);
@@ -90,8 +139,13 @@ void main()
         return;
     }
 
-    vec3 direction = normalize(weather.ray_base.xyz + texcoord.x * weather.ray_dx.xyz +
-        texcoord.y * weather.ray_dy.xyz);
+    if (diagnostic && panel != 0)
+    {
+        pixel_color = vec4(0.04, 0.08, 0.18, 1.0);
+        return;
+    }
+    vec3 direction = normalize(weather.ray_base.xyz + screen_uv.x * weather.ray_dx.xyz +
+        screen_uv.y * weather.ray_dy.xyz);
     float angle = weather.sky_color.a;
     direction.xz = mat2(cos(angle), -sin(angle), sin(angle), cos(angle)) * direction.xz;
     float blend = clamp(weather.light_color.a, 0.0, 1.0);
