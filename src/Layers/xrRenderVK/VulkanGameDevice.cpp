@@ -31,6 +31,55 @@ template <typename T> T proc(VkDevice device, PFN_vkGetDeviceProcAddr get, const
     return reinterpret_cast<T>(get(device, name));
 }
 
+bool shader_asset_fingerprint(uint64_t &result, std::string &error)
+{
+    if (!FS.path_exist("$game_shaders$"))
+    {
+        error = "game shader path is unavailable";
+        return false;
+    }
+    FS_FileSet files;
+    FS.file_list(files, "$game_shaders$", FS_ListFiles);
+    PipelineCacheFingerprint fingerprint(xrCore::GetBuildCommit());
+    size_t bytes_hashed = 0;
+    size_t count = 0;
+    for (const auto &file : files)
+    {
+        const std::string_view name(file.name.c_str());
+        if (name.size() < 4 || name.substr(name.size() - 4) != ".spv")
+            continue;
+        if (++count > 4096)
+        {
+            error = "too many precompiled game shaders for pipeline cache validation";
+            return false;
+        }
+        IReader *reader = FS.r_open("$game_shaders$", file.name.c_str());
+        if (!reader)
+        {
+            error = "could not hash precompiled game shader: " + std::string(name);
+            return false;
+        }
+        const size_t size = reader->length();
+        if (size > PipelineCache::MaximumBytes - bytes_hashed)
+        {
+            FS.r_close(reader);
+            error = "precompiled game shaders exceed pipeline cache validation limit";
+            return false;
+        }
+        fingerprint.append(name, reader->pointer(), size);
+        bytes_hashed += size;
+        FS.r_close(reader);
+    }
+    if (!count)
+    {
+        error = "no precompiled game shaders available for pipeline cache validation";
+        return false;
+    }
+    result = fingerprint.value();
+    error.clear();
+    return true;
+}
+
 #if defined(XR_PLATFORM_ANDROID)
 bool set_android_buffer_extent(SDL_Window *window, VkExtent2D extent, std::string &error)
 {
@@ -166,8 +215,14 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
             goto failed;
         }
         std::vector<uint8_t> cached;
+        uint64_t shader_fingerprint = 0;
+        std::string fingerprint_error;
+        const bool fingerprint_valid = shader_asset_fingerprint(shader_fingerprint, fingerprint_error);
+        if (!fingerprint_valid)
+            Msg("! [renderer-vulkan] pipeline cache reuse disabled: %s", fingerprint_error.c_str());
         string_path cache_path;
-        if (FS.path_exist("$app_data_root$") && FS.exist(cache_path, "$app_data_root$", "vulkan-pipelines.cache"))
+        if (fingerprint_valid && FS.path_exist("$app_data_root$") &&
+            FS.exist(cache_path, "$app_data_root$", "vulkan-pipelines.cache"))
             if (IReader *reader = FS.r_open(cache_path))
             {
                 if (reader->length() <= PipelineCache::MaximumDiskBytes)
@@ -175,7 +230,7 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
                                   static_cast<const uint8_t *>(reader->pointer()) + reader->length());
                 FS.r_close(reader);
             }
-        if (pipeline_cache_.initialize(device, get, physical.properties, cached))
+        if (pipeline_cache_.initialize(device, get, physical.properties, cached, shader_fingerprint))
         {
             scene_dispatch.pipeline_cache = pipeline_cache_.handle();
             Msg("[renderer-vulkan] pipeline.cache loaded-bytes=%zu", pipeline_cache_.loaded_bytes());
@@ -995,7 +1050,14 @@ void VulkanGameDevice::save_pipeline_cache()
 {
     if (!pipeline_cache_.handle() || !FS.path_exist("$app_data_root$"))
         return;
-    const auto bytes = pipeline_cache_.snapshot();
+    uint64_t shader_fingerprint = 0;
+    std::string fingerprint_error;
+    if (!shader_asset_fingerprint(shader_fingerprint, fingerprint_error))
+    {
+        Msg("! [renderer-vulkan] pipeline cache save skipped: %s", fingerprint_error.c_str());
+        return;
+    }
+    const auto bytes = pipeline_cache_.snapshot(shader_fingerprint);
     if (bytes.empty())
         return;
     string_path destination, temporary;

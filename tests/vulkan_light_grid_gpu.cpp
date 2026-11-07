@@ -210,7 +210,7 @@ int main()
     VkPhysicalDeviceProperties properties{};
     vkGetPhysicalDeviceProperties(physical[0], &properties);
     PipelineCache pipeline_cache;
-    assert(pipeline_cache.initialize(device, vkGetDeviceProcAddr, properties, {}));
+    assert(pipeline_cache.initialize(device, vkGetDeviceProcAddr, properties, {}, 42));
     graphics.pipeline_cache = pipeline_cache.handle();
     LightGrid grid;
     assert(grid.initialize(device, vkGetDeviceProcAddr, pass, layout, memory, bd, graphics, shaders,
@@ -336,10 +336,10 @@ int main()
             }
         }
     }
-    const auto persisted = pipeline_cache.snapshot();
-    assert(PipelineCache::compatible(persisted, properties));
+    const auto persisted = pipeline_cache.snapshot(42);
+    assert(PipelineCache::compatible(persisted, properties, 42));
     grid.destroy();
-    assert(pipeline_cache.initialize(device, vkGetDeviceProcAddr, properties, persisted));
+    assert(pipeline_cache.initialize(device, vkGetDeviceProcAddr, properties, persisted, 42));
     assert(pipeline_cache.loaded_bytes() != 0);
     graphics.pipeline_cache = pipeline_cache.handle();
     assert(grid.initialize(device, vkGetDeviceProcAddr, pass, layout, memory, bd, graphics, shaders,

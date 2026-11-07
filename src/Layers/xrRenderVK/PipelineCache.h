@@ -1,18 +1,56 @@
 #pragma once
 #include <cstdint>
 #include <cstring>
+#include <string_view>
 #include <vector>
 #include <vulkan/vulkan.h>
 
 namespace xray::render::vulkan
 {
+class PipelineCacheFingerprint
+{
+  public:
+    explicit PipelineCacheFingerprint(std::string_view build)
+    {
+        constexpr std::string_view format = "vulkan-shader-assets-v1";
+        append("format", format.data(), format.size());
+        append("build", build.data(), build.size());
+    }
+    void append(std::string_view name, const void *bytes, size_t size)
+    {
+        append_size(name.size());
+        append_bytes(name.data(), name.size());
+        append_size(size);
+        append_bytes(bytes, size);
+    }
+    uint64_t value() const { return value_; }
+
+  private:
+    void append_size(size_t size)
+    {
+        for (unsigned i = 0; i < 8; ++i)
+            append_byte(uint8_t(uint64_t(size) >> (i * 8)));
+    }
+    void append_bytes(const void *bytes, size_t size)
+    {
+        const auto *data = static_cast<const uint8_t *>(bytes);
+        for (size_t i = 0; i < size; ++i)
+            append_byte(data[i]);
+    }
+    void append_byte(uint8_t byte)
+    {
+        value_ = (value_ ^ byte) * 1099511628211ull;
+    }
+    uint64_t value_{14695981039346656037ull};
+};
+
 // The disk wrapper rejects partial writes before the driver sees its opaque
 // data. Vulkan's header then limits reuse to a compatible physical device.
 class PipelineCache
 {
   public:
     static constexpr size_t MaximumBytes = 64u * 1024u * 1024u;
-    static constexpr size_t WrapperBytes = 32;
+    static constexpr size_t WrapperBytes = 40;
     static constexpr size_t MaximumDiskBytes = MaximumBytes + WrapperBytes;
     ~PipelineCache()
     {
@@ -23,7 +61,7 @@ class PipelineCache
     PipelineCache &operator=(const PipelineCache &) = delete;
 
     bool initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, const VkPhysicalDeviceProperties &properties,
-                    const std::vector<uint8_t> &disk)
+                    const std::vector<uint8_t> &disk, uint64_t shader_fingerprint)
     {
         destroy();
         auto create = reinterpret_cast<PFN_vkCreatePipelineCache>(get(device, "vkCreatePipelineCache"));
@@ -35,7 +73,7 @@ class PipelineCache
         properties_ = properties;
         VkPipelineCacheCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
-        if (compatible(disk, properties))
+        if (compatible(disk, properties, shader_fingerprint))
         {
             info.initialDataSize = disk.size() - WrapperBytes;
             info.pInitialData = disk.data() + WrapperBytes;
@@ -64,7 +102,7 @@ class PipelineCache
     {
         return loaded_bytes_;
     }
-    std::vector<uint8_t> snapshot() const
+    std::vector<uint8_t> snapshot(uint64_t shader_fingerprint) const
     {
         if (!handle_)
             return {};
@@ -76,21 +114,24 @@ class PipelineCache
             size < 32)
             return {};
         result.resize(size + WrapperBytes);
-        std::memcpy(result.data(), "XRAYVKC2", 8);
+        std::memcpy(result.data(), "XRAYVKC3", 8);
         store(result.data() + 8, size);
         store(result.data() + 16, hash(result.data() + WrapperBytes, size));
         store(result.data() + 24, (uint64_t(properties_.apiVersion) << 32) | properties_.driverVersion);
+        store(result.data() + 32, shader_fingerprint);
         return result;
     }
-    static bool compatible(const std::vector<uint8_t> &disk, const VkPhysicalDeviceProperties &p)
+    static bool compatible(const std::vector<uint8_t> &disk, const VkPhysicalDeviceProperties &p,
+                           uint64_t shader_fingerprint)
     {
         if (disk.size() < WrapperBytes + 32 || disk.size() > MaximumDiskBytes ||
-            std::memcmp(disk.data(), "XRAYVKC2", 8) != 0)
+            std::memcmp(disk.data(), "XRAYVKC3", 8) != 0)
             return false;
         const size_t size = disk.size() - WrapperBytes;
         const auto *b = disk.data() + WrapperBytes;
         if (load(disk.data() + 8) != size || load(disk.data() + 16) != hash(b, size) ||
-            load(disk.data() + 24) != ((uint64_t(p.apiVersion) << 32) | p.driverVersion))
+            load(disk.data() + 24) != ((uint64_t(p.apiVersion) << 32) | p.driverVersion) ||
+            load(disk.data() + 32) != shader_fingerprint)
             return false;
         uint32_t header[4];
         for (unsigned field = 0; field < 4; ++field)
