@@ -5,6 +5,7 @@
 #include "VulkanRainRender.h"
 #include "VulkanThunderboltRender.h"
 #include "SceneShaders.h"
+#include "ShaderAssetFingerprint.h"
 #include "ShaderModule.h"
 #include "PostProcessShaders.h"
 #include "TransparentDrawOrder.h"
@@ -23,14 +24,6 @@
 
 namespace xray::render::vulkan
 {
-namespace
-{
-
-template <typename T> T proc(VkDevice device, PFN_vkGetDeviceProcAddr get, const char *name)
-{
-    return reinterpret_cast<T>(get(device, name));
-}
-
 bool shader_asset_fingerprint(uint64_t &result, std::string &error)
 {
     if (!FS.path_exist("$game_shaders$"))
@@ -39,6 +32,12 @@ bool shader_asset_fingerprint(uint64_t &result, std::string &error)
         return false;
     }
     FS_FileSet files;
+    // Android indexes bundled engine shaders under an overlay directory.
+    // file_list on $game_shaders$ only walks the game's physical directory,
+    // which can be empty even though r_open resolves shaders from the overlay.
+    const FS_Path *shader_path = FS.get_path("$game_shaders$");
+    if (shader_path->m_Overlay)
+        FS.file_list(files, shader_path->m_Overlay, FS_ListFiles);
     FS.file_list(files, "$game_shaders$", FS_ListFiles);
     PipelineCacheFingerprint fingerprint(xrCore::GetBuildCommit());
     size_t bytes_hashed = 0;
@@ -78,6 +77,14 @@ bool shader_asset_fingerprint(uint64_t &result, std::string &error)
     result = fingerprint.value();
     error.clear();
     return true;
+}
+
+namespace
+{
+
+template <typename T> T proc(VkDevice device, PFN_vkGetDeviceProcAddr get, const char *name)
+{
+    return reinterpret_cast<T>(get(device, name));
 }
 
 #if defined(XR_PLATFORM_ANDROID)
@@ -1060,15 +1067,16 @@ void VulkanGameDevice::save_pipeline_cache()
     const auto bytes = pipeline_cache_.snapshot(shader_fingerprint);
     if (bytes.empty())
         return;
-    string_path destination, temporary;
+    string_path destination;
     FS.update_path(destination, "$app_data_root$", "vulkan-pipelines.cache");
-    FS.update_path(temporary, "$app_data_root$", "vulkan-pipelines.cache.tmp");
-    if (IWriter *writer = FS.w_open(temporary))
+    if (IWriter *writer = FS.w_open(destination))
     {
         writer->w(bytes.data(), bytes.size());
         FS.w_close(writer);
-        FS.file_rename(temporary, destination, true);
-        Msg("[renderer-vulkan] pipeline.cache saved-bytes=%zu", bytes.size());
+        if (FS.file_length(destination) == static_cast<int>(bytes.size()))
+            Msg("[renderer-vulkan] pipeline.cache saved-bytes=%zu", bytes.size());
+        else
+            Msg("! [renderer-vulkan] pipeline cache write verification failed: %s", destination);
     }
 }
 

@@ -2,6 +2,7 @@
 #include "src/Layers/xrRenderVK/EngineLevelModels.h"
 #include "src/Layers/xrRenderVK/GpuModel.h"
 #include "src/Layers/xrRenderVK/VulkanModelVisual.h"
+#include "src/Layers/xrRenderVK/ShaderAssetFingerprint.h"
 #include "src/Layers/xrRenderVK/VulkanVisual.h"
 #include "src/Layers/xrRenderVK/VulkanUIShader.h"
 #include "src/Layers/xrRenderVK/VulkanUIRender.h"
@@ -159,6 +160,36 @@ int main()
     FS.append_path("$level$", directory.string().c_str(), nullptr, false);
     FS.append_path("$game_textures$", base_textures.string().c_str(), nullptr, false);
     FS.append_path("$game_meshes$", directory.string().c_str(), nullptr, false);
+    {
+        const auto game_shaders = directory / "game_shaders";
+        const auto engine_shaders = directory / "engine_shaders";
+        std::filesystem::remove_all(game_shaders);
+        std::filesystem::remove_all(engine_shaders);
+        std::filesystem::create_directories(game_shaders / "vk");
+        std::filesystem::create_directories(engine_shaders / "vk");
+        save(engine_shaders / "vk" / "overlay.spv", Bytes{'o', 'v', 'e', 'r', 'l', 'a', 'y'});
+        auto *shader_path = FS.append_path("$game_shaders$", game_shaders.string().c_str(), nullptr, true);
+        shader_path->_set_overlay(engine_shaders.string().c_str());
+        FS.rescan_path(shader_path->m_Overlay, true);
+
+        uint64_t overlay_fingerprint = 0;
+        std::string fingerprint_error;
+        assert(shader_asset_fingerprint(overlay_fingerprint, fingerprint_error));
+        assert(fingerprint_error.empty());
+
+        save(engine_shaders / "vk" / "overlay.spv", Bytes{'c', 'h', 'a', 'n', 'g', 'e', 'd'});
+        uint64_t changed_fingerprint = 0;
+        assert(shader_asset_fingerprint(changed_fingerprint, fingerprint_error));
+        assert(changed_fingerprint != overlay_fingerprint);
+
+        // A loose game/mod shader with the same relative name must be the
+        // effective input because r_open gives it priority over the overlay.
+        save(game_shaders / "vk" / "overlay.spv", Bytes{'o', 'v', 'e', 'r', 'r', 'i', 'd', 'e'});
+        FS.rescan_path(shader_path->m_Path, true);
+        uint64_t override_fingerprint = 0;
+        assert(shader_asset_fingerprint(override_fingerprint, fingerprint_error));
+        assert(override_fingerprint != changed_fingerprint);
+    }
     using namespace vk_mock;
     const auto device = handle<VkDevice>(1);
     const auto queue = handle<VkQueue>(2);
