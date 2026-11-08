@@ -32,7 +32,15 @@ class VulkanPreset final : public CCC_Token
     {
         CCC_Token::Execute(args);
         if (get_token_id(quality_tokens, args) >= 0)
+        {
             set_vulkan_quality(quality_preset);
+            const auto& quality = render_quality(quality_preset);
+            Msg("[renderer-vulkan] quality preset=%s texture-limit=%u anisotropy=%d detail-distance=%d "
+                "detail-spacing=%.3f detail-updates=%d point-shadows=%d spot-shadows=%d sun-span=%.0f",
+                get_token_name(quality_tokens, quality_preset), quality.texture_limit, texture_anisotropy,
+                detail_radius, detail_spacing, detail_update_cells, point_shadow_budget, spot_shadow_budget,
+                quality.sun_span);
+        }
     }
 };
 

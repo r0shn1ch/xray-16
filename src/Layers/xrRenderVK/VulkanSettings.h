@@ -18,9 +18,10 @@ inline constexpr unsigned DefaultVulkanQuality = 1;
 inline constexpr unsigned DefaultVulkanQuality = 2;
 #endif
 inline constexpr int PresetAnisotropy[]{2, 4, 8, 16, 16};
+inline constexpr float PresetDetailSpacing[]{1.f, .75f, .5f, .375f, .25f};
 inline uint32_t quality_preset = DefaultVulkanQuality;
 inline int detail_radius = RenderQualities[DefaultVulkanQuality].detail_distance;
-inline float detail_spacing = .5f;
+inline float detail_spacing = PresetDetailSpacing[DefaultVulkanQuality];
 inline int tessellation_enabled = 0;
 inline int legacy_level_lights = 0;
 inline int detail_update_cells = RenderQualities[DefaultVulkanQuality].detail_updates;
@@ -44,13 +45,15 @@ inline uint32_t antialiasing = 1;
 
 inline void set_vulkan_quality(unsigned preset)
 {
+    preset = std::min<unsigned>(preset, std::size(PresetAnisotropy) - 1);
     quality_preset = preset;
-    const auto& quality = render_quality(preset);
+    const auto& quality = render_quality(quality_preset);
     detail_radius = quality.detail_distance;
+    detail_spacing = PresetDetailSpacing[quality_preset];
     detail_update_cells = quality.detail_updates;
     point_shadow_budget = quality.point_shadows;
     spot_shadow_budget = quality.spot_shadows;
-    texture_anisotropy = PresetAnisotropy[preset];
+    texture_anisotropy = PresetAnisotropy[quality_preset];
 }
 
 // Interpret explicit command-line overrides as defaults. The saved user

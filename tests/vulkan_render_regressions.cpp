@@ -140,16 +140,20 @@ int main()
            decal.vertices[0].uv[0] == .3f);
     quality_preset = 4;
     detail_radius = 80;
+    detail_spacing = .25f;
     ambient_scale = .1f;
     hemisphere_scale = .2f;
     apply_vulkan_launch_settings(
         "-cop -android-mobile-preset Minimum -vk-detail-distance 0 -vk-ambient-scale 1 -vk-hemi-scale 1");
-    assert(quality_preset == 0 && detail_radius == 0 && ambient_scale == 1 && hemisphere_scale == 1);
+    assert(quality_preset == 0 && detail_radius == 0 && detail_spacing == 1.f && texture_anisotropy == 2 &&
+           detail_update_cells == 8 && point_shadow_budget == 0 && spot_shadow_budget == 1 && ambient_scale == 1 &&
+           hemisphere_scale == 1);
     quality_preset = 0;
     apply_vulkan_launch_settings("-android-mobile-preset Default");
     assert(quality_preset == 2);
     apply_vulkan_launch_settings("-android-mobile-preset Extreme -vk-detail-distance 20");
-    assert(quality_preset == 4 && detail_radius == 20);
+    assert(quality_preset == 4 && detail_radius == 20 && detail_spacing == .25f && texture_anisotropy == 16 &&
+           detail_update_cells == 32 && point_shadow_budget == 2 && spot_shadow_budget == 2);
     apply_vulkan_launch_settings("-vk-hemi-scale nan -vk-detail-distance invalid");
     assert(hemisphere_scale == 1 && detail_radius == 20);
     assert(texture_anisotropy == 16);

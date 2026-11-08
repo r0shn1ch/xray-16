@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import json
+import re
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -62,6 +63,95 @@ class AndroidMenuContractTest(unittest.TestCase):
         for filename in ("ui_mm_opt.xml", "ui_mm_opt_16.xml"):
             ui = ET.parse(ROOT / "res/gamedata/configs/ui" / filename)
             self.assertEqual(ui.find(".//options_item[@entry='r__tf_aniso']").get("depend"), "restart")
+
+    def test_vulkan_advanced_menu_only_exposes_effective_controls(self):
+        script = (ROOT / "res/gamedata/scripts/ui_mm_opt_video_adv.script").read_text()
+        functions = {
+            name: body
+            for name, body in re.findall(r"function (\w+)\(render_id\)\s+(.*?)\s+end", script, re.DOTALL)
+        }
+        self.assertIn("render_id~=7", functions["desktop_modes"])
+        self.assertIn("render_id==7", functions["vulkan_mode"])
+        for name in ("mode_ge_2a", "mode_ge_2", "mode_ge_25", "mode_ge_3", "mode_ge_4"):
+            self.assertIn("render_id~=7", functions[name])
+
+        def precondition(control):
+            match = re.search(
+                rf'Init\w+\s*\("video_adv:{control}".*?table\.insert\(handler\.m_preconditions, '
+                r'{func=(\w+)',
+                script,
+                re.DOTALL,
+            )
+            self.assertIsNotNone(match, control)
+            return match.group(1)
+
+        visible = {
+            "track_vis_dist": "all_modes",
+            "track_texture_lod": "all_modes",
+            "track_aniso": "all_modes",
+            "combo_vk_aa": "vulkan_mode",
+            "track_detail_density": "all_modes",
+            "track_detail_radius": "all_modes",
+            "check_npc_torch": "all_modes",
+            "check_always_active": "all_modes",
+            "track_fps_limit": "all_modes",
+            "track_fps_limit_in_menu": "all_modes",
+        }
+        for control, expected in visible.items():
+            self.assertEqual(precondition(control), expected, control)
+
+        hidden = {
+            "track_geometry_lod": "desktop_modes",
+            "track_ssample": "mode_less_3",
+            "combo_ssample": "mode_ge_3",
+            "track_light_distance": "mode_ge_2a",
+            "track_particles_distance": "desktop_modes",
+            "list_r2_smap_size": "desktop_modes",
+            "check_r2_detail_bump": "mode_ge_2",
+            "check_r2_steep_parallax": "mode_ge_25",
+            "list_r2_sun_quality": "mode_ge_25",
+            "combo_sun_shafts": "mode_ge_25",
+            "radio_tab_ao_options": "mode_ge_25",
+            "combo_ssao": "mode_ge_25",
+            "check_soft_water": "mode_ge_25",
+            "check_soft_particles": "mode_ge_25",
+            "check_dof": "mode_ge_25",
+            "check_volumetric_light": "mode_ge_25",
+            "check_r3_dynamic_wet_surfaces": "mode_ge_3",
+            "check_r3_volumetric_smoke": "mode_ge_3",
+            "check_r3_msaa_opt": "mode_3",
+            "check_vsync": "desktop_modes",
+        }
+        for control, expected in hidden.items():
+            self.assertEqual(precondition(control), expected, control)
+
+        self.assertRegex(
+            script,
+            r'(?s)InitCheck\("video_adv:check_r2_sun".*?return id>=2.*?control=_st',
+        )
+        self.assertRegex(
+            script,
+            r'(?s)InitCheck\("video_adv:check_r4_tessellation".*?mode_4\(id\) or id == 7.*?control=_st',
+        )
+
+    def test_vulkan_presets_cover_detail_distance_textures_and_shadows(self):
+        settings = (ENGINE / "VulkanSettings.h").read_text()
+        policy = (ENGINE / "RenderPolicy.h").read_text()
+        module = (ENGINE / "VulkanRendererModule.cpp").read_text()
+        self.assertIn("PresetDetailSpacing[]{1.f, .75f, .5f, .375f, .25f}", settings)
+        self.assertIn("detail_spacing = PresetDetailSpacing[quality_preset]", settings)
+        for assignment in (
+            "detail_radius = quality.detail_distance",
+            "detail_update_cells = quality.detail_updates",
+            "point_shadow_budget = quality.point_shadows",
+            "spot_shadow_budget = quality.spot_shadows",
+            "texture_anisotropy = PresetAnisotropy[quality_preset]",
+        ):
+            self.assertIn(assignment, settings)
+        self.assertIn("unsigned texture_limit", policy)
+        self.assertIn("texture-limit=%u", module)
+        self.assertIn("detail-spacing=%.3f", module)
+        self.assertIn("point-shadows=%d", module)
 
     def test_combo_selection_and_restore_use_the_same_token_id(self):
         combo = (ROOT / "src/xrUICore/ComboBox/UIComboBox.cpp").read_text()
