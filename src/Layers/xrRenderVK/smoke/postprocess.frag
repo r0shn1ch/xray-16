@@ -13,6 +13,7 @@ layout(push_constant) uniform Settings {
     vec4 effect;
     vec4 noise;
     vec4 color_map;
+    vec4 bloom;
 } settings;
 layout(location = 0) in vec2 texcoord;
 layout(location = 0) out vec4 pixel_color;
@@ -35,6 +36,7 @@ vec3 aa_sample(vec2 uv)
 }
 
 #include "fxaa.glsl"
+#include "bloom.glsl"
 
 void main()
 {
@@ -58,6 +60,13 @@ void main()
         const float white_squared = 1.7 * 1.7;
         vec3 mapped = exposed * (1.0 + exposed / white_squared) / (1.0 + exposed);
         image = mix(image, mapped, clamp(settings.grade.w, 0.0, 1.0));
+    }
+    int mip_levels = textureQueryLevels(sampler2D(frame_image, frame_sampler));
+    if (settings.bloom.x > 0.0 && mip_levels > 1)
+    {
+        float bloom_mip = clamp(settings.bloom.z, 1.0, float(mip_levels - 1));
+        vec3 low_frequency = textureLod(sampler2D(frame_image, frame_sampler), texcoord, bloom_mip).rgb;
+        image += bloom_highlights(low_frequency, settings.bloom.y, settings.bloom.w) * settings.bloom.x;
     }
     if (settings.effect.x > 0.0)
     {

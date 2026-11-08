@@ -53,6 +53,8 @@ if (XRAY_BUILD_VULKAN_TESTS)
     xray_add_vulkan_state_test(vulkan_render_regressions_test tests/vulkan_render_regressions.cpp)
     xray_add_vulkan_state_test(vulkan_fxaa_scene_test tests/vulkan_fxaa_scene.cpp)
     target_include_directories(vulkan_fxaa_scene_test PRIVATE "${XRAY_SOURCE_DIR}/Externals/gli/external")
+    xray_add_vulkan_state_test(vulkan_bloom_scene_test tests/vulkan_bloom_scene.cpp)
+    target_include_directories(vulkan_bloom_scene_test PRIVATE "${XRAY_SOURCE_DIR}/Externals/gli/external")
     xray_add_vulkan_state_test(vulkan_texture_upload_test tests/vulkan_texture_upload.cpp)
     target_sources(vulkan_texture_upload_test PRIVATE "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/TextureUpload.cpp"
         "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/ImageStateTracker.cpp")

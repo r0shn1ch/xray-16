@@ -37,6 +37,7 @@ struct PostProcessConstants
     float effect[4]{}; // blur, horizontal duality, vertical duality, grayscale
     float noise[4]{}; // intensity, grain, fps, elapsed time
     float color_map[4]{}; // influence, interpolation, middle gray, FXAA enable
+    float bloom[4]{0.14f, 0.72f, 4.f, 0.12f}; // intensity, threshold, source mip, soft knee
 };
 static_assert(sizeof(PostProcessConstants) <= 128);
 
