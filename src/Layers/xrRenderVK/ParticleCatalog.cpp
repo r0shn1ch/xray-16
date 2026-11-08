@@ -93,8 +93,10 @@ bool effect(LevelBytes bytes, ParticleEffectDef& def)
     if (!version.word(number) || number != 1 || !version.done() ||
         !name.name(def.name) || def.name.empty() || !name.done() ||
         !maximum.integer(def.max_particles) || !maximum.done() ||
-        !flags.integer(def.flags) || !flags.done() ||
         !def.max_particles || def.max_particles > 65535) return false;
+    // CPEDef::Load treats PED_CHUNK_FLAGS as optional; the constructor leaves
+    // flags at zero when older particle libraries omit it.
+    if (flags.bytes.data && (!flags.integer(def.flags) || !flags.done())) return false;
     auto actions = find(parts, 4);
     if (!actions.data || actions.size < 4 || actions.size > 8 * 1024 * 1024 ||
         get32(actions.data) > 4096 || get32(actions.data) > (actions.size - 4) / 4) return false;

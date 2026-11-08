@@ -56,6 +56,18 @@ int main()
     assert(parse_particle_catalog({library.data(), library.size()}, catalog, error));
     assert(catalog.effect("campfire") && catalog.effect("campfire")->max_particles == 64);
     assert(catalog.group("campfire_group") && catalog.group("campfire_group")->effects.size() == 1);
+    Bytes legacy_effect, legacy_effects, legacy_effect_library;
+    chunk(legacy_effect, 1, version);
+    data.clear();
+    name(data, "legacy_campfire"); chunk(legacy_effect, 2, data); data.clear();
+    u32(data, 64); chunk(legacy_effect, 3, data); data.clear();
+    chunk(legacy_effect, 4, Bytes{0, 0, 0, 0});
+    name(data, "particle"); name(data, "fire"); chunk(legacy_effect, 7, data); data.clear();
+    chunk(legacy_effects, 0, legacy_effect);
+    chunk(legacy_effect_library, 1, version);
+    chunk(legacy_effect_library, 3, legacy_effects);
+    assert(parse_particle_catalog({legacy_effect_library.data(), legacy_effect_library.size()}, catalog, error));
+    assert(catalog.effect("legacy_campfire") && catalog.effect("legacy_campfire")->flags == 0);
     const auto aligned_library=[&](bool scale_chunk,bool align_chunk,bool truncated) {
         Bytes def,values,table,lib;
         chunk(def,1,version);name(values,"campfire");chunk(def,2,values);values.clear();
