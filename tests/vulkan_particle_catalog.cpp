@@ -68,6 +68,41 @@ int main()
     chunk(legacy_effect_library, 3, legacy_effects);
     assert(parse_particle_catalog({legacy_effect_library.data(), legacy_effect_library.size()}, catalog, error));
     assert(catalog.effect("legacy_campfire") && catalog.effect("legacy_campfire")->flags == 0);
+    Bytes trailing_effect, trailing_effects, trailing_library;
+    chunk(trailing_effect, 1, version);
+    data.clear(); name(data, "legacy_trailing"); chunk(trailing_effect, 2, data); data.clear();
+    u32(data, 64); chunk(trailing_effect, 3, data); data.clear();
+    chunk(trailing_effect, 4, Bytes{0, 0, 0, 0});
+    u32(data, 1 | (1u << 10) | (1u << 14) | (1u << 15) | (1u << 18));
+    chunk(trailing_effect, 5, data); data.clear();
+    name(data, "particle"); name(data, "fire"); data.push_back(0xaa);
+    chunk(trailing_effect, 7, data); data.clear();
+    real(data, 1.f); real(data, 1.f); real(data, 0.f); real(data, 0.f);
+    u32(data, 8); u32(data, 16); real(data, 24.f); u32(data, 0xdeadbeef);
+    chunk(trailing_effect, 6, data); data.clear();
+    real(data, 5.f); u32(data, 0xdeadbeef); chunk(trailing_effect, 8, data); data.clear();
+    real(data, 1.f); real(data, 2.f); real(data, 3.f); u32(data, 0xdeadbeef);
+    chunk(trailing_effect, 0x22, data); data.clear();
+    real(data, .1f); real(data, .2f); real(data, .3f); u32(data, 0xdeadbeef);
+    chunk(trailing_effect, 0x25, data); data.clear();
+    chunk(trailing_effects, 0, trailing_effect);
+    chunk(trailing_library, 1, version); chunk(trailing_library, 3, trailing_effects);
+    assert(parse_particle_catalog({trailing_library.data(), trailing_library.size()}, catalog, error));
+    assert(catalog.effect("legacy_trailing") && catalog.effect("legacy_trailing")->velocity_scale[2] == 3.f &&
+        catalog.effect("legacy_trailing")->align_rotation[1] == .2f);
+    Bytes missing_scale_effect, missing_scale_effects, missing_scale_library;
+    chunk(missing_scale_effect, 1, version);
+    data.clear(); name(data, "legacy_missing_scale"); chunk(missing_scale_effect, 2, data); data.clear();
+    u32(data, 64); chunk(missing_scale_effect, 3, data); data.clear();
+    chunk(missing_scale_effect, 4, Bytes{0, 0, 0, 0});
+    u32(data, 1 | (1u << 18)); chunk(missing_scale_effect, 5, data); data.clear();
+    name(data, "particle"); name(data, "smoke"); chunk(missing_scale_effect, 7, data); data.clear();
+    chunk(missing_scale_effects, 0, missing_scale_effect);
+    chunk(missing_scale_library, 1, version); chunk(missing_scale_library, 3, missing_scale_effects);
+    assert(parse_particle_catalog({missing_scale_library.data(), missing_scale_library.size()}, catalog, error));
+    assert(catalog.effect("legacy_missing_scale") &&
+        catalog.effect("legacy_missing_scale")->velocity_scale[0] == 0.f &&
+        error.find("velocity_scale=1") != std::string::npos);
     const auto aligned_library=[&](bool scale_chunk,bool align_chunk,bool truncated) {
         Bytes def,values,table,lib;
         chunk(def,1,version);name(values,"campfire");chunk(def,2,values);values.clear();
@@ -86,7 +121,8 @@ int main()
     assert(catalog.effect("campfire")->align_rotation[0]<-1.57f);
     aligned=aligned_library(false,true,false);
     assert(parse_particle_catalog({aligned.data(),aligned.size()},catalog,error));
-    assert(!catalog.effect("campfire") && error.find("effects=1")!=std::string::npos);
+    assert(catalog.effect("campfire") && catalog.effect("campfire")->velocity_scale[0] == 0.f &&
+        error.find("velocity_scale=1") != std::string::npos);
     aligned=aligned_library(true,true,true);
     assert(parse_particle_catalog({aligned.data(),aligned.size()},catalog,error));
     assert(!catalog.effect("campfire") && error.find("effects=1")!=std::string::npos);

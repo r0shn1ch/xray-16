@@ -84,27 +84,30 @@ bool unique_chunks(const std::vector<std::pair<uint32_t, LevelBytes>>& chunks)
     return true;
 }
 
-bool effect(LevelBytes bytes, ParticleEffectDef& def)
+bool effect(LevelBytes bytes, ParticleEffectDef& def, std::string& reason)
 {
+    const auto reject = [&](const char* message) { reason = message; return false; };
     std::vector<std::pair<uint32_t, LevelBytes>> parts;
-    if (!chunks(bytes, parts) || !unique_chunks(parts)) return false;
+    if (!chunks(bytes, parts) || !unique_chunks(parts)) return reject("chunk table");
     Cursor version{find(parts, 1)}, name{find(parts, 2)}, maximum{find(parts, 3)}, flags{find(parts, 5)};
     uint16_t number;
-    if (!version.word(number) || number != 1 || !version.done() ||
-        !name.name(def.name) || def.name.empty() || !name.done() ||
-        !maximum.integer(def.max_particles) || !maximum.done() ||
-        !def.max_particles || def.max_particles > 65535) return false;
+    if (!version.word(number) || number != 1 || !version.done()) return reject("version");
+    if (!name.name(def.name) || def.name.empty() || !name.done()) return reject("name");
+    if (!maximum.integer(def.max_particles) || !maximum.done()) return reject("particle limit chunk");
+    if (!def.max_particles || def.max_particles > 65535) return reject("particle limit range");
     // CPEDef::Load treats PED_CHUNK_FLAGS as optional; the constructor leaves
     // flags at zero when older particle libraries omit it.
-    if (flags.bytes.data && (!flags.integer(def.flags) || !flags.done())) return false;
+    if (flags.bytes.data && (!flags.integer(def.flags) || !flags.done())) return reject("flags chunk");
     auto actions = find(parts, 4);
     if (!actions.data || actions.size < 4 || actions.size > 8 * 1024 * 1024 ||
-        get32(actions.data) > 4096 || get32(actions.data) > (actions.size - 4) / 4) return false;
+        get32(actions.data) > 4096 || get32(actions.data) > (actions.size - 4) / 4)
+        return reject("action list");
     def.actions.assign(actions.data, actions.data + actions.size);
     if (def.flags & 1u)
     {
         Cursor sprite{find(parts, 7)};
-        if (!sprite.name(def.shader) || !sprite.name(def.texture) || !sprite.done() || def.texture.empty()) return false;
+        if (!sprite.name(def.shader) || !sprite.name(def.texture) || def.texture.empty())
+            return reject("sprite chunk");
     }
     if (def.flags & (1u << 10))
     {
@@ -114,26 +117,50 @@ bool effect(LevelBytes bytes, ParticleEffectDef& def)
         uint32_t bits;
         if (!frame.real(def.frame_size[0]) || !frame.real(def.frame_size[1]) ||
             !frame.real(unused[0]) || !frame.real(unused[1]) ||
-            !frame.integer(bits)) return false;
+            !frame.integer(bits)) return reject("frame chunk");
         columns = static_cast<int32_t>(bits);
-        if (!frame.integer(bits)) return false;
+        if (!frame.integer(bits)) return reject("frame chunk");
         count = static_cast<int32_t>(bits);
-        if (!frame.real(def.frame_rate) || !frame.done() || columns <= 0 || count <= 0 ||
+        if (!frame.real(def.frame_rate) || columns <= 0 || count <= 0 ||
             count > 256 || def.frame_size[0] <= 0.f || def.frame_size[1] <= 0.f ||
-            def.frame_rate < 0.f) return false;
+            def.frame_rate < 0.f) return reject("frame values");
         def.frame_columns = columns;
         def.frame_count = count;
     }
     if (def.flags & (1u << 14))
     {
         Cursor limit{find(parts, 8)};
-        if (!limit.real(def.time_limit) || !limit.done() || def.time_limit < 0.f) return false;
+        if (!limit.real(def.time_limit) || def.time_limit < 0.f)
+            return reject("time limit chunk");
     }
     if(def.flags & (1u<<18))
     {
-        Cursor scale{find(parts,0x22)};
-        for(float& value:def.velocity_scale) if(!scale.real(value)) return false;
-        if(!scale.done()) return false;
+        const auto scale_bytes = find(parts, 0x22);
+        if (!scale_bytes.data)
+        {
+            // CPEDef starts with a zero velocity scale. Release builds tolerate
+            // legacy particle records that set the flag but omit this chunk.
+            def.velocity_scale.fill(0.f);
+            reason = "defaulted velocity scale to zero";
+        }
+        else
+        {
+            Cursor scale{scale_bytes};
+            for (size_t i = 0; i < def.velocity_scale.size(); ++i)
+            {
+                const size_t offset = scale.at;
+                if (!scale.real(def.velocity_scale[i]))
+                {
+                    if (offset + sizeof(uint32_t) > scale_bytes.size)
+                        reason = "velocity scale truncated: bytes=" + std::to_string(scale_bytes.size) +
+                            " index=" + std::to_string(i);
+                    else
+                        reason = "velocity scale nonfinite: index=" + std::to_string(i) +
+                            " bits=" + std::to_string(get32(scale_bytes.data + offset));
+                    return false;
+                }
+            }
+        }
     }
     if(def.flags & (1u<<15))
     {
@@ -141,8 +168,7 @@ bool effect(LevelBytes bytes, ParticleEffectDef& def)
         if(bytes.data)
         {
             Cursor align{bytes};
-            for(float& value:def.align_rotation) if(!align.real(value)) return false;
-            if(!align.done()) return false;
+            for(float& value:def.align_rotation) if(!align.real(value)) return reject("alignment chunk");
         }
     }
     return true;
@@ -209,7 +235,7 @@ bool parse_particle_catalog(LevelBytes bytes, ParticleCatalog& result, std::stri
     if (!version.word(number) || number != 1 || !version.done())
     { error = "unsupported particle library version"; return false; }
     ParticleCatalog parsed;
-    size_t skipped_effects = 0, skipped_groups = 0;
+    size_t skipped_effects = 0, skipped_groups = 0, defaulted_velocity_scales = 0;
     std::string first_skipped;
     for (uint32_t kind : {3u, 4u})
     {
@@ -226,11 +252,16 @@ bool parse_particle_catalog(LevelBytes bytes, ParticleCatalog& result, std::stri
             if (kind == 3)
             {
                 ParticleEffectDef def;
-                if (effect(entries[i].second, def)) parsed.effects.push_back(std::move(def));
+                std::string reason;
+                if (effect(entries[i].second, def, reason))
+                {
+                    if (reason == "defaulted velocity scale to zero") ++defaulted_velocity_scales;
+                    parsed.effects.push_back(std::move(def));
+                }
                 else
                 {
                     ++skipped_effects;
-                    if (first_skipped.empty()) first_skipped = "effect=" + std::to_string(i);
+                    if (first_skipped.empty()) first_skipped = "effect=" + std::to_string(i) + " reason=" + reason;
                 }
             }
             else
@@ -266,7 +297,8 @@ bool parse_particle_catalog(LevelBytes bytes, ParticleCatalog& result, std::stri
     error = skipped_effects || skipped_groups || skipped_items ?
         "skipped unsupported definitions: effects=" + std::to_string(skipped_effects) +
         " groups=" + std::to_string(skipped_groups) + " group-items=" + std::to_string(skipped_items) +
-        " first=" + first_skipped : std::string{};
+        " first=" + first_skipped : defaulted_velocity_scales ?
+        "legacy defaults applied: velocity_scale=" + std::to_string(defaulted_velocity_scales) : std::string{};
     return true;
 }
 } // namespace xray::render::vulkan
