@@ -2,6 +2,7 @@
 #include <gli/texture.hpp>
 #include <gli/save_dds.hpp>
 #include <gli/convert.hpp>
+#include <array>
 #include <cassert>
 #include <cstring>
 #include <cstdio>
@@ -32,9 +33,59 @@ std::vector<char> legacy_dds(uint32_t flags, uint32_t bits, uint32_t red,
     std::memcpy(bytes.data() + 128, pixels.data(), pixels.size());
     return bytes;
 }
+
+std::array<uint8_t, 16> solid_bc7_mode6(uint8_t red, uint8_t green, uint8_t blue, uint8_t alpha)
+{
+    assert(!(red & 1) && !(green & 1) && !(blue & 1) && !(alpha & 1));
+    std::array<uint8_t, 16> block{};
+    unsigned bit = 0;
+    auto write = [&](uint32_t value, unsigned count)
+    {
+        for (unsigned i = 0; i < count; ++i, ++bit)
+            block[bit / 8] |= uint8_t(((value >> i) & 1u) << (bit % 8));
+    };
+    write(1u << 6, 7); // Mode 6 prefix.
+    for (const uint8_t component : {red, red, green, green, blue, blue, alpha, alpha})
+        write(component >> 1, 7);
+    write(0, 2); // One P-bit per endpoint; all selected components are even.
+    write(0, 3); // Fix-up texel has one fewer index bit.
+    for (unsigned i = 1; i < 16; ++i)
+        write(0, 4);
+    assert(bit == 128);
+    return block;
+}
 }
 int main()
 {
+    // BC7 is uploaded without conversion when textureCompressionBC is
+    // available and expanded to RGBA8 otherwise. Exercise partial blocks too.
+    for (const bool srgb : {false, true})
+    {
+        const auto format = srgb ? gli::FORMAT_RGBA_BP_SRGB_BLOCK16 : gli::FORMAT_RGBA_BP_UNORM_BLOCK16;
+        gli::texture input(gli::TARGET_2D, format, {3,2,1}, 1, 1, 1);
+        const auto block = solid_bc7_mode6(64, 128, 192, 254);
+        assert(input.size() == block.size());
+        std::memcpy(input.data(), block.data(), block.size());
+        std::vector<char> file;
+        assert(gli::save_dds(input, file));
+
+        DdsTexture native;
+        std::string error;
+        assert(decode_dds(file.data(), file.size(), true, native, error));
+        assert(native.format == (srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK));
+        assert(native.extent.width == 3 && native.extent.height == 2 && native.pixels.size() == 16);
+        assert(!std::memcmp(native.pixels.data(), block.data(), block.size()));
+
+        DdsTexture fallback;
+        assert(decode_dds(file.data(), file.size(), false, fallback, error));
+        assert(fallback.format == (srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM));
+        assert(fallback.pixels.size() == 3 * 2 * 4);
+        for (size_t pixel = 0; pixel < 6; ++pixel)
+            assert(!std::memcmp(fallback.pixels.data() + pixel * 4,
+                std::array<uint8_t, 4>{64, 128, 192, 254}.data(), 4));
+        assert(!decode_dds(file.data(), file.size() - 1, false, fallback, error));
+    }
+
     // Compare complete BC fallback payloads against the independent texel
     // conversion path, including small/partial blocks, faces and mip tails.
     for(unsigned dimension : {7u,8u})

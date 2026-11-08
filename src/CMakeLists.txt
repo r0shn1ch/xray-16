@@ -58,7 +58,9 @@ if (XRAY_BUILD_VULKAN_TESTS)
         "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/ImageStateTracker.cpp")
     target_include_directories(vulkan_texture_upload_test PRIVATE "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include")
     xray_add_vulkan_state_test(vulkan_dds_test tests/vulkan_dds.cpp)
-    target_sources(vulkan_dds_test PRIVATE "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/DdsTexture.cpp")
+    target_sources(vulkan_dds_test PRIVATE
+        "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/Bc7Decoder.cpp"
+        "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/DdsTexture.cpp")
     target_include_directories(vulkan_dds_test PRIVATE "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include"
         "${XRAY_SOURCE_DIR}/Externals/gli" "${XRAY_SOURCE_DIR}/Externals/gli/external")
     xray_add_vulkan_state_test(vulkan_geometry_command_cache_test tests/vulkan_geometry_command_cache.cpp)

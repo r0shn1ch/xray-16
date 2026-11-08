@@ -13,6 +13,8 @@ target_sources(xrRenderVK PRIVATE
     BufferResource.h
     BufferUpload.cpp
     BufferUpload.h
+    Bc7Decoder.cpp
+    Bc7Decoder.h
     DdsTexture.cpp
     DdsTexture.h
     DetailAssets.cpp

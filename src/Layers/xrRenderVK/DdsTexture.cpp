@@ -1,4 +1,5 @@
 #include "DdsTexture.h"
+#include "Bc7Decoder.h"
 
 #include <gli/convert.hpp>
 #include <gli/load_dds.hpp>
@@ -27,10 +28,20 @@ void expand_bc(const uint8_t* source, uint8_t* target, size_t width, size_t heig
     const bool bc1=format>=VK_FORMAT_BC1_RGB_UNORM_BLOCK && format<=VK_FORMAT_BC1_RGBA_SRGB_BLOCK;
     const bool rgb=format==VK_FORMAT_BC1_RGB_UNORM_BLOCK || format==VK_FORMAT_BC1_RGB_SRGB_BLOCK;
     const bool bc2=format==VK_FORMAT_BC2_UNORM_BLOCK || format==VK_FORMAT_BC2_SRGB_BLOCK;
+    const bool bc7=format==VK_FORMAT_BC7_UNORM_BLOCK || format==VK_FORMAT_BC7_SRGB_BLOCK;
     const size_t block_size=bc1?8:16, columns=(width+3)/4;
     for(size_t y=0;y<height;y+=4) for(size_t x=0;x<width;x+=4)
     {
         const uint8_t* data=source+((y/4)*columns+x/4)*block_size;
+        if(bc7)
+        {
+            uint8_t pixels[4*4*4]{};
+            decode_bc7_block(data,pixels,4*4);
+            for(size_t row=0;row<std::min(size_t(4),height-y);++row)
+                std::memcpy(target+((y+row)*width+x)*4,pixels+row*4*4,
+                    std::min(size_t(4),width-x)*4);
+            continue;
+        }
         gli::detail::texel_block4x4 pixels;
         if(bc1) { gli::detail::dxt1_block block;std::memcpy(&block,data,sizeof(block));pixels=gli::detail::decompress_dxt1_block(block); }
         else if(bc2) { gli::detail::dxt3_block block;std::memcpy(&block,data,sizeof(block));pixels=gli::detail::decompress_dxt3_block(block); }
@@ -63,13 +74,16 @@ VkFormat vk_format(gli::format format)
     case gli::FORMAT_RGBA_DXT3_SRGB_BLOCK16: return VK_FORMAT_BC2_SRGB_BLOCK;
     case gli::FORMAT_RGBA_DXT5_UNORM_BLOCK16: return VK_FORMAT_BC3_UNORM_BLOCK;
     case gli::FORMAT_RGBA_DXT5_SRGB_BLOCK16: return VK_FORMAT_BC3_SRGB_BLOCK;
+    case gli::FORMAT_RGBA_BP_UNORM_BLOCK16: return VK_FORMAT_BC7_UNORM_BLOCK;
+    case gli::FORMAT_RGBA_BP_SRGB_BLOCK16: return VK_FORMAT_BC7_SRGB_BLOCK;
     default: return VK_FORMAT_UNDEFINED;
     }
 }
 
 bool compressed(VkFormat format)
 {
-    return format >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && format <= VK_FORMAT_BC3_SRGB_BLOCK;
+    return (format >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && format <= VK_FORMAT_BC3_SRGB_BLOCK) ||
+        format == VK_FORMAT_BC7_UNORM_BLOCK || format == VK_FORMAT_BC7_SRGB_BLOCK;
 }
 
 uint8_t channel(uint32_t pixel, uint32_t mask)
@@ -227,7 +241,8 @@ bool decode_dds(const void* data, size_t size, bool bc_supported, DdsTexture& re
     uint32_t block_bytes = 0;
     if (fourcc == 0x31545844u || dxgi == 71 || dxgi == 72) block_bytes = 8; // BC1
     else if (fourcc == 0x33545844u || fourcc == 0x35545844u ||
-        dxgi == 74 || dxgi == 75 || dxgi == 77 || dxgi == 78) block_bytes = 16; // BC2/BC3
+        dxgi == 74 || dxgi == 75 || dxgi == 77 || dxgi == 78 ||
+        dxgi == 98 || dxgi == 99) block_bytes = 16; // BC2/BC3/BC7
     else if (fourcc != 0 && (!extended || (dxgi != 28 && dxgi != 29 && dxgi != 87 && dxgi != 91)))
     {
         error = "unsupported DDS FourCC";
