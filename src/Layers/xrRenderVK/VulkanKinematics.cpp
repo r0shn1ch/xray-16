@@ -960,7 +960,6 @@ void VulkanKinematics::LL_SetChannelFactor(u16 channel, float factor)
 void VulkanKinematics::LL_UpdateTracks(float dt, bool, bool leave_blends)
 {
     if (tracks_update_ && tracks_update_->operator()(dt, *this)) return;
-    playback_.advance(dt);
     for (auto& blend : blends_)
     {
         if (blend->blend_state() == CBlend::eFREE_SLOT) continue;
@@ -976,6 +975,14 @@ void VulkanKinematics::LL_UpdateTracks(float dt, bool, bool leave_blends)
             blend->blendAmount = std::min(blend->blendPower, blend->blendAmount + dt * blend->blendAccrue * blend->blendPower);
         if (blend->timeCurrent >= blend->timeTotal && blend->stop_at_end)
             blend->set_falloff_state();
+    }
+    // Completion callbacks inspect CBlend's clock (doors distinguish the
+    // beginning from the end). Publish the new time before dispatch, and
+    // keep completed blends alive until their callbacks have returned.
+    playback_.advance(dt);
+    for (auto& blend : blends_)
+    {
+        if (blend->blend_state() == CBlend::eFREE_SLOT) continue;
         if (!leave_blends && blend->blendAmount <= 0.f && blend->blend_state() == CBlend::eFalloff)
         {
             if (blend_destroy_) blend_destroy_->BlendDestroy(*blend);

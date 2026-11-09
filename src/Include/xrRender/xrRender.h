@@ -30,10 +30,8 @@ namespace render_gl
 {
 XRRENDER_GL_API RendererModule* GetRendererModule();
 }
-#ifdef XR_PLATFORM_ANDROID
 namespace vulkan
 {
 RendererModule* GetRendererModule();
 }
-#endif
 } // namespace xray::render

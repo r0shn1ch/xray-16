@@ -7,6 +7,12 @@ The Vulkan renderer uses renderer ID `7`. The advanced graphics menu builds a
 renderer-specific list in `ui_mm_opt_video_adv.script`; controls not listed as
 supported below are hidden rather than presented as working options.
 
+Desktop builds register the Vulkan module alongside the existing renderers.
+Select it by saving `renderer renderer_vulkan` in the configuration passed to
+`-ltx` before starting the engine. Confirm `Selected renderer: renderer_vulkan`
+and `[renderer-vulkan] module.selected` in the startup log before using a run
+as Vulkan evidence. Keep a separate configuration for OpenGL comparisons.
+
 | Menu setting | Console value | Application point | Apply/persistence contract |
 |---|---|---|---|
 | Quality preset | `_preset` | `set_vulkan_quality`: texture limit and anisotropy, detail density/distance/update budget, local-shadow budgets and sun-shadow span | Restart; saved by `cfg_save` |

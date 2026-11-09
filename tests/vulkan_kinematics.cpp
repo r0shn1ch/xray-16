@@ -1,6 +1,7 @@
 #include "xrEngine/stdafx.h"
 #include "src/Layers/xrRenderVK/VulkanModelVisual.h"
 #include "xrEngine/EnnumerateVertices.h"
+#include "xrServerEntities/smart_cast.h"
 
 #include <cassert>
 
@@ -33,6 +34,14 @@ struct BlendCallback : IBlendDestroyCallback
     void BlendDestroy(CBlend&) override {}
 };
 
+static void completed_motion(CBlend* blend)
+{
+    auto& calls = *static_cast<unsigned*>(blend->CallbackParam);
+    ++calls;
+    assert(blend->timeCurrent >= blend->timeTotal);
+    assert(blend->blend_state() != CBlend::eFREE_SLOT);
+}
+
 int main()
 {
     Core.Initialize("vulkan_kinematics_test", nullptr, false);
@@ -51,6 +60,9 @@ int main()
     assert(kinematics && error.empty());
     visual->set_skeleton(std::move(kinematics));
     assert(visual->dcast_PKinematicsAnimated() == visual->skeleton());
+    IRenderVisual* render_visual = visual.get();
+    assert(smart_cast<IKinematics*>(render_visual) == visual->skeleton());
+    assert(smart_cast<IKinematicsAnimated*>(render_visual) == visual->skeleton());
     VisualRecord rigid_record;
     rigid_record.type = 10;
     VulkanModelVisual rigid_visual(rigid_record, "rigid", nullptr);
@@ -59,6 +71,10 @@ int main()
     rigid_visual.set_skeleton(std::move(rigid_pose));
     assert(rigid_visual.dcast_PKinematics() != nullptr);
     assert(rigid_visual.dcast_PKinematicsAnimated() == nullptr);
+    IRenderVisual* rigid_render_visual = &rigid_visual;
+    assert(smart_cast<IKinematics*>(rigid_render_visual) == rigid_visual.skeleton());
+    assert(smart_cast<IKinematicsAnimated*>(rigid_render_visual) == nullptr);
+    assert(smart_cast<IKinematics*>(static_cast<IRenderVisual*>(nullptr)) == nullptr);
     auto* pose = visual->dcast_PKinematics();
     MotionSlot slot;
     slot.source = "actor.omf";
@@ -172,5 +188,12 @@ int main()
     animated->LL_CloseCycle(0, 1);
     animated->LL_UpdateTracks(0.2f, true, false);
     assert(animated->LL_PartBlendsCount(0) == 0);
+    unsigned completed = 0;
+    assert(animated->LL_PlayCycle(0, animated->ID_Cycle_Safe("idle"), FALSE,
+        1.f, 1.f, 1.f, TRUE, completed_motion, &completed, 0));
+    animated->LL_UpdateTracks(0.1f, true, false);
+    assert(completed == 1);
+    animated->LL_UpdateTracks(0.1f, true, false);
+    assert(completed == 1);
     return 0;
 }
