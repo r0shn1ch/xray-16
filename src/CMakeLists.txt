@@ -141,6 +141,12 @@ if (XRAY_BUILD_VULKAN_TESTS)
     # channels from a headless Vulkan device (Mesa Lavapipe is sufficient).
     find_package(Vulkan QUIET)
     if (Vulkan_FOUND AND NOT ANDROID)
+        add_executable(vulkan_bc7_gpu_test "${XRAY_SOURCE_DIR}/tests/vulkan_bc7_gpu.cpp"
+            "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/Bc7Decoder.cpp")
+        target_include_directories(vulkan_bc7_gpu_test PRIVATE "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include")
+        target_link_libraries(vulkan_bc7_gpu_test PRIVATE Vulkan::Vulkan)
+        add_test(NAME vulkan_bc7_gpu COMMAND vulkan_bc7_gpu_test)
+        set_tests_properties(vulkan_bc7_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
         add_executable(vulkan_light_grid_gpu_test
             "${XRAY_SOURCE_DIR}/tests/vulkan_light_grid_gpu.cpp"
             "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/LightGrid.cpp"
@@ -167,6 +173,10 @@ if (XRAY_BUILD_VULKAN_TESTS)
         target_link_libraries(vulkan_surface_channels_test PRIVATE Vulkan::Vulkan)
         add_test(NAME vulkan_surface_channels COMMAND vulkan_surface_channels_test
             "${XRAY_SOURCE_DIR}/res/gamedata/shaders/vk")
+        # Validation reports errors without changing the executable's exit code.
+        # A numerical image match must not hide invalid Vulkan synchronization.
+        set_tests_properties(vulkan_bc7_gpu vulkan_light_grid_gpu vulkan_local_shadow_gpu vulkan_surface_channels
+            PROPERTIES FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
     endif()
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if (Python3_Interpreter_FOUND)

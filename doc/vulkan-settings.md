@@ -1,5 +1,8 @@
 # Vulkan graphics settings contract
 
+DDS encodings and software texture fallback are described in
+[the Vulkan texture contract](vulkan-textures.md).
+
 The Vulkan renderer uses renderer ID `7`. The advanced graphics menu builds a
 renderer-specific list in `ui_mm_opt_video_adv.script`; controls not listed as
 supported below are hidden rather than presented as working options.

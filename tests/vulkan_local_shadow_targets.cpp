@@ -50,6 +50,15 @@ VkResult VKAPI_PTR render_pass(VkDevice, const VkRenderPassCreateInfo *info, con
 {
     assert(info->attachmentCount == 1 && info->pAttachments[0].storeOp == VK_ATTACHMENT_STORE_OP_STORE &&
            info->pAttachments[0].finalLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+    // The compatible LOAD pass reads cached depth during its attachment load,
+    // before either early or late depth tests can update it.
+    if (info->pAttachments[0].loadOp == VK_ATTACHMENT_LOAD_OP_LOAD)
+    {
+        assert(info->dependencyCount == 2);
+        assert(info->pDependencies[0].dstAccessMask & VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
+        assert(info->pDependencies[0].dstStageMask & VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT);
+        assert(info->pDependencies[0].dstStageMask & VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT);
+    }
     *out = vk_mock::handle<VkRenderPass>(vk_mock::next_handle++);
     ++passes;
     return VK_SUCCESS;
