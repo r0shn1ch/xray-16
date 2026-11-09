@@ -78,13 +78,38 @@ CMainMenu::CMainMenu()
         void ProcessEvent() override
         {
             if (m_mainmenu->IsActive())
-                m_mainmenu->ReloadUI();
+            {
+                // The script engine is still being torn down here. Destroy the old
+                // scripted dialog now, but wait for EVENT_SCRIPT_ENGINE_STARTED
+                // before creating its replacement.
+                m_mainmenu->m_reloadUIAfterScriptEngineStart = true;
+                m_mainmenu->DestroyInternal(true);
+                m_mainmenu->CleanInternals();
+            }
             else
                 m_mainmenu->DestroyInternal(true);
         }
     };
 
+    class CStartedEventCb : public CEventNotifierCallbackWithCid
+    {
+        CMainMenu* m_mainmenu;
+
+    public:
+        CStartedEventCb(CID cid, CMainMenu* mm) : CEventNotifierCallbackWithCid(cid), m_mainmenu(mm) {}
+        void ProcessEvent() override
+        {
+            if (!m_mainmenu->m_reloadUIAfterScriptEngineStart)
+                return;
+
+            m_mainmenu->m_reloadUIAfterScriptEngineStart = false;
+            if (m_mainmenu->IsActive())
+                m_mainmenu->ReloadUI();
+        }
+    };
+
     m_script_reset_event_cid = ai().template Subscribe<CResetEventCb>(CAI_Space::EVENT_SCRIPT_ENGINE_RESET, this);
+    m_script_started_event_cid = ai().template Subscribe<CStartedEventCb>(CAI_Space::EVENT_SCRIPT_ENGINE_STARTED, this);
 
     m_Flags.zero();
     m_startDialog = NULL;
@@ -157,6 +182,7 @@ CMainMenu::~CMainMenu()
     delete_data(m_pMB_ErrDlgs);
 
     ai().Unsubscribe(m_script_reset_event_cid, CAI_Space::EVENT_SCRIPT_ENGINE_RESET);
+    ai().Unsubscribe(m_script_started_event_cid, CAI_Space::EVENT_SCRIPT_ENGINE_STARTED);
 }
 
 void CMainMenu::Activate(bool bActivate)
@@ -229,7 +255,7 @@ void CMainMenu::Activate(bool bActivate)
         if (show)
             Console->Show();
 
-        if (m_startDialog->IsShown())
+        if (m_startDialog && m_startDialog->IsShown())
             m_startDialog->HideDialog();
 
         CleanInternals();
@@ -303,7 +329,12 @@ bool CMainMenu::ReloadUI()
     xr_delete(m_startDialog);
 
     m_startDialog = smart_cast<CUIDialogWnd*>(dlg);
-    VERIFY(m_startDialog);
+    if (!m_startDialog)
+    {
+        xr_delete(dlg);
+        m_Flags.set(flActive | flNeedChangeCapture, FALSE);
+        return false;
+    }
     m_startDialog->m_bWorkInPause = true;
     m_startDialog->ShowDialog(true);
     return true;
