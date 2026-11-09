@@ -15,7 +15,7 @@ final class OptionCatalog {
     static final String[] GRAPHICS_PRESETS = { "Low", "Minimum", "Low", "Default", "High", "Extreme" };
 
     static final String[] TABS = { "Игра", "Параметры", "Диагностика" };
-    static final String[] SETTINGS_SECTIONS = { "Рендерер", "Качество рендеринга", "Разрешение 3D-рендера", "Управление и экран", "Дополнительные аргументы" };
+    static final String[] SETTINGS_SECTIONS = { "Рендерер", "Качество рендеринга", "Разрешение игрового кадра", "Управление и экран", "Дополнительные аргументы" };
 
     static String value(String[] values, int index, int fallback) {
         return values[index >= 0 && index < values.length ? index : fallback];

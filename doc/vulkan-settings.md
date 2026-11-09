@@ -20,6 +20,12 @@ supported below are hidden rather than presented as working options.
 | Always active / FPS limits | `rs_always_active`, `rs_fps_limit`, `rs_fps_limit_in_menu` | Shared engine scheduling | Runtime; saved by `cfg_save` |
 | Resolution / window mode | `vid_mode`, `vid_window_mode` | Shared SDL device | Desktop only; launcher owns the Android render size |
 
+Android launcher resolution currently sets the entire engine frame, including
+the in-game menu and HUD. The Java touch controls remain at Android display
+resolution. This is not independent 3D scaling: the swapchain, G-buffer,
+water/refraction targets, post-process input and UI currently share one extent.
+Independent 3D scaling with a native-resolution UI remains unimplemented.
+
 The Vulkan preset levels are intentionally monotonic. Minimum through Extreme
 increase the texture dimension limit, anisotropy, detail density, detail
 distance and per-frame detail update budget, local-shadow budgets, and the

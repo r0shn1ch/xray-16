@@ -397,6 +397,8 @@ public final class LauncherActivity extends Activity {
         resolutionAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         renderResolution.setAdapter(resolutionAdapter);
         content.addView(renderResolution, matchWrap());
+        content.addView(bodyText("Пониженное разрешение ускоряет игру, но снижает чёткость игрового меню и HUD. "
+                + "Сенсорные кнопки сохраняют чёткость экрана."), matchWrap());
 
         addSectionTitle(content, OptionCatalog.SETTINGS_SECTIONS[3]);
         gamepadEnabled = makeCheckBox("Включить поддержку геймпада", "Подключённый контроллер.");
