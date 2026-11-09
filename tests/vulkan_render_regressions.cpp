@@ -115,6 +115,39 @@ int main()
     assert(!is_water_contact_effect("hit_fx\\effects\\hit_water_hit_splash"));
     const auto anchored = project_particle_to_water({1, 12, 2}, {0, 4, 0}, {0, -2, 0});
     assert(std::abs(anchored[1] - 4.015f) < .0001f && anchored[0] == 1 && anchored[2] == 2);
+    {
+        // Contact effects can inherit translated/rotated emitter frames. Their
+        // particles rise and fall during the atlas lifetime, but the rendered
+        // distortion center must stay just above that same plane.
+        const std::array<float, 3> origin{12.f, 5.f, -4.f};
+        const std::array<float, 3> raw_normal{.4f, .8f, -.2f};
+        const auto basis = particle_face_basis(raw_normal);
+        const float normal_length = std::sqrt(.4f * .4f + .8f * .8f + .2f * .2f);
+        const std::array<float, 3> normal{.4f / normal_length, .8f / normal_length, -.2f / normal_length};
+        const auto dot = [](const auto& a, const auto& b) {
+            return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        };
+        assert(std::abs(dot(basis.right, normal)) < 1e-5f);
+        assert(std::abs(dot(basis.up, normal)) < 1e-5f);
+        assert(std::abs(dot(basis.right, basis.up)) < 1e-5f);
+        for (int age = 0; age <= 12; ++age)
+        {
+            const float tangent_right = 1.5f, tangent_up = -.75f;
+            const float drift = (age - 6) * .11f;
+            std::array<float, 3> particle{};
+            for (unsigned axis = 0; axis < 3; ++axis)
+                particle[axis] = origin[axis] + basis.right[axis] * tangent_right +
+                    basis.up[axis] * tangent_up + normal[axis] * drift;
+            const auto projected = project_particle_to_water(particle, origin, raw_normal);
+            const std::array<float, 3> relative{projected[0] - origin[0], projected[1] - origin[1],
+                                                 projected[2] - origin[2]};
+            assert(std::abs(dot(relative, normal) - .015f) < 1e-5f);
+            const std::array<float, 3> movement{projected[0] - particle[0], projected[1] - particle[1],
+                                                projected[2] - particle[2]};
+            assert(std::abs(dot(movement, basis.right)) < 1e-5f);
+            assert(std::abs(dot(movement, basis.up)) < 1e-5f);
+        }
+    }
     assert(render_quality(0).texture_limit < render_quality(2).texture_limit);
     assert(render_quality(4).point_shadows == 2 && render_quality(0).point_shadows == 0);
 
