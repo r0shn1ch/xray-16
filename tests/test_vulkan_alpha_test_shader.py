@@ -1,5 +1,7 @@
 import importlib.util
+import os
 import re
+import shutil
 import unittest
 from pathlib import Path
 
@@ -39,6 +41,9 @@ class VulkanAlphaTestShaderTest(unittest.TestCase):
         self.assertIn("alpha_test_fragment.initialize(device, shader_dispatch, deferred_shaders::GBufferAlphaTestFragment", factory)
 
     def test_generated_variant_contains_cutoff_discard(self):
+        glslc = os.environ.get("GLSLC") or shutil.which("glslc")
+        if not glslc:
+            self.skipTest("glslc is required to regenerate the embedded SPIR-V")
         spec = importlib.util.spec_from_file_location("alpha_shader_generator", SCRIPT)
         generator = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(generator)
@@ -48,7 +53,7 @@ class VulkanAlphaTestShaderTest(unittest.TestCase):
             words = [int(word, 16) for word in re.findall(r"0x([0-9a-fA-F]+)u", text)]
             words[2] = 0
             return words
-        self.assertEqual(code(OUTPUT.read_text()), code(generator.generate()))
+        self.assertEqual(code(OUTPUT.read_text()), code(generator.generate(glslc)))
 
         source = OUTPUT.read_text()
         match = re.search(r"GBufferAlphaTestFragment\[\] = \{(.*?)\};", source, re.S)

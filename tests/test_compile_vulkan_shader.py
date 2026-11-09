@@ -3,15 +3,19 @@ import contextlib
 import io
 import json
 import struct
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "tools" / "compile_vulkan_shader.py"
 spec = importlib.util.spec_from_file_location("compile_vulkan_shader", SCRIPT)
 compiler = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(compiler)
+_subprocess_run = subprocess.run
 
 
 class CompileVulkanShaderTest(unittest.TestCase):
@@ -23,7 +27,12 @@ class CompileVulkanShaderTest(unittest.TestCase):
                         "words = [0x07230203, 0x10000, 0, 2, 0, 0x0005000f, "
                         "model, 1, 0x6e69616d, 0]\n"
                         "Path(args[args.index('-Fo') + 1]).write_bytes(struct.pack('<10I', *words))\n")
-        path.chmod(0o755)
+
+    @staticmethod
+    def run_fake_dxc(command, **kwargs):
+        # Invoke the Python fake compiler through the current interpreter so
+        # Windows CreateProcess does not need to execute a shebang script.
+        return _subprocess_run([sys.executable, *command], **kwargs)
 
     def test_compile_preserves_previous_output_on_failure(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -36,11 +45,12 @@ class CompileVulkanShaderTest(unittest.TestCase):
             self.fake_dxc(dxc)
             args = ["--dxc", str(dxc), "--source", str(source), "--output", str(output),
                     "--stage", "ps", "--entry", "main", "--define", "TEST=1"]
-            self.assertEqual(compiler.compile_shader(args), 0)
-            self.assertEqual(output.read_bytes()[:4], bytes.fromhex("03022307"))
-            dxc.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(3)\n")
-            self.assertEqual(compiler.compile_shader(args), 3)
-            self.assertEqual(output.read_bytes()[:4], bytes.fromhex("03022307"))
+            with mock.patch.object(compiler.subprocess, "run", side_effect=self.run_fake_dxc):
+                self.assertEqual(compiler.compile_shader(args), 0)
+                self.assertEqual(output.read_bytes()[:4], bytes.fromhex("03022307"))
+                dxc.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(3)\n")
+                self.assertEqual(compiler.compile_shader(args), 3)
+                self.assertEqual(output.read_bytes()[:4], bytes.fromhex("03022307"))
 
     def test_variant_set_is_atomic_and_reports_failing_variant(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -66,14 +76,15 @@ class CompileVulkanShaderTest(unittest.TestCase):
                     "--output-dir", str(output_dir)]
             dxc.with_suffix(".fail").touch()
             errors = io.StringIO()
-            with contextlib.redirect_stderr(errors):
-                self.assertEqual(compiler.compile_shader(args), 4)
-            self.assertIn("b.ps [ps, USE_AREF=1]", errors.getvalue())
-            self.assertIn("bad macro", errors.getvalue())
-            self.assertEqual(old.read_bytes(), b"old")
-            self.assertFalse((output_dir / "game" / "b.ps.spv").exists())
-            dxc.with_suffix(".fail").unlink()
-            self.assertEqual(compiler.compile_shader(args), 0)
+            with mock.patch.object(compiler.subprocess, "run", side_effect=self.run_fake_dxc):
+                with contextlib.redirect_stderr(errors):
+                    self.assertEqual(compiler.compile_shader(args), 4)
+                self.assertIn("b.ps [ps, USE_AREF=1]", errors.getvalue())
+                self.assertIn("bad macro", errors.getvalue())
+                self.assertEqual(old.read_bytes(), b"old")
+                self.assertFalse((output_dir / "game" / "b.ps.spv").exists())
+                dxc.with_suffix(".fail").unlink()
+                self.assertEqual(compiler.compile_shader(args), 0)
             self.assertEqual(old.read_bytes()[:4], bytes.fromhex("03022307"))
             self.assertIn("-D SKIN_NONE=1", dxc.with_suffix(".calls").read_text())
             self.assertTrue((output_dir / "game" / "b.ps.spv").exists())
@@ -88,10 +99,11 @@ class CompileVulkanShaderTest(unittest.TestCase):
             dxc = root / "fake-dxc"
             self.fake_dxc(dxc)
             errors = io.StringIO()
-            with contextlib.redirect_stderr(errors):
-                self.assertEqual(compiler.compile_shader([
-                    "--dxc", str(dxc), "--source", str(source), "--output", str(output),
-                    "--stage", "ps", "--entry", "not_main"]), 1)
+            with mock.patch.object(compiler.subprocess, "run", side_effect=self.run_fake_dxc):
+                with contextlib.redirect_stderr(errors):
+                    self.assertEqual(compiler.compile_shader([
+                        "--dxc", str(dxc), "--source", str(source), "--output", str(output),
+                        "--stage", "ps", "--entry", "not_main"]), 1)
             self.assertIn("missing ps entry 'not_main'", errors.getvalue())
             self.assertEqual(output.read_bytes(), b"previous shader")
 
