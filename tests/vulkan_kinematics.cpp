@@ -2,6 +2,7 @@
 #include "src/Layers/xrRenderVK/VulkanModelVisual.h"
 #include "xrEngine/EnnumerateVertices.h"
 #include "xrServerEntities/smart_cast.h"
+#include "xrCore/FMesh.hpp"
 
 #include <cassert>
 
@@ -42,6 +43,45 @@ static void completed_motion(CBlend* blend)
     assert(blend->blend_state() != CBlend::eFREE_SLOT);
 }
 
+static std::vector<uint8_t> legacy_motion_file()
+{
+    CMemoryWriter file;
+    file.open_chunk(OGF_S_SMPARAMS);
+    file.w_u16(4);
+    file.w_u16(1);
+    file.w_stringZ("all");
+    file.w_u16(2);
+    file.w_stringZ("root");
+    file.w_u32(0);
+    file.w_stringZ("hand");
+    file.w_u32(1);
+    file.w_u16(1);
+    file.w_stringZ("idle");
+    file.w_u32(0);
+    file.w_u16(0);
+    file.w_u16(0);
+    for (unsigned i = 0; i < 4; ++i) file.w_float(1.f);
+    file.w_u32(0);
+    file.close_chunk();
+    file.open_chunk(OGF_S_MOTIONS);
+    file.open_chunk(0);
+    file.w_u32(1);
+    file.close_chunk();
+    file.open_chunk(1);
+    file.w_stringZ("idle");
+    file.w_u32(2);
+    for (unsigned bone = 0; bone < 2; ++bone)
+    {
+        file.w_u8(2); // Constant rotation and translation.
+        for (unsigned i = 0; i < 4; ++i) file.w_u16(i == 3 ? 32767 : 0);
+        for (unsigned i = 0; i < 3; ++i) file.w_float(0.f);
+    }
+    file.close_chunk();
+    file.close_chunk();
+    const auto* bytes = static_cast<const uint8_t*>(file.pointer());
+    return {bytes, bytes + file.size()};
+}
+
 int main()
 {
     Core.Initialize("vulkan_kinematics_test", nullptr, false);
@@ -78,6 +118,7 @@ int main()
     auto* pose = visual->dcast_PKinematics();
     MotionSlot slot;
     slot.source = "actor.omf";
+    slot.raw = legacy_motion_file();
     slot.partition_names = {"all"};
     slot.partitions = {{0, 1}};
     MotionDefinition idle;
@@ -97,6 +138,16 @@ int main()
         track.translations8 = {{{0, 0, 0}}, {{100, 0, 0}}};
     }
     static_cast<VulkanKinematics*>(pose)->set_motions({ slot });
+    {
+        auto replacement = VulkanKinematics::create(bones, visual.get(), error);
+        assert(replacement);
+        replacement->set_motions({slot});
+        replacement->set_motions({slot});
+        assert(replacement->partitions().part(0).bones.size() == 2);
+        replacement->set_motions({});
+        assert(replacement->LL_MotionsSlotCount() == 0);
+        assert(replacement->partitions().count() == 0);
+    }
     ModelGeometry geometry;
     geometry.type = 3;
     geometry.children.resize(1);

@@ -15,6 +15,10 @@ namespace xray::render::vulkan
 {
 struct VulkanKinematics::Data
 {
+    struct MotionContainer : motions_container
+    {
+        ~MotionContainer() { clean(false); }
+    };
     std::vector<std::unique_ptr<CBoneData>> owned;
     vecBones bones;
     accel names;
@@ -26,8 +30,8 @@ struct VulkanKinematics::Data
     std::vector<std::vector<std::vector<uint32_t>>> child_faces;
     std::vector<MotionSlot> motions;
     // Legacy motion objects back the low-level IKinematicsAnimated queries.
-    // Destroy handles before their private container (reverse field order).
-    std::unique_ptr<motions_container> motion_container;
+    // Release handles before cleaning unused entries in their private cache.
+    std::unique_ptr<MotionContainer> motion_container;
     std::vector<shared_motions> legacy_motions;
 };
 
@@ -67,6 +71,9 @@ void VulkanKinematics::set_motions(std::vector<MotionSlot> motions)
 {
     data_->motions = std::move(motions);
     playback_.reset();
+    data_->legacy_motions.clear();
+    data_->motion_container.reset();
+    partitions_ = CPartition{};
     if (data_->motions.empty()) return;
     const auto& first = data_->motions.front();
     for (size_t part = 0; part < first.partitions.size(); ++part)
@@ -75,8 +82,7 @@ void VulkanKinematics::set_motions(std::vector<MotionSlot> motions)
         for (uint16_t bone : first.partitions[part])
             partitions_[static_cast<u16>(part)].bones.push_back(bone);
     }
-    data_->legacy_motions.clear();
-    data_->motion_container = std::make_unique<motions_container>();
+    data_->motion_container = std::make_unique<Data::MotionContainer>();
     for (size_t index = 0; index < data_->motions.size(); ++index)
     {
         auto& slot = data_->motions[index];
