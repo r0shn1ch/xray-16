@@ -153,9 +153,9 @@ inline std::pair<char, GLuint> GLUseBinary(pcstr* buffer, size_t size, const GLe
     return { 'p', program };
 }
 
-static GLuint GLLinkMonolithicProgram(pcstr name, GLuint ps, GLuint vs, GLuint gs)
+static GLuint GLLinkMonolithicProgram(pcstr name, GLuint ps, GLuint vs, GLuint gs, bool allow_null_fragment = false)
 {
-    if (!vs || !ps)
+    if (!vs || (!ps && !allow_null_fragment))
     {
         Msg("! [shader-trace] refusing incomplete monolithic pass '%s': vs=%u ps=%u gs=%u",
             name, vs, ps, gs);
@@ -170,13 +170,15 @@ static GLuint GLLinkMonolithicProgram(pcstr name, GLuint ps, GLuint vs, GLuint g
     //if (HW.ShaderBinarySupported)
     //    CHK_GL(glProgramParameteri(program, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, (GLint)GL_TRUE));
 
-    CHK_GL(glAttachShader(program, ps));
+    if (ps)
+        CHK_GL(glAttachShader(program, ps));
     CHK_GL(glAttachShader(program, vs));
     if (gs)
         CHK_GL(glAttachShader(program, gs));
     bind_fragment_outputs(program);
     CHK_GL(glLinkProgram(program));
-    CHK_GL(glDetachShader(program, ps));
+    if (ps)
+        CHK_GL(glDetachShader(program, ps));
     CHK_GL(glDetachShader(program, vs));
     if (gs)
         CHK_GL(glDetachShader(program, gs));
@@ -192,9 +194,9 @@ static GLuint GLLinkMonolithicProgram(pcstr name, GLuint ps, GLuint vs, GLuint g
     return program;
 }
 
-static GLuint GLGeneratePipeline(pcstr name, GLuint ps, GLuint vs, GLuint gs)
+static GLuint GLGeneratePipeline(pcstr name, GLuint ps, GLuint vs, GLuint gs, bool allow_null_fragment = false)
 {
-    if (!vs || !ps)
+    if (!vs || (!ps && !allow_null_fragment))
     {
         Msg("! [shader-trace] refusing incomplete pipeline '%s': vs=%u ps=%u gs=%u",
             name, vs, ps, gs);

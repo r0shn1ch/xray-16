@@ -181,6 +181,9 @@ if (XRAY_BUILD_VULKAN_TESTS)
     endif()
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if (Python3_Interpreter_FOUND)
+        add_test(NAME gl_depth_only COMMAND "${Python3_EXECUTABLE}"
+            "${XRAY_SOURCE_DIR}/tests/test_gl_depth_only.py")
+        set_tests_properties(gl_depth_only PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
         add_test(NAME vulkan_detail_spirv COMMAND "${Python3_EXECUTABLE}"
             "${XRAY_SOURCE_DIR}/tests/vulkan_detail_spirv.py"
             "${XRAY_SOURCE_DIR}/res/gamedata/shaders")
