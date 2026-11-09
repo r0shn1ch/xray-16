@@ -64,7 +64,7 @@ void CRenderDevice::Reset(bool precache /*= true*/)
     m_imgui_render->OnDeviceResetEnd();
 
 #if defined(XR_PLATFORM_ANDROID)
-    if (!strstr(Core.Params, "-renderer-vulkan"))
+    if (!(SDL_GetWindowFlags(m_sdlWnd) & SDL_WINDOW_VULKAN))
 #endif
         UpdateWindowProps(); // The Vulkan reset already supplied drawable dimensions.
 

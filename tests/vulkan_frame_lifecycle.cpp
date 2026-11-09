@@ -350,6 +350,31 @@ int main()
         nullptr,nullptr, nullptr,nullptr, native_ui,nullptr,
         nullptr,nullptr, nullptr,nullptr, display_capture,nullptr));
     assert(submissions==submitted_before);
+    // Gameplay releases framebuffers before borrowed G-buffer depth and then
+    // rebuilds the surface. Exercise that order repeatedly with a fixed scene
+    // size and changing presentation size, including the final UI/grade pass.
+    const auto live_images = allocated_images.size();
+    const auto live_memory = allocated_memory - freed_memory;
+    for (unsigned cycle = 0; cycle < 12; ++cycle)
+    {
+        assert(frame.release_swapchain());
+        assert(allocated_images.empty() && viewed_images.empty());
+        assert(allocated_memory == freed_memory);
+        expected_presentation = cycle % 2 ? VkExtent2D{1280,720} : VkExtent2D{640,360};
+        assert(frame.recreate(physical,surface,expected_presentation,error));
+        assert(frame.extent().width==320 && frame.extent().height==180);
+        assert(allocated_images.size()==live_images && allocated_memory-freed_memory==live_memory);
+        expected_ui_pass=frame.presentation_render_pass();
+        assert(expected_ui_pass);
+        pass_order.clear();
+        assert(frame.render_frame(clear,status,error,scaled_scene,nullptr,scaled_readback,nullptr,
+            nullptr,nullptr,false,scaled_output,nullptr,
+            nullptr,nullptr, nullptr,nullptr, nullptr,nullptr, nullptr,nullptr,
+            nullptr,nullptr, nullptr,nullptr, native_ui,nullptr,
+            native_ui_capture,nullptr, native_ui_distortion,nullptr,
+            display_capture,nullptr, display_grade,nullptr));
+        assert((pass_order==std::vector<int>{1,10,20,30,40,60,70,50}));
+    }
     frame.destroy();
     assert(allocated_images.empty() && viewed_images.empty() && allocated_memory==freed_memory);
     // Failure after the first scene image must release all partially built resources.
