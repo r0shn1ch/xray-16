@@ -10,9 +10,11 @@
 #include "VulkanRenderContextState.h"
 #include "VulkanSurfaceLifecycle.h"
 #include "VulkanFrameMetrics.h"
+#include "VulkanFrameBenchmark.h"
 #include "ScreenCopyPass.h"
 #include "ResourceIssueCounter.h"
 #include "xrEngine/Render.h"
+#include "xrEngine/pure.h"
 
 #include <chrono>
 #include <memory>
@@ -30,7 +32,7 @@ class VulkanParticleEffect;
 class VulkanParticleGroup;
 struct ParticleCatalog;
 // IRender adapter for the Vulkan device, level geometry and model resources.
-class VulkanLevelRender : public IRender
+class VulkanLevelRender : public IRender, public pureAppDeactivate
 {
 public:
     VulkanLevelRender();
@@ -57,6 +59,9 @@ public:
     void Create(SDL_Window* window, u32& width, u32& height,
         float& half_width, float& half_height) override;
     void Destroy() override;
+    bool start_benchmark(uint32_t frames);
+    void interrupt_benchmark(const char* reason);
+    void OnAppDeactivate() override { interrupt_benchmark("application deactivated"); }
     void Reset(SDL_Window* window, u32& width, u32& height,
         float& half_width, float& half_height) override;
     void SetupStates() override;
@@ -192,6 +197,9 @@ private:
     bool reset_in_progress_{};
     bool device_loss_reported_{};
     VulkanFrameMetrics metrics_;
+    VulkanFrameBenchmark benchmark_;
+    std::string benchmark_context_;
+    void save_benchmark();
     std::chrono::steady_clock::time_point last_metric_frame_{};
     VulkanFramePhaseState frame_phase_;
     bool clear_target_pending_{};

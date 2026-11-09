@@ -103,6 +103,7 @@ if (XRAY_BUILD_VULKAN_TESTS)
         "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include")
     xray_add_vulkan_state_test(vulkan_surface_lifecycle_test tests/vulkan_surface_lifecycle.cpp)
     xray_add_vulkan_state_test(vulkan_frame_metrics_test tests/vulkan_frame_metrics.cpp)
+    xray_add_vulkan_state_test(vulkan_frame_benchmark_test tests/vulkan_frame_benchmark.cpp)
     target_sources(vulkan_wallmark_geometry_test PRIVATE
         "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/WallmarkGeometry.cpp")
     target_sources(vulkan_particle_catalog_test PRIVATE

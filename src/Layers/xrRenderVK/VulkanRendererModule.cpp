@@ -60,8 +60,36 @@ public:
     }
 };
 
-void register_vulkan_options()
+class VulkanBenchmarkCommand final : public IConsole_Command
 {
+public:
+    explicit VulkanBenchmarkCommand(VulkanLevelRender& renderer)
+        : IConsole_Command("r_vk_benchmark"), renderer_(renderer) {}
+    void Execute(pcstr args) override
+    {
+        if (!xr_strcmp(args, "cancel"))
+        {
+            renderer_.interrupt_benchmark("cancelled by user");
+            return;
+        }
+        uint32_t frames = 0;
+        if (!VulkanFrameBenchmark::parse_frame_count(args, frames))
+        {
+            InvalidSyntax();
+            return;
+        }
+        if (!renderer_.start_benchmark(frames))
+            Msg("! [renderer-vulkan] benchmark not armed: capture already active or device unavailable");
+    }
+    void Info(TInfo& info) override { xr_strcpy(info, "<1..36000 game frames> | cancel"); }
+private:
+    VulkanLevelRender& renderer_;
+};
+
+void register_vulkan_options(VulkanLevelRender& renderer)
+{
+    static VulkanBenchmarkCommand benchmark(renderer);
+    Console->AddCommand(&benchmark);
     static VulkanPreset preset;
     static CCC_Token aa("r_vk_aa", &antialiasing, aa_tokens);
     Console->AddCommand(&aa);
@@ -193,7 +221,7 @@ class VulkanRendererModule final : public RendererModule
         R_ASSERT2(mode && xr_strcmp(mode, "renderer_vulkan") == 0, "Vulkan module received another renderer mode");
         R_ASSERT2(!GEnv.Render || GEnv.Render == &renderer, "Another renderer is still bound to GEnv");
         GEnv.Render = &renderer;
-        register_vulkan_options();
+        register_vulkan_options(renderer);
         Msg("[renderer-vulkan] module.selected mode=%s", mode);
         GEnv.RenderFactory = &factory;
         GEnv.UIRender = &device.ui();

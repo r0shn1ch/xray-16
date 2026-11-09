@@ -19,6 +19,8 @@
 #include "xrEngine/thunderbolt.h"
 #include "xrEngine/device.h"
 #include "xrEngine/Engine.h"
+#include "xrEngine/XR_IOConsole.h"
+#include "xrEngine/defines.h"
 #include "xrEngine/xr_object.h"
 #include "xrEngine/IRenderable.h"
 #include "xrEngine/CustomHUD.h"
@@ -627,8 +629,63 @@ void VulkanLevelRender::Create(SDL_Window *window, u32 &width, u32 &height, floa
     reset_in_progress_ = false;
 }
 
+bool VulkanLevelRender::start_benchmark(uint32_t frames)
+{
+    if (!game_device_ || !benchmark_.arm(frames, FrameContext::FramesInFlight))
+        return false;
+    const auto& window = game_device_->window();
+    const auto scene = window.frame().extent();
+    const auto presentation = window.frame().presentation_extent();
+    const auto& gpu = window.physical().properties;
+    std::ostringstream context;
+    context << "{\"source_sha\": " << std::quoted(xrCore::GetBuildCommit())
+            << ", \"frame_clock\": \"steady wall time\", \"cpu_scope\": \"renderer recording/submission/present\""
+            << ", \"gpu\": " << std::quoted(gpu.deviceName) << ", \"driver_version\": " << gpu.driverVersion
+            << ", \"scene_extent\": [" << scene.width << ", " << scene.height
+            << "], \"presentation_extent\": [" << presentation.width << ", " << presentation.height
+            << "], \"quality_preset\": " << quality_preset << ", \"texture_lod\": " << psTextureLOD
+            << ", \"anisotropy\": " << texture_anisotropy << ", \"fxaa\": " << antialiasing
+            << ", \"detail_radius\": " << detail_radius << ", \"detail_spacing\": " << detail_spacing
+            << ", \"point_shadows\": " << point_shadow_budget << ", \"spot_shadows\": " << spot_shadow_budget << '}';
+    benchmark_context_ = context.str();
+    Device.seqAppDeactivate.Add(this);
+    Msg("[renderer-vulkan] benchmark.armed frames=%u; close console and return to unpaused gameplay", frames);
+    return true;
+}
+
+void VulkanLevelRender::interrupt_benchmark(const char* reason)
+{
+    if (benchmark_.interrupt(reason))
+        save_benchmark();
+}
+
+void VulkanLevelRender::save_benchmark()
+{
+    Device.seqAppDeactivate.Remove(this);
+    char* directory = SDL_GetPrefPath("OpenXRay", "vulkan-metrics");
+    bool saved = false;
+    if (directory)
+    {
+        const std::string path = std::string(directory) + "frame-benchmark.json";
+        std::ofstream output(path, std::ios::trunc);
+        output << "{\n  \"context\": " << benchmark_context_ << ",\n  \"capture\": ";
+        saved = benchmark_.write_json(output);
+        output << "}\n";
+        output.flush();
+        saved = saved && output.good();
+        Msg("%s [renderer-vulkan] benchmark.report path=%s", saved ? "*" : "!", path.c_str());
+        SDL_free(directory);
+    }
+    const auto summary = benchmark_.metrics().summary();
+    Msg("[renderer-vulkan] benchmark.finished complete=%d saved=%d frames=%llu requested=%u "
+        "frame-p50=%.2fms frame-p95=%.2fms frame-p99=%.2fms",
+        benchmark_.complete() ? 1 : 0, saved ? 1 : 0, static_cast<unsigned long long>(summary.frames),
+        benchmark_.requested_frames(), summary.frame_p50_ms, summary.frame_p95_ms, summary.frame_p99_ms);
+}
+
 void VulkanLevelRender::Destroy()
 {
+    interrupt_benchmark("device destroyed");
     if (game_device_)
         Msg("[renderer-vulkan] device.destroy begin level-models=%zu frame-count=%llu", models_.size(),
             static_cast<unsigned long long>(metrics_.summary().frames));
@@ -744,6 +801,7 @@ void VulkanLevelRender::Reset(SDL_Window *window, u32 &width, u32 &height, float
 
 void VulkanLevelRender::reset_begin()
 {
+    interrupt_benchmark("surface reset");
     R_ASSERT2(game_device_ && !reset_in_progress_ && !frame_phase_.active(),
               "Vulkan renderer reset_begin requires an idle initialized renderer");
     std::string error;
@@ -1248,6 +1306,7 @@ void VulkanLevelRender::End()
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpu_begin).count();
         repeated_render_errors_ = error == last_render_error_ ? repeated_render_errors_ + 1 : 1;
         last_render_error_ = error;
+        interrupt_benchmark("frame submission failed");
         if (repeated_render_errors_ <= 4 || (repeated_render_errors_ & (repeated_render_errors_ - 1)) == 0)
             Msg("! Vulkan frame recording/submission failed occurrence=%u frame=%u precache=%u world=%d cpu=%.2fms: %s",
                 repeated_render_errors_, Device.dwFrame, Device.dwPrecacheFrame, render_world ? 1 : 0, elapsed,
@@ -1286,8 +1345,18 @@ void VulkanLevelRender::End()
         frame_draw_calls_ = pass_->draw_calls() + game_device_->last_ui_draw_calls();
         frame_triangles_ = pass_->triangles() + game_device_->last_ui_triangles();
     }
-    metrics_.record({frame_ms, cpu_ms, game_device_->window().frame().take_gpu_frame_ms(),
-                     textures_ ? textures_->resident_bytes() : 0, geometry_bytes, frame_draw_calls_});
+    const VulkanFrameSample sample{frame_ms, cpu_ms, game_device_->window().frame().take_gpu_frame_ms(),
+                                   textures_ ? textures_->resident_bytes() : 0, geometry_bytes, frame_draw_calls_};
+    metrics_.record(sample);
+    const bool was_recording = benchmark_.recording();
+    const bool eligible = render_world && Device.dwPrecacheFrame == 0 && Device.b_is_Active &&
+                          !Device.Paused() && (!Console || !Console->bVisible) &&
+                          (!g_pGamePersistent || !g_pGamePersistent->IsMainMenuActive());
+    if (benchmark_.frame(std::chrono::duration<double, std::milli>(now.time_since_epoch()).count(), sample,
+                         eligible, status == FrameStatus::Presented))
+        save_benchmark();
+    else if (!was_recording && benchmark_.recording())
+        Msg("[renderer-vulkan] benchmark.started frames=%u", benchmark_.requested_frames());
     if (metrics_.frame_count() && metrics_.frame_count() % 300 == 0)
     {
         const auto sample = metrics_.summary();
@@ -1388,6 +1457,7 @@ void VulkanLevelRender::level_Load(IReader *reader)
 
 void VulkanLevelRender::level_Unload()
 {
+    interrupt_benchmark("level unloaded");
     Lights.Unload();
     flush_render_failures();
     flush_resource_failures();

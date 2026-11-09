@@ -96,6 +96,11 @@ class VulkanFrameMetrics
     bool write_json(const std::string &path) const
     {
         std::ofstream out(path, std::ios::trunc);
+        return write_json(out);
+    }
+
+    bool write_json(std::ostream &out) const
+    {
         if (!out)
             return false;
         const auto stats = summary();
