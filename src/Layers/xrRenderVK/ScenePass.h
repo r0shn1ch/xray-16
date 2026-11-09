@@ -75,7 +75,8 @@ public:
     bool initialize(VkDevice device, VkRenderPass render_pass,
         VkShaderModule scene_vertex, VkShaderModule scene_fragment,
         VkShaderModule ui_vertex, VkShaderModule ui_fragment,
-        const ScenePassDispatch& dispatch, std::string& error, bool use_depth = false);
+        const ScenePassDispatch& dispatch, std::string& error, bool use_depth = false,
+        VkRenderPass presentation_pass = VK_NULL_HANDLE);
     bool record_geometry(const FrameRecordingContext& frame, VkBuffer vertices, VkBuffer indices,
         VkIndexType index_type, uint32_t index_count, const SceneConstants& constants,
         VkDeviceSize vertex_offset = 0, VkDeviceSize index_offset = 0) const;
@@ -89,8 +90,9 @@ public:
         std::string& error, VkImageLayout image_layout = VK_IMAGE_LAYOUT_GENERAL);
     void update_ui_texture_set(VkDescriptorSet set, VkImageView view, VkSampler sampler);
     void release_ui_texture_set(VkDescriptorSet& set);
-    void rebind_render_pass(VkRenderPass compatible_render_pass, VkRenderPass overlay_pass = VK_NULL_HANDLE)
-    { m_render_pass = compatible_render_pass; m_overlay_pass = overlay_pass; }
+    void rebind_render_pass(VkRenderPass compatible_render_pass, VkRenderPass overlay_pass = VK_NULL_HANDLE,
+        VkRenderPass presentation_pass = VK_NULL_HANDLE)
+    { m_render_pass = compatible_render_pass; m_overlay_pass = overlay_pass; m_presentation_pass = presentation_pass; }
     void destroy();
 
 private:
@@ -98,10 +100,12 @@ private:
     VkDevice m_device = VK_NULL_HANDLE;
     VkRenderPass m_render_pass = VK_NULL_HANDLE;
     VkRenderPass m_overlay_pass = VK_NULL_HANDLE;
+    VkRenderPass m_presentation_pass = VK_NULL_HANDLE;
     VkPipelineLayout m_scene_layout = VK_NULL_HANDLE;
     VkPipelineLayout m_ui_layout = VK_NULL_HANDLE;
     VkPipeline m_scene_pipeline = VK_NULL_HANDLE;
     VkPipeline m_ui_pipelines[11]{};
+    VkPipeline m_presentation_ui_pipelines[11]{};
     VkPipeline m_world_ui_pipelines[11]{};
     VkDescriptorSetLayout m_ui_descriptor_layout = VK_NULL_HANDLE;
     VkDescriptorPool m_ui_descriptor_pool = VK_NULL_HANDLE;

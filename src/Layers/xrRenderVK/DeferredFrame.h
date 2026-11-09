@@ -44,7 +44,9 @@ class DeferredFrame
                 void *local_data = nullptr, WaterTargets *water = nullptr,
                 const WaterSceneUniform *water_uniform = nullptr, FrameInterpassRecorder final_capture = nullptr,
                 void *final_capture_data = nullptr, FrameRecorder final_overlay = nullptr,
-                void *final_overlay_data = nullptr);
+                void *final_overlay_data = nullptr, FrameInterpassRecorder display_capture = nullptr,
+                void *display_capture_data = nullptr, FrameRecorder display_grade = nullptr,
+                void *display_grade_data = nullptr);
 
   private:
     FrameRecorder light_grid_{};

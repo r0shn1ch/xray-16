@@ -230,7 +230,7 @@ bool FrameContext::initialize(VkPhysicalDevice physical_device, VkDevice device,
     VkQueue queue, uint32_t queue_family, VkExtent2D requested_extent,
     const FrameDispatch& dispatch, std::string& error, bool allow_readback, bool use_depth,
     bool preserve_prepass_depth, bool postprocess,
-    float timestamp_period_ns, uint32_t timestamp_valid_bits)
+    float timestamp_period_ns, uint32_t timestamp_valid_bits, VkExtent2D scene_extent)
 {
     destroy();
     if (!physical_device || !device || !surface || !queue || queue_family == UINT32_MAX)
@@ -253,6 +253,14 @@ bool FrameContext::initialize(VkPhysicalDevice physical_device, VkDevice device,
     m_allow_readback = allow_readback;
     m_preserve_prepass_depth = preserve_prepass_depth;
     m_postprocess = postprocess;
+    if ((scene_extent.width || scene_extent.height) &&
+        (!scene_extent.width || !scene_extent.height || !postprocess))
+    {
+        error = "independent scene extent requires nonzero dimensions and postprocessing";
+        destroy();
+        return false;
+    }
+    m_requested_scene_extent = scene_extent;
     if (timestamp_period_ns > 0.f && timestamp_valid_bits &&
         m_vk.create_query_pool && m_vk.destroy_query_pool && m_vk.cmd_reset_query_pool &&
         m_vk.cmd_write_timestamp && m_vk.get_query_pool_results)
@@ -385,19 +393,21 @@ bool FrameContext::create_swapchain(VkPhysicalDevice physical_device, VkSurfaceK
     }
 
     if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
-        m_extent = capabilities.currentExtent;
+        m_presentation_extent = capabilities.currentExtent;
     else
     {
-        m_extent.width = std::clamp(requested_extent.width,
+        m_presentation_extent.width = std::clamp(requested_extent.width,
             capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
-        m_extent.height = std::clamp(requested_extent.height,
+        m_presentation_extent.height = std::clamp(requested_extent.height,
             capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
     }
-    if (!m_extent.width || !m_extent.height)
+    if (!m_presentation_extent.width || !m_presentation_extent.height)
     {
         error = "Vulkan surface has zero extent";
         return false;
     }
+
+    m_extent = m_requested_scene_extent.width ? m_requested_scene_extent : m_presentation_extent;
 
     VkCompositeAlphaFlagBitsKHR composite_alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     if (!(capabilities.supportedCompositeAlpha & composite_alpha))
@@ -431,7 +441,7 @@ bool FrameContext::create_swapchain(VkPhysicalDevice physical_device, VkSurfaceK
     info.minImageCount = image_count;
     info.imageFormat = surface_format.format;
     info.imageColorSpace = surface_format.colorSpace;
-    info.imageExtent = m_extent;
+    info.imageExtent = m_presentation_extent;
     info.imageArrayLayers = 1;
     info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
         (m_allow_readback ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
@@ -457,6 +467,55 @@ bool FrameContext::create_swapchain(VkPhysicalDevice physical_device, VkSurfaceK
     {
         error = "could not enumerate Vulkan swapchain images";
         return false;
+    }
+    return true;
+}
+
+bool FrameContext::create_scene_colors(std::string& error)
+{
+    for (size_t i = 0; i < m_images.size(); ++i)
+    {
+        VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        info.imageType = VK_IMAGE_TYPE_2D;
+        info.format = m_format;
+        info.extent = {m_extent.width, m_extent.height, 1};
+        info.mipLevels = info.arrayLayers = 1;
+        info.samples = VK_SAMPLE_COUNT_1_BIT;
+        info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        VkImage image = VK_NULL_HANDLE;
+        if (m_vk.create_image(m_device, &info, nullptr, &image) != VK_SUCCESS)
+        { error = "could not create independent scene color"; return false; }
+        m_scene_images.push_back(image);
+        VkMemoryRequirements requirements{};
+        m_vk.get_image_memory_requirements(m_device, image, &requirements);
+        uint32_t type = UINT32_MAX;
+        for (uint32_t n = 0; n < m_memory_properties.memoryTypeCount; ++n)
+            if ((requirements.memoryTypeBits & (1u << n)) &&
+                (m_memory_properties.memoryTypes[n].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+            { type = n; break; }
+        if (type == UINT32_MAX)
+        { error = "no device-local memory for independent scene color"; return false; }
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = type;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        if (m_vk.allocate_memory(m_device, &allocation, nullptr, &memory) != VK_SUCCESS)
+        { error = "could not allocate independent scene color"; return false; }
+        m_scene_memories.push_back(memory);
+        if (m_vk.bind_image_memory(m_device, image, memory, 0) != VK_SUCCESS)
+        { error = "could not bind independent scene color"; return false; }
+        VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view.image = image;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = m_format;
+        view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        view.subresourceRange.levelCount = view.subresourceRange.layerCount = 1;
+        VkImageView output = VK_NULL_HANDLE;
+        if (m_vk.create_image_view(m_device, &view, nullptr, &output) != VK_SUCCESS)
+        { error = "could not create independent scene color view"; return false; }
+        m_scene_views.push_back(output);
     }
     return true;
 }
@@ -530,6 +589,7 @@ bool FrameContext::create_render_targets(std::string& error)
         return false;
     }
 
+    if (m_requested_scene_extent.width && !create_scene_colors(error)) return false;
     m_image_views.reserve(m_images.size());
     m_depth_images.reserve(m_images.size());
     m_depth_memories.reserve(m_images.size());
@@ -618,6 +678,7 @@ bool FrameContext::create_render_targets(std::string& error)
             framebuffer_views[1] = depth_view;
         }
 
+        if (!m_scene_views.empty()) framebuffer_views[0] = m_scene_views[m_framebuffers.size()];
         VkFramebufferCreateInfo framebuffer_info{};
         framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebuffer_info.renderPass = m_render_pass;
@@ -652,7 +713,7 @@ bool FrameContext::create_postprocess_targets(std::string& error)
     color.samples = VK_SAMPLE_COUNT_1_BIT;
     color.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    color.initialLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    color.initialLayout = m_scene_images.empty() ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
     color.finalLayout = m_allow_readback ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL :
         VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     const VkAttachmentReference reference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
@@ -684,6 +745,19 @@ bool FrameContext::create_postprocess_targets(std::string& error)
     {
         error = "could not create Vulkan postprocess render pass";
         return false;
+    }
+    if (!m_scene_images.empty())
+    {
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        color.initialLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+        deps[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+        deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        if (m_vk.create_render_pass(m_device, &pass, nullptr, &m_presentation_pass) != VK_SUCCESS)
+        {
+            error = "could not create native-resolution UI load pass";
+            return false;
+        }
     }
     for (size_t i = 0; i < m_images.size(); ++i)
     {
@@ -753,8 +827,8 @@ bool FrameContext::create_postprocess_targets(std::string& error)
         framebuffer.renderPass = m_composite_pass;
         framebuffer.attachmentCount = 1;
         framebuffer.pAttachments = &m_image_views[i];
-        framebuffer.width = m_extent.width;
-        framebuffer.height = m_extent.height;
+        framebuffer.width = m_presentation_extent.width;
+        framebuffer.height = m_presentation_extent.height;
         framebuffer.layers = 1;
         VkFramebuffer output = VK_NULL_HANDLE;
         if (m_vk.create_framebuffer(m_device, &framebuffer, nullptr, &output) != VK_SUCCESS)
@@ -780,7 +854,7 @@ bool FrameContext::attach_scene_depth(const std::vector<VkImageView>& views, std
     replacements.reserve(m_image_views.size());
     for (size_t i = 0; i < m_image_views.size(); ++i)
     {
-        const VkImageView attachments[]{m_image_views[i], views.empty() ? m_depth_views[i] : views[i]};
+        const VkImageView attachments[]{m_scene_views.empty() ? m_image_views[i] : m_scene_views[i], views.empty() ? m_depth_views[i] : views[i]};
         VkFramebufferCreateInfo info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
         info.renderPass = m_render_pass;
         info.attachmentCount = 2;
@@ -955,7 +1029,12 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
     FrameInterpassRecorder final_capture, void* final_capture_data,
     FrameRecorder final_overlay, void* final_overlay_data,
     FrameInterpassRecorder refraction_capture, void* refraction_capture_data,
-    FrameRecorder refraction_overlay, void* refraction_overlay_data)
+    FrameRecorder refraction_overlay, void* refraction_overlay_data,
+    FrameRecorder presentation_overlay, void* presentation_overlay_data,
+    FrameInterpassRecorder presentation_capture, void* presentation_capture_data,
+    FrameRecorder presentation_distortion, void* presentation_distortion_data,
+    FrameInterpassRecorder display_capture, void* display_capture_data,
+    FrameRecorder display_grade, void* display_grade_data)
 {
     using Clock = std::chrono::steady_clock;
     const auto milliseconds = [](Clock::time_point begin) {
@@ -980,6 +1059,11 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
     if ((refraction_capture || refraction_overlay) &&
         (!m_overlay_pass || !interpass || !refraction_capture || !refraction_overlay))
     { error = "particle refraction requires completed world capture and overlay recorders"; return false; }
+    if ((presentation_overlay || presentation_capture || presentation_distortion || display_capture || display_grade) &&
+        (!m_presentation_pass || !presentation_overlay ||
+            bool(presentation_capture) != bool(presentation_distortion) ||
+            bool(display_capture) != bool(display_grade)))
+    { error = "presentation UI requires its load pass and paired distortion capture/overlay"; return false; }
 
     crash_stage("vulkan frame: wait fence");
     const auto fence_begin = Clock::now();
@@ -1081,6 +1165,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
             m_extent, image_index, m_current_frame};
         prepass(frame, prepass_data);
     }
+    const VkImage scene_image = m_scene_images.empty() ? m_images[image_index] : m_scene_images[image_index];
     VkClearValue clear_values[2]{};
     clear_values[0].color = clear;
     clear_values[1].depthStencil = {1.0f, 0};
@@ -1114,7 +1199,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
     if (interpass)
     {
         crash_stage("vulkan frame: record overlay");
-        interpass(command, m_images[image_index], image_index, interpass_data);
+        interpass(command, scene_image, image_index, interpass_data);
         render_info.renderPass = m_overlay_pass;
         m_vk.cmd_begin_render_pass(command, &render_info, VK_SUBPASS_CONTENTS_INLINE);
         const FrameRecordingContext overlay_frame{command, m_overlay_pass,
@@ -1124,7 +1209,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
     }
     if (refraction_capture)
     {
-        refraction_capture(command, m_images[image_index], image_index, refraction_capture_data);
+        refraction_capture(command, scene_image, image_index, refraction_capture_data);
         render_info.renderPass = m_overlay_pass;
         m_vk.cmd_begin_render_pass(command, &render_info, VK_SUBPASS_CONTENTS_INLINE);
         const FrameRecordingContext refraction_frame{command, m_overlay_pass,
@@ -1134,7 +1219,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
     }
     if (final_capture)
     {
-        final_capture(command, m_images[image_index], image_index, final_capture_data);
+        final_capture(command, scene_image, image_index, final_capture_data);
         render_info.renderPass = m_overlay_pass;
         m_vk.cmd_begin_render_pass(command, &render_info, VK_SUBPASS_CONTENTS_INLINE);
         const FrameRecordingContext final_frame{command, m_overlay_pass,
@@ -1165,7 +1250,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
         region.srcSubresource.aspectMask = region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         region.srcSubresource.layerCount = region.dstSubresource.layerCount = 1;
         region.extent = {m_extent.width, m_extent.height, 1};
-        m_vk.cmd_copy_image(command, m_images[image_index], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        m_vk.cmd_copy_image(command, scene_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             m_post_images[image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
         uint32_t width = m_extent.width, height = m_extent.height;
         for (uint32_t mip = 1; mip < m_post_mip_levels; ++mip)
@@ -1218,17 +1303,46 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
         VkRenderPassBeginInfo composite{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
         composite.renderPass = m_composite_pass;
         composite.framebuffer = m_composite_framebuffers[image_index];
-        composite.renderArea.extent = m_extent;
+        composite.renderArea.extent = m_presentation_extent;
         m_vk.cmd_begin_render_pass(command, &composite, VK_SUBPASS_CONTENTS_INLINE);
         const FrameRecordingContext context{command, m_composite_pass,
-            m_composite_framebuffers[image_index], m_extent, image_index, m_current_frame};
+            m_composite_framebuffers[image_index], m_presentation_extent, image_index, m_current_frame};
         compositor(context, compositor_data);
         m_vk.cmd_end_render_pass(command);
+    }
+    if (presentation_overlay)
+    {
+        // The scene has already been scaled and postprocessed. Keep 2D UI at
+        // presentation resolution and capture that completed UI before its
+        // screen-space distortion. Neither pass borrows scene-sized depth.
+        VkRenderPassBeginInfo info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        info.renderPass = m_presentation_pass;
+        info.framebuffer = m_composite_framebuffers[image_index];
+        info.renderArea.extent = m_presentation_extent;
+        const FrameRecordingContext output{command, m_presentation_pass,
+            info.framebuffer, m_presentation_extent, image_index, m_current_frame};
+        m_vk.cmd_begin_render_pass(command, &info, VK_SUBPASS_CONTENTS_INLINE);
+        presentation_overlay(output, presentation_overlay_data);
+        m_vk.cmd_end_render_pass(command);
+        if (presentation_capture)
+        {
+            presentation_capture(command, m_images[image_index], image_index, presentation_capture_data);
+            m_vk.cmd_begin_render_pass(command, &info, VK_SUBPASS_CONTENTS_INLINE);
+            presentation_distortion(output, presentation_distortion_data);
+            m_vk.cmd_end_render_pass(command);
+        }
+        if (display_capture)
+        {
+            display_capture(command, m_images[image_index], image_index, display_capture_data);
+            m_vk.cmd_begin_render_pass(command, &info, VK_SUBPASS_CONTENTS_INLINE);
+            display_grade(output, display_grade_data);
+            m_vk.cmd_end_render_pass(command);
+        }
     }
     if (m_allow_readback)
     {
         if (readback)
-            readback(command, m_images[image_index], m_extent, readback_data);
+            readback(command, m_images[image_index], m_presentation_extent, readback_data);
         VkImageMemoryBarrier present_barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
         present_barrier.srcAccessMask = readback ? VK_ACCESS_TRANSFER_READ_BIT : 0;
         present_barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
@@ -1345,6 +1459,8 @@ void FrameContext::destroy()
     m_timestamp_submitted = {};
     m_last_gpu_ms.reset();
     m_extent = {};
+    m_presentation_extent = {};
+    m_requested_scene_extent = {};
     m_format = VK_FORMAT_UNDEFINED;
     m_color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     m_depth_format = VK_FORMAT_UNDEFINED;
@@ -1355,6 +1471,9 @@ void FrameContext::destroy()
     m_scene_depth_attached = false;
     m_images.clear();
     m_image_views.clear();
+    m_scene_images.clear();
+    m_scene_memories.clear();
+    m_scene_views.clear();
     m_depth_images.clear();
     m_depth_memories.clear();
     m_depth_views.clear();
@@ -1364,6 +1483,7 @@ void FrameContext::destroy()
     m_post_views.clear();
     m_composite_framebuffers.clear();
     m_composite_pass = VK_NULL_HANDLE;
+    m_presentation_pass = VK_NULL_HANDLE;
     m_commands.clear();
     m_render_finished.clear();
     m_image_available = {};
@@ -1381,6 +1501,12 @@ void FrameContext::destroy_swapchain_resources()
         if (framebuffer) m_vk.destroy_framebuffer(m_device, framebuffer, nullptr);
     for (VkFramebuffer framebuffer : m_composite_framebuffers)
         if (framebuffer) m_vk.destroy_framebuffer(m_device, framebuffer, nullptr);
+    for (VkImageView view : m_scene_views)
+        if (view) m_vk.destroy_image_view(m_device, view, nullptr);
+    for (VkImage image : m_scene_images)
+        if (image) m_vk.destroy_image(m_device, image, nullptr);
+    for (VkDeviceMemory memory : m_scene_memories)
+        if (memory) m_vk.free_memory(m_device, memory, nullptr);
     for (VkImageView view : m_post_views)
         if (view) m_vk.destroy_image_view(m_device, view, nullptr);
     for (VkImage image : m_post_images)
@@ -1388,6 +1514,7 @@ void FrameContext::destroy_swapchain_resources()
     for (VkDeviceMemory memory : m_post_memories)
         if (memory) m_vk.free_memory(m_device, memory, nullptr);
     if (m_composite_pass) m_vk.destroy_render_pass(m_device, m_composite_pass, nullptr);
+    if (m_presentation_pass) m_vk.destroy_render_pass(m_device, m_presentation_pass, nullptr);
     if (m_overlay_pass) m_vk.destroy_render_pass(m_device, m_overlay_pass, nullptr);
     for (VkImageView view : m_image_views)
         if (view) m_vk.destroy_image_view(m_device, view, nullptr);
@@ -1409,9 +1536,14 @@ void FrameContext::destroy_swapchain_resources()
     m_render_pass = VK_NULL_HANDLE;
     m_overlay_pass = VK_NULL_HANDLE;
     m_composite_pass = VK_NULL_HANDLE;
+    m_presentation_pass = VK_NULL_HANDLE;
     m_extent = {};
+    m_presentation_extent = {};
     m_images.clear();
     m_image_views.clear();
+    m_scene_images.clear();
+    m_scene_memories.clear();
+    m_scene_views.clear();
     m_depth_images.clear();
     m_depth_memories.clear();
     m_depth_views.clear();

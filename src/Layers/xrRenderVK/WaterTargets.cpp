@@ -44,7 +44,7 @@ bool WaterTargets::make_image(Image& target, std::string& error)
 bool WaterTargets::initialize(VkPhysicalDevice physical, VkDevice device, VkFormat format, VkExtent2D extent,
     uint32_t count, const VkPhysicalDeviceMemoryProperties& memory,
     const FrameDispatch& dispatch, const BufferResourceDispatch& buffers,
-    std::string& error)
+    std::string& error, bool refraction_only)
 {
     destroy();
     if (!physical || !device || format == VK_FORMAT_UNDEFINED || !extent.width || !extent.height ||
@@ -66,11 +66,11 @@ bool WaterTargets::initialize(VkPhysicalDevice physical, VkDevice device, VkForm
     vk_ = dispatch;
     targets_.resize(count);
     for (auto& target : targets_)
-        if (!make_image(target.refraction, error) || !make_image(target.field, error) ||
+        if (!make_image(target.refraction, error) || (!refraction_only && (!make_image(target.field, error) ||
             !target.constants.initialize(device, sizeof(WaterSceneUniform),
                 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                memory, buffers, error))
+                memory, buffers, error))))
         { destroy(); return false; }
     error.clear();
     return true;
@@ -100,7 +100,8 @@ bool WaterTargets::capture_distortion(VkCommandBuffer command, VkImage source, u
 
 bool WaterTargets::capture_images(VkCommandBuffer command, VkImage source, uint32_t index, bool distortion) const
 {
-    if (!command || !source || index >= targets_.size()) return false;
+    if (!command || !source || index >= targets_.size() ||
+        (distortion && !targets_[index].field.image)) return false;
     const auto& target = targets_[index];
     VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     barrier.image = distortion ? target.field.image : target.refraction.image;

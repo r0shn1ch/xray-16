@@ -50,7 +50,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VulkanWindowDevice::validation_callback(
 
 bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
     bool allow_readback, std::string& error, bool use_depth, bool preserve_prepass_depth,
-    bool postprocess)
+    bool postprocess, VkExtent2D scene_extent)
 {
     destroy();
     if (!window || !extent.width || !extent.height)
@@ -245,9 +245,10 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
     if (!m_frame.initialize(m_physical.handle, m_device, m_surface, m_queue,
             m_physical.graphics_present_family, extent, frame_dispatch, error,
             allow_readback, use_depth, preserve_prepass_depth, postprocess,
-            m_physical.properties.limits.timestampPeriod, timestamp_bits))
+            m_physical.properties.limits.timestampPeriod, timestamp_bits, scene_extent))
         return fail();
-    SDL_Log("[renderer-vulkan] swapchain.ready extent=%ux%u images=%u format=%d timestamps=%u bits",
+    SDL_Log("[renderer-vulkan] swapchain.ready extent=%ux%u scene=%ux%u images=%u format=%d timestamps=%u bits",
+        m_frame.presentation_extent().width, m_frame.presentation_extent().height,
         m_frame.extent().width, m_frame.extent().height, m_frame.image_count(),
         static_cast<int>(m_frame.format()), timestamp_bits);
     error.clear();

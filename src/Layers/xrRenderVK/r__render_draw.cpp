@@ -77,7 +77,9 @@ void VulkanGameDevice::record_distortion(const FrameRecordingContext &frame, voi
 void VulkanGameDevice::capture_ui(VkCommandBuffer command, VkImage image, uint32_t index, void *user)
 {
     auto &owner = *static_cast<VulkanGameDevice *>(user);
-    owner.ui_recorded_ &= owner.water_targets_.capture(command, image, index);
+    auto &snapshot = owner.window_.frame().presentation_render_pass() != VK_NULL_HANDLE
+        ? owner.ui_snapshot_targets_ : owner.water_targets_;
+    owner.ui_recorded_ &= snapshot.capture(command, image, index);
 }
 
 void VulkanGameDevice::record_ui_distortion(const FrameRecordingContext &frame, void *user)
@@ -102,6 +104,12 @@ void VulkanGameDevice::record_postprocess(const FrameRecordingContext &frame, vo
 {
     auto &owner = *static_cast<VulkanGameDevice *>(user);
     owner.postprocess_passes_[frame.image_index]->record(frame);
+}
+
+void VulkanGameDevice::record_display_grade(const FrameRecordingContext &frame, void *user)
+{
+    auto &owner = *static_cast<VulkanGameDevice *>(user);
+    owner.display_grade_passes_[frame.image_index]->record(frame);
 }
 
 void VulkanGameDevice::record_level_visuals(const FrameRecordingContext &frame, void *user)

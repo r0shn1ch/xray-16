@@ -20,7 +20,7 @@ public:
     ~WaterTargets() { destroy(); }
     bool initialize(VkPhysicalDevice physical, VkDevice device, VkFormat format, VkExtent2D extent, uint32_t count,
         const VkPhysicalDeviceMemoryProperties& memory, const FrameDispatch& dispatch,
-        const BufferResourceDispatch& buffers, std::string& error);
+        const BufferResourceDispatch& buffers, std::string& error, bool refraction_only = false);
     bool write_uniform(uint32_t index, const WaterSceneUniform& value, std::string& error);
     bool capture(VkCommandBuffer command, VkImage source, uint32_t index) const;
     bool capture_refraction(VkCommandBuffer command, VkImage source, uint32_t index) const;

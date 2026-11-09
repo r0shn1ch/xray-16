@@ -17,6 +17,7 @@ uint32_t layouts = 0, pipelines = 0, destroyed_layouts = 0, destroyed_pipelines 
 uint32_t geometry_draws = 0, ui_draws = 0;
 uint32_t descriptor_updates = 0, descriptor_binds = 0, descriptor_frees = 0;
 uint32_t scissor_width = 0;
+float expected_width=960, expected_height=540;
 VkResult ui_result = VK_SUCCESS;
 VkPipeline bound = VK_NULL_HANDLE;
 
@@ -32,11 +33,13 @@ void VKAPI_CALL destroy_layout(VkDevice, VkPipelineLayout, const VkAllocationCal
 VkResult VKAPI_CALL create_pipeline(VkDevice, VkPipelineCache, uint32_t,
     const VkGraphicsPipelineCreateInfo* info, const VkAllocationCallbacks*, VkPipeline* pipeline)
 {
+    const bool native=info->renderPass==handle<VkRenderPass>(90);
     const bool ui=info->pVertexInputState->vertexAttributeDescriptionCount==4;
     static unsigned ui_mode=0;if(!ui)ui_mode=0;
     const int mode=ui?int(ui_mode++%11):-1;
     const bool world=ui && info->pDepthStencilState && info->pDepthStencilState->depthTestEnable;
-    ++pipelines;
+
+    if (native) assert(ui && !info->pDepthStencilState);
     assert(info->stageCount == 2 && info->pVertexInputState->vertexAttributeDescriptionCount == (ui ? 4u : 3u));
     assert(info->pVertexInputState->pVertexBindingDescriptions[0].stride ==
         (ui ? sizeof(xray::render::vulkan::UiVertex) : sizeof(xray::render::vulkan::SceneVertex)));
@@ -67,13 +70,14 @@ VkResult VKAPI_CALL create_pipeline(VkDevice, VkPipelineCache, uint32_t,
     assert(info->pVertexInputState->pVertexAttributeDescriptions[2].format ==
         (ui ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_R32G32B32A32_SFLOAT));
     if (ui && ui_result != VK_SUCCESS) return ui_result;
-    *pipeline = handle<VkPipeline>(ui ? (world ? 40 : 12) + mode : 11);
+    ++pipelines;
+    *pipeline = handle<VkPipeline>(ui ? (native ? 80 : world ? 40 : 12) + mode : 11);
     return VK_SUCCESS;
 }
 void VKAPI_CALL destroy_pipeline(VkDevice, VkPipeline, const VkAllocationCallbacks*) { ++destroyed_pipelines; }
 void VKAPI_CALL bind_pipeline(VkCommandBuffer, VkPipelineBindPoint, VkPipeline pipeline) { bound = pipeline; }
 void VKAPI_CALL viewport(VkCommandBuffer, uint32_t, uint32_t, const VkViewport* v)
-{ assert(v->width == 960 && v->height == 540); }
+{ assert(v->width == expected_width && v->height == expected_height); }
 void VKAPI_CALL scissor(VkCommandBuffer, uint32_t, uint32_t, const VkRect2D* rect)
 { scissor_width = rect->extent.width; }
 void VKAPI_CALL bind_vertices(VkCommandBuffer, uint32_t, uint32_t, const VkBuffer* buffer, const VkDeviceSize*)
@@ -87,7 +91,7 @@ void VKAPI_CALL draw(VkCommandBuffer, uint32_t count, uint32_t instances, uint32
 {
     assert(instances == 1);
     if (bound == handle<VkPipeline>(11)) { assert(count == 3); ++geometry_draws; }
-    else { assert(((bound >= handle<VkPipeline>(12) && bound <= handle<VkPipeline>(21)) || (bound>=handle<VkPipeline>(40) && bound<=handle<VkPipeline>(50))) && count == 6); ++ui_draws; }
+    else { assert(((bound >= handle<VkPipeline>(12) && bound <= handle<VkPipeline>(21)) || (bound>=handle<VkPipeline>(40) && bound<=handle<VkPipeline>(50)) || (bound>=handle<VkPipeline>(80) && bound<=handle<VkPipeline>(90))) && count == 6); ++ui_draws; }
 }
 VkResult VKAPI_CALL create_descriptor_layout(VkDevice, const VkDescriptorSetLayoutCreateInfo* info,
     const VkAllocationCallbacks*, VkDescriptorSetLayout* layout)
@@ -184,4 +188,24 @@ int main()
     assert(!pass.initialize(device, render_pass, handle<VkShaderModule>(3), handle<VkShaderModule>(4),
         handle<VkShaderModule>(5), handle<VkShaderModule>(6), dispatch, error));
     assert(destroyed_pipelines == 24 && destroyed_layouts == 4);
+    ui_result=VK_SUCCESS;
+    const auto native_pass=handle<VkRenderPass>(90);
+    assert(pass.initialize(device,render_pass,handle<VkShaderModule>(3),handle<VkShaderModule>(4),
+        handle<VkShaderModule>(5),handle<VkShaderModule>(6),dispatch,error,true,native_pass));
+    assert(pass.create_ui_texture_set(handle<VkImageView>(33),handle<VkSampler>(34),texture,error));
+    auto native_frame=frame; native_frame.render_pass=native_pass; native_frame.extent={1920,1080};
+    expected_width=1920; expected_height=1080;
+    for (int mode=0;mode<11;++mode) {
+        assert(pass.record_ui(native_frame,handle<VkBuffer>(20),handle<VkBuffer>(21),VK_INDEX_TYPE_UINT16,
+            6,texture,&clipped,0,0,0.f,{960,540},mode));
+        assert(bound==handle<VkPipeline>(80+mode) && scissor_width==200);
+    }
+    assert(!pass.record_ui(native_frame,handle<VkBuffer>(20),handle<VkBuffer>(21),VK_INDEX_TYPE_UINT16,
+        6,texture,nullptr,0,0,0.f,{960,540},1,texture,true));
+    assert(!pass.record_geometry(native_frame,handle<VkBuffer>(20),handle<VkBuffer>(21),
+        VK_INDEX_TYPE_UINT16,3,constants));
+    pass.release_ui_texture_set(texture);
+    pass.destroy();
+    assert(pipelines==destroyed_pipelines && layouts==destroyed_layouts);
+
 }

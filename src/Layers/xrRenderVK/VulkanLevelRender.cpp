@@ -598,16 +598,16 @@ void VulkanLevelRender::Create(SDL_Window *window, u32 &width, u32 &height, floa
         gpu.vendorID, gpu.deviceID, gpu.driverVersion, VK_VERSION_MAJOR(gpu.apiVersion),
         VK_VERSION_MINOR(gpu.apiVersion));
 
-    const VkExtent2D extent = resources->window().frame().extent();
+    // Engine UI coordinates and font selection follow the display. Scene
+    // resources use FrameContext::extent() independently of this logical size.
+    const VkExtent2D extent = resources->window().frame().presentation_extent();
     if (!extent.width || !extent.height)
     {
         xrDebug::Fatal(DEBUG_INFO, "Vulkan swapchain has an empty extent");
         return;
     }
-#if !defined(XR_PLATFORM_ANDROID)
     width = extent.width;
     height = extent.height;
-#endif
     half_width = static_cast<float>(width) * 0.5f;
     half_height = static_cast<float>(height) * 0.5f;
 
@@ -730,11 +730,9 @@ void VulkanLevelRender::Reset(SDL_Window *window, u32 &width, u32 &height, float
         xrDebug::Fatal(DEBUG_INFO, "Vulkan swapchain recreation failed: %s", error.c_str());
         return;
     }
-    const VkExtent2D extent = game_device_->window().frame().extent();
-#if !defined(XR_PLATFORM_ANDROID)
+    const VkExtent2D extent = game_device_->window().frame().presentation_extent();
     width = extent.width;
     height = extent.height;
-#endif
     half_width = static_cast<float>(width) * 0.5f;
     half_height = static_cast<float>(height) * 0.5f;
     game_device_->clear_reset_required();

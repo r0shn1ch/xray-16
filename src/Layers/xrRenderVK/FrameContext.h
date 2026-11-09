@@ -101,11 +101,15 @@ public:
     FrameContext(const FrameContext&) = delete;
     FrameContext& operator=(const FrameContext&) = delete;
 
+    // A nonzero scene_extent allocates scene color separately from the swapchain.
+    // Scene/interpass callbacks retain that size; the compositor and readback use
+    // the surface size. Requires postprocessing to write the presentation image.
     bool initialize(VkPhysicalDevice physical_device, VkDevice device, VkSurfaceKHR surface,
         VkQueue queue, uint32_t queue_family, VkExtent2D requested_extent,
         const FrameDispatch& dispatch, std::string& error, bool allow_readback = false,
         bool use_depth = false, bool preserve_prepass_depth = false, bool postprocess = false,
-        float timestamp_period_ns = 0.f, uint32_t timestamp_valid_bits = 0);
+        float timestamp_period_ns = 0.f, uint32_t timestamp_valid_bits = 0,
+        VkExtent2D scene_extent = {});
     // Borrow depth views produced by the offscreen pass. Caller must restore
     // the owned views (empty vector) before destroying the borrowed images.
     bool attach_scene_depth(const std::vector<VkImageView>& views, std::string& error);
@@ -128,7 +132,12 @@ public:
         FrameInterpassRecorder final_capture = nullptr, void* final_capture_data = nullptr,
         FrameRecorder final_overlay = nullptr, void* final_overlay_data = nullptr,
         FrameInterpassRecorder refraction_capture = nullptr, void* refraction_capture_data = nullptr,
-        FrameRecorder refraction_overlay = nullptr, void* refraction_overlay_data = nullptr);
+        FrameRecorder refraction_overlay = nullptr, void* refraction_overlay_data = nullptr,
+        FrameRecorder presentation_overlay = nullptr, void* presentation_overlay_data = nullptr,
+        FrameInterpassRecorder presentation_capture = nullptr, void* presentation_capture_data = nullptr,
+        FrameRecorder presentation_distortion = nullptr, void* presentation_distortion_data = nullptr,
+        FrameInterpassRecorder display_capture = nullptr, void* display_capture_data = nullptr,
+        FrameRecorder display_grade = nullptr, void* display_grade_data = nullptr);
     void destroy();
 
     struct CpuTiming
@@ -136,11 +145,14 @@ public:
         double fence_ms{}, acquire_ms{}, record_ms{}, submit_ms{}, present_ms{};
     };
     const CpuTiming& cpu_timing() const { return m_cpu_timing; }
+    // Scene callbacks and borrowed depth use extent(); composition/readback use presentation_extent().
     VkExtent2D extent() const { return m_extent; }
+    VkExtent2D presentation_extent() const { return m_presentation_extent; }
     VkFormat format() const { return m_format; }
     VkRenderPass render_pass() const { return m_render_pass; }
     VkRenderPass overlay_render_pass() const { return m_overlay_pass; }
     VkRenderPass composite_render_pass() const { return m_composite_pass; }
+    VkRenderPass presentation_render_pass() const { return m_presentation_pass; }
     VkImageView postprocess_view(size_t index) const { return m_post_views.at(index); }
     VkFormat depth_format() const { return m_depth_format; }
     VkCommandPool command_pool() const { return m_command_pool; }
@@ -158,6 +170,7 @@ private:
     bool create_swapchain(VkPhysicalDevice physical_device, VkSurfaceKHR surface,
         VkExtent2D requested_extent, std::string& error);
     bool create_render_targets(std::string& error);
+    bool create_scene_colors(std::string& error);
     bool create_postprocess_targets(std::string& error);
     bool create_commands(std::string& error);
     bool create_sync(std::string& error);
@@ -179,6 +192,8 @@ private:
     std::optional<double> m_last_gpu_ms;
     CpuTiming m_cpu_timing{};
     VkExtent2D m_extent{};
+    VkExtent2D m_presentation_extent{};
+    VkExtent2D m_requested_scene_extent{};
     VkFormat m_format = VK_FORMAT_UNDEFINED;
     VkColorSpaceKHR m_color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     VkFormat m_depth_format = VK_FORMAT_UNDEFINED;
@@ -189,11 +204,15 @@ private:
     bool m_scene_depth_attached = false;
     std::vector<VkImage> m_images;
     std::vector<VkImageView> m_image_views;
+    std::vector<VkImage> m_scene_images;
+    std::vector<VkDeviceMemory> m_scene_memories;
+    std::vector<VkImageView> m_scene_views;
     std::vector<VkImage> m_depth_images;
     std::vector<VkDeviceMemory> m_depth_memories;
     std::vector<VkImageView> m_depth_views;
     std::vector<VkFramebuffer> m_framebuffers;
     VkRenderPass m_composite_pass = VK_NULL_HANDLE;
+    VkRenderPass m_presentation_pass = VK_NULL_HANDLE;
     std::vector<VkImage> m_post_images;
     uint32_t m_post_mip_levels{1};
     std::vector<VkDeviceMemory> m_post_memories;

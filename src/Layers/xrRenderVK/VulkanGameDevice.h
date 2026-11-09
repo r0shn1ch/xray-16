@@ -173,6 +173,7 @@ class VulkanGameDevice
     static void record_level_visuals(const FrameRecordingContext &frame, void *user);
     static void record_readback(VkCommandBuffer command, VkImage image, VkExtent2D extent, void *user);
     static void record_postprocess(const FrameRecordingContext &frame, void *user);
+    static void record_display_grade(const FrameRecordingContext &frame, void *user);
     bool create_postprocess(std::string &error);
     bool refresh_color_maps(std::string &error);
     bool create_forward_targets(std::string &error);
@@ -217,6 +218,7 @@ class VulkanGameDevice
     BufferUploadDispatch buffer_upload_{};
     GBufferTargets targets_;
     WaterTargets water_targets_;
+    WaterTargets ui_snapshot_targets_;
     SunShadowTargets sun_shadows_;
     LocalShadowTargets local_shadows_;
     std::vector<std::vector<VkDescriptorSet>> local_sets_;
@@ -248,6 +250,7 @@ class VulkanGameDevice
     VulkanUIRender ui_;
     DeferredFrame frame_;
     std::vector<std::unique_ptr<ScreenCopyPass>> postprocess_passes_;
+    std::vector<std::unique_ptr<ScreenCopyPass>> display_grade_passes_;
     PostProcessConstants postprocess_params_{};
     std::string color_map_names_[2];
     std::string active_map_names_[2];

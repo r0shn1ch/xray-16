@@ -215,7 +215,9 @@ bool DeferredFrame::render(FrameContext &frame, GBufferTargets &targets, const G
                            LocalShadowTargets *local_shadows, const std::vector<LocalLightUniform> *local_lights,
                            FrameRecorder local_lighting, void *local_data, WaterTargets *water,
                            const WaterSceneUniform *water_uniform, FrameInterpassRecorder final_capture,
-                           void *final_capture_data, FrameRecorder final_overlay, void *final_overlay_data)
+                           void *final_capture_data, FrameRecorder final_overlay, void *final_overlay_data,
+                           FrameInterpassRecorder display_capture, void *display_capture_data,
+                           FrameRecorder display_grade, void *display_grade_data)
 {
     targets_ = &targets;
     shadows_ = shadows;
@@ -236,7 +238,9 @@ bool DeferredFrame::render(FrameContext &frame, GBufferTargets &targets, const G
     weather_set_ = weather_set;
     if (weather)
         weather_ = *weather;
-    ui_ = ui;
+    // Native 2D UI follows scene postprocessing; the 3D HUD stays in foreground.
+    const bool native_ui = frame.presentation_render_pass() != VK_NULL_HANDLE;
+    ui_ = native_ui ? nullptr : ui;
     ui_data_ = ui_data;
     hud_ = hud;
     hud_data_ = hud_data;
@@ -254,9 +258,14 @@ bool DeferredFrame::render(FrameContext &frame, GBufferTargets &targets, const G
     const bool refract_world = distortion_ && water_ && render_world_;
     if (!frame.render_frame(clear, status, error, lighting, this, readback, readback_data, geometry, this, clear_target,
                             compositor_, compositor_data_, water_ ? capture : nullptr, this, water_ ? overlay : nullptr,
-                            this, final_capture, final_capture_data, final_overlay, final_overlay_data,
+                            this, native_ui ? nullptr : final_capture, final_capture_data,
+                            native_ui ? nullptr : final_overlay, final_overlay_data,
                             refract_world ? capture_distortion : nullptr, this,
-                            refract_world ? distortion_overlay : nullptr, this))
+                            refract_world ? distortion_overlay : nullptr, this,
+                            native_ui ? ui : nullptr, ui_data,
+                            native_ui ? final_capture : nullptr, final_capture_data,
+                            native_ui ? final_overlay : nullptr, final_overlay_data,
+                            display_capture, display_capture_data, display_grade, display_grade_data))
         return false;
     if (!recorded_)
     {

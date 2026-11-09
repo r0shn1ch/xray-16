@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <type_traits>
 #include <vector>
+#include <map>
 
 using namespace xray::render::vulkan;
 
@@ -15,6 +16,13 @@ template <class T> T handle(uintptr_t id)
     else return static_cast<T>(id);
 }
 uintptr_t next_handle = 100;
+std::map<VkImage, VkExtent3D> allocated_images;
+std::map<VkImageView, VkImage> viewed_images;
+unsigned allocated_memory{}, freed_memory{};
+int fail_image_after = -1;
+VkImage last_copy_source{};
+VkExtent3D last_copy_extent{};
+std::vector<VkExtent2D> framebuffer_extents;
 unsigned idle_calls{}, swapchain_creates{}, swapchain_destroys{}, submissions{}, presents{},
     fences_created{}, fences_destroyed{}, semaphores_created{}, semaphores_destroyed{},
     query_creates{}, query_destroys{}, timestamp_writes{};
@@ -60,14 +68,23 @@ VkResult VKAPI_PTR images(VkDevice, VkSwapchainKHR chain, uint32_t* count, VkIma
     if (out) { out[0] = handle<VkImage>(10); out[1] = handle<VkImage>(11); }
     return VK_SUCCESS;
 }
-VkResult VKAPI_PTR view(VkDevice, const VkImageViewCreateInfo*, const VkAllocationCallbacks*, VkImageView* out)
-{ *out = handle<VkImageView>(++next_handle); return VK_SUCCESS; }
-void VKAPI_PTR destroy_view(VkDevice, VkImageView, const VkAllocationCallbacks*) {}
+VkResult VKAPI_PTR view(VkDevice, const VkImageViewCreateInfo* info, const VkAllocationCallbacks*, VkImageView* out)
+{ *out=handle<VkImageView>(++next_handle); viewed_images[*out]=info->image; return VK_SUCCESS; }
+void VKAPI_PTR destroy_view(VkDevice, VkImageView view, const VkAllocationCallbacks*)
+{ assert(viewed_images.erase(view)==1); }
 VkResult VKAPI_PTR pass(VkDevice, const VkRenderPassCreateInfo*, const VkAllocationCallbacks*, VkRenderPass* out)
 { *out = handle<VkRenderPass>(++next_handle); return VK_SUCCESS; }
 void VKAPI_PTR destroy_pass(VkDevice, VkRenderPass, const VkAllocationCallbacks*) {}
-VkResult VKAPI_PTR framebuffer(VkDevice, const VkFramebufferCreateInfo*, const VkAllocationCallbacks*, VkFramebuffer* out)
-{ *out = handle<VkFramebuffer>(++next_handle); return VK_SUCCESS; }
+VkResult VKAPI_PTR framebuffer(VkDevice, const VkFramebufferCreateInfo* info, const VkAllocationCallbacks*, VkFramebuffer* out)
+{
+    framebuffer_extents.push_back({info->width, info->height});
+    const auto image = viewed_images.find(info->pAttachments[0]);
+    if (image != viewed_images.end() && allocated_images.count(image->second)) {
+        const auto extent = allocated_images.at(image->second);
+        assert(info->width <= extent.width && info->height <= extent.height);
+    }
+    *out = handle<VkFramebuffer>(++next_handle); return VK_SUCCESS;
+}
 void VKAPI_PTR destroy_framebuffer(VkDevice, VkFramebuffer, const VkAllocationCallbacks*) {}
 VkResult VKAPI_PTR pool(VkDevice, const VkCommandPoolCreateInfo*, const VkAllocationCallbacks*, VkCommandPool* out)
 { *out = handle<VkCommandPool>(++next_handle); return VK_SUCCESS; }
@@ -116,20 +133,51 @@ void VKAPI_PTR depth_formats(VkPhysicalDevice, VkFormat, VkFormatProperties *out
 { out->optimalTilingFeatures = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT; }
 void VKAPI_PTR memory_types(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties *out)
 { *out = {}; out->memoryTypeCount = 1; out->memoryTypes[0].propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT; }
-VkResult VKAPI_PTR depth_image(VkDevice, const VkImageCreateInfo *, const VkAllocationCallbacks *, VkImage *out)
-{ *out = handle<VkImage>(++next_handle); return VK_SUCCESS; }
-void VKAPI_PTR destroy_depth_image(VkDevice, VkImage, const VkAllocationCallbacks *) {}
+VkResult VKAPI_PTR depth_image(VkDevice, const VkImageCreateInfo *info, const VkAllocationCallbacks *, VkImage *out)
+{
+    if (fail_image_after == 0) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    if (fail_image_after > 0) --fail_image_after;
+    *out = handle<VkImage>(++next_handle); allocated_images[*out]=info->extent; return VK_SUCCESS;
+}
+void VKAPI_PTR destroy_depth_image(VkDevice, VkImage image, const VkAllocationCallbacks *) { assert(allocated_images.erase(image)==1); }
 void VKAPI_PTR depth_requirements(VkDevice, VkImage, VkMemoryRequirements *out)
 { *out = {}; out->size = 4096; out->alignment = 16; out->memoryTypeBits = 1; }
 VkResult VKAPI_PTR depth_allocate(VkDevice, const VkMemoryAllocateInfo *, const VkAllocationCallbacks *, VkDeviceMemory *out)
-{ *out = handle<VkDeviceMemory>(++next_handle); return VK_SUCCESS; }
-void VKAPI_PTR depth_free(VkDevice, VkDeviceMemory, const VkAllocationCallbacks *) {}
+{ *out = handle<VkDeviceMemory>(++next_handle); ++allocated_memory; return VK_SUCCESS; }
+void VKAPI_PTR depth_free(VkDevice, VkDeviceMemory, const VkAllocationCallbacks *) { ++freed_memory; }
 VkResult VKAPI_PTR depth_bind(VkDevice, VkImage, VkDeviceMemory, VkDeviceSize) { return VK_SUCCESS; }
 std::vector<int> pass_order;
 void record_stage(const FrameRecordingContext &, void *stage)
 { pass_order.push_back(*static_cast<int *>(stage)); }
 void capture_stage(VkCommandBuffer, VkImage, uint32_t, void *stage)
 { pass_order.push_back(*static_cast<int *>(stage)); }
+void VKAPI_PTR copy_image(VkCommandBuffer, VkImage source, VkImageLayout, VkImage, VkImageLayout,
+    uint32_t count, const VkImageCopy* copies)
+{ assert(count==1); last_copy_source=source; last_copy_extent=copies[0].extent; }
+void VKAPI_PTR barrier(VkCommandBuffer, VkPipelineStageFlags, VkPipelineStageFlags, VkDependencyFlags,
+    uint32_t, const VkMemoryBarrier*, uint32_t, const VkBufferMemoryBarrier*, uint32_t, const VkImageMemoryBarrier*) {}
+void scaled_scene(const FrameRecordingContext& context, void*)
+{ assert(context.extent.width==320 && context.extent.height==180); pass_order.push_back(1); }
+VkExtent2D expected_presentation;
+void scaled_output(const FrameRecordingContext& context, void*)
+{ assert(context.extent.width==expected_presentation.width && context.extent.height==expected_presentation.height); pass_order.push_back(10); }
+void scaled_readback(VkCommandBuffer, VkImage image, VkExtent2D extent, void*)
+{ assert(image==handle<VkImage>(10) || image==handle<VkImage>(11));
+  assert(extent.width==expected_presentation.width && extent.height==expected_presentation.height); pass_order.push_back(50); }
+VkRenderPass expected_ui_pass;
+void native_ui(const FrameRecordingContext& context, void*)
+{ assert(context.render_pass==expected_ui_pass); assert(context.extent.width==expected_presentation.width);
+  assert(context.extent.height==expected_presentation.height); pass_order.push_back(20); }
+void native_ui_capture(VkCommandBuffer, VkImage image, uint32_t, void*)
+{ assert(image==handle<VkImage>(10) || image==handle<VkImage>(11)); pass_order.push_back(30); }
+void native_ui_distortion(const FrameRecordingContext& context, void*)
+{ assert(context.render_pass==expected_ui_pass && context.extent.width==expected_presentation.width);
+  pass_order.push_back(40); }
+void display_capture(VkCommandBuffer, VkImage image, uint32_t, void*)
+{ assert(image==handle<VkImage>(10) || image==handle<VkImage>(11)); pass_order.push_back(60); }
+void display_grade(const FrameRecordingContext& context, void*)
+{ assert(context.render_pass==expected_ui_pass && context.extent.width==expected_presentation.width);
+  pass_order.push_back(70); }
 FrameDispatch dispatch()
 {
     FrameDispatch d{};
@@ -245,6 +293,73 @@ int main()
         nullptr, nullptr, false, nullptr, nullptr, capture_stage, &opaque_copy, record_stage, &transparent));
     assert((pass_order == std::vector<int>{1, 2, 3}));
     frame.destroy();
+    // A scene-sized color target must not shrink the presentation or screenshots.
+    world_dispatch.cmd_copy_image=copy_image;
+    world_dispatch.cmd_pipeline_barrier=barrier;
+    framebuffer_extents.clear();
+    assert(frame.initialize(physical, device, surface, queue, 0, {640, 360}, world_dispatch, error,
+        true, false, false, true, 0.f, 0, {320, 180}));
+    assert(frame.extent().width==320 && frame.presentation_extent().width==640);
+    assert(framebuffer_extents.size()==4);
+    assert(framebuffer_extents[0].width==320 && framebuffer_extents[2].width==640);
+    expected_presentation={640,360};
+    pass_order.clear();
+    assert(frame.render_frame(clear,status,error,scaled_scene,nullptr,scaled_readback,nullptr,
+        nullptr,nullptr,false,scaled_output));
+    assert((pass_order==std::vector<int>{1,10,50}));
+    assert(allocated_images.count(last_copy_source) && last_copy_extent.width==320 && last_copy_extent.height==180);
+    assert(frame.recreate(physical,surface,{1280,720},error));
+    assert(frame.extent().width==320 && frame.presentation_extent().width==1280);
+    expected_presentation={1280,720};
+    expected_ui_pass=frame.presentation_render_pass();
+    assert(expected_ui_pass);
+    pass_order.clear();
+    assert(frame.render_frame(clear,status,error,scaled_scene,nullptr,scaled_readback,nullptr,
+        nullptr,nullptr,false,scaled_output,nullptr,
+        nullptr,nullptr, nullptr,nullptr, // world capture/overlay
+        nullptr,nullptr, nullptr,nullptr, // scene UI capture/overlay
+        nullptr,nullptr, nullptr,nullptr, // particle refraction capture/overlay
+        native_ui,nullptr, native_ui_capture,nullptr, native_ui_distortion,nullptr,
+        display_capture,nullptr, display_grade,nullptr));
+    assert((pass_order==std::vector<int>{1,10,20,30,40,60,70,50}));
+    // Display correction also works without any UI distortion batches.
+    pass_order.clear();
+    assert(frame.render_frame(clear,status,error,scaled_scene,nullptr,scaled_readback,nullptr,
+        nullptr,nullptr,false,scaled_output,nullptr,
+        nullptr,nullptr, nullptr,nullptr, nullptr,nullptr, nullptr,nullptr,
+        nullptr,nullptr, nullptr,nullptr, native_ui,nullptr,
+        nullptr,nullptr, nullptr,nullptr, display_capture,nullptr, display_grade,nullptr));
+    assert((pass_order==std::vector<int>{1,10,20,60,70,50}));
+    // Neutral correction needs neither a full-resolution snapshot nor a draw.
+    pass_order.clear();
+    assert(frame.render_frame(clear,status,error,scaled_scene,nullptr,scaled_readback,nullptr,
+        nullptr,nullptr,false,scaled_output,nullptr,
+        nullptr,nullptr, nullptr,nullptr, nullptr,nullptr, nullptr,nullptr,
+        nullptr,nullptr, nullptr,nullptr, native_ui,nullptr));
+    assert((pass_order==std::vector<int>{1,10,20,50}));
+    // A capture without its distortion draw must fail before submitting a frame.
+    const auto submitted_before=submissions;
+    assert(!frame.render_frame(clear,status,error,scaled_scene,nullptr,scaled_readback,nullptr,
+        nullptr,nullptr,false,scaled_output,nullptr,
+        nullptr,nullptr, nullptr,nullptr, nullptr,nullptr, nullptr,nullptr,
+        nullptr,nullptr, nullptr,nullptr, native_ui,nullptr, native_ui_capture,nullptr));
+    assert(submissions==submitted_before);
+    assert(!frame.render_frame(clear,status,error,scaled_scene,nullptr,scaled_readback,nullptr,
+        nullptr,nullptr,false,scaled_output,nullptr,
+        nullptr,nullptr, nullptr,nullptr, nullptr,nullptr, nullptr,nullptr,
+        nullptr,nullptr, nullptr,nullptr, native_ui,nullptr,
+        nullptr,nullptr, nullptr,nullptr, display_capture,nullptr));
+    assert(submissions==submitted_before);
+    frame.destroy();
+    assert(allocated_images.empty() && viewed_images.empty() && allocated_memory==freed_memory);
+    // Failure after the first scene image must release all partially built resources.
+    fail_image_after=1;
+    assert(!frame.initialize(physical,device,surface,queue,0,{640,360},world_dispatch,error,
+        true,false,false,true,0.f,0,{320,180}));
+    assert(allocated_images.empty() && viewed_images.empty() && allocated_memory==freed_memory);
+    fail_image_after=-1;
+    assert(!frame.initialize(physical,device,surface,queue,0,{640,360},world_dispatch,error,
+        true,false,false,false,0.f,0,{320,180}));
     assert(swapchain_creates == swapchain_destroys && fences_created == fences_destroyed &&
         semaphores_created == semaphores_destroyed && query_creates == query_destroys && timestamp_writes >= 4);
 }

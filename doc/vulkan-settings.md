@@ -20,11 +20,20 @@ supported below are hidden rather than presented as working options.
 | Always active / FPS limits | `rs_always_active`, `rs_fps_limit`, `rs_fps_limit_in_menu` | Shared engine scheduling | Runtime; saved by `cfg_save` |
 | Resolution / window mode | `vid_mode`, `vid_window_mode` | Shared SDL device | Desktop only; launcher owns the Android render size |
 
-Android launcher resolution currently sets the entire engine frame, including
-the in-game menu and HUD. The Java touch controls remain at Android display
-resolution. This is not independent 3D scaling: the swapchain, G-buffer,
-water/refraction targets, post-process input and UI currently share one extent.
-Independent 3D scaling with a native-resolution UI remains unimplemented.
+On Android, the launcher resolution selects the 3D scene size. The G-buffer,
+world water/refraction targets and post-process input use that size, including
+the 3D weapon HUD and world-space UI. The swapchain and engine UI coordinate
+system use the native surface size. Ordinary 2D UI is drawn after scene
+postprocessing, with its own native-size snapshot for UI distortion. Screenshot
+readback includes that final UI and uses the presentation size. The Java touch
+controls also use the Android display size.
+
+Tonemapping and scene effects precede native 2D UI. Gamma, brightness and
+contrast apply once to the completed scene and UI, after UI distortion and
+before screenshot readback. Neutral display correction skips the extra copy
+and draw. The shared color-policy review remains open; this rendering split
+alone does not validate linear/sRGB behavior or the appearance of every menu,
+video, font and UI distortion effect.
 
 The Vulkan preset levels are intentionally monotonic. Minimum through Extreme
 increase the texture dimension limit, anisotropy, detail density, detail

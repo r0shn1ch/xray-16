@@ -106,6 +106,25 @@ bool set_android_buffer_extent(SDL_Window *window, VkExtent2D extent, std::strin
     }
     return true;
 }
+
+bool android_presentation_extent(SDL_Window *window, VkExtent2D &extent, std::string &error)
+{
+    if (!set_android_buffer_extent(window, {}, error))
+        return false;
+    SDL_SysWMinfo info{};
+    SDL_VERSION(&info.version);
+    if (!SDL_GetWindowWMInfo(window, &info) || !info.info.android.window)
+        return false;
+    const int width = ANativeWindow_getWidth(info.info.android.window);
+    const int height = ANativeWindow_getHeight(info.info.android.window);
+    if (width <= 0 || height <= 0)
+    {
+        error = "Android Vulkan surface has an invalid native resolution";
+        return false;
+    }
+    extent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
+    return true;
+}
 #endif
 
 } // namespace
@@ -130,13 +149,17 @@ bool VulkanGameDevice::wait_idle()
 bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::string &error)
 {
     destroy();
+    VkExtent2D scene_extent{};
 #if defined(XR_PLATFORM_ANDROID)
-    if (!extent.width || !extent.height || !set_android_buffer_extent(window, extent, error))
+    if (!extent.width || !extent.height)
         return false;
     scaled_android_window_ = window;
     requested_android_extent_ = extent;
+    scene_extent = extent;
+    if (!android_presentation_extent(window, extent, error))
+        return false;
 #endif
-    readback_enabled_ = window_.initialize(window, extent, true, error, true, true, true);
+    readback_enabled_ = window_.initialize(window, extent, true, error, true, true, true, scene_extent);
     if (!readback_enabled_)
     {
         destroy();
@@ -147,10 +170,8 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
     const auto &physical = window_.physical();
     const auto &frame = window_.frame();
 #if defined(XR_PLATFORM_ANDROID)
-    Msg("[renderer-vulkan] internal resolution requested=%ux%u swapchain=%ux%u", extent.width, extent.height,
-        frame.extent().width, frame.extent().height);
-    if (frame.extent().width != extent.width || frame.extent().height != extent.height)
-        Msg("! [renderer-vulkan] Android surface did not adopt the requested buffer resolution");
+    Msg("[renderer-vulkan] resolution scene=%ux%u presentation=%ux%u", frame.extent().width,
+        frame.extent().height, frame.presentation_extent().width, frame.presentation_extent().height);
 #endif
     Msg("[renderer-vulkan] device.gpu name='%s' driver=0x%x api=%u.%u push-constant-limit=%u",
         physical.properties.deviceName, physical.properties.driverVersion,
@@ -302,21 +323,20 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
             !ui_vertex.initialize(device, shaders, scene_shaders::UiVertex, sizeof(scene_shaders::UiVertex), error) ||
             !ui_fragment.initialize(device, shaders, scene_shaders::UiFragment, sizeof(scene_shaders::UiFragment), error) ||
             !ui_pass_.initialize(device, frame.render_pass(), scene_vertex.handle(), scene_fragment.handle(), ui_vertex.handle(), ui_fragment.handle(),
-                                 scene_dispatch, error, true) ||
+                                 scene_dispatch, error, true, frame.presentation_render_pass()) ||
             !textures_.initialize(device, window_.queue(), frame.command_pool(), physical.memory, physical.features.textureCompressionBC,
                 physical.features, physical.properties,
                 float(texture_anisotropy),
                 texture_dispatch_,
-                                  create_sampler, destroy_sampler, frame_dispatch_.device_wait_idle, error) ||
-            !create_postprocess(error))
+                                  create_sampler, destroy_sampler, frame_dispatch_.device_wait_idle, error))
             goto failed;
         for (uint32_t i = 0; i < frame.image_count(); ++i)
             if (!deferred_.water_set(i, water_targets_.refraction(i), water_targets_.distortion_field(i),
                                      targets_.sampled_depth_view(i), textures_.sampler(), targets_.sampler(),
                                      water_targets_.uniform(i), error))
                 goto failed;
-        ui_pass_.rebind_render_pass(frame.render_pass(), frame.overlay_render_pass());
-        if (!create_ui_scene_sets(error))
+        ui_pass_.rebind_render_pass(frame.render_pass(), frame.overlay_render_pass(), frame.presentation_render_pass());
+        if (!create_ui_scene_sets(error) || !create_postprocess(error))
             goto failed;
         Msg("[renderer-vulkan] device.passes ready water-overlay=%d images=%zu",
             frame.overlay_render_pass() != VK_NULL_HANDLE, frame.image_count());
@@ -355,10 +375,18 @@ bool VulkanGameDevice::reload_game_shaders(std::string &error)
 
 bool VulkanGameDevice::create_ui_scene_sets(std::string &error)
 {
+    const auto &frame = window_.frame();
+    const bool native_ui = frame.presentation_render_pass() != VK_NULL_HANDLE;
+    if (native_ui && !ui_snapshot_targets_.initialize(window_.physical().handle, window_.device(),
+            frame.format(), frame.presentation_extent(), static_cast<uint32_t>(frame.image_count()),
+            window_.physical().memory, frame_dispatch_, buffer_upload_.buffer, error, true))
+        return false;
     ui_scene_sets_.resize(window_.frame().image_count());
     ui_depth_sets_.resize(window_.frame().image_count());
     for (uint32_t i = 0; i < ui_scene_sets_.size(); ++i)
-        if (!ui_pass_.create_ui_texture_set(water_targets_.refraction(i), targets_.sampler(), ui_scene_sets_[i],
+        if (!ui_pass_.create_ui_texture_set(
+                native_ui ? ui_snapshot_targets_.refraction(i) : water_targets_.refraction(i),
+                targets_.sampler(), ui_scene_sets_[i],
                                             error) ||
             !ui_pass_.create_ui_texture_set(targets_.sampled_depth_view(i), targets_.sampler(), ui_depth_sets_[i],
                                             error, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
@@ -368,12 +396,14 @@ bool VulkanGameDevice::create_ui_scene_sets(std::string &error)
 
 void VulkanGameDevice::release_ui_scene_sets()
 {
+    display_grade_passes_.clear();
     for (auto &set : ui_scene_sets_)
         ui_pass_.release_ui_texture_set(set);
     ui_scene_sets_.clear();
     for (auto &set : ui_depth_sets_)
         ui_pass_.release_ui_texture_set(set);
     ui_depth_sets_.clear();
+    ui_snapshot_targets_.destroy();
 }
 
 bool VulkanGameDevice::create_forward_targets(std::string &error)
@@ -403,6 +433,7 @@ void VulkanGameDevice::release_forward_targets()
 bool VulkanGameDevice::create_postprocess(std::string &error)
 {
     postprocess_passes_.clear();
+    display_grade_passes_.clear();
     auto &frame = window_.frame();
     const auto device = window_.device();
     const auto get = window_.device_proc();
@@ -430,6 +461,14 @@ bool VulkanGameDevice::create_postprocess(std::string &error)
         }
         pass->set_color_maps(color_map_views_[0], color_map_views_[1]);
         postprocess_passes_.push_back(std::move(pass));
+        if (frame.presentation_render_pass())
+        {
+            auto display = std::make_unique<ScreenCopyPass>();
+            if (!display->initialize(device, frame.presentation_render_pass(), ui_snapshot_targets_.refraction(i),
+                    textures_.sampler(), vertex.handle(), fragment.handle(), dispatch, error))
+                return false;
+            display_grade_passes_.push_back(std::move(display));
+        }
     }
     return true;
 }
@@ -723,6 +762,21 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
     if (!refresh_color_maps(error))
         return false;
     auto frame_postprocess = postprocess_params_;
+    const bool native_ui = window_.frame().presentation_render_pass() != VK_NULL_HANDLE;
+    bool grade_display = false;
+    if (native_ui)
+    {
+        PostProcessConstants display;
+        display.bloom[0] = 0.f;
+        for (size_t i = 0; i < 3; ++i)
+        {
+            display.grade[i] = frame_postprocess.grade[i];
+            grade_display |= display.grade[i] != 1.f;
+            frame_postprocess.grade[i] = 1.f;
+        }
+        for (auto &pass : display_grade_passes_)
+            pass->set_constants(display);
+    }
     // Resolve the saved console value each frame. Menus and loading screens
     // bypass AA, and changing AA needs neither vid_restart nor a new pipeline.
     frame_postprocess.color_map[3] = render_world && antialiasing == 1 ? 1.f : 0.f;
@@ -745,7 +799,7 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
     screenshot_ready_ = false;
     if (screenshot_requested_ && readback_enabled_)
     {
-        screenshot_extent_ = window_.frame().extent();
+        screenshot_extent_ = window_.frame().presentation_extent();
         const VkDeviceSize bytes = VkDeviceSize(screenshot_extent_.width) * screenshot_extent_.height * 4;
         if (screenshot_buffer_.size() < bytes)
         {
@@ -870,7 +924,9 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
                        this, &sun_shadows_, &sun_uniform, &local_shadows_, &local_uniforms_, record_local_lights, this,
                        render_world && (level.has_water() || particle_refraction) ? &water_targets_ : nullptr,
                        &water_uniform, ui_.has_distortion() ? capture_ui : nullptr, this,
-                       ui_.has_distortion() ? record_ui_distortion : nullptr, this))
+                       ui_.has_distortion() ? record_ui_distortion : nullptr, this,
+                       grade_display ? capture_ui : nullptr, this,
+                       grade_display ? record_display_grade : nullptr, this))
     {
         if (!window_.frame().device_lost())
             reset_required_ = true;
@@ -963,9 +1019,8 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
     targets_.destroy();
     water_targets_.destroy();
 #if defined(XR_PLATFORM_ANDROID)
-    if (!set_android_buffer_extent(scaled_android_window_, requested_android_extent_, error))
+    if (!android_presentation_extent(scaled_android_window_, extent, error))
         return false;
-    extent = requested_android_extent_;
 #endif
     if (!(replace_surface ? window_.recreate_surface(extent, error) : window_.recreate_frame(extent, error)))
         return false;
@@ -973,8 +1028,8 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
     auto &frame = window_.frame();
     const auto &physical = window_.physical();
 #if defined(XR_PLATFORM_ANDROID)
-    Msg("[renderer-vulkan] internal resolution reset requested=%ux%u swapchain=%ux%u", requested_android_extent_.width,
-        requested_android_extent_.height, frame.extent().width, frame.extent().height);
+    Msg("[renderer-vulkan] resolution reset scene=%ux%u presentation=%ux%u", frame.extent().width,
+        frame.extent().height, frame.presentation_extent().width, frame.presentation_extent().height);
 #endif
     if (!targets_.initialize(physical.handle, window_.device(), frame.extent(),
                              static_cast<uint32_t>(frame.image_count()), frame.depth_format(), physical.memory,
@@ -1005,7 +1060,7 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
         return false;
     deferred_.rebind_compatible_render_passes(targets_.render_pass(), frame.render_pass(), sun_shadows_.render_pass(),
                                               local_shadows_.render_pass(), frame.overlay_render_pass());
-    ui_pass_.rebind_render_pass(frame.render_pass(), frame.overlay_render_pass());
+    ui_pass_.rebind_render_pass(frame.render_pass(), frame.overlay_render_pass(), frame.presentation_render_pass());
     if (!create_ui_scene_sets(error))
         return false;
     if (!targets_.bind_lighting(deferred_, error))

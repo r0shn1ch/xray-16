@@ -155,7 +155,7 @@ bool load_scene_pass_dispatch(VkDevice device, PFN_vkGetDeviceProcAddr get_proc,
 bool ScenePass::initialize(VkDevice device, VkRenderPass render_pass,
     VkShaderModule scene_vertex, VkShaderModule scene_fragment,
     VkShaderModule ui_vertex, VkShaderModule ui_fragment,
-    const ScenePassDispatch& dispatch, std::string& error, bool use_depth)
+    const ScenePassDispatch& dispatch, std::string& error, bool use_depth, VkRenderPass presentation_pass)
 {
     destroy();
     if (!device || !render_pass || !scene_vertex || !scene_fragment || !ui_vertex || !ui_fragment ||
@@ -166,6 +166,7 @@ bool ScenePass::initialize(VkDevice device, VkRenderPass render_pass,
     }
     m_device = device;
     m_render_pass = render_pass;
+    m_presentation_pass = presentation_pass;
     m_vk = dispatch;
     const VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
         1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
@@ -224,6 +225,15 @@ bool ScenePass::initialize(VkDevice device, VkRenderPass render_pass,
             destroy();
             return false;
         }
+    if (presentation_pass)
+        for (int mode = 0; mode < 11; ++mode)
+            if (!make_pipeline(device, presentation_pass, m_ui_layout, ui_vertex, ui_fragment,
+                    true, false, m_vk, mode, m_presentation_ui_pipelines[mode]))
+            {
+                error = "could not create presentation UI pipeline mode=" + std::to_string(mode);
+                destroy();
+                return false;
+            }
     if (use_depth)
         for (int mode=0;mode<11;++mode)
             if (!make_pipeline(device,render_pass,m_ui_layout,ui_vertex,ui_fragment,
@@ -239,7 +249,8 @@ bool ScenePass::initialize(VkDevice device, VkRenderPass render_pass,
 bool ScenePass::valid_frame(const FrameRecordingContext& frame) const
 {
     return m_scene_pipeline && m_ui_pipelines[1] && frame.command_buffer &&
-        (frame.render_pass == m_render_pass || (m_overlay_pass && frame.render_pass == m_overlay_pass)) &&
+        (frame.render_pass == m_render_pass || (m_overlay_pass && frame.render_pass == m_overlay_pass) ||
+            (m_presentation_pass && frame.render_pass == m_presentation_pass)) &&
         frame.extent.width && frame.extent.height;
 }
 
@@ -247,7 +258,8 @@ bool ScenePass::record_geometry(const FrameRecordingContext& frame, VkBuffer ver
     VkIndexType index_type, uint32_t index_count, const SceneConstants& constants,
     VkDeviceSize vertex_offset, VkDeviceSize index_offset) const
 {
-    if (!valid_frame(frame) || !vertices || !indices || !index_count ||
+    if (!valid_frame(frame) || (m_presentation_pass && frame.render_pass == m_presentation_pass) ||
+        !vertices || !indices || !index_count ||
         (index_type != VK_INDEX_TYPE_UINT16 && index_type != VK_INDEX_TYPE_UINT32))
         return false;
     const VkViewport viewport{0, 0, static_cast<float>(frame.extent.width),
@@ -270,8 +282,10 @@ bool ScenePass::record_ui(const FrameRecordingContext& frame, VkBuffer vertices,
     VkDeviceSize vertex_offset, VkDeviceSize index_offset, float alpha_ref,
     VkExtent2D logical_extent, int blend_mode, VkDescriptorSet distortion_scene, bool world_depth) const
 {
-    if ((world_depth && !distortion_scene) || !valid_frame(frame) || !vertices || !indices || !texture_set || !index_count ||
-        blend_mode < 0 || blend_mode >= 11 || !m_ui_pipelines[blend_mode] ||
+    const bool presentation = m_presentation_pass && frame.render_pass == m_presentation_pass;
+    const auto* ui_pipelines = presentation ? m_presentation_ui_pipelines : m_ui_pipelines;
+    if ((world_depth && (!distortion_scene || presentation)) || !valid_frame(frame) || !vertices || !indices || !texture_set || !index_count ||
+        blend_mode < 0 || blend_mode >= 11 || !ui_pipelines[blend_mode] ||
         (world_depth && !m_world_ui_pipelines[blend_mode]) ||
         (index_type != VK_INDEX_TYPE_UINT16 && index_type != VK_INDEX_TYPE_UINT32))
         return false;
@@ -301,7 +315,7 @@ bool ScenePass::record_ui(const FrameRecordingContext& frame, VkBuffer vertices,
         static_cast<float>(logical_extent.height), std::clamp(alpha_ref, 0.0f, 1.0f),
         world_depth ? 16.f + blend_mode : distortion_scene ? -1.f : static_cast<float>(blend_mode)};
     m_vk.cmd_bind_pipeline(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-        world_depth ? m_world_ui_pipelines[blend_mode] : m_ui_pipelines[blend_mode]);
+        world_depth ? m_world_ui_pipelines[blend_mode] : ui_pipelines[blend_mode]);
     m_vk.cmd_set_viewport(frame.command_buffer, 0, 1, &viewport);
     m_vk.cmd_set_scissor(frame.command_buffer, 0, 1, &scissor);
     m_vk.cmd_bind_vertex_buffers(frame.command_buffer, 0, 1, &vertices, &vertex_offset);
@@ -372,6 +386,8 @@ void ScenePass::destroy()
     {
         for (auto& pipeline : m_ui_pipelines)
             if (pipeline) m_vk.destroy_pipeline(m_device, pipeline, nullptr);
+        for (auto& pipeline : m_presentation_ui_pipelines)
+            if (pipeline) m_vk.destroy_pipeline(m_device, pipeline, nullptr);
         for (auto& pipeline : m_world_ui_pipelines)
             if (pipeline) m_vk.destroy_pipeline(m_device,pipeline,nullptr);
         if (m_scene_pipeline) m_vk.destroy_pipeline(m_device, m_scene_pipeline, nullptr);
@@ -388,9 +404,11 @@ void ScenePass::destroy()
     m_device = VK_NULL_HANDLE;
     m_render_pass = VK_NULL_HANDLE;
     m_overlay_pass = VK_NULL_HANDLE;
+    m_presentation_pass = VK_NULL_HANDLE;
     m_scene_layout = m_ui_layout = VK_NULL_HANDLE;
     m_scene_pipeline = VK_NULL_HANDLE;
     for (auto& pipeline : m_ui_pipelines) pipeline = VK_NULL_HANDLE;
+    for (auto& pipeline : m_presentation_ui_pipelines) pipeline = VK_NULL_HANDLE;
     for (auto& pipeline : m_world_ui_pipelines) pipeline = VK_NULL_HANDLE;
     m_ui_descriptor_pool = VK_NULL_HANDLE;
     m_ui_descriptor_layout = VK_NULL_HANDLE;

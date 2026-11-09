@@ -24,7 +24,7 @@ public:
 
     bool initialize(SDL_Window* window, VkExtent2D extent, bool allow_readback,
         std::string& error, bool use_depth = false, bool preserve_prepass_depth = false,
-        bool postprocess = false);
+        bool postprocess = false, VkExtent2D scene_extent = {});
     bool recreate_frame(VkExtent2D extent, std::string& error);
     bool recreate_surface(VkExtent2D extent, std::string& error);
     void destroy();

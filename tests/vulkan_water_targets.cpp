@@ -89,4 +89,17 @@ int main()
         vk_mock::handle<VkImage>(3), 2));
     targets.destroy();
     assert(vk_mock::images.empty() && vk_mock::buffers.empty() && vk_mock::allocations.empty());
+    // Native UI needs only a sampled color snapshot, without water's second
+    // color image and camera constants for every presentation image.
+    assert(targets.initialize(vk_mock::handle<VkPhysicalDevice>(4),
+        vk_mock::handle<VkDevice>(1), VK_FORMAT_B8G8R8A8_UNORM,
+        {800, 600}, 2, memory, dispatch, buffers, error, true));
+    assert(vk_mock::images.size() == 2 && vk_mock::buffers.empty());
+    assert(targets.refraction(1) && !targets.distortion_field(1) && !targets.uniform(1));
+    assert(targets.capture(vk_mock::handle<VkCommandBuffer>(2), vk_mock::handle<VkImage>(3), 1));
+    assert(copies == 4 && barriers == 8);
+    assert(!targets.capture_distortion(vk_mock::handle<VkCommandBuffer>(2), vk_mock::handle<VkImage>(3), 1));
+    assert(copies == 4 && barriers == 8);
+    targets.destroy();
+    assert(vk_mock::images.empty() && vk_mock::buffers.empty() && vk_mock::allocations.empty());
 }
