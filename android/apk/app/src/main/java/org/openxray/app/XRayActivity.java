@@ -59,6 +59,9 @@ public final class XRayActivity extends SDLActivity {
                 + "; abi=" + (Build.SUPPORTED_ABIS.length == 0 ? "unknown" : Build.SUPPORTED_ABIS[0]));
         try {
             super.onCreate(savedInstanceState);
+            // Native UI provides focus feedback. Android's default decoration
+            // would tint the entire SDL surface after the keyboard closes.
+            mSurface.setDefaultFocusHighlightEnabled(false);
             if (getIntent().getBooleanExtra(LauncherActivity.EXTRA_TOUCH_CONTROLS, true)) {
                 touchControls = new TouchControlsView(this);
                 addContentView(touchControls, new ViewGroup.LayoutParams(
