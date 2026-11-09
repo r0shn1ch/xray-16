@@ -2,6 +2,7 @@ package org.openxray.app;
 
 import android.app.Activity;
 import android.app.ActivityManager;
+import android.app.ApplicationExitInfo;
 import android.app.AlertDialog;
 import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
@@ -69,7 +70,6 @@ public final class LauncherActivity extends Activity {
     public static final String EXTRA_IMMERSIVE = "org.openxray.extra.IMMERSIVE";
     public static final String EXTRA_TOUCH_CONTROLS = "org.openxray.extra.TOUCH_CONTROLS";
     public static final String EXTRA_RENDERER_MODE = "org.openxray.extra.RENDERER_MODE";
-    public static final String EXTRA_GRAPHICS_PRESET = "org.openxray.extra.GRAPHICS_PRESET";
     public static final String EXTRA_ENGINE_LOG = "org.openxray.extra.ENGINE_LOG";
     public static final String EXTRA_ACTIVITY_LOG = "org.openxray.extra.ACTIVITY_LOG";
     public static final String EXTRA_RENDER_WIDTH = "org.openxray.extra.RENDER_WIDTH";
@@ -90,20 +90,14 @@ public final class LauncherActivity extends Activity {
     private static final String PREF_TOUCH_CONTROLS = "touch_controls";
     private static final String PREF_ACTIVE_PAGE = "active_page";
     private static final String PREF_RENDERER_MODE = "renderer_mode";
-    private static final String PREF_GRAPHICS_PRESET = "graphics_preset";
     private static final String PREF_RENDER_RESOLUTION = "render_resolution";
     private static final String PREF_SHOW_FPS = "show_fps";
+    private static final String PREF_ANDROID_CRASH_REPORTS = "android_crash_reports";
 
     public static final int RENDERER_AUTO = 0;
     public static final int RENDERER_GLES = 1;
     public static final int RENDERER_VULKAN = 2;
 
-    public static final int GRAPHICS_AUTO = 0;
-    public static final int GRAPHICS_MINIMUM = 1;
-    public static final int GRAPHICS_LOW = 2;
-    public static final int GRAPHICS_DEFAULT = 3;
-    public static final int GRAPHICS_HIGH = 4;
-    public static final int GRAPHICS_EXTREME = 5;
 
     private static final int PAGE_GAME = 0;
     private static final int PAGE_SETTINGS = 1;
@@ -120,7 +114,6 @@ public final class LauncherActivity extends Activity {
     private EditText customArgs;
     private Spinner gameVariant;
     private Spinner rendererMode;
-    private Spinner graphicsPreset;
     private Spinner renderResolution;
     private CheckBox gamepadEnabled;
     private CheckBox splashEnabled;
@@ -128,7 +121,7 @@ public final class LauncherActivity extends Activity {
     private CheckBox immersiveMode;
     private CheckBox touchControlsEnabled;
     private CheckBox showFps;
-    private CheckBox[] advancedOptions;
+    private CheckBox androidCrashReports;
     private TextView accessStatus;
     private TextView gameInspection;
     private TextView status;
@@ -175,6 +168,8 @@ public final class LauncherActivity extends Activity {
         public void run() {
             if (activePage == PAGE_DIAGNOSTICS)
                 refreshLog();
+            else if (!isEngineProcessRunning())
+                logExecutor.execute(LauncherActivity.this::saveAndroidCrashReport);
             refreshRunningState();
             handler.postDelayed(this, activePage == PAGE_DIAGNOSTICS ? 1500 : 3000);
         }
@@ -195,6 +190,7 @@ public final class LauncherActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        logExecutor.execute(this::saveAndroidCrashReport);
         refreshAccessStatus();
         refreshGameInspection();
         if (activePage == PAGE_DIAGNOSTICS)
@@ -286,7 +282,8 @@ public final class LauncherActivity extends Activity {
         root.addView(title, matchWrap());
 
         TextView version = new TextView(this);
-        version.setText("Версия " + BuildConfig.VERSION_NAME + " · ARMv7");
+        version.setText("Версия " + BuildConfig.VERSION_NAME + " · "
+                + android.os.Build.SUPPORTED_ABIS[0]);
         version.setTextSize(13);
         version.setPadding(0, 0, 0, dp(10));
         root.addView(version, matchWrap());
@@ -318,7 +315,6 @@ public final class LauncherActivity extends Activity {
     private View buildGamePage() {
         LinearLayout content = pageContent();
         addSectionTitle(content, "Профиль игры");
-        content.addView(bodyText("Выберите профиль игры."), matchWrap());
 
         gameVariant = new Spinner(this);
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
@@ -340,8 +336,6 @@ public final class LauncherActivity extends Activity {
 
         addSectionTitle(content, "Установка игры");
 
-        content.addView(bodyText("Выберите папку установки с fsgame.ltx."), matchWrap());
-
         gamePath = new EditText(this);
         gamePath.setSingleLine(true);
         gamePath.setHint("/storage/emulated/0/STALKER");
@@ -353,7 +347,6 @@ public final class LauncherActivity extends Activity {
 
         LinearLayout pathActions = horizontalRow();
         pathActions.addView(actionButton("Выбрать папку", view -> chooseGameFolder()), weightedButton());
-        pathActions.addView(actionButton("Проверить", view -> refreshGameInspection()), weightedButton());
         content.addView(pathActions, matchWrap());
 
         gameInspection = bodyText("");
@@ -379,11 +372,6 @@ public final class LauncherActivity extends Activity {
         stopParams.setMarginStart(dp(6));
         launchActions.addView(stopButton, stopParams);
         content.addView(launchActions, matchWrap());
-        content.addView(actionButton("Проверка GLES", view -> launchEngine(true)),
-                new LinearLayout.LayoutParams(-1, dp(52)));
-        content.addView(actionButton("Проверка Vulkan", view -> launchVulkanSmoke()),
-                new LinearLayout.LayoutParams(-1, dp(52)));
-
         status = bodyText("Готово к настройке.");
         status.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         status.setPadding(dp(2), dp(10), dp(2), dp(14));
@@ -394,8 +382,6 @@ public final class LauncherActivity extends Activity {
     private View buildSettingsPage() {
         LinearLayout content = pageContent();
         addSectionTitle(content, OptionCatalog.SETTINGS_SECTIONS[0]);
-        content.addView(bodyText("Для игры используется OpenGL ES. Vulkan доступен для проверки."),
-                matchWrap());
         rendererMode = new Spinner(this);
         ArrayAdapter<String> rendererAdapter = new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_item, OptionCatalog.RENDERER_LABELS);
@@ -403,18 +389,7 @@ public final class LauncherActivity extends Activity {
         rendererMode.setAdapter(rendererAdapter);
         content.addView(rendererMode, matchWrap());
 
-        addSectionTitle(content, OptionCatalog.SETTINGS_SECTIONS[1]);
-        content.addView(bodyText("Автоматический профиль: Low."),
-                matchWrap());
-        graphicsPreset = new Spinner(this);
-        ArrayAdapter<String> graphicsAdapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, OptionCatalog.GRAPHICS_LABELS);
-        graphicsAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        graphicsPreset.setAdapter(graphicsAdapter);
-        content.addView(graphicsPreset, matchWrap());
-
         addSectionTitle(content, OptionCatalog.SETTINGS_SECTIONS[2]);
-        content.addView(bodyText("Снижение разрешения ускоряет рендеринг, но уменьшает чёткость."), matchWrap());
         buildRenderResolutionList();
         renderResolution = new Spinner(this);
         ArrayAdapter<RenderResolution> resolutionAdapter = new ArrayAdapter<>(this,
@@ -422,6 +397,8 @@ public final class LauncherActivity extends Activity {
         resolutionAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         renderResolution.setAdapter(resolutionAdapter);
         content.addView(renderResolution, matchWrap());
+        content.addView(bodyText("В Vulkan разрешение влияет на 3D-сцену и модель оружия. "
+                + "Игровое меню, 2D HUD и сенсорные кнопки используют разрешение экрана."), matchWrap());
 
         addSectionTitle(content, OptionCatalog.SETTINGS_SECTIONS[3]);
         gamepadEnabled = makeCheckBox("Включить поддержку геймпада", "Подключённый контроллер.");
@@ -441,22 +418,12 @@ public final class LauncherActivity extends Activity {
         content.addView(immersiveMode, matchWrap());
         content.addView(showFps, matchWrap());
 
+        addSectionTitle(content, "Диагностика");
+        androidCrashReports = makeCheckBox("Сохранять отчёты Android о завершении движка",
+                "Данные о завершении и системный tombstone после вылета сохраняются рядом с логами игры.");
+        content.addView(androidCrashReports, matchWrap());
+
         addSectionTitle(content, OptionCatalog.SETTINGS_SECTIONS[4]);
-        advancedOptions = new CheckBox[OptionCatalog.ADVANCED_KEYS.length];
-        for (int index = 0; index < advancedOptions.length; ++index) {
-            advancedOptions[index] = makeCheckBox(OptionCatalog.ADVANCED_LABELS[index],
-                    OptionCatalog.ADVANCED_DESCRIPTIONS[index]);
-            content.addView(advancedOptions[index], matchWrap());
-        }
-
-        content.addView(actionButton(OptionCatalog.ADVANCED_RESET_LABEL, view -> {
-            for (CheckBox option : advancedOptions)
-                option.setChecked(false);
-            savePreferences();
-        }), matchWrap());
-
-        addSectionTitle(content, OptionCatalog.SETTINGS_SECTIONS[5]);
-        content.addView(bodyText("Необязательные параметры движка."), matchWrap());
         customArgs = new EditText(this);
         customArgs.setHint("Например: -novtf");
         customArgs.setMinLines(2);
@@ -464,7 +431,6 @@ public final class LauncherActivity extends Activity {
         content.addView(customArgs, matchWrap());
 
         content.addView(actionButton("Сохранить параметры", view -> {
-            savePreferences();
             setStatus("Параметры сохранены.");
             showPage(PAGE_GAME);
         }), new LinearLayout.LayoutParams(-1, dp(52)));
@@ -618,8 +584,8 @@ public final class LauncherActivity extends Activity {
         content.addView(actions, matchWrap());
 
         TextView help = bodyText(
-                "Показываются native-лог OpenXRay и события Android Activity. Полный logcat полезен "
-                        + "для ошибок драйвера или системного завершения процесса.");
+                "Логи движка, Activity и отчёты Android сохраняются в _appdata_/logs игры. "
+                        + "Отчёт о вылете сохраняется после возврата в лаунчер.");
         help.setPadding(0, dp(8), 0, dp(8));
         content.addView(help, matchWrap());
 
@@ -700,13 +666,9 @@ public final class LauncherActivity extends Activity {
         keepScreenOn.setChecked(preferences.getBoolean(PREF_KEEP_SCREEN_ON, true));
         immersiveMode.setChecked(preferences.getBoolean(PREF_IMMERSIVE, true));
         rendererMode.setSelection(clampRendererMode(preferences.getInt(PREF_RENDERER_MODE, RENDERER_AUTO)));
-        graphicsPreset.setSelection(clampGraphicsPreset(
-                preferences.getInt(PREF_GRAPHICS_PRESET, GRAPHICS_AUTO)));
         selectStoredResolution(preferences.getString(PREF_RENDER_RESOLUTION, "auto"));
         showFps.setChecked(preferences.getBoolean(PREF_SHOW_FPS, true));
-        for (int index = 0; index < advancedOptions.length; ++index)
-            advancedOptions[index].setChecked(preferences.getBoolean(
-                    "advanced_" + OptionCatalog.ADVANCED_KEYS[index], false));
+        androidCrashReports.setChecked(preferences.getBoolean(PREF_ANDROID_CRASH_REPORTS, true));
         showPage(preferences.getInt(PREF_ACTIVE_PAGE, PAGE_GAME));
     }
 
@@ -725,16 +687,11 @@ public final class LauncherActivity extends Activity {
                 .putBoolean(PREF_KEEP_SCREEN_ON, keepScreenOn.isChecked())
                 .putBoolean(PREF_IMMERSIVE, immersiveMode.isChecked())
                 .putInt(PREF_RENDERER_MODE, rendererMode.getSelectedItemPosition())
-                .putInt(PREF_GRAPHICS_PRESET, graphicsPreset.getSelectedItemPosition())
                 .putString(PREF_RENDER_RESOLUTION, selectedRenderResolution().id)
                 .putBoolean(PREF_SHOW_FPS, showFps.isChecked())
+                .putBoolean(PREF_ANDROID_CRASH_REPORTS, androidCrashReports.isChecked())
                 .putInt(PREF_ACTIVE_PAGE, activePage)
                 .apply();
-        SharedPreferences.Editor advancedEditor = preferences.edit();
-        for (int index = 0; index < advancedOptions.length; ++index)
-            advancedEditor.putBoolean("advanced_" + OptionCatalog.ADVANCED_KEYS[index],
-                    advancedOptions[index].isChecked());
-        advancedEditor.apply();
     }
 
     private int clampVariant(int value) {
@@ -745,10 +702,6 @@ public final class LauncherActivity extends Activity {
         return value >= 0 && value < OptionCatalog.RENDERER_LABELS.length ? value : RENDERER_AUTO;
     }
 
-    private int clampGraphicsPreset(int value) {
-        return value >= 0 && value < OptionCatalog.GRAPHICS_LABELS.length ? value : GRAPHICS_AUTO;
-    }
-
     private void buildRenderResolutionList() {
         renderResolutions.clear();
         DisplayMetrics metrics = new DisplayMetrics();
@@ -756,28 +709,27 @@ public final class LauncherActivity extends Activity {
         int nativeWidth = Math.max(metrics.widthPixels, metrics.heightPixels);
         int nativeHeight = Math.min(metrics.widthPixels, metrics.heightPixels);
         if (nativeWidth <= 0 || nativeHeight <= 0) {
-            nativeWidth = 1280;
-            nativeHeight = 720;
+            DisplayMetrics fallback = getResources().getDisplayMetrics();
+            nativeWidth = Math.max(fallback.widthPixels, fallback.heightPixels);
+            nativeHeight = Math.min(fallback.widthPixels, fallback.heightPixels);
         }
 
-        int autoWidth = Math.min(nativeWidth, 1280);
-        int autoHeight = aspectHeight(autoWidth, nativeWidth, nativeHeight);
+        int autoWidth = scaledDimension(nativeWidth, 50);
+        int autoHeight = scaledDimension(nativeHeight, 50);
         renderResolutions.add(new RenderResolution("auto",
                 "Автоматически — " + autoWidth + "×" + autoHeight, autoWidth, autoHeight));
 
-        for (int width : OptionCatalog.RESOLUTION_WIDTHS) {
-            if (width >= nativeWidth)
-                continue;
-            int height = aspectHeight(width, nativeWidth, nativeHeight);
-            addRenderResolution(width + "x" + height, width + "×" + height, width, height);
+        for (int percent : new int[]{40, 67, 75}) {
+            int width = scaledDimension(nativeWidth, percent);
+            int height = scaledDimension(nativeHeight, percent);
+            addRenderResolution("scale-" + percent, percent + "% — " + width + "×" + height, width, height);
         }
         addRenderResolution("native", "Нативное — " + nativeWidth + "×" + nativeHeight,
                 nativeWidth, nativeHeight);
     }
 
-    private int aspectHeight(int width, int nativeWidth, int nativeHeight) {
-        int height = Math.max(320, Math.round((float) width * nativeHeight / nativeWidth));
-        return height & ~1;
+    private int scaledDimension(int nativePixels, int percent) {
+        return Math.max(2, Math.round(nativePixels * percent / 100.0f)) & ~1;
     }
 
     private void addRenderResolution(String id, String label, int width, int height) {
@@ -850,7 +802,10 @@ public final class LauncherActivity extends Activity {
     private void showPage(int requestedPage) {
         int page = requestedPage >= PAGE_GAME && requestedPage <= PAGE_DIAGNOSTICS
                 ? requestedPage : PAGE_GAME;
+        boolean leavingSettings = activePage == PAGE_SETTINGS && page != PAGE_SETTINGS;
         activePage = page;
+        if (leavingSettings)
+            savePreferences();
         if (pages == null)
             return;
         for (int index = 0; index < pages.length; ++index) {
@@ -949,17 +904,13 @@ public final class LauncherActivity extends Activity {
         return true;
     }
 
-    private void launchEngine(boolean rendererSmoke) {
-        launchEngine(rendererSmoke, false);
-    }
-
     private void launchVulkanSmoke() {
-        launchEngine(true, true);
+        launchEngine(true);
     }
 
-    private void launchEngine(boolean rendererSmoke, boolean vulkanRendererSmoke) {
+    private void launchEngine(boolean vulkanSmoke) {
         ++stopGeneration; // Cancel pending retries before any new launch or reattach.
-        if (!rendererSmoke && isEngineProcessRunning()) {
+        if (!vulkanSmoke && isEngineProcessRunning()) {
             setStatus("Возвращаю уже запущенный движок на экран…");
             Intent resume = new Intent(this, XRayActivity.class);
             resume.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
@@ -970,19 +921,12 @@ public final class LauncherActivity extends Activity {
             }
             return;
         }
-        if (!rendererSmoke && !prepareEngineLaunch())
+        if (!vulkanSmoke && !prepareEngineLaunch())
             return;
 
         String[] additionalArgs;
         try {
             additionalArgs = parseAdditionalArguments(customArgs.getText().toString());
-            List<String> selectedArgs = new ArrayList<>();
-            for (String argument : additionalArgs)
-                selectedArgs.add(argument);
-            for (int index = 0; index < advancedOptions.length; ++index)
-                if (advancedOptions[index].isChecked())
-                    selectedArgs.add(OptionCatalog.ADVANCED_ARGS[index]);
-            additionalArgs = selectedArgs.toArray(new String[0]);
         } catch (IllegalArgumentException error) {
             setStatus("Ошибка в дополнительных аргументах: " + error.getMessage());
             showPage(PAGE_SETTINGS);
@@ -990,36 +934,65 @@ public final class LauncherActivity extends Activity {
         }
 
         savePreferences();
+        if (androidCrashReports.isChecked()) {
+            try {
+                NativeCrashReport.saveLatest(this);
+            } catch (IOException | RuntimeException error) {
+                writeLauncherLog("[launcher] unable to save previous Android exit: " + error);
+            }
+        }
         String selectedPath = gamePath.getText().toString().trim();
         SessionLogs.Session logSession;
         try {
-            logSession = SessionLogs.start(this, rendererSmoke ? null : selectedPath);
+            logSession = SessionLogs.start(this, vulkanSmoke ? null : selectedPath);
         } catch (IOException | SecurityException error) {
             setStatus("Не удалось создать журналы в папке игры: " + error.getMessage());
             return;
         }
         writeLauncherLog("[launcher] starting "
-                + (rendererSmoke ? "renderer smoke test" : "OpenXRay; game root=" + selectedPath),
+                + (vulkanSmoke ? "Vulkan smoke test" : "OpenXRay; game root=" + selectedPath),
+                logSession.activity);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                ActivityManager manager = getSystemService(ActivityManager.class);
+                if (manager != null) {
+                    for (ApplicationExitInfo exit : manager.getHistoricalProcessExitReasons(
+                            getPackageName(), 0, 3)) {
+                        writeLauncherLog("[launcher] previous process exit time=" + exit.getTimestamp()
+                                + " reason=" + exit.getReason() + " status=" + exit.getStatus()
+                                + " pssKb=" + exit.getPss() + " rssKb=" + exit.getRss()
+                                + " description=" + exit.getDescription(), logSession.activity);
+                    }
+                }
+            } catch (RuntimeException error) {
+                writeLauncherLog("[launcher] previous process exit lookup failed: " + error,
+                        logSession.activity);
+            }
+        }
+        RenderResolution diagnosticsResolution = selectedRenderResolution();
+        writeLauncherLog("[launcher] environment renderer="
+                + OptionCatalog.value(OptionCatalog.RENDERER_LABELS,
+                        clampRendererMode(rendererMode.getSelectedItemPosition()), 0)
+                + " resolution=" + diagnosticsResolution.width + "x" + diagnosticsResolution.height
+                + " android=" + android.os.Build.VERSION.RELEASE
+                + " sdk=" + android.os.Build.VERSION.SDK_INT
+                + " device=" + android.os.Build.MANUFACTURER + "/" + android.os.Build.MODEL
+                + " abi=" + java.util.Arrays.toString(android.os.Build.SUPPORTED_ABIS),
                 logSession.activity);
         engineLaunchTime = SystemClock.elapsedRealtime();
         engineFailureToastShown = false;
 
-        Intent intent = createEngineIntent(rendererSmoke, vulkanRendererSmoke);
+        Intent intent = createEngineIntent(vulkanSmoke);
         intent.putExtra(EXTRA_ENGINE_LOG, logSession.engine.getAbsolutePath());
         intent.putExtra(EXTRA_ACTIVITY_LOG, logSession.activity.getAbsolutePath());
         intent.putExtra(EXTRA_ADDITIONAL_ARGS, additionalArgs);
         String launchStatus;
-        if (vulkanRendererSmoke) {
-            launchStatus = "Запускаю Vulkan probe и GLES fallback…";
-        } else if (rendererSmoke) {
-            launchStatus = "Запускаю GLES smoke test…";
+        if (vulkanSmoke) {
+            launchStatus = "Запускаю независимую проверку Vulkan…";
         } else {
             launchStatus = "Запускаю OpenXRay: "
                     + OptionCatalog.value(OptionCatalog.RENDERER_LABELS,
-                            clampRendererMode(rendererMode.getSelectedItemPosition()), 0)
-                    + ", качество: "
-                    + OptionCatalog.value(OptionCatalog.GRAPHICS_LABELS,
-                            clampGraphicsPreset(graphicsPreset.getSelectedItemPosition()), 0);
+                            clampRendererMode(rendererMode.getSelectedItemPosition()), 0);
         }
         setStatus(launchStatus);
         Toast.makeText(this, "OpenXRay: запуск движка…", Toast.LENGTH_SHORT).show();
@@ -1031,14 +1004,10 @@ public final class LauncherActivity extends Activity {
         }
     }
 
-    private Intent createEngineIntent(boolean rendererSmoke) {
-        return createEngineIntent(rendererSmoke, false);
-    }
-
-    private Intent createEngineIntent(boolean rendererSmoke, boolean vulkanRendererSmoke) {
+    private Intent createEngineIntent(boolean vulkanSmoke) {
         Intent intent = new Intent(this, XRayActivity.class);
-        intent.putExtra(EXTRA_RENDERER_SMOKE, rendererSmoke);
-        intent.putExtra(EXTRA_RENDERER_VULKAN_SMOKE, vulkanRendererSmoke);
+        intent.putExtra(EXTRA_RENDERER_SMOKE, vulkanSmoke);
+        intent.putExtra(EXTRA_RENDERER_VULKAN_SMOKE, vulkanSmoke);
         intent.putExtra(EXTRA_GAMEPAD_ENABLED, gamepadEnabled.isChecked());
         intent.putExtra(EXTRA_TOUCH_CONTROLS, touchControlsEnabled.isChecked());
         intent.putExtra(EXTRA_SPLASH_ENABLED, splashEnabled.isChecked());
@@ -1046,13 +1015,11 @@ public final class LauncherActivity extends Activity {
         intent.putExtra(EXTRA_IMMERSIVE, immersiveMode.isChecked());
         intent.putExtra(EXTRA_RENDERER_MODE,
                 clampRendererMode(rendererMode.getSelectedItemPosition()));
-        intent.putExtra(EXTRA_GRAPHICS_PRESET,
-                clampGraphicsPreset(graphicsPreset.getSelectedItemPosition()));
         RenderResolution resolution = selectedRenderResolution();
         intent.putExtra(EXTRA_RENDER_WIDTH, resolution.width);
         intent.putExtra(EXTRA_RENDER_HEIGHT, resolution.height);
         intent.putExtra(EXTRA_SHOW_FPS, showFps.isChecked());
-        if (!rendererSmoke) {
+        if (!vulkanSmoke) {
             intent.putExtra(EXTRA_GAME_PATH, gamePath.getText().toString().trim());
             intent.putExtra(EXTRA_GAME_VARIANT, activeGameVariant);
         }
@@ -1223,9 +1190,26 @@ public final class LauncherActivity extends Activity {
         File privateRoot = new File(getFilesDir(), "openxray");
         File destination = new File(privateRoot, "engine-gamedata");
         File marker = new File(privateRoot, "engine-data.version");
-        String desiredVersion = Integer.toString(BuildConfig.VERSION_CODE);
+        // VERSION_CODE remains the same across diagnostic APKs. The bundled
+        // shaders can change between builds, so use the payload's fingerprint.
+        String desiredVersion;
+        try (InputStream input = getAssets().open("gamedata/openxray-bundle.sha256")) {
+            byte[] bytes = new byte[65];
+            int length = 0;
+            while (length < bytes.length) {
+                int count = input.read(bytes, length, bytes.length - length);
+                if (count < 0)
+                    break;
+                length += count;
+            }
+            desiredVersion = new String(bytes, 0, length, StandardCharsets.US_ASCII);
+            if (length != 64 || !desiredVersion.matches("[0-9a-f]{64}") || input.read() != -1)
+                throw new IOException("invalid bundled engine data fingerprint");
+        }
 
-        if (desiredVersion.equals(readSmallTextFile(marker)) && isCompleteEngineData(destination)) {
+        if (desiredVersion.equals(readSmallTextFile(marker))
+                && desiredVersion.equals(readSmallTextFile(new File(destination, "openxray-bundle.sha256")))
+                && isCompleteEngineData(destination)) {
             writeLauncherLog("[launcher] OpenXRay engine data is current: " + destination.getAbsolutePath());
             return true;
         }
@@ -1367,34 +1351,13 @@ public final class LauncherActivity extends Activity {
             return;
         }
 
-        boolean fsgame = new File(root, "fsgame.ltx").isFile();
-        boolean gamedata = new File(root, "gamedata").isDirectory();
-        boolean resources = new File(root, "resources").isDirectory();
         File appData = new File(root, "_appdata_");
-        boolean appDataWritable = appData.isDirectory() ? appData.canWrite() : root.canWrite();
-        boolean socExecutable = new File(root, "bin/XR_3DA.exe").isFile()
-                || new File(root, "bin/xr_3da.exe").isFile();
-        boolean laterExecutable = new File(root, "bin/xrEngine.exe").isFile()
-                || new File(root, "bin/xrengine.exe").isFile();
-        String hint = socExecutable ? "похоже на Shadow of Chernobyl"
-                : laterExecutable ? "обнаружена установка CS/CoP"
-                : "точная игра будет определена выбранным профилем";
-        String mismatch = socExecutable && activeGameVariant > 1
-                ? " · профиль не совпадает с найденным XR_3DA.exe"
-                : laterExecutable && activeGameVariant == 1
-                ? " · профиль SoC не совпадает с найденным xrEngine.exe" : "";
-        gameInspection.setText("Профиль: " + profileName(activeGameVariant)
-                + " · папка читается · fsgame.ltx: " + yesNo(fsgame)
-                + " · gamedata: " + yesNo(gamedata)
-                + " · resources: " + yesNo(resources)
-                + " · _appdata_ доступна для записи: " + yesNo(appDataWritable) + "\n" + hint
-                + mismatch + ". Проверка информационная и не изменяет файлы.");
-        gameInspection.setTextColor(fsgame && appDataWritable && mismatch.isEmpty()
-                ? Color.rgb(25, 115, 55) : Color.rgb(150, 95, 25));
-    }
-
-    private String yesNo(boolean value) {
-        return value ? "есть" : "нет";
+        if (!(appData.isDirectory() ? appData.canWrite() : root.canWrite())) {
+            gameInspection.setText("Папка сохранений недоступна для записи.");
+            gameInspection.setTextColor(Color.rgb(190, 70, 35));
+        } else {
+            gameInspection.setText("");
+        }
     }
 
     private void refreshRunningState() {
@@ -1472,28 +1435,35 @@ public final class LauncherActivity extends Activity {
                 if (isFinishing() || isDestroyed() || logView == null)
                     return;
                 logView.setText(log.isEmpty()
-                        ? "Лог пока пуст. Запустите GLES/Vulkan-проверку или игру." : log);
+                        ? "Лог пока пуст. Запустите проверку Vulkan или игру." : log);
                 updateEngineStatus(log);
             });
         });
     }
 
     private String collectLogs() {
+        saveAndroidCrashReport();
         StringBuilder result = new StringBuilder();
         File[] session = SessionLogs.latest(this);
-        for (File file : session) appendLog(result, file);
+        for (File file : session) if (!file.getName().endsWith(".native-tombstone.pb"))
+            appendLog(result, file);
         return result.toString();
+    }
+
+    private void saveAndroidCrashReport() {
+        if (!preferences.getBoolean(PREF_ANDROID_CRASH_REPORTS, true)) return;
+        try {
+            NativeCrashReport.saveLatest(this);
+        } catch (IOException | RuntimeException error) {
+            writeLauncherLog("[launcher] unable to save Android exit: " + error);
+        }
     }
 
     private void updateEngineStatus(String log) {
         if (engineLaunchTime == 0)
             return;
-        if (log.contains("[renderer-vulkan] PASS: Vulkan command buffer")) {
-            setStatus("Самостоятельный Vulkan render pass завершён: PASS.");
-            return;
-        }
-        if (log.contains("[renderer-smoke] center pixel") && log.contains(": PASS")) {
-            setStatus("GLES renderer smoke test завершён: PASS.");
+        if (log.contains("[renderer-vulkan] PASS: three Vulkan lit geometry and UI draws")) {
+            setStatus("Vulkan: геометрия, освещение и UI-проверка завершены: PASS.");
             return;
         }
         if (log.contains("[android] engine loaded")) {
@@ -1563,24 +1533,45 @@ public final class LauncherActivity extends Activity {
 
     private void shareLogs() {
         logExecutor.execute(() -> {
-            String collected = collectLogs();
-            if (collected.length() > MAX_SHARED_LOG_CHARS)
-                collected = collected.substring(collected.length() - MAX_SHARED_LOG_CHARS);
-            final String log = collected;
+            saveAndroidCrashReport();
+            File[] files = SessionLogs.latest(this);
+            File archive = new File(getCacheDir(), "openxray-diagnostics.zip");
+            try (java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(
+                    new FileOutputStream(archive))) {
+                byte[] buffer = new byte[65536];
+                for (File file : files) {
+                    if (!file.isFile()) continue;
+                    zip.putNextEntry(new java.util.zip.ZipEntry(file.getName()));
+                    try (FileInputStream input = new FileInputStream(file)) {
+                        int count;
+                        while ((count = input.read(buffer)) != -1) zip.write(buffer, 0, count);
+                    }
+                    zip.closeEntry();
+                }
+            } catch (IOException error) {
+                handler.post(() -> Toast.makeText(this,
+                        "Не удалось собрать журналы: " + error.getMessage(), Toast.LENGTH_LONG).show());
+                return;
+            }
             handler.post(() -> {
-                if (log.isEmpty()) {
+                if (archive.length() == 0) {
                     Toast.makeText(this, "Лог пока пуст", Toast.LENGTH_SHORT).show();
                     return;
                 }
                 Intent share = new Intent(Intent.ACTION_SEND);
-                share.setType("text/plain");
+                share.setType("application/zip");
                 share.putExtra(Intent.EXTRA_SUBJECT,
                         "OpenXRay Android " + BuildConfig.VERSION_NAME + " logs");
-                share.putExtra(Intent.EXTRA_TEXT, log);
+                Uri archiveUri = Uri.parse("content://" + getPackageName()
+                        + ".diagnostics/openxray-diagnostics.zip");
+                share.putExtra(Intent.EXTRA_STREAM, archiveUri);
+                share.setClipData(android.content.ClipData.newUri(
+                        getContentResolver(), "OpenXRay diagnostics", archiveUri));
+                share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 try {
                     startActivity(Intent.createChooser(share, "Поделиться логом OpenXRay"));
                 } catch (ActivityNotFoundException error) {
-                    Toast.makeText(this, "Нет приложения для отправки текста", Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, "Нет приложения для отправки архива", Toast.LENGTH_LONG).show();
                 }
             });
         });
@@ -1592,23 +1583,15 @@ public final class LauncherActivity extends Activity {
             return;
         }
         for (File file : SessionLogs.latest(this)) deleteLog(file);
+        deleteLog(SessionLogs.pending(this));
         refreshLog();
     }
 
     private void writeLauncherLog(String message) {
-        File[] session = SessionLogs.latest(this);
-        writeLauncherLog(message, session.length != 0 ? session[1] : null);
+        writeLauncherLog(message, SessionLogs.pending(this));
     }
 
     private void writeLauncherLog(String message, File sessionFile) {
-        if (sessionFile == null) {
-            String gameRoot = gamePath == null ? "" : gamePath.getText().toString().trim();
-            File directory = gameRoot.isEmpty() ? new File(getFilesDir(), "openxray/logs")
-                    : new File(gameRoot, "_appdata_/logs");
-            if (!directory.isDirectory() && !directory.mkdirs()) return;
-            String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
-            sessionFile = new File(directory, "activity_" + stamp + "_launcher.log");
-        }
         String timestamp = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
                 .format(new Date());
         File parent = sessionFile.getParentFile();

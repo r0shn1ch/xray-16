@@ -107,11 +107,16 @@ bool CResourceManager::_LinkPP(SPass& pass)
     if (pp.pp)
         return true;
 
+    // Desktop shadow blenders intentionally request "null": depth/stencil
+    // rendering does not require a fragment stage. A failed named PS must
+    // still be rejected. Android maps this sentinel to its no-op "dumb" PS
+    // before reaching here, preserving the GLES monolithic requirement.
+    const bool allow_null_fragment = 0 == xr_stricmp(pass.ps->cName.c_str(), "null");
     if (GLAD_GL_ARB_separate_shader_objects)
-        pp.pp = GLGeneratePipeline(pp.cName.c_str(), pass.ps->sh, pass.vs->sh, pass.gs->sh);
+        pp.pp = GLGeneratePipeline(pp.cName.c_str(), pass.ps->sh, pass.vs->sh, pass.gs->sh, allow_null_fragment);
     else
     {
-        pp.pp = GLLinkMonolithicProgram(pp.cName.c_str(), pass.ps->sh, pass.vs->sh, pass.gs->sh);
+        pp.pp = GLLinkMonolithicProgram(pp.cName.c_str(), pass.ps->sh, pass.vs->sh, pass.gs->sh, allow_null_fragment);
         if (!pp.pp)
             return false;
 

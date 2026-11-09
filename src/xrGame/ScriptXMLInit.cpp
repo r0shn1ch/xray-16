@@ -278,6 +278,10 @@ void CScriptXmlInit::script_register(lua_State* luaState)
         class_<CScriptXmlInit>("CScriptXmlInit")
             .def(constructor<>())
             .def("ParseFile", &CScriptXmlInit::ParseFile)
+            .def("HasNode", +[](CScriptXmlInit* self, pcstr path)
+            {
+                return self->GetXml().NavigateToNode(path, 0) != nullptr;
+            })
             .def("ParseShTexInfo", &CScriptXmlInit::ParseShTexInfo)
             .def("InitWindow", &CScriptXmlInit::InitWindow)
             .def("InitHint", &CScriptXmlInit::InitHint)

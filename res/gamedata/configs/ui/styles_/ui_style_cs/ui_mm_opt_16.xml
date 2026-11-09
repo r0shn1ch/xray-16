@@ -414,6 +414,19 @@
       <list_font	 r="216" g="186" b="140" font="letterica16"/>
     </combo_ssample>
 
+    <cap_vk_aa x="17" y="0" width="119" height="21">
+      <text font="letterica16" color="ui_6">ui_mm_supersample</text>
+    </cap_vk_aa>
+    <combo_vk_aa x="162" y="0" width="200" height="21" list_length="2" always_show_scroll="0">
+      <options_item entry="r_vk_aa" group="mm_opt_video_adv"/>
+      <text_color>
+        <e r="216" g="186" b="140"/>
+        <d color="ui_gray"/>
+      </text_color>
+      <list_font_s r="240" g="217" b="182"/>
+      <list_font	 r="216" g="186" b="140" font="letterica16"/>
+    </combo_vk_aa>
+
 
 
     <cap_r2_sun x="17" y="0" width="119" height="21">

@@ -35,6 +35,7 @@ target_link_libraries(xr_3da
     xrAPI
     xrEngine
     xrRender_GL
+    xrRenderVK
     xrGame
 )
 

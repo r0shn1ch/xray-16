@@ -1,0 +1,250 @@
+#include "xrEngine/stdafx.h"
+#include "src/Layers/xrRenderVK/VulkanModelVisual.h"
+#include "xrEngine/EnnumerateVertices.h"
+#include "xrServerEntities/smart_cast.h"
+#include "xrCore/FMesh.hpp"
+
+#include <cassert>
+
+using namespace xray::render::vulkan;
+
+static void move_bone(CBoneInstance* instance)
+{
+    instance->mTransform.c.x = 2.f;
+}
+
+struct VertexCounter : SEnumVerticesCallback
+{
+    int count = 0;
+    float first_x = 0.f;
+
+    void operator()(const Fvector& position) override
+    {
+        if (!count) first_x = position.x;
+        ++count;
+    }
+};
+
+struct TracksCallback : IUpdateTracksCallback
+{
+    bool operator()(float, IKinematicsAnimated&) override { return false; }
+};
+
+struct BlendCallback : IBlendDestroyCallback
+{
+    void BlendDestroy(CBlend&) override {}
+};
+
+static void completed_motion(CBlend* blend)
+{
+    auto& calls = *static_cast<unsigned*>(blend->CallbackParam);
+    ++calls;
+    assert(blend->timeCurrent >= blend->timeTotal);
+    assert(blend->blend_state() != CBlend::eFREE_SLOT);
+}
+
+static std::vector<uint8_t> legacy_motion_file()
+{
+    CMemoryWriter file;
+    file.open_chunk(OGF_S_SMPARAMS);
+    file.w_u16(4);
+    file.w_u16(1);
+    file.w_stringZ("all");
+    file.w_u16(2);
+    file.w_stringZ("root");
+    file.w_u32(0);
+    file.w_stringZ("hand");
+    file.w_u32(1);
+    file.w_u16(1);
+    file.w_stringZ("idle");
+    file.w_u32(0);
+    file.w_u16(0);
+    file.w_u16(0);
+    for (unsigned i = 0; i < 4; ++i) file.w_float(1.f);
+    file.w_u32(0);
+    file.close_chunk();
+    file.open_chunk(OGF_S_MOTIONS);
+    file.open_chunk(0);
+    file.w_u32(1);
+    file.close_chunk();
+    file.open_chunk(1);
+    file.w_stringZ("idle");
+    file.w_u32(2);
+    for (unsigned bone = 0; bone < 2; ++bone)
+    {
+        file.w_u8(2); // Constant rotation and translation.
+        for (unsigned i = 0; i < 4; ++i) file.w_u16(i == 3 ? 32767 : 0);
+        for (unsigned i = 0; i < 3; ++i) file.w_float(0.f);
+    }
+    file.close_chunk();
+    file.close_chunk();
+    const auto* bytes = static_cast<const uint8_t*>(file.pointer());
+    return {bytes, bytes + file.size()};
+}
+
+int main()
+{
+    Core.Initialize("vulkan_kinematics_test", nullptr, false);
+    SkeletonBones bones;
+    bones.root = 0;
+    bones.bones.resize(2);
+    bones.bones[0].name = "root";
+    bones.bones[1].name = "hand";
+    bones.bones[1].parent = 0;
+
+    VisualRecord record;
+    record.type = 3;
+    auto visual = std::make_unique<VulkanModelVisual>(record, "", nullptr);
+    std::string error;
+    auto kinematics = VulkanKinematics::create(bones, visual.get(), error);
+    assert(kinematics && error.empty());
+    visual->set_skeleton(std::move(kinematics));
+    assert(visual->dcast_PKinematicsAnimated() == visual->skeleton());
+    IRenderVisual* render_visual = visual.get();
+    assert(smart_cast<IKinematics*>(render_visual) == visual->skeleton());
+    assert(smart_cast<IKinematicsAnimated*>(render_visual) == visual->skeleton());
+    VisualRecord rigid_record;
+    rigid_record.type = 10;
+    VulkanModelVisual rigid_visual(rigid_record, "rigid", nullptr);
+    auto rigid_pose = VulkanKinematics::create(bones, &rigid_visual, error);
+    assert(rigid_pose);
+    rigid_visual.set_skeleton(std::move(rigid_pose));
+    assert(rigid_visual.dcast_PKinematics() != nullptr);
+    assert(rigid_visual.dcast_PKinematicsAnimated() == nullptr);
+    IRenderVisual* rigid_render_visual = &rigid_visual;
+    assert(smart_cast<IKinematics*>(rigid_render_visual) == rigid_visual.skeleton());
+    assert(smart_cast<IKinematicsAnimated*>(rigid_render_visual) == nullptr);
+    assert(smart_cast<IKinematics*>(static_cast<IRenderVisual*>(nullptr)) == nullptr);
+    auto* pose = visual->dcast_PKinematics();
+    MotionSlot slot;
+    slot.source = "actor.omf";
+    slot.raw = legacy_motion_file();
+    slot.partition_names = {"all"};
+    slot.partitions = {{0, 1}};
+    MotionDefinition idle;
+    idle.name = "idle";
+    idle.bone_or_part = 0;
+    idle.parameters = {1.f, 1.f, 10.f, 10.f};
+    slot.definitions.push_back(idle);
+    auto& clip = slot.clips.emplace_back();
+    clip.name = "idle";
+    clip.frames = 2;
+    clip.bones.resize(2);
+    for (auto& track : clip.bones)
+    {
+        track.flags = 3;
+        track.rotations.push_back({0, 0, 0, 32767});
+        track.translation_size = {0.01f, 0.f, 0.f};
+        track.translations8 = {{{0, 0, 0}}, {{100, 0, 0}}};
+    }
+    static_cast<VulkanKinematics*>(pose)->set_motions({ slot });
+    {
+        auto replacement = VulkanKinematics::create(bones, visual.get(), error);
+        assert(replacement);
+        replacement->set_motions({slot});
+        replacement->set_motions({slot});
+        assert(replacement->partitions().part(0).bones.size() == 2);
+        replacement->set_motions({});
+        assert(replacement->LL_MotionsSlotCount() == 0);
+        assert(replacement->partitions().count() == 0);
+    }
+    ModelGeometry geometry;
+    geometry.type = 3;
+    geometry.children.resize(1);
+    auto& child = geometry.children[0];
+    child.type = 5;
+    child.vertices.resize(3);
+    child.indices = { 0, 1, 2 };
+    child.vertices[0].position[0] = 0.f;
+    child.vertices[1].position[0] = 1.f;
+    child.vertices[2].position[1] = 1.f;
+    for (auto& vertex : child.vertices)
+        vertex.bones[0] = 1;
+    assert(static_cast<VulkanKinematics*>(pose)->attach_geometry(geometry, error));
+    xr_vector<xr_vector<u16>> groups;
+    assert(pose->LL_GetBoneGroups(groups) == 1 && groups[0].size() == 1 && groups[0][0] == 1);
+    VertexCounter counter;
+    pose->EnumBoneVertices(counter, 1);
+    assert(counter.count == 3);
+    Fmatrix identity;
+    identity.identity();
+    IKinematics::pick_result hit{};
+    Fvector start, direction;
+    start.set(0.25f, 0.25f, -1.f);
+    direction.set(0.f, 0.f, 1.f);
+    assert(pose->PickBone(identity, hit, 5.f, start, direction, 1));
+    assert(hit.dist == 1.f);
+    pose->LL_GetBoneInstance(1).set_callback(0, move_bone, nullptr);
+    pose->CalculateBones_Invalidate();
+    pose->CalculateBones(TRUE);
+    assert(pose->LL_GetTransform_R(1).c.x == 2.f);
+    VertexCounter moved;
+    pose->EnumBoneVertices(moved, 1);
+    assert(moved.count == 3 && moved.first_x == 2.f);
+    start.x += 2.f;
+    assert(pose->PickBone(identity, hit, 5.f, start, direction, 1) && hit.dist == 1.f);
+    start.x -= 2.f;
+    assert(!pose->PickBone(identity, hit, 5.f, start, direction, 1));
+    pose->LL_GetBoneInstance(1).set_callback(0, move_bone, nullptr, TRUE);
+    pose->CalculateBones(TRUE);
+    assert(pose->LL_GetTransform_R(1).c.x == 2.f);
+    TracksCallback tracks_callback;
+    BlendCallback blend_callback;
+    auto* animated_before_reset = pose->dcast_PKinematicsAnimated();
+    animated_before_reset->SetUpdateTracksCalback(&tracks_callback);
+    animated_before_reset->SetBlendDestroyCallback(&blend_callback);
+    static_cast<VulkanKinematics*>(pose)->reset_instance_state();
+    assert(!animated_before_reset->GetUpdateTracksCalback());
+    assert(!animated_before_reset->GetBlendDestroyCallback());
+    assert(!pose->LL_GetBoneInstance(1).callback() && pose->LL_GetTransform_R(1).c.x == 0.f);
+    assert(pose && pose->LL_BoneCount() == 2 && pose->LL_GetBoneRoot() == 0);
+    assert(pose->LL_BoneID("HAND") == 1 && pose->LL_BoneID("missing") == BI_NONE);
+    assert(pose->LL_GetData(1).GetParentID() == 0);
+    xr_vector<Fmatrix> bind;
+    pose->LL_GetBindTransform(bind);
+    assert(bind.size() == 2 && bind[1].c.x == 0.f);
+    assert(pose->LL_VisibleBoneCount() == 2);
+    pose->LL_SetBoneVisible(1, FALSE, FALSE);
+    assert(pose->LL_VisibleBoneCount() == 1 && !pose->LL_GetBoneVisible(1));
+    assert(!pose->PickBone(identity, hit, 5.f, start, direction, 1));
+
+    auto duplicate = std::make_unique<VulkanModelVisual>(*visual);
+    auto* copied = duplicate->dcast_PKinematics();
+    assert(static_cast<VulkanKinematics*>(copied)->motions()[0].clips[0].name == "idle");
+    assert(copied && copied->dcast_RenderVisual() == duplicate.get());
+    assert(copied->LL_BoneCount() == 2 && !copied->LL_GetBoneVisible(1));
+    copied->LL_SetBoneVisible(1, TRUE, FALSE);
+    assert(copied->LL_GetBoneVisible(1) && !pose->LL_GetBoneVisible(1));
+    copied->LL_GetBoneInstance(1).mTransform.c.x = 7.f;
+    assert(pose->LL_GetBoneInstance(1).mTransform.c.x != 7.f);
+    auto* animated = pose->dcast_PKinematicsAnimated();
+    auto* copied_animated = copied->dcast_PKinematicsAnimated();
+    pose->LL_SetBoneVisible(1, TRUE, FALSE);
+    assert(animated && copied_animated && animated->LL_MotionsSlotCount() == 1);
+    assert(animated->ID_Cycle_Safe("idle").valid());
+    assert(animated->LL_PartID("all") == 0);
+    assert(animated->PlayCycle("idle", FALSE, nullptr, nullptr, 0));
+    assert(copied_animated->PlayCycle("idle", FALSE, nullptr, nullptr, 0));
+    animated->LL_UpdateTracks(1.f / 30.f, true, false);
+    copied_animated->LL_UpdateTracks(0.01f, true, false);
+    SKeyTable root_keys;
+    animated->LL_BuldBoneMatrixDequatize(&pose->LL_GetData(0), 1, root_keys);
+    assert(root_keys.chanel_blend_conts[0] == 1);
+    assert(root_keys.blends[0][0] == animated->LL_PartBlend(0, 0));
+    assert(root_keys.keys[0][0].T.x > 0.f);
+    pose->CalculateBones(TRUE);
+    copied->CalculateBones(TRUE);
+    assert(pose->LL_GetTransform(1).c.x > copied->LL_GetTransform(1).c.x);
+    assert(animated->LL_PartBlendsCount(0) == 1);
+    animated->LL_CloseCycle(0, 1);
+    animated->LL_UpdateTracks(0.2f, true, false);
+    assert(animated->LL_PartBlendsCount(0) == 0);
+    unsigned completed = 0;
+    assert(animated->LL_PlayCycle(0, animated->ID_Cycle_Safe("idle"), FALSE,
+        1.f, 1.f, 1.f, TRUE, completed_motion, &completed, 0));
+    animated->LL_UpdateTracks(0.1f, true, false);
+    assert(completed == 1);
+    animated->LL_UpdateTracks(0.1f, true, false);
+    assert(completed == 1);
+    return 0;
+}
