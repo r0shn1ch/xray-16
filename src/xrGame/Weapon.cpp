@@ -911,11 +911,15 @@ void CWeapon::UpdateCL()
     if (m_zoom_params.m_pVision)
         m_zoom_params.m_pVision->Update();
 
-    if (GEnv.Render && IsGameTypeSingle())
+    if (m_smokeTrailEmissionTime > 0.f)
     {
+        const float emission_dt = std::min(Device.fTimeDelta, m_smokeTrailEmissionTime);
+        m_smokeTrailEmissionTime -= emission_dt;
         CActor* actor = smart_cast<CActor*>(H_Parent());
-        if (actor && actor->inventory().ActiveItem() == this)
-            GEnv.Render->UpdateSmokeTrail(get_LastFP(), get_LastFD(), Device.fTimeDelta, !!GetHUDmode());
+        if (GEnv.Render && IsGameTypeSingle() && actor && actor->inventory().ActiveItem() == this)
+            GEnv.Render->UpdateSmokeTrail(get_LastFP(), get_LastFD(), emission_dt, !!GetHUDmode());
+        else
+            m_smokeTrailEmissionTime = 0.f;
     }
 }
 void CWeapon::EnableActorNVisnAfterZoom()

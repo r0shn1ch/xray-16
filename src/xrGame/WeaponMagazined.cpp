@@ -642,6 +642,7 @@ void CWeaponMagazined::OnShot()
     //дым из ствола
     ForceUpdateFireParticles();
     StartSmokeParticles(get_LastFP(), vel);
+    m_smokeTrailEmissionTime = 0.12f;
 }
 
 void CWeaponMagazined::OnEmptyClick() { PlaySound("sndEmptyClick", get_LastFP()); }
