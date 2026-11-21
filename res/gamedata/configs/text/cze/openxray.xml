@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="windows-1250" ?>
 <string_table>
+	<string id="st_vk_upscaling"><text>Zv&#283;t&#353;en&#237;</text></string>	<string id="st_vk_frame_generation"><text>Generov&#225;n&#237; sn&#237;mk&#367; (FSR 3.1)</text></string>
+	<string id="st_vk_msaa"><text>MSAA</text></string>
+	<string id="st_vk_texture_mip_bias"><text>Posun mipmapy</text></string>
+	<string id="st_vk_dof_focus"><text>Vzd&#225;lenost zaost&#345;en&#237; DOF</text></string>
+	<string id="st_vk_motion_blur"><text>Rozmaz&#225;n&#237; pohybem</text></string>
 	<string id="st_unload_magazine_after_pickup">
 		<text>Po sebrání automaticky vyložit zbraň</text>
 	</string>

@@ -214,7 +214,6 @@ function options_dialog:OnBtnKeybDefault()
 end
 
 function options_dialog:OnPresetChanged()
-	if self.combo_renderer:CurrentID() == 7 then return end
 	local opt					= COptionsManager()
 	opt:SetCurrentValues		("mm_opt_video_adv")
 end

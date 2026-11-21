@@ -405,7 +405,7 @@
     <cap_vk_aa x="20" y="0" width="143" height="21">
 			<text font="letterica16" color="ui_6">ui_mm_supersample</text>
 		</cap_vk_aa>
-		<combo_vk_aa x="194" y="0" width="245" height="21" list_length="2" always_show_scroll="0">
+		<combo_vk_aa x="194" y="0" width="245" height="21" list_length="3" always_show_scroll="0">
       <options_item entry="r_vk_aa" group="mm_opt_video_adv"/>
       <text_color>
         <e r="216" g="186" b="140"/>
@@ -414,6 +414,95 @@
       <list_font_s r="240" g="217" b="182"/>
       <list_font	 r="216" g="186" b="140" font="letterica16"/>
     </combo_vk_aa>
+
+    <cap_vk_msaa x="20" y="0" width="143" height="21">
+			<text font="letterica16" color="ui_6">st_vk_msaa</text>
+		</cap_vk_msaa>
+		<combo_vk_msaa x="194" y="0" width="245" height="21" list_length="3" always_show_scroll="0">
+      <options_item entry="r_vk_msaa" group="mm_opt_video_adv" depend="restart"/>
+      <text_color>
+        <e r="216" g="186" b="140"/>
+        <d color="ui_gray"/>
+      </text_color>
+      <list_font_s r="240" g="217" b="182"/>
+      <list_font r="216" g="186" b="140" font="letterica16"/>
+		</combo_vk_msaa>
+
+        <cap_vk_upscale x="20" y="0" width="143" height="21">
+			<text font="letterica16" color="ui_6">st_vk_upscaling</text>
+		</cap_vk_upscale>
+		<combo_vk_upscale x="194" y="0" width="245" height="21" list_length="4" always_show_scroll="0">
+      <options_item entry="r_vk_upscaler" group="mm_opt_video_adv" depend="vid"/>
+      <text_color>
+        <e r="216" g="186" b="140"/>
+        <d color="ui_gray"/>
+      </text_color>
+      <list_font_s r="240" g="217" b="182"/>
+      <list_font	 r="216" g="186" b="140" font="letterica16"/>
+    </combo_vk_upscale>
+
+    <cap_vk_framegen x="20" y="0" width="143" height="21">
+      <text font="letterica16" color="ui_6">st_vk_frame_generation</text>
+    </cap_vk_framegen>
+    <combo_vk_framegen x="194" y="0" width="245" height="21" list_length="2" always_show_scroll="0">
+      <options_item entry="r_vk_frame_generation" group="mm_opt_video_adv" depend="restart"/>
+      <text_color>
+        <e r="216" g="186" b="140"/>
+        <d color="ui_gray"/>
+      </text_color>
+      <list_font_s r="240" g="217" b="182"/>
+      <list_font r="216" g="186" b="140" font="letterica16"/>
+    </combo_vk_framegen>
+
+    <cap_vk_mip_bias x="20" y="0" width="143" height="21">
+      <text font="letterica16" color="ui_6">st_vk_texture_mip_bias</text>
+    </cap_vk_mip_bias>
+    <track_vk_mip_bias x="194" y="0" width="245" height="21" step="0.1">
+      <options_item entry="r_vk_texture_mip_bias" group="mm_opt_video_adv"/>
+    </track_vk_mip_bias>
+
+    <cap_vk_ao x="20" y="0" width="143" height="21">
+
+      <text font="letterica16" color="ui_6">ui_mm_ssao_text</text>
+    </cap_vk_ao>
+    <track_vk_ao x="194" y="0" width="245" height="21" step="0.1">
+      <options_item entry="r_vk_ao_strength" group="mm_opt_video_adv"/>
+    </track_vk_ao>
+
+    <cap_vk_rtgi x="20" y="0" width="143" height="21">
+      <text font="letterica16" color="ui_6">RTGI</text>
+    </cap_vk_rtgi>
+    <track_vk_rtgi x="194" y="0" width="245" height="21" step="0.1">
+      <options_item entry="r_vk_rtgi_strength" group="mm_opt_video_adv"/>
+    </track_vk_rtgi>
+
+    <cap_vk_dof x="20" y="0" width="143" height="21">
+      <text font="letterica16" color="ui_6">ui_mm_dof</text>
+    </cap_vk_dof>
+    <track_vk_dof x="194" y="0" width="245" height="21" step="0.05">
+      <options_item entry="r_vk_dof_strength" group="mm_opt_video_adv"/>
+    </track_vk_dof>
+
+    <cap_vk_dof_focus x="20" y="0" width="143" height="21">
+      <text font="letterica16" color="ui_6">st_vk_dof_focus</text>
+    </cap_vk_dof_focus>
+    <track_vk_dof_focus x="194" y="0" width="245" height="21" step="0.5">
+      <options_item entry="r_vk_dof_focus" group="mm_opt_video_adv"/>
+    </track_vk_dof_focus>
+
+    <cap_vk_motion_blur x="20" y="0" width="143" height="21">
+      <text font="letterica16" color="ui_6">st_vk_motion_blur</text>
+    </cap_vk_motion_blur>
+    <track_vk_motion_blur x="194" y="0" width="245" height="21" step="0.05">
+      <options_item entry="r_vk_motion_blur" group="mm_opt_video_adv"/>
+    </track_vk_motion_blur>
+
+    <cap_vk_sun_shafts x="20" y="0" width="143" height="21">
+      <text font="letterica16" color="ui_6">ui_mm_sun_shafts</text>
+    </cap_vk_sun_shafts>
+    <track_vk_sun_shafts x="194" y="0" width="245" height="21" step="0.05">
+      <options_item entry="r_vk_sun_shafts_strength" group="mm_opt_video_adv"/>
+    </track_vk_sun_shafts>
     
     <cap_r2_sun x="20" y="0" width="143" height="21">
 			<text font="letterica16" color="ui_6">ui_mm_r2_sun</text>
