@@ -64,7 +64,33 @@ endif()
 include(XRay.Build)
 include(XRay.Packaging)
 
-add_subdirectory(Externals)
+function(xray_add_externals)
+    if (ANDROID AND CMAKE_HOST_WIN32 AND XRAY_USE_LUAJIT)
+        if (NOT LUAJIT_HOST_C_COMPILER)
+            find_program(xray_luajit_host_cc NAMES gcc clang REQUIRED NO_CACHE)
+            set(LUAJIT_HOST_C_COMPILER "${xray_luajit_host_cc}")
+        endif()
+        # buildvm runs on Windows but must generate frames for the Android ABI.
+        set(CMAKE_POLICY_DEFAULT_CMP0126 NEW)
+        set(lua_target_os "-DLUAJIT_OS=LUAJIT_OS_LINUX")
+        set(LUAJIT_HOST_C_COMPILER "${LUAJIT_HOST_C_COMPILER}\;${lua_target_os}")
+
+        set(lua_build_dir "${CMAKE_CURRENT_BINARY_DIR}/Externals/LuaJIT-proj")
+        set(lua_buildvm_dir "${lua_build_dir}/HostBuildTools/buildvm")
+        if (EXISTS "${lua_buildvm_dir}/compile_commands.json")
+            file(STRINGS "${lua_buildvm_dir}/compile_commands.json" buildvm_target
+                REGEX "${lua_target_os}" LIMIT_COUNT 1)
+            if (NOT buildvm_target)
+                file(GLOB lua_generated_headers "${lua_build_dir}/lj_*def.h")
+                file(REMOVE "${lua_buildvm_dir}/CMakeCache.txt" "${lua_buildvm_dir}/buildvm.exe"
+                    "${lua_buildvm_dir}/Release/buildvm.exe" "${lua_build_dir}/lj_vm.S"
+                    "${lua_build_dir}/jit/vmdef.lua" ${lua_generated_headers})
+            endif()
+        endif()
+    endif()
+    add_subdirectory(Externals)
+endfunction()
+xray_add_externals()
 if (MSVC AND TARGET xrLuaJIT)
     # The bundled LuaJIT build files also supply MinGW options on Windows.
     get_target_property(lua_compile_options xrLuaJIT COMPILE_OPTIONS)
