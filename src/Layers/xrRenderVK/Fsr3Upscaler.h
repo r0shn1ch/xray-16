@@ -36,7 +36,13 @@ public:
     void destroy();
     bool ready() const { return context_initialized_; }
     bool active() const { return active_; }
-    void set_active(bool active) { active_ = ready() && active; }
+    void set_active(bool active)
+    {
+        active = ready() && active;
+        if (active_ != active)
+            reset_history();
+        active_ = active;
+    }
     void reset_history() { history_valid_ = false; }
     void commit_frame() { if (active_) history_valid_ = true; }
     void set_frame(uint64_t frame_id, float delta_ms, float camera_near, float camera_far,
@@ -119,6 +125,7 @@ private:
     bool frame_generation_requested_{};
     bool frame_generation_context_{};
     bool frame_generation_frame_enabled_{};
+    bool frame_generation_config_valid_{};
     VkSwapchainKHR frame_interpolation_swapchain_ = VK_NULL_HANDLE;
     bool active_{};
     bool history_valid_{};

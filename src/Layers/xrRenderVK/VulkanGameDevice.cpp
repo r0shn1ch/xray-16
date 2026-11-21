@@ -1579,14 +1579,6 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
     const bool fsr3_active = render_world && temporal_jitter_active_ &&
         spatial_upscaler == 3 && fsr3_upscaler_.ready();
     fsr3_upscaler_.set_active(fsr3_active);
-    if (fsr3_upscaler_.ready())
-    {
-        float far_plane = 500.f;
-        if (g_pGamePersistent)
-            far_plane = g_pGamePersistent->Environment().CurrentEnv.far_plane;
-        fsr3_upscaler_.set_frame(Device.dwFrame, Device.fTimeDelta * 1000.f, VIEWPORT_NEAR,
-            far_plane, Device.fFOV * (3.14159265358979323846f / 180.f));
-    }
     temporal_.set_active(render_world && temporal_jitter_active_ && !fsr3_active);
     frame_postprocess.color_map[3] = render_world && !temporal_jitter_active_ &&
         (antialiasing == 1 || antialiasing == 2 || spatial_upscaler == 2 || spatial_upscaler == 3) ? 1.f : 0.f;
@@ -2002,6 +1994,12 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         object_velocity_.lod_ready();
     hiz_dynamic_mask_recorded_ = hiz_dynamic_mask_enabled;
     frame_.set_hiz_dynamic_mask_enabled(hiz_dynamic_mask_enabled);
+    if (fsr3_upscaler_.ready())
+    {
+        const float far_plane = g_pGamePersistent ? g_pGamePersistent->Environment().CurrentEnv.far_plane : 500.f;
+        fsr3_upscaler_.set_frame(Device.dwFrame, Device.fTimeDelta * 1000.f, VIEWPORT_NEAR,
+            far_plane, Device.fFOV * (3.14159265358979323846f / 180.f));
+    }
     if (!frame_.render(window_.frame(), targets_, level, deferred_, render_mvp, light, status, error, record_ui, this,
                        record_hud, this, record_models, this, record_transparent, this,
                        scene_visibility_ ? record_level_visuals : nullptr, this, render_world, clear_target,

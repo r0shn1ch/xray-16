@@ -294,7 +294,7 @@ void Fsr3Upscaler::set_frame(uint64_t frame_id, float delta_ms, float camera_nea
         {
             return ffxFsr3DispatchFrameGeneration(desc);
         };
-        config.frameGenerationEnabled = active_ && frame_generation_requested_;
+        config.frameGenerationEnabled = active_ && frame_generation_requested_ && history_valid_;
         config.allowAsyncWorkloads = false;
         config.onlyPresentInterpolated = false;
         config.interpolationRect = {0, 0, static_cast<int32_t>(display_extent_.width),
@@ -302,9 +302,14 @@ void Fsr3Upscaler::set_frame(uint64_t frame_id, float delta_ms, float camera_nea
         config.frameID = frame_id_;
         const FfxErrorCode result = ffxFsr3ConfigureFrameGeneration(&context_, &config);
         frame_generation_frame_enabled_ = result == FFX_OK && config.frameGenerationEnabled;
+        frame_generation_config_valid_ = result == FFX_OK;
         if (result != FFX_OK)
+        {
             Msg("! [renderer-vulkan][FSR3] frame-generation configuration failed with code %d",
                 static_cast<int>(result));
+            config.frameGenerationEnabled = false;
+            frame_generation_config_valid_ = ffxFsr3ConfigureFrameGeneration(&context_, &config) == FFX_OK;
+        }
     }
 #endif
 }
@@ -430,9 +435,9 @@ bool Fsr3Upscaler::record(const FrameRecordingContext& frame, std::string& error
         error = "FSR3 dispatch has invalid frame inputs";
         return false;
     }
-    if (frame_generation_context_ && frame_generation_requested_ && !frame_generation_frame_enabled_)
+    if (frame_generation_context_ && !frame_generation_config_valid_)
     {
-        error = "FSR frame generation was enabled but the frame configuration failed";
+        error = "FSR could not configure or disable interpolation for this frame";
         return false;
     }
     const auto image_info = [this](VkExtent2D extent, VkFormat format, VkImageUsageFlags usage) {
