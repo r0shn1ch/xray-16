@@ -1,5 +1,6 @@
 #include "xrEngine/stdafx.h"
 #include "VulkanGameLighting.h"
+#include "VulkanGameDevice.h"
 #include "LevelLights.h"
 #include "VulkanSettings.h"
 #include "xrEngine/IGame_Level.h"
@@ -129,7 +130,7 @@ void VulkanGlow::set_color(float r, float g, float b)
 
 void VulkanObjectSpecific::update(const float *ambient, const float *hemi, const float *sun,
                                   const VulkanHemiLightGrid &lights, const VulkanHemiLightGrid *baked,
-                                  unsigned *ray_budget)
+                                  unsigned *ray_budget, const VulkanGameDevice* game_device)
 {
     std::array<float, 3> position{};
     if (parent_)
@@ -176,7 +177,10 @@ void VulkanObjectSpecific::update(const float *ambient, const float *hemi, const
         return g_pGameLevel->ObjectSpace.RayPick(origin, direction, std::max(distance - .05f, 0.f), collide::rqtStatic,
                                                  hit, nullptr);
     };
-    if (mode_ & VulkanTraceHemi)
+    std::array<float, 6> probe_faces{};
+    const bool has_probe = (mode_ & VulkanTraceHemi) && game_device &&
+        game_device->sample_sky(position, probe_faces);
+    if ((mode_ & VulkanTraceHemi) && !has_probe)
         visibility_.sky(work, trace);
     for (auto &light : lighting_sources_)
     {
@@ -188,7 +192,21 @@ void VulkanObjectSpecific::update(const float *ambient, const float *hemi, const
     }
     if (ray_budget)
         *ray_budget -= before - work;
-    const auto sky_faces = visibility_.faces(hemi_sky_scale);
+    auto sky_faces = visibility_.faces(hemi_sky_scale);
+    if (has_probe)
+    {
+        // Preserve the legacy hemisphere's unoccluded face response.
+        sky_faces.fill(0.f);
+        for (const auto& direction : SkyDirections)
+            for (unsigned axis = 0; axis < 3; ++axis)
+            {
+                const bool negative = direction[axis] < 0.f;
+                sky_faces[axis + (negative ? 3 : 0)] += std::abs(direction[axis]) *
+                    probe_faces[2 * axis + unsigned(negative)] * hemi_sky_scale;
+            }
+        for (auto& value : sky_faces)
+            value = std::clamp(value, 1.f / 255.f, 1.f);
+    }
     const VulkanObjectLighting lighting =
         evaluate_object_lighting(position, ambient, hemi, sun, mode_, lighting_sources_,
                                  ray_budget ? &sky_faces : nullptr, hemi_light_scale, hemi_light_flow);

@@ -73,16 +73,19 @@ bool FrameImagePool::initialize(VkDevice device, const VkPhysicalDeviceMemoryPro
 bool FrameImagePool::acquire(const VkImageCreateInfo& info, VkImage& image, std::string& error)
 {
     image = VK_NULL_HANDLE;
+    const bool valid_shape =
+        (info.imageType == VK_IMAGE_TYPE_1D && info.extent.height == 1 && info.extent.depth == 1) ||
+        (info.imageType == VK_IMAGE_TYPE_2D && info.extent.depth == 1) ||
+        (info.imageType == VK_IMAGE_TYPE_3D && info.extent.depth && info.arrayLayers == 1);
     if (!device_ || info.sType != VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO || info.pNext ||
-        info.imageType != VK_IMAGE_TYPE_2D || !info.extent.width || !info.extent.height ||
-        info.extent.depth != 1 || !info.mipLevels || !info.arrayLayers ||
+        !valid_shape || !info.extent.width || !info.extent.height || !info.mipLevels || !info.arrayLayers ||
         (info.sharingMode == VK_SHARING_MODE_EXCLUSIVE &&
             (info.queueFamilyIndexCount != 0 || info.pQueueFamilyIndices != nullptr)) ||
         (info.sharingMode == VK_SHARING_MODE_CONCURRENT &&
             (info.queueFamilyIndexCount < 2 || !info.pQueueFamilyIndices)) ||
         (info.sharingMode != VK_SHARING_MODE_EXCLUSIVE && info.sharingMode != VK_SHARING_MODE_CONCURRENT))
     {
-        error = "frame image pool needs a valid 2D image sharing description";
+        error = "frame image pool needs a valid image shape and sharing description";
         return false;
     }
     if (info.sharingMode == VK_SHARING_MODE_CONCURRENT)
@@ -130,8 +133,16 @@ bool FrameImagePool::acquire(const VkImageCreateInfo& info, VkImage& image, std:
             texture_desc.mipLevels = info.mipLevels;
             texture_desc.sampleCount = static_cast<uint32_t>(info.samples);
             texture_desc.format = format;
-            texture_desc.dimension = info.arrayLayers > 1 ? nvrhi::TextureDimension::Texture2DArray :
-                nvrhi::TextureDimension::Texture2D;
+            using Dimension = nvrhi::TextureDimension;
+            const bool array = info.arrayLayers > 1;
+            if (info.imageType == VK_IMAGE_TYPE_3D)
+                texture_desc.dimension = Dimension::Texture3D;
+            else if (info.imageType == VK_IMAGE_TYPE_1D)
+                texture_desc.dimension = array ? Dimension::Texture1DArray : Dimension::Texture1D;
+            else if (info.samples != VK_SAMPLE_COUNT_1_BIT)
+                texture_desc.dimension = array ? Dimension::Texture2DMSArray : Dimension::Texture2DMS;
+            else
+                texture_desc.dimension = array ? Dimension::Texture2DArray : Dimension::Texture2D;
             texture_desc.isShaderResource = (info.usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0;
             texture_desc.isRenderTarget = (info.usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) != 0;

@@ -11,6 +11,7 @@
 #include "../src/Layers/xrRenderVK/WaterShaders.h"
 #include "../src/Layers/xrRenderVK/RenderPolicy.h"
 #include "../src/Layers/xrRenderVK/DeferredShaders.h"
+#include "../src/Layers/xrRenderVK/DeferredPass.h"
 #include "../src/Layers/xrRenderVK/LocalLightShaders.h"
 #include "../src/Layers/xrRenderVK/LocalShadowTargets.h"
 #include "../src/Layers/xrRenderVK/DetailInstance.h"
@@ -376,7 +377,8 @@ int main(int argc, char **argv)
         sampler_info.magFilter = sampler_info.minFilter = VK_FILTER_NEAREST;
         sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
         check(vkCreateSampler(device, &sampler_info, nullptr, &sampler));
-        std::array<VkDescriptorSetLayoutBinding, 20> bindings{};
+        constexpr uint32_t material_slots = xray::render::vulkan::SurfaceMaterialTextureCount;
+        std::array<VkDescriptorSetLayoutBinding, material_slots> bindings{};
         for (uint32_t i = 0; i < bindings.size(); ++i)
             bindings[i] = {i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
         VkDescriptorSetLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -384,7 +386,7 @@ int main(int argc, char **argv)
         layout_info.pBindings = bindings.data();
         VkDescriptorSetLayout descriptor_layout{};
         check(vkCreateDescriptorSetLayout(device, &layout_info, nullptr, &descriptor_layout));
-        const VkDescriptorPoolSize pool_sizes[]{{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 92},
+        const VkDescriptorPoolSize pool_sizes[]{{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, material_slots * 3 + 32},
                                                 {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4},
                                                 {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}};
         VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -401,11 +403,11 @@ int main(int argc, char **argv)
         check(vkAllocateDescriptorSets(device, &alloc, &set));
         VkDescriptorSet scene_set{};
         check(vkAllocateDescriptorSets(device, &alloc, &scene_set));
-        std::array<VkDescriptorImageInfo, 20> images{};
-        std::array<VkWriteDescriptorSet, 20> writes{};
-        for (uint32_t i = 0; i < 20; ++i)
+        std::array<VkDescriptorImageInfo, material_slots> images{};
+        std::array<VkWriteDescriptorSet, material_slots> writes{};
+        for (uint32_t i = 0; i < material_slots; ++i)
         {
-            images[i] = {sampler, input[i].view, VK_IMAGE_LAYOUT_GENERAL};
+            images[i] = {sampler, input[i < input.size() ? i : 0].view, VK_IMAGE_LAYOUT_GENERAL};
             writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
             writes[i].dstSet = set;
             writes[i].dstBinding = i;
@@ -416,9 +418,10 @@ int main(int argc, char **argv)
         vkUpdateDescriptorSets(device, writes.size(), writes.data(), 0, nullptr);
         auto scene_images = images;
         auto scene_writes = writes;
-        for (uint32_t i = 0; i < 20; ++i)
+        scene_images[0].imageView = input[3].view;
+        scene_images[2].imageView = input[19].view;
+        for (uint32_t i = 0; i < material_slots; ++i)
         {
-            scene_images[i].imageView = input[i == 0 ? 3 : i == 2 ? 19 : i].view;
             scene_writes[i].dstSet = scene_set;
             scene_writes[i].pImageInfo = &scene_images[i];
         }

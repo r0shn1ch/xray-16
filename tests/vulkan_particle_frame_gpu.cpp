@@ -1,4 +1,12 @@
 #include "xrEngine/stdafx.h"
+#include "src/Layers/xrRenderVK/FrameImageGraph.h"
+#include "src/Layers/xrRenderVK/FrameImagePool.h"
+#include "src/Layers/xrRenderVK/VisibilityPasses.h"
+#include "src/Layers/xrRenderVK/LevelModels.h"
+#include "src/Layers/xrRenderVK/SkyProbeReducePass.h"
+#include "src/Layers/xrRenderVK/SkyProbeBakePass.h"
+#include "src/Layers/xrRenderVK/DetailCullPass.h"
+#include "src/Layers/xrRenderVK/DetailGeneratePass.h"
 #include "src/Layers/xrRenderVK/GpuParticleBuffers.h"
 #include "src/Layers/xrRenderVK/GpuParticleCompute.h"
 #include "src/Layers/xrRenderVK/GpuParticleFrame.h"
@@ -33,6 +41,235 @@ struct Fixture
 };
 static void require(bool condition, const std::string& message)
 { if (!condition) throw std::runtime_error(message); }
+
+static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommandPool pool,
+    const VkPhysicalDeviceLimits& limits, const VkPhysicalDeviceMemoryProperties& memory,
+    const BufferResourceDispatch& vk, const VisibilityPasses::Source& source, bool bindless)
+{
+    std::string error;
+    std::vector<uint8_t> shader;
+    require(source("vk/visibility_software_raster.cs.spv", shader, error), error);
+    require(shader.size() % sizeof(uint32_t) == 0, "invalid raster shader size");
+    std::vector<uint32_t> code(shader.size() / sizeof(uint32_t));
+    std::memcpy(code.data(), shader.data(), shader.size());
+    StorageComputePass raster;
+    constexpr auto image = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    constexpr auto storage = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    require(raster.initialize(device, vkGetDeviceProcAddr, 4,
+        {{0, image}, {1, storage}, {2, storage}, {3, storage}, {4, image}, {5, storage},
+            {6, VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER}}, sizeof(visibility::SoftwareRasterParameters),
+        limits.maxStorageBufferRange, limits.maxUniformBufferRange, VK_NULL_HANDLE,
+        code.data(), shader.size(), error), error);
+
+    const visibility::DrawEntry entries[]{{0, 3, 0, 0, 0}, {3, 3, 0, 0, 1, 0}, {6, 3, 0, 0, 1}};
+    const VkDrawIndexedIndirectCommand commands[]{{3, 1, 0, 0, 0}, {3, 1, 3, 0, 0}, {3, 1, 6, 0, 0}};
+    const uint32_t indices[]{0, 1, 2, 3, 4, 5, 6, 7, 8};
+    LevelVertex vertices[9]{};
+    for (uint32_t draw = 0; draw < 3; ++draw)
+    {
+        const float depths[]{0.75f, 0.5f, 0.0625f};
+        const float depth = depths[draw];
+        const float apex_depth = draw == 1 ? -0.25f : depth;
+        const float points[3][3]{{-0.75f, -0.75f, depth}, {0.75f, -0.75f, depth}, {0.f, 0.75f, apex_depth}};
+        for (uint32_t vertex = 0; vertex < 3; ++vertex)
+        {
+            std::copy_n(points[vertex], 3, vertices[3 * draw + vertex].position);
+            vertices[3 * draw + vertex].normal[1] = 1.f;
+        }
+    }
+    constexpr uint32_t visible_draws = 0b011u;
+    constexpr auto host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    BufferResource geometry[4], mask, readback;
+    const auto upload = [&](BufferResource& buffer, const void* data, size_t bytes, VkBufferUsageFlags usage) {
+        require(buffer.initialize(device, bytes, usage, host, memory, vk, error) && buffer.write(0, data, bytes, error), error);
+    };
+    upload(geometry[0], entries, sizeof(entries), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    upload(geometry[1], indices, sizeof(indices), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    upload(geometry[2], vertices, sizeof(vertices), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    upload(geometry[3], commands, sizeof(commands), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    upload(mask, &visible_draws, sizeof(visible_draws), VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT);
+    constexpr VkDeviceSize raster_bytes = 2 * 8 * 8 * sizeof(uint32_t);
+    constexpr VkDeviceSize resolved_bytes = 8 * 8 * 4 * sizeof(uint16_t);
+    require(readback.initialize(device, raster_bytes + (bindless ? 2 * resolved_bytes : 0), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        host, memory, vk, error), error);
+
+    FrameImagePool images;
+    require(images.initialize(device, memory, {vkCreateImage, vkDestroyImage, vkGetImageMemoryRequirements,
+        vkAllocateMemory, vkFreeMemory, vkBindImageMemory}), "visibility image pool");
+    struct Views
+    {
+        VkDevice device;
+        VkBufferView mask{};
+        VkImageView images[5]{};
+        VkSampler sampler{};
+        ~Views()
+        {
+            if (mask) vkDestroyBufferView(device, mask, nullptr);
+            if (sampler) vkDestroySampler(device, sampler, nullptr);
+            for (auto image : images)
+                if (image) vkDestroyImageView(device, image, nullptr);
+        }
+    } views{device};
+    VkBufferViewCreateInfo mask_info{VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO};
+    mask_info.buffer = mask.handle();
+    mask_info.format = VK_FORMAT_R32_UINT;
+    mask_info.range = sizeof(visible_draws);
+    require(vkCreateBufferView(device, &mask_info, nullptr, &views.mask) == VK_SUCCESS, "visibility mask view");
+    FrameImageGraph graph;
+    ImageStateTracker states;
+    VkImage targets[5]{};
+    FrameImageGraph::Resource resources[5];
+    const size_t target_count = bindless ? 5 : 2;
+    constexpr VkImageSubresourceRange color{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    for (size_t i = 0; i < target_count; ++i)
+    {
+        VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        info.imageType = VK_IMAGE_TYPE_2D;
+        info.format = i < 2 ? VK_FORMAT_R32_UINT : VK_FORMAT_R16G16B16A16_SFLOAT;
+        info.extent = {8, 8, 1};
+        info.mipLevels = info.arrayLayers = 1;
+        info.samples = VK_SAMPLE_COUNT_1_BIT;
+        info.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+            VK_IMAGE_USAGE_SAMPLED_BIT;
+        require(images.acquire(info, targets[i], error), error);
+        VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view_info.image = targets[i];
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.format = info.format;
+        view_info.subresourceRange = color;
+        require(vkCreateImageView(device, &view_info, nullptr, &views.images[i]) == VK_SUCCESS, "visibility image view");
+        require(graph.import_image(targets[i], color, resources[i], error) &&
+            states.register_image(targets[i], color, ImageUse::Undefined, error), error);
+    }
+    const auto clear = graph.add_command_pass("clear visibility test", [&](VkCommandBuffer command) {
+        VkClearColorValue value{};
+        vkCmdClearColorImage(command, targets[0], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &value, 1, &color);
+        value.uint32[0] = 0x3f800000u;
+        vkCmdClearColorImage(command, targets[1], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &value, 1, &color);
+        if (bindless)
+        {
+            VkClearColorValue zero{};
+            VkClearColorValue material{{0.25f, 0.5f, 1.f, 1.f}};
+            vkCmdClearColorImage(command, targets[2], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &color);
+            vkCmdClearColorImage(command, targets[3], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &color);
+            vkCmdClearColorImage(command, targets[4], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &material, 1, &color);
+        }
+    });
+    for (size_t i = 0; i < target_count; ++i)
+        require(graph.write(clear, resources[i], ImageUse::TransferDestination, resources[i], error), error);
+
+    std::vector<VkDescriptorBufferInfo> buffers;
+    for (const auto& buffer : geometry)
+        buffers.push_back({buffer.handle(), 0, buffer.size()});
+    const std::vector<VkDescriptorImageInfo> descriptors{{VK_NULL_HANDLE, views.images[0], VK_IMAGE_LAYOUT_GENERAL},
+        {VK_NULL_HANDLE, views.images[1], VK_IMAGE_LAYOUT_GENERAL}};
+    for (uint32_t phase = 0; phase < 2; ++phase)
+    {
+        const auto pass = graph.add_checked_command_pass("raster visibility test", [&, phase](VkCommandBuffer cb, std::string& why) {
+            visibility::SoftwareRasterParameters params{};
+            for (size_t i = 0; i < 16; i += 5) params.camera.view_projection[i] = 1.f;
+            params.camera.viewport.extent[0] = params.camera.viewport.extent[1] = 8.f;
+            params.write_ids = phase;
+            for (uint32_t batch = 0; batch < 2; ++batch)
+            {
+                params.first_draw = batch;
+                params.draw_count = 1 + batch;
+                params.geometry_batch = batch;
+                if (!raster.record_mixed(cb, 2 * phase + batch, buffers, descriptors, &params, params.draw_count, 1,
+                        why, VK_NULL_HANDLE, views.mask))
+                    return false;
+            }
+            return true;
+        });
+        for (size_t i = 0; i < 2; ++i)
+            require(graph.read_write(pass, resources[i], resources[i], error), error);
+    }
+    BindlessTextureTable materials;
+    VisibilityPasses visibility_passes;
+    if (bindless)
+    {
+        VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        require(vkCreateSampler(device, &sampler_info, nullptr, &views.sampler) == VK_SUCCESS, "visibility test sampler");
+        require(materials.initialize(device, vkGetDeviceProcAddr, 1, error) &&
+            materials.write(0, views.images[4], views.sampler, error, VK_IMAGE_LAYOUT_GENERAL), error);
+        require(visibility_passes.initialize(device, vkGetDeviceProcAddr, limits, 1, 2, VK_NULL_HANDLE,
+            materials, source, error), error);
+        const auto resolve = graph.add_checked_command_pass("resolve visibility test", [&](VkCommandBuffer cb, std::string& why) {
+            const VisibilityPasses::Geometry input{buffers[0], buffers[1], buffers[2]};
+            const VkDescriptorImageInfo ids{views.sampler, views.images[0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            visibility::MaterialResolveParameters params{};
+            for (size_t i = 0; i < 16; i += 5) params.camera.view_projection[i] = 1.f;
+            params.camera.viewport.extent[0] = params.camera.viewport.extent[1] = 8.f;
+            params.material_count = 1;
+            for (uint32_t batch = 0; batch < 2; ++batch)
+            {
+                params.first_draw = batch;
+                params.draw_count = 1 + batch;
+                params.geometry_batch = batch;
+                if (!visibility_passes.resolve(cb, 0, batch, input, ids, materials, views.images[2], views.images[3],
+                        {8, 8}, params, why))
+                    return false;
+            }
+            return true;
+        });
+        require(graph.read(resolve, resources[0], ImageUse::ComputeSampled, error) &&
+            graph.read(resolve, resources[4], ImageUse::StorageRead, error), error);
+        for (size_t i = 2; i < 4; ++i)
+            require(graph.read_write(resolve, resources[i], resources[i], error), error);
+    }
+    const auto copy = graph.add_command_pass("read visibility test", [&](VkCommandBuffer cb) {
+        for (size_t i = 0; i < (bindless ? 4u : 2u); ++i)
+        {
+            const auto offset = i < 2 ? i * 8 * 8 * sizeof(uint32_t) : raster_bytes + (i - 2) * resolved_bytes;
+            VkBufferImageCopy region{offset, 0, 0,
+                {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {8, 8, 1}};
+            vkCmdCopyImageToBuffer(cb, targets[i], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.handle(), 1, &region);
+        }
+        VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &barrier,
+            0, nullptr, 0, nullptr);
+    });
+    for (size_t i = 0; i < (bindless ? 4u : 2u); ++i)
+        require(graph.read(copy, resources[i], ImageUse::TransferSource, error), error);
+    VkCommandBuffer cb{};
+    VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    allocation.commandPool = pool;
+    allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocation.commandBufferCount = 1;
+    const VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    require(vkAllocateCommandBuffers(device, &allocation, &cb) == VK_SUCCESS &&
+        vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS, "visibility test command buffer");
+    require(graph.execute(cb, states, {vkCmdPipelineBarrier}, error), error);
+    require(vkEndCommandBuffer(cb) == VK_SUCCESS, "visibility test end");
+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &cb;
+    require(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS && vkQueueWaitIdle(queue) == VK_SUCCESS,
+        "visibility test submit");
+    vkFreeCommandBuffers(device, pool, 1, &cb);
+    uint32_t pixels[2][64]{};
+    require(readback.read(0, pixels, sizeof(pixels), error), error);
+    require(pixels[0][36] == visibility::pack_id(1, 0), "nearest unmasked triangle must win across batches");
+    float depth{};
+    std::memcpy(&depth, &pixels[1][36], sizeof(depth));
+    require(std::abs(depth - 0.1875f) < 1e-6f, "visibility depth after near clipping");
+    require(pixels[0][20] == visibility::pack_id(0, 0), "near clipping must expose the triangle behind it");
+    require(pixels[0][0] == visibility::Background && pixels[1][0] == 0x3f800000u, "visibility background clear");
+    if (bindless)
+    {
+        uint16_t output[2][64][4]{};
+        require(readback.read(raster_bytes, output, sizeof(output), error), error);
+        require(output[0][36][0] == 0x3400 && output[0][36][1] == 0x3800 && output[0][36][2] == 0x3c00,
+            "visibility resolve material color");
+        require(output[0][36][3] == 0x3800 && output[1][36][0] == 0 && output[1][36][1] == 0x3c00 &&
+            output[1][36][3] == 0x3a00, "visibility resolve baked sunlight and hemisphere");
+        require(output[0][20][3] == 0x3c00 && output[1][20][3] == 0x3c00,
+            "visibility resolve unlightmapped material");
+        require(output[0][0][0] == 0 && output[1][0][3] == 0, "visibility resolve background");
+    }
+}
 
 static void exercise_collision_shader(VkPhysicalDevice physical, VkDevice device, VkQueue queue, VkCommandPool pool,
     const VkPhysicalDeviceLimits& limits, const VkPhysicalDeviceMemoryProperties& memory,
@@ -144,8 +381,12 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
         "smoke trail ordered emission, simulation and compaction");
     vkFreeCommandBuffers(device, pool, 1, &cb);
     smoke.destroy();
+    FrameImagePool noise_images;
+    require(noise_images.initialize(device, memory, {vkCreateImage, vkDestroyImage,
+        vkGetImageMemoryRequirements, vkAllocateMemory, vkFreeMemory, vkBindImageMemory}), "smoke noise image pool");
     SmokeTrailNoise noise;
-    require(noise.initialize(device, vkGetDeviceProcAddr, limits, memory, vk, 8, 1, VK_NULL_HANDLE, source, error), error);
+    require(noise.initialize(device, vkGetDeviceProcAddr, limits, memory, vk, 8, 1, VK_NULL_HANDLE,
+        source, error, UINT32_MAX, UINT32_MAX, &noise_images), error);
     BufferResource noise_readback;
     require(noise_readback.initialize(device, 8 * 8 * 8 * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, memory, vk, error), error);
@@ -170,7 +411,118 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
     require(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS && vkQueueWaitIdle(queue) == VK_SUCCESS &&
         noise_readback.read(0, voxels, sizeof(voxels), error) && voxels[0] != old_value, "smoke noise temporal update");
     vkFreeCommandBuffers(device, pool, 1, &cb); noise.destroy();
-    std::cout << "GPU smoke trail compute passed\n";
+    SkyProbeReducePass sky;
+    require(sky.initialize(device, vkGetDeviceProcAddr, limits, 1, VK_NULL_HANDLE, source, error), error);
+    xray::render::framegraph::SkyProbeLayout layout;
+    std::vector<RayQueryInput> generated_rays;
+    require(layout.initialize({0, 2, 4}, {2, 4, 6}, 2, 8) &&
+        generate_sky_probe_rays(layout, 1, 1, 100, generated_rays) &&
+        generated_rays.size() == 6 * SkyProbeRaysPerFace, "sky probe ray layout");
+    std::vector<SkyProbeVisibility> grid(layout.count);
+    for (size_t i = 0; i < grid.size(); ++i)
+        grid[i].faces.fill((i & 1) ? 1.f : 0.f);
+    std::array<float, 6> sampled{};
+    require(sample_sky_probes(layout, grid, {1.f, 3.f, 5.f}, sampled) &&
+        sampled == std::array<float, 6>{.5f, .5f, .5f, .5f, .5f, .5f} &&
+        !sample_sky_probes(layout, grid, {-1.f, 3.f, 5.f}, sampled), "sky probe interpolation");
+    for (size_t i = 0; i < generated_rays.size(); ++i)
+    {
+        const auto& ray = generated_rays[i];
+        const auto face = i / SkyProbeRaysPerFace;
+        const float squared_length = ray.direction_max[0] * ray.direction_max[0] +
+            ray.direction_max[1] * ray.direction_max[1] + ray.direction_max[2] * ray.direction_max[2];
+        require(ray.origin_min[0] == 2.f && ray.origin_min[1] == 2.f && ray.origin_min[2] == 4.f &&
+            ray.direction_max[3] == 100.f && std::abs(squared_length - 1.f) < .001f &&
+            (ray.direction_max[face / 2] > 0.f) == (face % 2 == 0), "sky probe ray direction");
+    }
+    const auto host_memory = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    BufferResource hits, probes;
+    std::array<RayQueryHit, 12> rays{};
+    rays[0].found = rays[2].found = rays[3].found = 1;
+    require(hits.initialize(device, sizeof(rays), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        host_memory, memory, vk, error) &&
+        probes.initialize(device, 2 * sizeof(SkyProbeVisibility), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            host_memory, memory, vk, error) && hits.write(0, rays.data(), sizeof(rays), error), error);
+    require(vkAllocateCommandBuffers(device, &ai, &cb) == VK_SUCCESS &&
+        vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS &&
+        sky.record(cb, 0, hits, probes, 1, 1, 2, error), error);
+    VkMemoryBarrier probe_barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    probe_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    probe_barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+        0, 1, &probe_barrier, 0, nullptr, 0, nullptr);
+    require(vkEndCommandBuffer(cb) == VK_SUCCESS, "sky probe reduction end");
+    submit.pCommandBuffers = &cb;
+    require(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS &&
+        vkQueueWaitIdle(queue) == VK_SUCCESS, "sky probe reduction submit");
+    SkyProbeVisibility sky_result{};
+    require(probes.read(sizeof(sky_result), &sky_result, sizeof(sky_result), error) &&
+        sky_result.faces == std::array<float, 6>{.5f, 0.f, 1.f, 1.f, 1.f, 1.f}, "sky probe face visibility");
+    vkFreeCommandBuffers(device, pool, 1, &cb);
+    DetailCullPass grass;
+    require(grass.initialize(device, vkGetDeviceProcAddr, limits, 1, VK_NULL_HANDLE, source, error), error);
+    BufferResource placements, instances, detail_args;
+    const std::array<DetailCullInput, 2> planted{{{0, 0, .5f, 0, 2}, {40, 0, .5f, 0, 1}}};
+    require(placements.initialize(device, sizeof(planted), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        host_memory, memory, vk, error) &&
+        instances.initialize(device, 2 * sizeof(DetailInstance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, host_memory, memory, vk, error) &&
+        detail_args.initialize(device, sizeof(VkDrawIndexedIndirectCommand), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+            host_memory, memory, vk, error) && placements.write(0, planted.data(), sizeof(planted), error), error);
+    const float identity[16]{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    require(vkAllocateCommandBuffers(device, &ai, &cb) == VK_SUCCESS &&
+        vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS &&
+        grass.record(cb, 0, placements, instances, detail_args, identity, 2, 12, error), error);
+    probe_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &probe_barrier, 0, nullptr, 0, nullptr);
+    require(vkEndCommandBuffer(cb) == VK_SUCCESS, "detail cull end");
+    submit.pCommandBuffers = &cb;
+    require(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS &&
+        vkQueueWaitIdle(queue) == VK_SUCCESS, "detail cull submit");
+    VkDrawIndexedIndirectCommand draw{};
+    DetailInstance grass_instance{};
+    require(detail_args.read(0, &draw, sizeof(draw), error) && draw.indexCount == 12 && draw.instanceCount == 1 &&
+        instances.read(0, &grass_instance, sizeof(grass_instance), error) &&
+        grass_instance.position_scale[3] == 2.f && grass_instance.rotation[0] == 1.f, "compacted GPU grass");
+    vkFreeCommandBuffers(device, pool, 1, &cb);
+    DetailGeneratePass generate;
+    require(generate.initialize(device, vkGetDeviceProcAddr, limits, 1, VK_NULL_HANDLE, source, error), error);
+    const std::array<DetailGenerateSlot, 2> cells{{
+        {{0, 0, 0, 2}, {0, 0x3f3f3f00u, 0, 1}, {0x0f0f0f0fu}},
+        {{0, 0, 0, 2}, {0, 0x3f3f3f00u, 0, 0}, {0x0f0f0f0fu}}}};
+    const DetailGroundTriangle triangle{{0, 1, 0, 0}, {0, 1, 2, 0}, {2, 1, 0, 0}};
+    const std::array<float, 2> scales{2, 3};
+    BufferResource cell_data, ground, prototype, generated;
+    const auto upload_data = [&](BufferResource& buffer, const void* data, size_t bytes) {
+        return buffer.initialize(device, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, host_memory, memory, vk, error) &&
+            buffer.write(0, data, bytes, error);
+    };
+    require(upload_data(cell_data, cells.data(), sizeof(cells)) && upload_data(ground, &triangle, sizeof(triangle)) &&
+        upload_data(prototype, scales.data(), sizeof(scales)) &&
+        generated.initialize(device, 2 * sizeof(GeneratedDetail), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            host_memory, memory, vk, error), error);
+    require(vkAllocateCommandBuffers(device, &ai, &cb) == VK_SUCCESS && vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS &&
+        generate.record(cb, 0, cell_data, ground, prototype, generated, {2, 1, 2.f, 1.f}, error), error);
+    require(grass.record(cb, 0, generated, instances, detail_args, identity, 2, 12, error, 0), error);
+    probe_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_HOST_BIT,
+        0, 1, &probe_barrier, 0, nullptr, 0, nullptr);
+    require(vkEndCommandBuffer(cb) == VK_SUCCESS, "detail generation end");
+    submit.pCommandBuffers = &cb;
+    require(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS &&
+        vkQueueWaitIdle(queue) == VK_SUCCESS, "detail generation submit");
+    std::array<GeneratedDetail, 2> grass_results{};
+    require(generated.read(0, grass_results.data(), sizeof(grass_results), error) && grass_results[0].model == 0 &&
+        grass_results[0].position_scale[0] == .5f && grass_results[0].position_scale[1] == 1.f &&
+        grass_results[0].position_scale[3] == 2.f && grass_results[1].model == UINT32_MAX, "GPU ground placement");
+    require(detail_args.read(0, &draw, sizeof(draw), error) && draw.instanceCount == 1 &&
+        instances.read(0, &grass_instance, sizeof(grass_instance), error) &&
+        grass_instance.position_scale[1] == 1.f, "GPU generated grass draw arguments");
+    vkFreeCommandBuffers(device, pool, 1, &cb);
+    std::cout << "GPU smoke trail and detail compute passed\n";
 }
 
 int main(int argc, char** argv)
@@ -210,7 +562,10 @@ int main(int argc, char** argv)
     try
     {
         Fixture f;
-        VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO}; app.apiVersion = VK_API_VERSION_1_1;
+        uint32_t loader_version = VK_API_VERSION_1_1;
+        vkEnumerateInstanceVersion(&loader_version);
+        VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+        app.apiVersion = std::min(loader_version, uint32_t(VK_API_VERSION_1_2));
         VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO}; instance_info.pApplicationInfo = &app;
         require(vkCreateInstance(&instance_info, nullptr, &f.instance) == VK_SUCCESS, "instance");
         uint32_t count = 0; vkEnumeratePhysicalDevices(f.instance, &count, nullptr);
@@ -236,6 +591,18 @@ int main(int argc, char** argv)
         const float priority = 1.f; VkDeviceQueueCreateInfo q{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
         q.queueFamilyIndex = family; q.queueCount = 1; q.pQueuePriorities = &priority;
         VkDeviceCreateInfo di{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO}; di.queueCreateInfoCount = 1; di.pQueueCreateInfos = &q;
+        VkPhysicalDeviceDescriptorIndexingFeatures indexing{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES};
+        bool bindless = false;
+        if (app.apiVersion >= VK_API_VERSION_1_2 && props.apiVersion >= VK_API_VERSION_1_2)
+        {
+            VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+            features.pNext = &indexing;
+            vkGetPhysicalDeviceFeatures2(physical, &features);
+            bindless = indexing.runtimeDescriptorArray && indexing.shaderSampledImageArrayNonUniformIndexing &&
+                indexing.descriptorBindingSampledImageUpdateAfterBind && indexing.descriptorBindingPartiallyBound;
+            if (bindless)
+                di.pNext = &indexing;
+        }
         require(vkCreateDevice(physical, &di, nullptr, &f.device) == VK_SUCCESS, "device");
         VkQueue queue{}; vkGetDeviceQueue(f.device, family, 0, &queue);
         VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO}; pi.queueFamilyIndex = family;
@@ -255,6 +622,8 @@ int main(int argc, char** argv)
             return true;
         };
         exercise_smoke_shader(f.device, queue, f.pool, props.limits, memory, vk, source);
+        exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source, bindless);
+        std::cout << "Visibility material resolve " << (bindless ? "passed" : "skipped (no descriptor indexing)") << '\n';
         require(compute.initialize_from_source(f.device, vkGetDeviceProcAddr, props.limits, 3, VK_NULL_HANDLE, source, error), error);
         GpuParticleBuffers buffers;
         GpuParticleBuffers::Capacity capacity{8, 4, 1, 2, 1, 1, 2, 514, 48};
@@ -370,14 +739,97 @@ int main(int argc, char** argv)
         for (size_t i = 0; i < 112; ++i)
             require(draw_words[i * 4] == 6 && draw_words[i * 4 + 1] == (i == 6 || i == 20 || i == 90 ? 1u : 0u), "compacted draw arguments");
         require(index_values[0] == 0 && index_values[1] == 2 && index_values[2] == 1, "root and child particle indices");
+        FrameBufferPool buffer_pool;
+        require(buffer_pool.initialize(f.device, memory, vk), "particle frame buffer pool");
         GpuParticleRuntime runtime;
         require(runtime.initialize(f.device, vkGetDeviceProcAddr, props.limits, memory, vk, capacity,
-            1, 16384, VK_NULL_HANDLE, source, error), error);
+            1, 16384, VK_NULL_HANDLE, source, error, &buffer_pool), error);
         GpuParticleEmitters emitter_manager(runtime.programs(), runtime.commands(), capacity.roots);
         GpuParticleEmitters::Handle handle{};
         require(emitter_manager.create(definition, handle, error), error);
         require(vkAllocateCommandBuffers(f.device, &ai, &cb) == VK_SUCCESS && vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS, "runtime begin");
         const VkQueueFlags frame_queue_flags = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT;
+        {
+            FrameImagePool image_pool;
+            require(image_pool.initialize(f.device, memory, {vkCreateImage, vkDestroyImage,
+                vkGetImageMemoryRequirements, vkAllocateMemory, vkFreeMemory, vkBindImageMemory}), "transient image pool");
+            FrameImageGraph graph;
+            FrameImageGraph::BufferResource transient, written, unused;
+            require(graph.declare_buffer(64, VK_BUFFER_USAGE_TRANSFER_DST_BIT, transient, error) &&
+                graph.declare_buffer(128, VK_BUFFER_USAGE_TRANSFER_DST_BIT, unused, error), error);
+            VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            image_info.imageType = VK_IMAGE_TYPE_2D;
+            image_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+            image_info.extent = {4, 4, 1};
+            image_info.mipLevels = image_info.arrayLayers = 1;
+            image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+            image_info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            FrameImageGraph::Resource image, cleared;
+            require(graph.declare_image(image_info, VK_IMAGE_ASPECT_COLOR_BIT, image, error), error);
+            const VkImageSubresourceRange color_range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            auto clear = graph.add_command_pass("clear transient image", [&](VkCommandBuffer command) {
+                VkClearColorValue red{{1.f, 0.f, 0.f, 1.f}};
+                vkCmdClearColorImage(command, graph.image_handle(cleared),
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &red, 1, &color_range);
+            });
+            auto fill = graph.add_command_pass("copy transient image to buffer", [&](VkCommandBuffer command) {
+                const VkBufferImageCopy region{0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                    {0, 0, 0}, {4, 4, 1}};
+                vkCmdCopyImageToBuffer(command, graph.image_handle(cleared), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    graph.buffer_handle(written), 1, &region);
+            });
+            auto host = graph.add_pass("read transient buffer", {});
+            require(graph.write(clear, image, ImageUse::TransferDestination, cleared, error) &&
+                graph.read(fill, cleared, ImageUse::TransferSource, error) &&
+                graph.write_buffer(fill, transient, BufferUse::TransferDestination, written, error) &&
+                graph.read_buffer(host, written, BufferUse::HostRead, error), error);
+            require(graph.materialize_images([&image_pool](const VkImageCreateInfo& info,
+                FrameImageGraph::TransientImage& output, std::string& failure) {
+                if (!image_pool.acquire(info, output.handle, failure))
+                    return false;
+                output.owner = std::shared_ptr<void>(new VkImage(output.handle), [&image_pool](void* resource) {
+                    const std::unique_ptr<VkImage> image(static_cast<VkImage*>(resource));
+                    image_pool.release(*image);
+                });
+                return true;
+            }, error), error);
+            BufferResource* physical = nullptr;
+            require(graph.materialize_buffers([&](VkDeviceSize size, VkBufferUsageFlags usage,
+                FrameImageGraph::TransientBuffer& output, std::string& failure) {
+                if (!buffer_pool.acquire(size, usage, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, false, physical, failure))
+                    return false;
+                output.handle = physical->handle();
+                output.owner = std::shared_ptr<void>(physical, [&buffer_pool](void* buffer) {
+                    buffer_pool.release(static_cast<BufferResource*>(buffer));
+                });
+                return true;
+            }, error), error);
+            require(physical && !graph.buffer_handle(unused), "unused transient buffer was allocated");
+            VkCommandBuffer transient_command{};
+            require(vkAllocateCommandBuffers(f.device, &ai, &transient_command) == VK_SUCCESS &&
+                vkBeginCommandBuffer(transient_command, &begin) == VK_SUCCESS, "transient buffer begin");
+            ImageStateTracker states;
+            require(states.register_image(graph.image_handle(image), color_range, ImageUse::Undefined, error), error);
+            require(graph.execute(transient_command, states, {vkCmdPipelineBarrier}, error,
+                frame_queue_flags), error);
+            require(vkEndCommandBuffer(transient_command) == VK_SUCCESS, "transient buffer end");
+            xray::render::framegraph::ResourceRetirement retirement(2);
+            graph.retire_allocations(retirement, 1u << 1);
+            retirement.complete(0);
+            require(retirement.size() == 2 && !graph.buffer_handle(written) && !graph.image_handle(image),
+                "transient resource ownership handoff");
+            VkSubmitInfo transient_submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+            transient_submit.commandBufferCount = 1;
+            transient_submit.pCommandBuffers = &transient_command;
+            require(vkQueueSubmit(queue, 1, &transient_submit, VK_NULL_HANDLE) == VK_SUCCESS &&
+                vkQueueWaitIdle(queue) == VK_SUCCESS, "transient buffer submit");
+            uint32_t result{};
+            require(physical->read(0, &result, sizeof(result), error) && result == 0xff0000ffu, "transient image result");
+            vkFreeCommandBuffers(f.device, f.pool, 1, &transient_command);
+            retirement.complete(1);
+            require(retirement.size() == 0, "transient buffer retirement");
+        }
         FrameSubmissionGraph runtime_submission_graph;
         const auto runtime_continuation = runtime_submission_graph.add_pass(
             "runtime graphics continuation", FrameSubmissionGraph::Queue::Graphics, family);
@@ -482,8 +934,10 @@ int main(int argc, char** argv)
             VkDescriptorSetLayout material_layout{};
             VkDescriptorSetLayoutBinding material_binding{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
                 VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+            VkDescriptorSetLayoutBinding material_bindings[]{material_binding, material_binding};
+            material_bindings[1].binding = 36; // material_parallax
             VkDescriptorSetLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-            layout_info.bindingCount = 1; layout_info.pBindings = &material_binding;
+            layout_info.bindingCount = 2; layout_info.pBindings = material_bindings;
             require(vkCreateDescriptorSetLayout(f.device, &layout_info, nullptr, &material_layout) == VK_SUCCESS, "material layout");
             VkDescriptorSetLayout scene_layout{};
             VkDescriptorSetLayoutBinding scene_bindings[]{material_binding, material_binding};
@@ -500,8 +954,17 @@ int main(int argc, char** argv)
             VkAttachmentReference color{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, depth{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
             VkSubpassDescription subpass{}; subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
             subpass.colorAttachmentCount = 1; subpass.pColorAttachments = &color; subpass.pDepthStencilAttachment = &depth;
+            VkSubpassDependency readback_dependency{};
+            readback_dependency.srcSubpass = 0;
+            readback_dependency.dstSubpass = VK_SUBPASS_EXTERNAL;
+            readback_dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            readback_dependency.dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            readback_dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            readback_dependency.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
             VkRenderPassCreateInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
             rp.attachmentCount = 2; rp.pAttachments = attachments; rp.subpassCount = 1; rp.pSubpasses = &subpass;
+            rp.dependencyCount = 1;
+            rp.pDependencies = &readback_dependency;
             VkRenderPass render_pass{};
             require(vkCreateRenderPass(f.device, &rp, nullptr, &render_pass) == VK_SUCCESS, "particle render pass");
             GpuParticleGraphics graphics;
@@ -566,7 +1029,7 @@ int main(int argc, char** argv)
             VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO}; si.magFilter = si.minFilter = VK_FILTER_NEAREST;
             si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST; si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
             require(vkCreateSampler(f.device, &si, nullptr, &images.sampler) == VK_SUCCESS, "particle sampler");
-            VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3};
+            VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4};
             VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO}; dpi.maxSets = 2;
             dpi.poolSizeCount = 1; dpi.pPoolSizes = &pool_size;
             require(vkCreateDescriptorPool(f.device, &dpi, nullptr, &images.pool) == VK_SUCCESS, "particle material pool");
@@ -576,7 +1039,9 @@ int main(int argc, char** argv)
             VkDescriptorImageInfo dii{images.sampler, images.views[2], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             VkWriteDescriptorSet dw{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}; dw.dstSet = material; dw.dstBinding = 0;
             dw.descriptorCount = 1; dw.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; dw.pImageInfo = &dii;
-            vkUpdateDescriptorSets(f.device, 1, &dw, 0, nullptr);
+            VkWriteDescriptorSet material_writes[]{dw, dw};
+            material_writes[1].dstBinding = material_bindings[1].binding;
+            vkUpdateDescriptorSets(f.device, 2, material_writes, 0, nullptr);
             dai.pSetLayouts = &scene_layout;
             VkDescriptorSet scene{}; require(vkAllocateDescriptorSets(f.device, &dai, &scene) == VK_SUCCESS, "particle scene set");
             VkWriteDescriptorSet scene_writes[]{dw, dw};

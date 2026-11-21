@@ -1,11 +1,9 @@
 #pragma once
 
 #include "BufferResource.h"
+#include "../xrRenderGraph/ResourcePool.h"
 
-#include <cstdint>
-#include <memory>
 #include <string>
-#include <vector>
 
 namespace xray::render::vulkan
 {
@@ -45,19 +43,9 @@ private:
                 shared_queue_flags == other.shared_queue_flags;
         }
     };
-    struct Entry
-    {
-        Descriptor descriptor{};
-        std::unique_ptr<BufferResource> resource;
-        uint64_t last_used{};
-        bool in_use{};
-    };
-
     VkDevice device_{};
     VkPhysicalDeviceMemoryProperties memory_{};
     BufferResourceDispatch dispatch_{};
-    std::vector<Entry> entries_;
-    uint64_t frame_{};
-    static constexpr uint64_t EvictAfterFrames = 4;
+    framegraph::ResourcePool<Descriptor, BufferResource> resources_;
 };
 }

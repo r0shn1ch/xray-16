@@ -57,6 +57,8 @@ BufferUseInfo describe(BufferUse use)
     case BufferUse::FragmentRead: return {VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false};
     case BufferUse::IndirectRead: return {VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
         VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, false};
+    case BufferUse::IndirectAndComputeRead: return {VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT,
+        VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, false};
     case BufferUse::AllCommandsReadWrite: return {VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, true};
     }
@@ -71,6 +73,9 @@ bool supported_on_queue(BufferUse use, VkQueueFlags flags)
     case BufferUse::FragmentRead:
     case BufferUse::IndirectRead:
         return (flags & VK_QUEUE_GRAPHICS_BIT) != 0;
+    case BufferUse::IndirectAndComputeRead:
+        return (flags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) ==
+            (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT);
     case BufferUse::ComputeRead:
     case BufferUse::ComputeWrite:
     case BufferUse::ComputeReadWrite:
@@ -132,22 +137,98 @@ bool FrameImageGraph::import_buffer(VkBuffer buffer, VkDeviceSize offset, VkDevi
         }
         if (existing.offset == offset && existing.size == size)
         {
-            resource = {uint32_t(&existing - m_buffers.data()), uint32_t(existing.versions.size() - 1)};
+            resource = {uint32_t(&existing - m_buffers.data()), uint32_t(existing.versions.size() - 1), generation_};
             error.clear();
             return true;
         }
     }
-    resource = {uint32_t(m_buffers.size()), 0};
+    resource = {uint32_t(m_buffers.size()), 0, generation_};
     m_buffers.push_back({buffer, offset, size, initial_use, initial_queue, initial_submission,
         initial_producer_pass, sharing_mode, std::move(sharing_queue_families), {{}}});
     error.clear();
     return true;
 }
 
+bool FrameImageGraph::declare_buffer(VkDeviceSize size, VkBufferUsageFlags usage,
+    BufferResource& resource, std::string& error)
+{
+    if (!size || !usage)
+    {
+        error = "Frame image graph: transient buffer requires size and usage";
+        return false;
+    }
+    Buffer buffer;
+    buffer.size = size;
+    buffer.transient_usage = usage;
+    buffer.initial_queue = default_queue_;
+    m_buffers.push_back(std::move(buffer));
+    resource = {uint32_t(m_buffers.size() - 1), 0, generation_};
+    error.clear();
+    return true;
+}
+
+bool FrameImageGraph::materialize_buffers(const AllocateBuffer& allocate, std::string& error)
+{
+    ResourceLifetimes lifetimes;
+    if (!compile_resource_lifetimes(lifetimes, error))
+        return false;
+    std::vector<std::pair<size_t, TransientBuffer>> allocations;
+    for (size_t index = 0; index < m_buffers.size(); ++index)
+    {
+        const Buffer& buffer = m_buffers[index];
+        if (buffer.buffer || lifetimes.buffers[index].first_use == framegraph::INVALID_INDEX)
+            continue;
+        TransientBuffer physical;
+        if (!allocate || !allocate(buffer.size, buffer.transient_usage, physical, error) ||
+            !physical.handle || !physical.owner ||
+            !valid_sharing_metadata(physical.sharing_mode, physical.queue_families))
+        {
+            if (error.empty())
+                error = "Frame image graph: transient buffer allocation failed";
+            return false;
+        }
+        allocations.emplace_back(index, std::move(physical));
+    }
+    for (auto& pending : allocations)
+    {
+        Buffer& buffer = m_buffers[pending.first];
+        auto& physical = pending.second;
+        buffer.buffer = physical.handle;
+        buffer.sharing_mode = physical.sharing_mode;
+        buffer.sharing_queue_families = std::move(physical.queue_families);
+        buffer.allocation = std::move(physical.owner);
+        buffer.initial_queue = m_passes[lifetimes.pass_order[lifetimes.buffers[pending.first].first_use]].queue;
+    }
+    return true;
+}
+
+VkBuffer FrameImageGraph::buffer_handle(BufferResource resource) const
+{
+    if (resource.generation != generation_ || resource.index >= m_buffers.size())
+        return VK_NULL_HANDLE;
+    const Buffer& buffer = m_buffers[resource.index];
+    return resource.version < buffer.versions.size() ? buffer.buffer : VK_NULL_HANDLE;
+}
+
+void FrameImageGraph::retire_allocations(framegraph::ResourceRetirement& retirement, uint32_t slots)
+{
+    const auto retire = [&](auto& resource, auto& handle) {
+        if (!resource.allocation)
+            return;
+        retirement.defer_for_slots(slots, [owner = resource.allocation]() mutable { owner.reset(); });
+        resource.allocation.reset();
+        handle = VK_NULL_HANDLE;
+    };
+    for (auto& buffer : m_buffers)
+        retire(buffer, buffer.buffer);
+    for (auto& image : m_images)
+        retire(image, image.image);
+}
+
 bool FrameImageGraph::valid_buffer(Pass pass, BufferResource resource, std::string& error) const
 {
-    if (pass >= m_passes.size() || resource.id >= m_buffers.size() ||
-        resource.version >= m_buffers[resource.id].versions.size())
+    if (pass >= m_passes.size() || resource.generation != generation_ || resource.index >= m_buffers.size() ||
+        resource.version >= m_buffers[resource.index].versions.size())
     {
         error = "Frame image graph: invalid pass or buffer version";
         return false;
@@ -157,9 +238,9 @@ bool FrameImageGraph::valid_buffer(Pass pass, BufferResource resource, std::stri
 
 bool FrameImageGraph::buffer_ranges_overlap(BufferResource first, BufferResource second) const
 {
-    const Buffer& a = m_buffers[first.id];
-    const Buffer& b = m_buffers[second.id];
-    return a.buffer == b.buffer && a.offset < b.offset + b.size && b.offset < a.offset + a.size;
+    const Buffer& a = m_buffers[first.index];
+    const Buffer& b = m_buffers[second.index];
+    return a.buffer && a.buffer == b.buffer && a.offset < b.offset + b.size && b.offset < a.offset + a.size;
 }
 
 void FrameImageGraph::add_buffer_alias_hazard_edges(std::vector<std::set<Pass>>& edges,
@@ -178,14 +259,14 @@ void FrameImageGraph::add_buffer_alias_hazard_edges(std::vector<std::set<Pass>>&
     {
         for (const BufferAccess& access : m_passes[pass].buffer_reads)
         {
-            const Buffer& buffer = m_buffers[access.resource.id];
-            accesses.push_back({pass, access.resource.id, buffer.buffer, buffer.offset,
+            const Buffer& buffer = m_buffers[access.resource.index];
+            accesses.push_back({pass, access.resource.index, buffer.buffer, buffer.offset,
                 buffer.offset + buffer.size, false});
         }
         for (const BufferAccess& access : m_passes[pass].buffer_writes)
         {
-            const Buffer& buffer = m_buffers[access.resource.id];
-            accesses.push_back({pass, access.resource.id, buffer.buffer, buffer.offset,
+            const Buffer& buffer = m_buffers[access.resource.index];
+            accesses.push_back({pass, access.resource.index, buffer.buffer, buffer.offset,
                 buffer.offset + buffer.size, true});
         }
     }
@@ -216,7 +297,7 @@ void FrameImageGraph::add_buffer_alias_hazard_edges(std::vector<std::set<Pass>>&
         for (size_t j = i + 1; j < accesses.size(); ++j)
         {
             const AccessRange& b = accesses[j];
-            if (a.pass == b.pass || a.resource_id == b.resource_id || a.buffer != b.buffer ||
+            if (!a.buffer || a.pass == b.pass || a.resource_id == b.resource_id || a.buffer != b.buffer ||
                 (!a.writes && !b.writes) ||
                 a.begin >= b.end || b.begin >= a.end)
                 continue;
@@ -237,31 +318,31 @@ bool FrameImageGraph::read_buffer(Pass pass, BufferResource resource,
 {
     if (!valid_buffer(pass, resource, error)) return false;
     if (use != BufferUse::ComputeRead && use != BufferUse::FragmentRead &&
-        use != BufferUse::VertexRead && use != BufferUse::IndirectRead &&
+        use != BufferUse::VertexRead && use != BufferUse::IndirectRead && use != BufferUse::IndirectAndComputeRead &&
         use != BufferUse::TransferSource && use != BufferUse::HostRead)
     {
         error = "Frame image graph: invalid buffer read use";
         return false;
     }
-    const Buffer& buffer = m_buffers[resource.id];
+    const Buffer& buffer = m_buffers[resource.index];
     if (buffer.versions[resource.version].producer == pass)
     {
         error = "Frame image graph: a pass cannot read its own buffer output";
         return false;
     }
     for (const BufferAccess& access : m_passes[pass].buffer_reads)
-        if (access.resource.id == resource.id || buffer_ranges_overlap(access.resource, resource))
+        if (access.resource.index == resource.index || buffer_ranges_overlap(access.resource, resource))
         {
             error = "Frame image graph: overlapping buffer ranges may be accessed only once per pass";
             return false;
         }
     for (const BufferAccess& access : m_passes[pass].buffer_writes)
-        if (access.resource.id == resource.id || buffer_ranges_overlap(access.resource, resource))
+        if (access.resource.index == resource.index || buffer_ranges_overlap(access.resource, resource))
         {
             error = "Frame image graph: overlapping buffer ranges may be accessed only once per pass";
             return false;
         }
-    m_buffers[resource.id].versions[resource.version].readers.push_back(pass);
+    m_buffers[resource.index].versions[resource.version].readers.push_back(pass);
     m_passes[pass].buffer_reads.push_back({resource, use});
     return true;
 }
@@ -276,24 +357,24 @@ bool FrameImageGraph::write_buffer(Pass pass, BufferResource resource,
         return false;
     }
     for (const BufferAccess& access : m_passes[pass].buffer_reads)
-        if (access.resource.id == resource.id || buffer_ranges_overlap(access.resource, resource))
+        if (access.resource.index == resource.index || buffer_ranges_overlap(access.resource, resource))
         {
             error = "Frame image graph: overlapping buffer ranges may be accessed only once per pass";
             return false;
         }
     for (const BufferAccess& access : m_passes[pass].buffer_writes)
-        if (access.resource.id == resource.id || buffer_ranges_overlap(access.resource, resource))
+        if (access.resource.index == resource.index || buffer_ranges_overlap(access.resource, resource))
         {
             error = "Frame image graph: overlapping buffer ranges may be accessed only once per pass";
             return false;
         }
-    Buffer& buffer = m_buffers[resource.id];
+    Buffer& buffer = m_buffers[resource.index];
     if (resource.version + 1 != buffer.versions.size())
     {
         error = "Frame image graph: buffer write requires latest version";
         return false;
     }
-    next = {resource.id, uint32_t(buffer.versions.size())};
+    next = {resource.index, uint32_t(buffer.versions.size()), generation_};
     buffer.versions.push_back({pass, {}});
     m_passes[pass].buffer_writes.push_back({next, use});
     return true;
@@ -309,25 +390,25 @@ bool FrameImageGraph::read_write_buffer(Pass pass, BufferResource resource,
         return false;
     }
     for (const BufferAccess& access : m_passes[pass].buffer_reads)
-        if (access.resource.id == resource.id || buffer_ranges_overlap(access.resource, resource))
+        if (access.resource.index == resource.index || buffer_ranges_overlap(access.resource, resource))
         {
             error = "Frame image graph: overlapping buffer ranges may be accessed only once per pass";
             return false;
         }
     for (const BufferAccess& access : m_passes[pass].buffer_writes)
-        if (access.resource.id == resource.id || buffer_ranges_overlap(access.resource, resource))
+        if (access.resource.index == resource.index || buffer_ranges_overlap(access.resource, resource))
         {
             error = "Frame image graph: overlapping buffer ranges may be accessed only once per pass";
             return false;
         }
-    Buffer& buffer = m_buffers[resource.id];
+    Buffer& buffer = m_buffers[resource.index];
     if (resource.version + 1 != buffer.versions.size())
     {
         error = "Frame image graph: buffer read/write requires latest version";
         return false;
     }
     buffer.versions[resource.version].readers.push_back(pass);
-    next = {resource.id, uint32_t(buffer.versions.size())};
+    next = {resource.index, uint32_t(buffer.versions.size()), generation_};
     buffer.versions.push_back({pass, {}});
     m_passes[pass].buffer_writes.push_back({next, use});
     return true;
@@ -378,7 +459,7 @@ bool FrameImageGraph::import_image(VkImage image, const VkImageSubresourceRange&
                 error = "Frame image graph: repeated image import has different producer metadata";
                 return false;
             }
-            resource = {uint32_t(&existing - m_images.data()), uint32_t(existing.versions.size() - 1)};
+            resource = {uint32_t(&existing - m_images.data()), uint32_t(existing.versions.size() - 1), generation_};
             error.clear();
             return true;
         }
@@ -390,11 +471,85 @@ bool FrameImageGraph::import_image(VkImage image, const VkImageSubresourceRange&
             return false;
         }
     }
-    resource = {uint32_t(m_images.size()), 0};
+    resource = {uint32_t(m_images.size()), 0, generation_};
     m_images.push_back({image, range, initial_queue, initial_use, initial_submission,
         initial_producer_pass, sharing_mode, std::move(sharing_queue_families), {{}}});
     error.clear();
     return true;
+}
+
+bool FrameImageGraph::declare_image(const VkImageCreateInfo& info, VkImageAspectFlags aspects,
+    Resource& resource, std::string& error)
+{
+    if (info.sType != VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO || info.pNext ||
+        info.initialLayout != VK_IMAGE_LAYOUT_UNDEFINED || !aspects || !info.usage ||
+        !info.extent.width || !info.extent.height || !info.extent.depth ||
+        !info.mipLevels || !info.arrayLayers ||
+        (info.queueFamilyIndexCount && !info.pQueueFamilyIndices))
+    {
+        error = "Frame image graph: invalid transient image descriptor";
+        return false;
+    }
+
+    Image image;
+    image.range = {aspects, 0, info.mipLevels, 0, info.arrayLayers};
+    image.initial_queue = default_queue_;
+    image.sharing_mode = info.sharingMode;
+    if (info.queueFamilyIndexCount)
+        image.sharing_queue_families.assign(info.pQueueFamilyIndices,
+            info.pQueueFamilyIndices + info.queueFamilyIndexCount);
+    if (!valid_sharing_metadata(image.sharing_mode, image.sharing_queue_families))
+    {
+        error = "Frame image graph: invalid transient image queue families";
+        return false;
+    }
+    image.transient_info = info;
+    image.transient_info.pQueueFamilyIndices = nullptr;
+    m_images.push_back(std::move(image));
+    resource = {uint32_t(m_images.size() - 1), 0, generation_};
+    error.clear();
+    return true;
+}
+
+bool FrameImageGraph::materialize_images(const AllocateImage& allocate, std::string& error)
+{
+    ResourceLifetimes lifetimes;
+    if (!compile_resource_lifetimes(lifetimes, error))
+        return false;
+    std::vector<std::pair<size_t, TransientImage>> allocations;
+    for (size_t index = 0; index < m_images.size(); ++index)
+    {
+        const Image& image = m_images[index];
+        if (image.image || lifetimes.images[index].first_use == framegraph::INVALID_INDEX)
+            continue;
+        VkImageCreateInfo info = image.transient_info;
+        info.pQueueFamilyIndices = image.sharing_queue_families.empty()
+            ? nullptr : image.sharing_queue_families.data();
+        TransientImage physical;
+        if (!allocate || !allocate(info, physical, error) || !physical.handle || !physical.owner)
+        {
+            if (error.empty())
+                error = "Frame image graph: transient image allocation failed";
+            return false;
+        }
+        allocations.emplace_back(index, std::move(physical));
+    }
+    for (auto& pending : allocations)
+    {
+        auto& image = m_images[pending.first];
+        image.image = pending.second.handle;
+        image.allocation = std::move(pending.second.owner);
+        image.initial_queue = m_passes[lifetimes.pass_order[lifetimes.images[pending.first].first_use]].queue;
+    }
+    return true;
+}
+
+VkImage FrameImageGraph::image_handle(Resource resource) const
+{
+    if (resource.generation != generation_ || resource.index >= m_images.size())
+        return VK_NULL_HANDLE;
+    const Image& image = m_images[resource.index];
+    return resource.version < image.versions.size() ? image.image : VK_NULL_HANDLE;
 }
 
 FrameImageGraph::Pass FrameImageGraph::add_pass(const char* name, Record record)
@@ -469,8 +624,8 @@ bool FrameImageGraph::depends_on(Pass after, Pass before, std::string& error)
 
 bool FrameImageGraph::valid(Pass pass, Resource resource, std::string& error) const
 {
-    if (pass >= m_passes.size() || resource.id >= m_images.size() ||
-        resource.version >= m_images[resource.id].versions.size())
+    if (pass >= m_passes.size() || resource.generation != generation_ || resource.index >= m_images.size() ||
+        resource.version >= m_images[resource.index].versions.size())
     {
         error = "Frame image graph: invalid pass or resource version";
         return false;
@@ -480,9 +635,9 @@ bool FrameImageGraph::valid(Pass pass, Resource resource, std::string& error) co
 
 bool FrameImageGraph::image_ranges_overlap(Resource first, Resource second) const
 {
-    const Image& a = m_images[first.id];
-    const Image& b = m_images[second.id];
-    return a.image == b.image && image_subresources_overlap(a.range, b.range);
+    const Image& a = m_images[first.index];
+    const Image& b = m_images[second.index];
+    return a.image && a.image == b.image && image_subresources_overlap(a.range, b.range);
 }
 
 void FrameImageGraph::add_image_alias_hazard_edges(std::vector<std::set<Pass>>& edges,
@@ -501,13 +656,13 @@ void FrameImageGraph::add_image_alias_hazard_edges(std::vector<std::set<Pass>>& 
     {
         for (const Access& access : m_passes[pass].reads)
         {
-            const Image& image = m_images[access.resource.id];
-            accesses.push_back({pass, access.resource.id, image.image, image.range, false});
+            const Image& image = m_images[access.resource.index];
+            accesses.push_back({pass, access.resource.index, image.image, image.range, false});
         }
         for (const Access& access : m_passes[pass].writes)
         {
-            const Image& image = m_images[access.resource.id];
-            accesses.push_back({pass, access.resource.id, image.image, image.range, true});
+            const Image& image = m_images[access.resource.index];
+            accesses.push_back({pass, access.resource.index, image.image, image.range, true});
         }
     }
     const auto has_path = [&edges](Pass from, Pass to) {
@@ -537,7 +692,7 @@ void FrameImageGraph::add_image_alias_hazard_edges(std::vector<std::set<Pass>>& 
         for (size_t j = i + 1; j < accesses.size(); ++j)
         {
             const AccessRange& b = accesses[j];
-            if (a.pass == b.pass || a.resource_id == b.resource_id || a.image != b.image ||
+            if (!a.image || a.pass == b.pass || a.resource_id == b.resource_id || a.image != b.image ||
                 (!a.writes && !b.writes) || !image_subresources_overlap(a.range, b.range))
                 continue;
             if (has_path(a.pass, b.pass) || has_path(b.pass, a.pass))
@@ -564,24 +719,24 @@ bool FrameImageGraph::read(Pass pass, Resource resource, ImageUse use, std::stri
         error = "Frame image graph: invalid read use";
         return false;
     }
-    if (m_images[resource.id].versions[resource.version].producer == pass)
+    if (m_images[resource.index].versions[resource.version].producer == pass)
     {
         error = "Frame image graph: a pass cannot read its own output version";
         return false;
     }
     for (const Access& access : m_passes[pass].reads)
-        if (access.resource.id == resource.id || image_ranges_overlap(access.resource, resource))
+        if (access.resource.index == resource.index || image_ranges_overlap(access.resource, resource))
         {
             error = "Frame image graph: overlapping image subresources may be accessed only once per pass";
             return false;
         }
     for (const Access& access : m_passes[pass].writes)
-        if (access.resource.id == resource.id || image_ranges_overlap(access.resource, resource))
+        if (access.resource.index == resource.index || image_ranges_overlap(access.resource, resource))
         {
             error = "Frame image graph: overlapping image subresources may be accessed only once per pass";
             return false;
         }
-    m_images[resource.id].versions[resource.version].readers.push_back(pass);
+    m_images[resource.index].versions[resource.version].readers.push_back(pass);
     m_passes[pass].reads.push_back({resource, use});
     return true;
 }
@@ -599,24 +754,24 @@ bool FrameImageGraph::write(Pass pass, Resource resource, ImageUse use,
         return false;
     }
     for (const Access& access : m_passes[pass].reads)
-        if (access.resource.id == resource.id || image_ranges_overlap(access.resource, resource))
+        if (access.resource.index == resource.index || image_ranges_overlap(access.resource, resource))
         {
             error = "Frame image graph: overlapping image subresources may be accessed only once per pass";
             return false;
         }
     for (const Access& access : m_passes[pass].writes)
-        if (access.resource.id == resource.id || image_ranges_overlap(access.resource, resource))
+        if (access.resource.index == resource.index || image_ranges_overlap(access.resource, resource))
         {
             error = "Frame image graph: overlapping image subresources may be accessed only once per pass";
             return false;
         }
-    Image& image = m_images[resource.id];
+    Image& image = m_images[resource.index];
     if (resource.version + 1 != image.versions.size())
     {
         error = "Frame image graph: write requires the latest resource version";
         return false;
     }
-    next = {resource.id, uint32_t(image.versions.size())};
+    next = {resource.index, uint32_t(image.versions.size()), generation_};
     image.versions.push_back({pass, {}});
     m_passes[pass].writes.push_back({next, use});
     return true;
@@ -655,24 +810,24 @@ bool FrameImageGraph::write_render_pass(Pass pass, Resource resource,
     if (!valid(pass, resource, error))
         return false;
     for (const Access& access : m_passes[pass].reads)
-        if (access.resource.id == resource.id || image_ranges_overlap(access.resource, resource))
+        if (access.resource.index == resource.index || image_ranges_overlap(access.resource, resource))
         {
             error = "Frame image graph: overlapping image subresources may be accessed only once per pass";
             return false;
         }
     for (const Access& access : m_passes[pass].writes)
-        if (access.resource.id == resource.id || image_ranges_overlap(access.resource, resource))
+        if (access.resource.index == resource.index || image_ranges_overlap(access.resource, resource))
         {
             error = "Frame image graph: overlapping image subresources may be accessed only once per pass";
             return false;
         }
-    Image& image = m_images[resource.id];
+    Image& image = m_images[resource.index];
     if (resource.version + 1 != image.versions.size())
     {
         error = "Frame image graph: write requires the latest resource version";
         return false;
     }
-    next = {resource.id, uint32_t(image.versions.size())};
+    next = {resource.index, uint32_t(image.versions.size()), generation_};
     image.versions.push_back({pass, {}});
     m_passes[pass].writes.push_back({next,
         initial_use == ImageUse::Undefined ? attachment_use : initial_use, final_use});
@@ -691,25 +846,25 @@ bool FrameImageGraph::read_write(Pass pass, Resource resource, Resource& next, s
         return false;
     }
     for (const Access& access : m_passes[pass].reads)
-        if (access.resource.id == resource.id || image_ranges_overlap(access.resource, resource))
+        if (access.resource.index == resource.index || image_ranges_overlap(access.resource, resource))
         {
             error = "Frame image graph: overlapping image subresources may be accessed only once per pass";
             return false;
         }
     for (const Access& access : m_passes[pass].writes)
-        if (access.resource.id == resource.id || image_ranges_overlap(access.resource, resource))
+        if (access.resource.index == resource.index || image_ranges_overlap(access.resource, resource))
         {
             error = "Frame image graph: overlapping image subresources may be accessed only once per pass";
             return false;
         }
-    Image& image = m_images[resource.id];
+    Image& image = m_images[resource.index];
     if (resource.version + 1 != image.versions.size())
     {
         error = "Frame image graph: read_write requires the latest resource version";
         return false;
     }
     image.versions[resource.version].readers.push_back(pass);
-    next = {resource.id, uint32_t(image.versions.size())};
+    next = {resource.index, uint32_t(image.versions.size()), generation_};
     image.versions.push_back({pass, {}});
     m_passes[pass].writes.push_back({next, use});
     return true;
@@ -725,38 +880,10 @@ bool FrameImageGraph::build_pass_graph(std::vector<std::set<Pass>>& edges,
             ++indegree[to];
     };
     for (const Image& image : m_images)
-    {
-        for (size_t i = 0; i < image.versions.size(); ++i)
-        {
-            const Version& version = image.versions[i];
-            for (Pass reader : version.readers)
-                edge(version.producer, reader);
-            if (i + 1 < image.versions.size())
-            {
-                const Pass writer = image.versions[i + 1].producer;
-                edge(version.producer, writer);
-                for (Pass reader : version.readers)
-                    edge(reader, writer);
-            }
-        }
-    }
+        framegraph::add_resource_dependencies(image.versions, edge);
     add_image_alias_hazard_edges(edges, indegree);
     for (const Buffer& buffer : m_buffers)
-    {
-        for (size_t i = 0; i < buffer.versions.size(); ++i)
-        {
-            const Version& version = buffer.versions[i];
-            for (Pass reader : version.readers)
-                edge(version.producer, reader);
-            if (i + 1 < buffer.versions.size())
-            {
-                const Pass writer = buffer.versions[i + 1].producer;
-                edge(version.producer, writer);
-                for (Pass reader : version.readers)
-                    edge(reader, writer);
-            }
-        }
-    }
+        framegraph::add_resource_dependencies(buffer.versions, edge);
     add_buffer_alias_hazard_edges(edges, indegree);
     for (const Dependency& dependency : m_dependencies)
     {
@@ -769,26 +896,37 @@ bool FrameImageGraph::build_pass_graph(std::vector<std::set<Pass>>& edges,
         edge(dependency.before, dependency.after);
     }
 
-    std::set<Pass> ready;
-    for (Pass pass = 0; pass < m_passes.size(); ++pass)
-        if (!indegree[pass]) ready.insert(pass);
-    std::vector<Pass> sorted;
-    sorted.reserve(m_passes.size());
-    while (!ready.empty())
-    {
-        const Pass pass = *ready.begin();
-        ready.erase(ready.begin());
-        sorted.push_back(pass);
-        for (Pass to : edges[pass])
-            if (!--indegree[to]) ready.insert(to);
-    }
-    if (sorted.size() != m_passes.size())
+    if (!framegraph::sort_passes(edges, std::move(indegree), order))
     {
         error = "Frame image graph: cyclic pass dependencies";
         return false;
     }
-    order = std::move(sorted);
     error.clear();
+    return true;
+}
+
+bool FrameImageGraph::compile_resource_lifetimes(ResourceLifetimes& lifetimes, std::string& error) const
+{
+    ResourceLifetimes compiled;
+    std::vector<std::set<Pass>> edges;
+    if (!build_pass_graph(edges, compiled.pass_order, error))
+        return false;
+
+    compiled.images.resize(m_images.size());
+    compiled.buffers.resize(m_buffers.size());
+    for (uint32_t index = 0; index < compiled.pass_order.size(); ++index)
+    {
+        const PassInfo& pass = m_passes[compiled.pass_order[index]];
+        for (const auto& access : pass.reads)
+            compiled.images[access.resource.index].record_use(index);
+        for (const auto& access : pass.writes)
+            compiled.images[access.resource.index].record_use(index);
+        for (const auto& access : pass.buffer_reads)
+            compiled.buffers[access.resource.index].record_use(index);
+        for (const auto& access : pass.buffer_writes)
+            compiled.buffers[access.resource.index].record_use(index);
+    }
+    lifetimes = std::move(compiled);
     return true;
 }
 
@@ -1070,15 +1208,15 @@ bool FrameImageGraph::add_generated_ownership_transfers(FrameSubmissionGraph& su
     {
         const PassInfo& info = m_passes[pass];
         for (const Access& access : info.reads)
-            image_accesses[access.resource.id].push_back({pass, access.use, access.resource.id});
+            image_accesses[access.resource.index].push_back({pass, access.use, access.resource.index});
         for (const Access& access : info.writes)
-            image_accesses[access.resource.id].push_back({pass,
+            image_accesses[access.resource.index].push_back({pass,
                 access.final_use != ImageUse::Undefined ? access.final_use : access.use,
-                access.resource.id});
+                access.resource.index});
         for (const BufferAccess& access : info.buffer_reads)
-            buffer_accesses[access.resource.id].push_back({pass, access.use, access.resource.id});
+            buffer_accesses[access.resource.index].push_back({pass, access.use, access.resource.index});
         for (const BufferAccess& access : info.buffer_writes)
-            buffer_accesses[access.resource.id].push_back({pass, access.use, access.resource.id});
+            buffer_accesses[access.resource.index].push_back({pass, access.use, access.resource.index});
     }
 
     std::vector<bool> image_processed(m_images.size(), false);
@@ -1848,13 +1986,25 @@ bool FrameImageGraph::connect_submission_dependencies(FrameSubmissionGraph& subm
 bool FrameImageGraph::begin_execution(ExecutionState& state, std::string& error) const
 {
     state = {};
+    for (const Image& image : m_images)
+        if (!image.image && (image.versions.size() > 1 || !image.versions.front().readers.empty()))
+        {
+            error = "Frame image graph: used transient image has not been materialized";
+            return false;
+        }
+    for (const Buffer& buffer : m_buffers)
+        if (!buffer.buffer && (buffer.versions.size() > 1 || !buffer.versions.front().readers.empty()))
+        {
+            error = "Frame image graph: used transient buffer has not been materialized";
+            return false;
+        }
     state.graph = this;
     try
     {
         for (size_t i = 0; i < m_buffers.size(); ++i)
         {
             const VkBuffer handle = m_buffers[i].buffer;
-            if (std::any_of(m_buffers.begin(), m_buffers.begin() + i,
+            if (!handle || std::any_of(m_buffers.begin(), m_buffers.begin() + i,
                     [handle](const Buffer& existing) { return existing.buffer == handle; }))
                 continue;
             std::vector<VkDeviceSize> boundaries;
@@ -2059,26 +2209,26 @@ bool FrameImageGraph::execute_internal(VkCommandBuffer command, ImageStateTracke
             continue;
         for (const Access& access : info.reads)
         {
-            const Image& image = m_images[access.resource.id];
+            const Image& image = m_images[access.resource.index];
             if (!states.can_transition(image.image, image.range, access.use, error))
                 return false;
         }
         for (const Access& access : info.writes)
         {
-            const Image& image = m_images[access.resource.id];
+            const Image& image = m_images[access.resource.index];
             if (!states.can_transition(image.image, image.range, access.use, error))
                 return false;
         }
     }
     std::set<const QueueGroup::OwnershipTransfer*> acquired_image_transfers;
     const auto transition_image = [&](Pass pass, const Access& access) {
-        const Image& image = m_images[access.resource.id];
+        const Image& image = m_images[access.resource.index];
         if (selected_group)
         {
             for (const QueueGroup::OwnershipTransfer& transfer : selected_group->ownership_acquires)
             {
                 if (transfer.kind != QueueGroup::OwnershipTransfer::Kind::Image ||
-                    transfer.destination_pass != pass || transfer.resource_id != access.resource.id ||
+                    transfer.destination_pass != pass || transfer.resource_id != access.resource.index ||
                     transfer.destination_image_use != access.use ||
                     acquired_image_transfers.find(&transfer) != acquired_image_transfers.end())
                     continue;
@@ -2109,7 +2259,7 @@ bool FrameImageGraph::execute_internal(VkCommandBuffer command, ImageStateTracke
     };
     std::set<std::pair<const QueueGroup::OwnershipTransfer*, VkDeviceSize>> acquired_buffer_segments;
     const auto transition_buffer = [&](Pass pass, const BufferAccess& access) {
-        const Buffer& buffer = m_buffers[access.resource.id];
+        const Buffer& buffer = m_buffers[access.resource.index];
         const VkDeviceSize end = buffer.offset + buffer.size;
         std::vector<const QueueGroup::OwnershipTransfer*> transfers;
         if (selected_group)
@@ -2117,7 +2267,7 @@ bool FrameImageGraph::execute_internal(VkCommandBuffer command, ImageStateTracke
             for (const QueueGroup::OwnershipTransfer& transfer : selected_group->ownership_acquires)
             {
                 if (transfer.kind != QueueGroup::OwnershipTransfer::Kind::Buffer ||
-                    transfer.destination_pass != pass || transfer.resource_id != access.resource.id ||
+                    transfer.destination_pass != pass || transfer.resource_id != access.resource.index ||
                     transfer.destination_buffer_use != access.use)
                     continue;
                 if (!transfer.buffer_size || transfer.buffer_offset >
@@ -2389,7 +2539,7 @@ bool FrameImageGraph::execute_internal(VkCommandBuffer command, ImageStateTracke
         {
             if (access.final_use == ImageUse::Undefined)
                 continue;
-            const Image& image = m_images[access.resource.id];
+            const Image& image = m_images[access.resource.index];
             if (!states.set_render_pass_final_state(image.image, image.range,
                     access.final_use, error))
                 return false;

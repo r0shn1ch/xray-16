@@ -34,6 +34,10 @@ class DeferredFrame
     void set_hiz_pyramid(HiZPyramid* pyramid) { hiz_ = pyramid; }
     void set_motion_vectors(MotionVectors* vectors) { motion_ = vectors; }
     void set_hiz_dynamic_mask_enabled(bool enabled) { hiz_dynamic_mask_enabled_ = enabled; }
+    using VisibilityRecorder = void (*)(const FrameRecordingContext&, const GpuLevel&, const float (&)[16], void*);
+    void set_visibility_recorder(VisibilityRecorder recorder, void* user)
+    { visibility_ = recorder; visibility_data_ = user; }
+    void set_visibility_gbuffer_recorder(FrameRecorder recorder) { visibility_gbuffer_ = recorder; }
     using ComputeRecorder = bool (*)(const FrameRecordingContext&, void*, std::string&);
     void set_compute_recorder(ComputeRecorder recorder, void* user) { compute_ = recorder; compute_data_ = user; }
     void set_object_velocity_recorder(FrameCheckedRecorder recorder, void* user)
@@ -70,6 +74,9 @@ class DeferredFrame
     void* external_validation_data_{};
     FrameRecorder light_grid_{};
     ComputeRecorder compute_{};
+    VisibilityRecorder visibility_{};
+    FrameRecorder visibility_gbuffer_{};
+    void* visibility_data_{};
     void* compute_data_{};
     RayRecorder ray_{};
     VsmRecorder vsm_{};

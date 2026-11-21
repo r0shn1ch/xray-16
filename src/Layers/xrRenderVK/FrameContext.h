@@ -65,6 +65,7 @@ struct FrameDispatch
     PFN_vkCmdResetQueryPool cmd_reset_query_pool{};
     PFN_vkCmdWriteTimestamp cmd_write_timestamp{};
     PFN_vkGetQueryPoolResults get_query_pool_results{};
+    PFN_vkSetHdrMetadataEXT set_hdr_metadata{};
 };
 
 // Optional replacement-swapchain provider used by frame interpolation. The
@@ -245,7 +246,7 @@ public:
         FrameSwapchainDestroyed swapchain_destroyed = nullptr, void* swapchain_data = nullptr,
         bool async_copy_queue = false, VkQueueFlags copy_queue_flags = VK_QUEUE_TRANSFER_BIT,
         uint32_t compute_queue_family = VK_QUEUE_FAMILY_IGNORED,
-        uint32_t copy_queue_family = VK_QUEUE_FAMILY_IGNORED);
+        uint32_t copy_queue_family = VK_QUEUE_FAMILY_IGNORED, bool linear_scene = false, bool hdr10 = false);
     // Borrow depth views produced by the offscreen pass. Caller must restore
     // the owned views (empty vector) before destroying the borrowed images.
     bool attach_scene_depth(const std::vector<VkImageView>& views,
@@ -322,6 +323,15 @@ public:
     VkExtent2D extent() const { return m_extent; }
     VkExtent2D presentation_extent() const { return m_presentation_extent; }
     VkFormat format() const { return m_format; }
+    VkFormat scene_format() const { return m_scene_format; }
+    bool hdr10_surface_available() const { return m_hdr10_surface_available; }
+    bool hdr10_active() const { return m_color_space == VK_COLOR_SPACE_HDR10_ST2084_EXT; }
+    void update_hdr_metadata(float paper_white, float peak, float black);
+    VkFormat composite_format() const { return m_composite_format; }
+    VkImageView composite_view(uint32_t index) const;
+    VkRenderPass display_output_pass() const { return m_display_output_pass; }
+    void set_display_output_recorder(FrameRecorder recorder, void* data)
+    { m_display_output_recorder = recorder; m_display_output_data = data; }
     VkRenderPass render_pass() const { return m_render_pass; }
     VkRenderPass overlay_render_pass() const { return m_overlay_pass; }
     VkRenderPass composite_render_pass() const { return m_composite_pass; }
@@ -356,7 +366,7 @@ private:
     bool create_render_targets(std::string& error);
     bool create_scene_colors(std::string& error);
     bool create_multisampled_scene_colors(std::string& error);
-    bool create_postprocess_targets(std::string& error);
+    bool create_postprocess_targets(std::string& error, VkFormat composite_format = VK_FORMAT_UNDEFINED);
     bool create_commands(std::string& error);
     bool create_sync(std::string& error);
     void destroy_swapchain_resources();
@@ -405,7 +415,14 @@ private:
     VkExtent2D m_requested_scene_extent{};
     VkSampleCountFlagBits m_scene_samples{VK_SAMPLE_COUNT_1_BIT};
     VkFormat m_format = VK_FORMAT_UNDEFINED;
+    VkFormat m_scene_format = VK_FORMAT_UNDEFINED;
+    VkFormat m_composite_format = VK_FORMAT_UNDEFINED;
+    bool m_linear_scene{};
     VkColorSpaceKHR m_color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    bool m_hdr10_surface_available{};
+    bool m_hdr10_requested{};
+    float m_hdr_metadata_peak{-1.f};
+    float m_hdr_metadata_black{-1.f};
     VkFormat m_depth_format = VK_FORMAT_UNDEFINED;
     VkPhysicalDeviceMemoryProperties m_memory_properties{};
     bool m_allow_readback = false;
@@ -462,6 +479,12 @@ private:
     std::vector<std::vector<VkImageView>> m_bloom_level_views;
     std::vector<std::vector<VkFramebuffer>> m_bloom_upsample_framebuffers;
     std::vector<VkFramebuffer> m_composite_framebuffers;
+    std::vector<VkImage> m_composite_images;
+    std::vector<VkImageView> m_composite_views;
+    VkRenderPass m_display_output_pass{};
+    std::vector<VkFramebuffer> m_display_output_framebuffers;
+    FrameRecorder m_display_output_recorder{};
+    void* m_display_output_data{};
     std::vector<VkImage> m_frame_generation_ui_images;
     std::vector<VkImageView> m_frame_generation_ui_views;
     std::vector<VkFramebuffer> m_frame_generation_ui_framebuffers;

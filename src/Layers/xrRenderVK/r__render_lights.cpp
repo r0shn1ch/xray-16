@@ -68,6 +68,7 @@ void VulkanGameDevice::render_lights(const float (&mvp)[16], bool render_world, 
         inverse.invert_44(camera);
         LocalShadowBudget shadows{LocalShadowSlots, unsigned(std::max(point_shadow_budget, 0)),
                                   unsigned(std::max(spot_shadow_budget, 0))};
+        std::array<LocalShadowTargets::TileRequest, LocalShadowSlots> shadow_tiles{};
         light_candidates_.clear();
         const VkExtent2D extent = window_.frame().extent();
         for (const auto &snapshot : light_snapshots_)
@@ -91,7 +92,6 @@ void VulkanGameDevice::render_lights(const float (&mvp)[16], bool render_world, 
             const auto &light_snapshot = *candidate.light;
             const bool spot = light_snapshot.type == VulkanLightType::Spot;
             const bool volumetric = volumetric_lights_enabled && light_snapshot.volumetric;
-            const int slot = shadows.reserve(light_snapshot.shadow, spot, candidate.distance, light_snapshot.range);
             auto scissor_light = light_snapshot;
             if (volumetric)
                 scissor_light.range = std::min(1000.f,
@@ -99,6 +99,7 @@ void VulkanGameDevice::render_lights(const float (&mvp)[16], bool render_world, 
             const VkRect2D scissor = light_scissor(camera, scissor_light, extent);
             if (!scissor.extent.width || !scissor.extent.height)
                 continue;
+            const int slot = shadows.reserve(light_snapshot.shadow, spot, candidate.distance, light_snapshot.range);
             LocalLightUniform local{};
             local.debug_mode[0] = sun_uniform.options[1];
             if (volumetric)
@@ -123,6 +124,12 @@ void VulkanGameDevice::render_lights(const float (&mvp)[16], bool render_world, 
             const float cone = std::clamp(light_snapshot.cone, .15f, 3.f);
             local.direction_cone[3] = std::cos(cone * .5f);
             const bool cast = slot >= 0;
+            if (cast)
+            {
+                const uint32_t footprint = std::max(scissor.extent.width, scissor.extent.height);
+                shadow_tiles[slot] = {footprint <= 160 ? 128u : footprint <= 320 ? 256u : LocalShadowSize,
+                    spot ? 1u : LocalShadowFaces};
+            }
             local.shadow_params[0] = cast ? float(slot * LocalShadowFaces) : 0.f;
             local.shadow_params[1] = LocalShadowReceiverOffset;
             local.shadow_params[2] = cast ? 1.f : 0.f;
@@ -160,6 +167,7 @@ void VulkanGameDevice::render_lights(const float (&mvp)[16], bool render_world, 
             local_uniforms_.push_back(local);
             local_scissors_.push_back(scissor);
         }
+        local_shadows_.layout_tiles(shadow_tiles);
     }
     std::copy_n(light.direction_ambient, 4, forward_lighting_.sun_direction_ambient);
     std::copy_n(sun_uniform.ambient_color, 4, forward_lighting_.ambient_color);

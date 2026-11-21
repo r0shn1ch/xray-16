@@ -31,7 +31,7 @@ public:
         const std::vector<VkDescriptorBufferInfo>& buffers,
         const std::vector<VkDescriptorImageInfo>& images, const void* constants,
         uint32_t groups_x, uint32_t groups_y, std::string& error,
-        VkDescriptorSet external_set = VK_NULL_HANDLE) const;
+        VkDescriptorSet external_set = VK_NULL_HANDLE, VkBufferView uniform_texels = VK_NULL_HANDLE) const;
     void destroy();
 private:
     VkDevice device_{};

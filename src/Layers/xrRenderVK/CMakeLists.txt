@@ -115,6 +115,8 @@ target_sources(xrRenderVK PRIVATE
     GpuParticleTranslate.h
     RayQueryBatch.h
     RayQueryBatchShaders.h
+    SkyProbeReducePass.h
+    SkyProbeBakePass.h
     RayGenerateShaders.h
     IndirectRadianceShaders.h
     WorldRadianceCacheShaders.h
@@ -128,6 +130,20 @@ target_sources(xrRenderVK PRIVATE
     RayFrameResources.cpp
     RayFrameResources.h
     smoke/ray_visibility.comp
+    smoke/sky_probe_reduce.comp
+    smoke/detail_cull.comp
+    smoke/detail_generate.comp
+    smoke/visibility_common.glsl
+    smoke/visibility_geometry.glsl
+    smoke/visibility_material_resolve.comp
+    smoke/visibility_software_raster.comp
+    smoke/visibility_gbuffer.vert
+    smoke/visibility_gbuffer.frag
+    smoke/hdr10_output.frag
+    VisibilityPasses.cpp
+    VisibilityPasses.h
+    DetailCullPass.h
+    DetailGeneratePass.h
     smoke/ray_generate.comp
     smoke/indirect_radiance.comp
     smoke/world_radiance_cache.glsl
@@ -381,7 +397,7 @@ target_include_directories(xrRenderVK
 # Android Vulkan smoke path, so propagate NVRHI's include directories as well
 # as its static link dependencies.
 target_link_libraries(xrRenderVK
-    PUBLIC ${XRAY_NVRHI_LIBRARIES}
+    PUBLIC xrRenderGraph ${XRAY_NVRHI_LIBRARIES}
     PRIVATE SDL2::SDL2 xrCDB xrImGui meshoptimizer
 )
 

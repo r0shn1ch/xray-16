@@ -1,4 +1,5 @@
 #include "LocalShadowTargets.h"
+#include "../xrRenderGraph/LocalAtlasAllocator.h"
 
 namespace xray::render::vulkan
 {
@@ -45,9 +46,10 @@ bool LocalShadowTargets::initialize(VkDevice device, VkFormat format, uint32_t c
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.pDepthStencilAttachment = &reference;
     const VkSubpassDependency dependencies[]{
-        {VK_SUBPASS_EXTERNAL, 0, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        {VK_SUBPASS_EXTERNAL, 0, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
          VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-         VK_ACCESS_SHADER_READ_BIT,
+         VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
          VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
          VK_DEPENDENCY_BY_REGION_BIT},
         {0, VK_SUBPASS_EXTERNAL,
@@ -64,6 +66,13 @@ bool LocalShadowTargets::initialize(VkDevice device, VkFormat format, uint32_t c
     if (vk_.create_render_pass(device, &pass, nullptr, &pass_) != VK_SUCCESS)
     {
         error = "cannot create local shadow render pass";
+        destroy();
+        return false;
+    }
+    depth.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    if (vk_.create_render_pass(device, &pass, nullptr, &tile_pass_) != VK_SUCCESS)
+    {
+        error = "cannot create local shadow tile pass";
         destroy();
         return false;
     }
@@ -101,15 +110,32 @@ bool LocalShadowTargets::initialize(VkDevice device, VkFormat format, uint32_t c
         destroy();
         return false;
     }
+    framegraph::LocalAtlasAllocator atlas;
+    for (auto& tile : tiles_)
+    {
+        const auto node = atlas.Alloc(atlas.LevelOf(LocalShadowSize));
+        if (node == UINT32_MAX)
+        {
+            error = "local shadow atlas cannot fit the configured faces";
+            destroy();
+            return false;
+        }
+        uint32_t x{}, y{}, size{};
+        atlas.Rect(node, x, y, size);
+        tile = {{int32_t(x), int32_t(y)}, {size, size}};
+        atlas_extent_.width = std::max(atlas_extent_.width, x + size);
+        atlas_extent_.height = std::max(atlas_extent_.height, y + size);
+    }
+    fixed_tiles_ = tiles_;
     targets_.resize(count + (caching() ? 1 : 0));
     for (Target &target : targets_)
     {
         VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         image.imageType = VK_IMAGE_TYPE_2D;
         image.format = format;
-        image.extent = {LocalShadowSize, LocalShadowSize, 1};
+        image.extent = {atlas_extent_.width, atlas_extent_.height, 1};
         image.mipLevels = 1;
-        image.arrayLayers = LocalShadowSlots * LocalShadowFaces;
+        image.arrayLayers = 1;
         image.samples = VK_SAMPLE_COUNT_1_BIT;
         image.tiling = VK_IMAGE_TILING_OPTIMAL;
         image.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
@@ -165,36 +191,25 @@ bool LocalShadowTargets::initialize(VkDevice device, VkFormat format, uint32_t c
         view.format = format;
         view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
         view.subresourceRange.levelCount = 1;
-        view.subresourceRange.layerCount = LocalShadowSlots * LocalShadowFaces;
+        view.subresourceRange.layerCount = 1;
         if (vk_.create_image_view(device, &view, nullptr, &target.array_view) != VK_SUCCESS)
         {
             error = "cannot create local shadow array view";
             destroy();
             return false;
         }
-        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view.subresourceRange.layerCount = 1;
-        for (uint32_t layer = 0; layer < target.layer_views.size(); ++layer)
+        VkFramebufferCreateInfo framebuffer{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        framebuffer.renderPass = pass_;
+        framebuffer.attachmentCount = 1;
+        framebuffer.pAttachments = &target.array_view;
+        framebuffer.width = atlas_extent_.width;
+        framebuffer.height = atlas_extent_.height;
+        framebuffer.layers = 1;
+        if (vk_.create_framebuffer(device, &framebuffer, nullptr, &target.framebuffer) != VK_SUCCESS)
         {
-            view.subresourceRange.baseArrayLayer = layer;
-            if (vk_.create_image_view(device, &view, nullptr, &target.layer_views[layer]) != VK_SUCCESS)
-            {
-                error = "cannot create local shadow layer view";
-                destroy();
-                return false;
-            }
-            VkFramebufferCreateInfo framebuffer{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-            framebuffer.renderPass = pass_;
-            framebuffer.attachmentCount = 1;
-            framebuffer.pAttachments = &target.layer_views[layer];
-            framebuffer.width = framebuffer.height = LocalShadowSize;
-            framebuffer.layers = 1;
-            if (vk_.create_framebuffer(device, &framebuffer, nullptr, &target.framebuffers[layer]) != VK_SUCCESS)
-            {
-                error = "cannot create local shadow framebuffer";
-                destroy();
-                return false;
-            }
+            error = "cannot create local shadow atlas framebuffer";
+            destroy();
+            return false;
         }
         if (!target.constants.initialize(
                 device, uniform_stride_ * LocalLightCapacity, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -224,10 +239,82 @@ bool LocalShadowTargets::reserve_lights(uint32_t image, size_t count, std::strin
     return true;
 }
 
+void LocalShadowTargets::layout_tiles(const std::array<TileRequest, LocalShadowSlots>& requests)
+{
+    framegraph::LocalAtlasAllocator atlas;
+    std::array<uint32_t, LocalShadowSlots> slots{};
+    for (uint32_t i = 0; i < slots.size(); ++i)
+        slots[i] = i;
+    std::sort(slots.begin(), slots.end(), [&](uint32_t a, uint32_t b) {
+        if (requests[a].resolution != requests[b].resolution)
+            return requests[a].resolution > requests[b].resolution;
+        return a < b;
+    });
+
+    decltype(tiles_) packed{};
+    bool fits = true;
+    for (uint32_t slot : slots)
+    {
+        const auto request = requests[slot];
+        if (!request.faces)
+            continue;
+        std::array<uint32_t, LocalShadowFaces> nodes{};
+        if (!atlas.AllocateFaces(atlas.LevelOf(request.resolution), request.faces, nodes))
+        {
+            fits = false;
+            break;
+        }
+        for (uint32_t face = 0; face < request.faces; ++face)
+        {
+            uint32_t x{}, y{}, size{};
+            atlas.Rect(nodes[face], x, y, size);
+            if (x + size > atlas_extent_.width || y + size > atlas_extent_.height)
+                fits = false;
+            packed[slot * LocalShadowFaces + face] = {{int32_t(x), int32_t(y)}, {size, size}};
+        }
+    }
+    if (!fits)
+    {
+        packed = {};
+        for (uint32_t slot = 0; slot < requests.size(); ++slot)
+            for (uint32_t face = 0; face < std::min(requests[slot].faces, LocalShadowFaces); ++face)
+            {
+                auto& tile = packed[slot * LocalShadowFaces + face];
+                tile.offset = fixed_tiles_[slot * LocalShadowFaces + face].offset;
+                tile.extent = {requests[slot].resolution, requests[slot].resolution};
+            }
+    }
+
+    for (size_t i = 0; i < tiles_.size(); ++i)
+        if (tiles_[i].offset.x != packed[i].offset.x || tiles_[i].offset.y != packed[i].offset.y ||
+            tiles_[i].extent.width != packed[i].extent.width)
+            cache_signatures_[i] = 0;
+    tiles_ = packed;
+}
+
+VkExtent2D LocalShadowTargets::face_extent(uint32_t slot, uint32_t face) const
+{
+    if (slot >= LocalShadowSlots || face >= LocalShadowFaces)
+        return {};
+    return tiles_[slot * LocalShadowFaces + face].extent;
+}
+
 bool LocalShadowTargets::write_light(uint32_t image, uint32_t index, const LocalLightUniform &value, std::string &error)
 {
-    return image < image_count_ && index < targets_[image].constants.size() / uniform_stride_ &&
-           targets_[image].constants.write(VkDeviceSize(index) * uniform_stride_, &value, sizeof(value), error);
+    if (image >= image_count_ || index >= targets_[image].constants.size() / uniform_stride_)
+        return false;
+    LocalLightUniform uniform = value;
+    const uint32_t base = static_cast<uint32_t>(value.shadow_params[0]);
+    if (value.shadow_params[2] > .5f && base <= tiles_.size() - LocalShadowFaces)
+        for (uint32_t face = 0; face < LocalShadowFaces; ++face)
+        {
+            const auto& tile = tiles_[base + face];
+            uniform.shadow_tiles[face][0] = tile.offset.x;
+            uniform.shadow_tiles[face][1] = tile.offset.y;
+            uniform.shadow_tiles[face][2] = int32_t(tile.extent.width);
+            uniform.shadow_tiles[face][3] = 0;
+        }
+    return targets_[image].constants.write(VkDeviceSize(index) * uniform_stride_, &uniform, sizeof(uniform), error);
 }
 
 bool LocalShadowTargets::initialize_layers(const FrameRecordingContext &frame, bool graph_managed_layouts)
@@ -237,19 +324,16 @@ bool LocalShadowTargets::initialize_layers(const FrameRecordingContext &frame, b
     const auto initialize = [&](Target& target) {
         if (target.initialized)
             return true;
-        for (uint32_t layer = 0; layer < target.framebuffers.size(); ++layer)
-        {
-            VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-            begin.renderPass = graph_managed_layouts ? graph_pass_ : pass_;
-            begin.framebuffer = target.framebuffers[layer];
-            begin.renderArea.extent = {LocalShadowSize, LocalShadowSize};
-            VkClearValue clear{};
-            clear.depthStencil = {1.f, 0};
-            begin.clearValueCount = 1;
-            begin.pClearValues = &clear;
-            vk_.cmd_begin_render_pass(frame.command_buffer, &begin, VK_SUBPASS_CONTENTS_INLINE);
-            vk_.cmd_end_render_pass(frame.command_buffer);
-        }
+        VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        begin.renderPass = graph_managed_layouts ? graph_pass_ : pass_;
+        begin.framebuffer = target.framebuffer;
+        begin.renderArea.extent = atlas_extent_;
+        VkClearValue clear{};
+        clear.depthStencil = {1.f, 0};
+        begin.clearValueCount = 1;
+        begin.pClearValues = &clear;
+        vk_.cmd_begin_render_pass(frame.command_buffer, &begin, VK_SUBPASS_CONTENTS_INLINE);
+        vk_.cmd_end_render_pass(frame.command_buffer);
         target.initialized = true;
         return true;
     };
@@ -268,12 +352,12 @@ bool LocalShadowTargets::begin_face(const FrameRecordingContext &frame, uint32_t
         face >= LocalShadowFaces || (cached && !caching()))
         return false;
     const VkFramebuffer framebuffer =
-        targets_[cached ? cache_index_ : frame.image_index].framebuffers[slot * LocalShadowFaces + face];
+        targets_[cached ? cache_index_ : frame.image_index].framebuffer;
     VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     begin.renderPass = graph_managed_layouts ?
-        (preserve ? graph_load_pass_ : graph_pass_) : (preserve ? load_pass_ : pass_);
+        (preserve ? graph_load_pass_ : graph_pass_) : (preserve ? load_pass_ : tile_pass_);
     begin.framebuffer = framebuffer;
-    begin.renderArea.extent = {LocalShadowSize, LocalShadowSize};
+    begin.renderArea = tiles_[slot * LocalShadowFaces + face];
     VkClearValue clear{};
     clear.depthStencil = {1.f, 0};
     begin.clearValueCount = 1;
@@ -282,7 +366,8 @@ bool LocalShadowTargets::begin_face(const FrameRecordingContext &frame, uint32_t
     shadow_frame = frame;
     shadow_frame.render_pass = begin.renderPass;
     shadow_frame.framebuffer = framebuffer;
-    shadow_frame.extent = {LocalShadowSize, LocalShadowSize};
+    shadow_frame.extent = begin.renderArea.extent;
+    shadow_frame.viewport_offset = begin.renderArea.offset;
     return true;
 }
 
@@ -314,8 +399,10 @@ bool LocalShadowTargets::record_cached_face_copy(VkCommandBuffer command, uint32
         return false;
     const uint32_t layer = slot * LocalShadowFaces + face;
     VkImageCopy copy{};
-    copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, layer, 1};
-    copy.extent = {LocalShadowSize, LocalShadowSize, 1};
+    copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+    const auto& tile = tiles_[layer];
+    copy.srcOffset = copy.dstOffset = {tile.offset.x, tile.offset.y, 0};
+    copy.extent = {tile.extent.width, tile.extent.height, 1};
     vk_.cmd_copy_image(command, targets_[cache_index_].image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         targets_[image].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
     return true;
@@ -333,7 +420,7 @@ bool LocalShadowTargets::copy_cached_face(const FrameRecordingContext &frame, ui
         b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         b.image = targets_[i ? frame.image_index : cache_index_].image;
-        b.subresourceRange = {barrier_aspects_, 0, 1, layer, 1};
+        b.subresourceRange = {barrier_aspects_, 0, 1, 0, 1};
         b.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         b.newLayout = i ? VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         b.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
@@ -344,8 +431,10 @@ bool LocalShadowTargets::copy_cached_face(const FrameRecordingContext &frame, ui
                                  VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
     VkImageCopy copy{};
-    copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, layer, 1};
-    copy.extent = {LocalShadowSize, LocalShadowSize, 1};
+    copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+    const auto& tile = tiles_[layer];
+    copy.srcOffset = copy.dstOffset = {tile.offset.x, tile.offset.y, 0};
+    copy.extent = {tile.extent.width, tile.extent.height, 1};
     vk_.cmd_copy_image(frame.command_buffer, barriers[0].image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, barriers[1].image,
                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
     for (unsigned i = 0; i < 2; ++i)
@@ -386,12 +475,8 @@ void LocalShadowTargets::destroy()
         for (Target &target : targets_)
         {
             target.constants.destroy();
-            for (auto framebuffer : target.framebuffers)
-                if (framebuffer)
-                    vk_.destroy_framebuffer(device_, framebuffer, nullptr);
-            for (auto view : target.layer_views)
-                if (view)
-                    vk_.destroy_image_view(device_, view, nullptr);
+            if (target.framebuffer)
+                vk_.destroy_framebuffer(device_, target.framebuffer, nullptr);
             if (target.array_view)
                 vk_.destroy_image_view(device_, target.array_view, nullptr);
             if (target.image)
@@ -406,6 +491,8 @@ void LocalShadowTargets::destroy()
             destroy_sampler_(device_, sampler_, nullptr);
         if (pass_)
             vk_.destroy_render_pass(device_, pass_, nullptr);
+        if (tile_pass_)
+            vk_.destroy_render_pass(device_, tile_pass_, nullptr);
         if (load_pass_)
             vk_.destroy_render_pass(device_, load_pass_, nullptr);
         if (graph_load_pass_)
@@ -415,7 +502,8 @@ void LocalShadowTargets::destroy()
     }
     targets_.clear();
     device_ = VK_NULL_HANDLE;
-    pass_ = load_pass_ = graph_pass_ = graph_load_pass_ = VK_NULL_HANDLE;
+    pass_ = tile_pass_ = load_pass_ = graph_pass_ = graph_load_pass_ = VK_NULL_HANDLE;
+    atlas_extent_ = {};
     image_count_ = 0;
     cache_index_ = UINT32_MAX;
     invalidate_cache();

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "VisibilityPasses.h"
+
 #include "DeferredFrame.h"
 #include "DeferredShaderFactory.h"
 #include "GameTextureFactory.h"
@@ -35,6 +37,7 @@
 #include "TrailManager.h"
 
 #include <array>
+#include "SkyProbeBakePass.h"
 #include "ResourceRetirement.h"
 #include <unordered_set>
 #include <memory>
@@ -71,7 +74,7 @@ class VulkanGameDevice
     void discard_thunderbolt(const VulkanThunderboltRender *bolt);
     void request_screenshot()
     {
-        screenshot_requested_ = true;
+        screenshot_requested_ = !window_.frame().hdr10_active();
     }
     bool take_screenshot(std::vector<uint8_t> &pixels, VkExtent2D &extent, VkFormat &format);
     void set_postprocess(const PostProcessConstants &params, std::string first, std::string second);
@@ -82,6 +85,7 @@ class VulkanGameDevice
                 const DeferredEnvironment *environment = nullptr);
     bool recreate_swapchain(VkExtent2D extent, std::string &error, bool recreate_surface = false);
     bool prepare_for_reset(std::string &error);
+    void set_level_visibility(const VisibilityPasses* passes, const BindlessTextureTable* materials);
     bool reload_game_shaders(std::string &error);
     bool wait_idle();
     GpuParticleEmitters* gpu_particle_emitters() const { return gpu_particle_failed_ ? nullptr : gpu_particle_emitters_.get(); }
@@ -98,7 +102,15 @@ class VulkanGameDevice
         std::string& error);
     void release_indirect_frames();
     void release_ray_frames();
-    void set_ray_queries(RayQueryBatch* queries) { ray_queries_ = queries; }
+    bool sample_sky(const std::array<float, 3>& position, std::array<float, 6>& faces) const
+    { return sample_sky_probes(sky_probe_layout_, sky_probe_cpu_, position, faces); }
+    void set_ray_queries(RayQueryBatch* queries, const BindlessTextureTable* sky_probe_textures)
+    {
+        ray_queries_ = queries;
+        sky_probe_textures_ = sky_probe_textures;
+        if (sky_probe_textures_)
+            window_.frame().set_frame_observer(gpu_particles_submitted, gpu_particles_completed, this);
+    }
     using ModelRayPreparer = std::function<bool(GpuModel&, IKinematics*, uint32_t, VkCommandBuffer,
         const VkTransformMatrixKHR&, RayGeometryBatch&, std::vector<TextureMatrixSet>&, bool&, std::string&)>;
     void set_model_ray_preparer(ModelRayPreparer prepare) { model_ray_preparer_ = std::move(prepare); }
@@ -236,6 +248,7 @@ class VulkanGameDevice
     static void record_readback(VkCommandBuffer command, VkImage image, VkExtent2D extent, void *user);
     static void record_postprocess(const FrameRecordingContext &frame, void *user);
     static void record_display_grade(const FrameRecordingContext &frame, void *user);
+    static void record_hdr_output(const FrameRecordingContext& frame, void* user);
     bool create_postprocess(std::string &error);
     bool refresh_color_maps(std::string &error);
     bool update_rain_shadow_resolution(std::string &error);
@@ -352,6 +365,16 @@ class VulkanGameDevice
     BindlessTextureTable* indirect_alpha_textures_{};
     uint32_t indirect_recorded_image_{UINT32_MAX};
     RayQueryBatch* ray_queries_{};
+    const BindlessTextureTable* sky_probe_textures_{};
+    std::unique_ptr<SkyProbeBakePass> sky_probe_bake_;
+    framegraph::SkyProbeLayout sky_probe_layout_;
+    BufferResource sky_probe_results_;
+    uint32_t sky_probe_next_{};
+    uint32_t sky_probe_last_slot_{UINT32_MAX};
+    std::vector<SkyProbeVisibility> sky_probe_cpu_;
+    bool sky_probe_failed_{};
+    std::array<uint32_t, FrameContext::FramesInFlight> sky_probe_recorded_{};
+    void record_sky_probe_slice(const FrameRecordingContext& frame, const LevelRayScene& scene);
     FrameRayScenes model_ray_scenes_;
     ModelRayPreparer model_ray_preparer_;
     static bool record_ray_visibility(const FrameRecordingContext& frame, const GpuLevel& level,
@@ -401,6 +424,26 @@ class VulkanGameDevice
     std::unordered_map<std::string, VkDescriptorSet> glow_textures_;
     VulkanUIRender ui_;
     DeferredFrame frame_;
+    static void record_level_visibility(const FrameRecordingContext&, const GpuLevel&, const float (&)[16], void*);
+    static void draw_level_visibility(const FrameRecordingContext&, void*);
+    bool initialize_visibility_gbuffer(std::string& error);
+    void release_visibility_gbuffer();
+    bool ensure_visibility_targets(uint32_t slot, VkExtent2D extent, std::string& error);
+    void release_visibility_targets(VisibilityPasses::Targets& targets);
+    const VisibilityPasses* visibility_passes_{};
+    const BindlessTextureTable* visibility_materials_{};
+    std::array<VisibilityPasses::Targets, FrameContext::FramesInFlight> visibility_targets_{};
+    VkSampler visibility_sampler_{};
+    ScreenCopyDispatch visibility_graphics_{};
+    VkPipeline visibility_gbuffer_pipeline_{};
+    VkPipelineLayout visibility_gbuffer_layout_{};
+    VkDescriptorSetLayout visibility_descriptor_layout_{};
+    VkDescriptorPool visibility_descriptor_pool_{};
+    std::array<VkDescriptorSet, FrameContext::FramesInFlight> visibility_descriptors_{};
+    std::array<bool, FrameContext::FramesInFlight> visibility_recorded_{};
+    std::array<BufferResource, FrameContext::FramesInFlight> visibility_draw_masks_;
+    std::array<VkBufferView, FrameContext::FramesInFlight> visibility_mask_views_{};
+    PFN_vkDestroyBufferView destroy_visibility_mask_view_{};
     std::vector<std::unique_ptr<ScreenCopyPass>> postprocess_passes_;
     std::vector<std::array<std::unique_ptr<ScreenCopyPass>, 2>> temporal_upscale_passes_;
     std::vector<std::unique_ptr<ScreenCopyPass>> fsr3_upscale_passes_;
@@ -411,6 +454,7 @@ class VulkanGameDevice
     std::vector<std::vector<std::unique_ptr<ScreenCopyPass>>> bloom_upsample_passes_;
     float legacy_bloom_factor_{0.5f};
     std::vector<std::unique_ptr<ScreenCopyPass>> display_grade_passes_;
+    std::vector<std::unique_ptr<ScreenCopyPass>> hdr_output_passes_;
     PostProcessConstants postprocess_params_{};
     std::string color_map_names_[2];
     std::string active_map_names_[2];

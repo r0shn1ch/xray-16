@@ -1,6 +1,8 @@
 #include "xrEngine/stdafx.h"
 #include "SmokeTrailNoise.h"
 #include "FrameImageGraph.h"
+#include "FrameBufferPool.h"
+#include "FrameImagePool.h"
 #include "ShaderModule.h"
 #include <cmath>
 #include <cstring>
@@ -10,7 +12,8 @@ namespace xray::render::vulkan
 bool SmokeTrailNoise::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, const VkPhysicalDeviceLimits& limits,
     const VkPhysicalDeviceMemoryProperties& memory, const BufferResourceDispatch& dispatch,
     uint32_t size, uint32_t frames, VkPipelineCache cache, const GpuParticleCompute::Source& source,
-    std::string& error, uint32_t graphics_queue_family, uint32_t compute_queue_family)
+    std::string& error, uint32_t graphics_queue_family, uint32_t compute_queue_family,
+    FrameImagePool* image_pool)
 {
     destroy();
     if (!size || size > 256) { error = "invalid smoke noise volume size"; return false; }
@@ -53,20 +56,28 @@ bool SmokeTrailNoise::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, c
         ii.queueFamilyIndexCount = 2;
         ii.pQueueFamilyIndices = queue_families;
     }
-    if (create_image(device, &ii, nullptr, &image_) != VK_SUCCESS)
-    { error = "smoke noise image creation failed"; destroy(); return false; }
     image_sharing_mode_ = ii.sharingMode;
     image_sharing_queue_families_.clear();
     if (image_sharing_mode_ == VK_SHARING_MODE_CONCURRENT)
         image_sharing_queue_families_.assign(queue_families, queue_families + 2);
-    VkMemoryRequirements req{}; requirements(device, image_, &req);
-    uint32_t type = 0;
-    while (type < memory.memoryTypeCount && (!(req.memoryTypeBits & (1u << type)) ||
-        !(memory.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))) ++type;
-    if (type == memory.memoryTypeCount) { error = "smoke noise image memory unavailable"; destroy(); return false; }
-    VkMemoryAllocateInfo mi{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO}; mi.allocationSize = req.size; mi.memoryTypeIndex = type;
-    if (allocate(device, &mi, nullptr, &memory_) != VK_SUCCESS || bind(device, image_, memory_, 0) != VK_SUCCESS)
-    { error = "smoke noise image allocation failed"; destroy(); return false; }
+    image_pool_ = image_pool;
+    if (image_pool_)
+    {
+        if (!image_pool_->acquire(ii, image_, error)) { destroy(); return false; }
+    }
+    else
+    {
+        if (create_image(device, &ii, nullptr, &image_) != VK_SUCCESS)
+        { error = "smoke noise image creation failed"; destroy(); return false; }
+        VkMemoryRequirements req{}; requirements(device, image_, &req);
+        uint32_t type = 0;
+        while (type < memory.memoryTypeCount && (!(req.memoryTypeBits & (1u << type)) ||
+            !(memory.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))) ++type;
+        if (type == memory.memoryTypeCount) { error = "smoke noise image memory unavailable"; destroy(); return false; }
+        VkMemoryAllocateInfo mi{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO}; mi.allocationSize = req.size; mi.memoryTypeIndex = type;
+        if (allocate(device, &mi, nullptr, &memory_) != VK_SUCCESS || bind(device, image_, memory_, 0) != VK_SUCCESS)
+        { error = "smoke noise image allocation failed"; destroy(); return false; }
+    }
     VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO}; vi.image = image_;
     vi.viewType = VK_IMAGE_VIEW_TYPE_3D; vi.format = ii.format; vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     if (create_view(device, &vi, nullptr, &view_) != VK_SUCCESS)
@@ -100,7 +111,8 @@ bool SmokeTrailNoise::record(VkCommandBuffer command, uint32_t slot, float time,
     FrameSubmissionGraph::Pass graphics_continuation_pass,
     uint64_t previous_graphics_submission,
     FrameSubmissionGraph::Queue recording_queue, VkQueueFlags graphics_queue_flags,
-    RequestSubmissionCommandBuffer request_submission_command_buffer)
+    RequestSubmissionCommandBuffer request_submission_command_buffer,
+    FrameBufferPool* buffer_pool, framegraph::ResourceRetirement* retirement)
 {
     if (!command || slot >= uniforms_.size() || !image_ || !std::isfinite(time) || !std::isfinite(tile_scale) || tile_scale <= 0.f)
     { error = "invalid smoke noise frame"; return false; }
@@ -115,21 +127,26 @@ bool SmokeTrailNoise::record(VkCommandBuffer command, uint32_t slot, float time,
         struct Params { float time, scale; uint32_t size; float padding; } params{time, tile_scale, size_, 0.f};
         auto& uniform = *uniforms_[slot]; uniform.reset(); VkDescriptorBufferInfo constants{};
         if (!uniform.append(&params, sizeof(params), constants, error)) return false;
-        const VkDescriptorBufferInfo storage{buffer_.handle(), 0, buffer_.size()};
+        const bool transient = buffer_pool && retirement && slot < 31;
         const uint32_t groups_x = (size_ + 3) / 4;
         const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         FrameImageGraph graph(recording_queue);
         FrameImageGraph::BufferResource buffer_resource, generated_buffer;
         FrameImageGraph::Resource image_resource, uploaded_image;
-        if (!graph.import_buffer(buffer_.handle(), 0, buffer_.size(), BufferUse::AllCommandsReadWrite,
+        const bool has_buffer = transient
+            ? graph.declare_buffer(buffer_.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT, buffer_resource, error)
+            : graph.import_buffer(buffer_.handle(), 0, buffer_.size(), BufferUse::AllCommandsReadWrite,
                 buffer_resource, error, recording_queue, 0, buffer_.sharing_mode(),
-                buffer_.sharing_queue_families()) ||
+                buffer_.sharing_queue_families());
+        if (!has_buffer ||
             !graph.import_image(image_, range, image_resource, error,
                 FrameSubmissionGraph::Queue::Graphics, first ? 0 : previous_graphics_submission,
                 image_sharing_mode_, image_sharing_queue_families_))
             return false;
         const auto generate = graph.add_checked_command_pass("generate smoke noise volume", recording_queue,
             [&](VkCommandBuffer recording_command, std::string& pass_error) {
+                const VkDescriptorBufferInfo storage{graph.buffer_handle(generated_buffer), 0, buffer_.size()};
                 return compute_.record(recording_command, slot, {constants, storage}, nullptr,
                     groups_x, groups_x * groups_x, pass_error);
             });
@@ -140,7 +157,7 @@ bool SmokeTrailNoise::record(VkCommandBuffer command, uint32_t slot, float time,
             {0, 0, 0}, {size_, size_, size_}};
         const auto upload_image = graph.add_command_pass("upload smoke noise image", recording_queue,
             [&](VkCommandBuffer recording_command) {
-                copy_(recording_command, buffer_.handle(), image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                copy_(recording_command, graph.buffer_handle(generated_buffer), image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     1, &region);
             });
         if (!graph.read_buffer(upload_image, generated_buffer, BufferUse::TransferSource, error) ||
@@ -149,6 +166,20 @@ bool SmokeTrailNoise::record(VkCommandBuffer command, uint32_t slot, float time,
         const auto sample = graph.add_pass("sample smoke noise image",
             FrameSubmissionGraph::Queue::Graphics, {});
         if (!graph.read(sample, uploaded_image, ImageUse::Sampled, error))
+            return false;
+        if (transient && !graph.materialize_buffers([buffer_pool](VkDeviceSize size, VkBufferUsageFlags usage,
+                FrameImageGraph::TransientBuffer& output, std::string& failure) {
+                BufferResource* buffer = nullptr;
+                if (!buffer_pool->acquire(size, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, true, buffer, failure))
+                    return false;
+                output.owner = std::shared_ptr<void>(buffer, [buffer_pool](void* resource) {
+                    buffer_pool->release(static_cast<BufferResource*>(resource));
+                });
+                output.handle = buffer->handle();
+                output.sharing_mode = buffer->sharing_mode();
+                output.queue_families = buffer->sharing_queue_families();
+                return true;
+            }, error))
             return false;
 
         ImageStateTracker image_states;
@@ -182,6 +213,8 @@ bool SmokeTrailNoise::record(VkCommandBuffer command, uint32_t slot, float time,
                     error, group_flags, semaphore_handoff))
                 return false;
         }
+        if (transient)
+            graph.retire_allocations(*retirement, 1u << slot);
         error.clear();
         return true;
     }
@@ -260,7 +293,9 @@ void SmokeTrailNoise::destroy()
     uniforms_.clear(); compute_.destroy(); buffer_.destroy();
     if (device_ && sampler_ && destroy_sampler_) destroy_sampler_(device_, sampler_, nullptr);
     if (device_ && view_ && destroy_view_) destroy_view_(device_, view_, nullptr);
-    if (device_ && image_ && destroy_image_) destroy_image_(device_, image_, nullptr);
+    if (image_ && image_pool_) image_pool_->release(image_);
+    else if (device_ && image_ && destroy_image_) destroy_image_(device_, image_, nullptr);
+    image_pool_ = nullptr;
     if (device_ && memory_ && free_memory_) free_memory_(device_, memory_, nullptr);
     device_ = VK_NULL_HANDLE; image_ = VK_NULL_HANDLE; memory_ = VK_NULL_HANDLE; view_ = VK_NULL_HANDLE; sampler_ = VK_NULL_HANDLE; size_ = 0;
     image_sharing_mode_ = VK_SHARING_MODE_EXCLUSIVE;

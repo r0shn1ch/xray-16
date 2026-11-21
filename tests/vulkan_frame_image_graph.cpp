@@ -37,12 +37,37 @@ int main()
     FrameImageGraph graph;
     FrameImageGraph::Resource initial;
     assert(graph.import_image(image, range, initial, error));
+    {
+        FrameImageGraph lifetime_graph;
+        FrameImageGraph::Resource used, written, unused;
+        const auto unused_image = reinterpret_cast<VkImage>(uintptr_t(3));
+        assert(lifetime_graph.import_image(image, range, used, error));
+        assert(lifetime_graph.import_image(unused_image, range, unused, error));
+        const auto read = lifetime_graph.add_pass("read", [] {});
+        const auto write = lifetime_graph.add_pass("write", FrameSubmissionGraph::Queue::Compute, [] {});
+        assert(lifetime_graph.write(write, used, ImageUse::StorageWrite, written, error));
+        assert(lifetime_graph.read(read, written, ImageUse::Sampled, error));
+        FrameImageGraph::ResourceLifetimes lifetimes;
+        assert(lifetime_graph.compile_resource_lifetimes(lifetimes, error));
+        assert((lifetimes.pass_order == std::vector<FrameImageGraph::Pass>{write, read}));
+        assert(lifetimes.images[used.index].first_use == 0 && lifetimes.images[used.index].last_use == 1);
+        assert(lifetimes.images[unused.index].first_use == xray::render::framegraph::INVALID_INDEX);
+    }
+    {
+        FrameImageGraph other_graph;
+        FrameImageGraph::Resource other_image;
+        assert(other_graph.import_image(image, range, other_image, error));
+        const auto pass = other_graph.add_pass("read imported image", [] {});
+        assert(initial.index == other_image.index && initial.version == other_image.version);
+        assert(!other_graph.read(pass, initial, ImageUse::Sampled, error));
+        assert(other_graph.read(pass, other_image, ImageUse::Sampled, error));
+    }
     FrameImageGraph::Resource rejected_import;
     assert(graph.import_image(image, range, rejected_import, error));
-    assert(rejected_import.id == initial.id && rejected_import.version == initial.version);
+    assert(rejected_import.index == initial.index && rejected_import.version == initial.version);
     const VkImageSubresourceRange two_mips{VK_IMAGE_ASPECT_COLOR_BIT, 0, 2, 0, 1};
     assert(graph.import_image(image, two_mips, rejected_import, error));
-    assert(rejected_import.id != initial.id);
+    assert(rejected_import.index != initial.index);
     const VkImageSubresourceRange next_layer{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 1, 1};
     assert(graph.import_image(image, next_layer, rejected_import, error));
     const VkImageSubresourceRange next_mip{VK_IMAGE_ASPECT_COLOR_BIT, 1, 1, 0, 1};
@@ -56,7 +81,7 @@ int main()
     assert(graph.write(producer, initial, ImageUse::TransferDestination, written, error));
     FrameImageGraph::Resource imported_current;
     assert(graph.import_image(image, range, imported_current, error));
-    assert(imported_current.id == written.id && imported_current.version == written.version);
+    assert(imported_current.index == written.index && imported_current.version == written.version);
     assert(graph.read(reader, written, ImageUse::TransferSource, error));
     FrameImageGraph::Resource final;
     assert(graph.write(consumer, written, ImageUse::TransferDestination, final, error));
@@ -349,14 +374,14 @@ int main()
     assert(buffer_graph.import_buffer(lights, 0, 128, BufferUse::HostWrite, input, error));
     assert(buffer_graph.import_buffer(tiles, 0, 256, BufferUse::FragmentRead, tile_old, error));
     assert(buffer_graph.import_buffer(tiles, 0, 256, BufferUse::FragmentRead, duplicate, error));
-    assert(duplicate.id == tile_old.id && duplicate.version == tile_old.version);
+    assert(duplicate.index == tile_old.index && duplicate.version == tile_old.version);
     FrameImageGraph overlapping_buffer_imports;
     FrameImageGraph::BufferResource overlapping_full, overlapping_tail;
     assert(overlapping_buffer_imports.import_buffer(tiles, 0, 256,
         BufferUse::FragmentRead, overlapping_full, error));
     assert(overlapping_buffer_imports.import_buffer(tiles, 128, 128,
         BufferUse::FragmentRead, overlapping_tail, error));
-    assert(overlapping_tail.id != overlapping_full.id);
+    assert(overlapping_tail.index != overlapping_full.index);
     std::vector<int> buffer_order;
     const auto shade_tiles = buffer_graph.add_pass("shade tiles", [&] { buffer_order.push_back(2); });
     const auto cull_tiles = buffer_graph.add_pass("cull tiles", [&] { buffer_order.push_back(1); });

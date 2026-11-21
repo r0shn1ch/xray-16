@@ -234,10 +234,14 @@ void register_vulkan_options(VulkanLevelRender& renderer)
     static CCC_Float legacy_tone_lowlum("r2_tonemap_lowlum", &tonemap_low_luminance, .0001f, 1.f);
     static CCC_Float wallmark_lifetime("r__wallmark_ttl", &wallmark_ttl, 1.f, 600.f);
     static CCC_Float bloom_strength("r_vk_bloom_intensity", &bloom_intensity, 0.f, 2.f);
+    static CCC_Float hdr_paper_white("r_vk_hdr_paper_white", &hdr_paper_white_nits, 80.f, 1000.f);
+    static CCC_Float hdr_peak("r_vk_hdr_peak", &hdr_peak_nits, 80.f, 10000.f);
+    static CCC_Float hdr_black("r_vk_hdr_black", &hdr_black_nits, 0.f, 10.f);
+    static CCC_Integer hdr_pattern("r_vk_hdr_calibration_pattern", &hdr_calibration_pattern, 0, 1);
     static CCC_Float bloom_cutoff("r_vk_bloom_threshold", &bloom_threshold, 0.f, 4.f);
     static CCC_Float bloom_radius("r_vk_bloom_mip", &bloom_mip, 1.f, 12.f);
     static CCC_Float bloom_softness("r_vk_bloom_knee", &bloom_knee, 0.f, 2.f);
-    static CCC_Float legacy_bloom_cutoff("r2_ls_bloom_threshold", &bloom_threshold, 0.f, 1.f);
+    static CCC_Float legacy_bloom_cutoff("r2_ls_bloom_threshold", &legacy_bloom_threshold, 0.f, 1.f);
     static VulkanLegacyBloomKernel legacy_bloom_scale("r2_ls_bloom_kernel_scale", &legacy_bloom_kernel_scale,
         .5f, 2.f, VulkanLegacyBloomKernel::Parameter::KernelScale);
     static VulkanLegacyBloomKernel legacy_bloom_g("r2_ls_bloom_kernel_g", &legacy_bloom_kernel_g,
@@ -294,6 +298,10 @@ void register_vulkan_options(VulkanLevelRender& renderer)
     Console->AddCommand(&legacy_tone_lowlum);
     Console->AddCommand(&wallmark_lifetime);
     Console->AddCommand(&bloom_strength);
+    Console->AddCommand(&hdr_paper_white);
+    Console->AddCommand(&hdr_peak);
+    Console->AddCommand(&hdr_black);
+    Console->AddCommand(&hdr_pattern);
     Console->AddCommand(&bloom_cutoff);
     Console->AddCommand(&bloom_radius);
     Console->AddCommand(&bloom_softness);

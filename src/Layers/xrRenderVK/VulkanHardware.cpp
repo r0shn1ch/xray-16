@@ -401,6 +401,7 @@ bool select_physical_device(VkInstance instance, VkSurfaceKHR surface, const Har
                 extensions, candidate.properties.apiVersion, vk.get_physical_features2);
             candidate.timeline_semaphore = probe_timeline_semaphore_availability(device,
                 extensions, candidate.properties.apiVersion, vk.get_physical_features2);
+            candidate.hdr_metadata = supports_extension(extensions, VK_EXT_HDR_METADATA_EXTENSION_NAME);
             candidate.create_render_pass2_extension = supports_extension(extensions,
                 VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME);
             candidate.depth_stencil_resolve_extension = supports_extension(extensions,
@@ -521,6 +522,8 @@ bool create_logical_device(const PhysicalDevice &physical_device, const DeviceDi
         queue_info.pQueuePriorities = priorities.data();
     }
     std::vector<const char*> extensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    if (physical_device.hdr_metadata)
+        extensions.push_back(VK_EXT_HDR_METADATA_EXTENSION_NAME);
     if (physical_device.timeline_semaphore && effective_api_version < VK_API_VERSION_1_2)
         extensions.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
     if (enable_bindless_textures && effective_api_version < VK_API_VERSION_1_2 &&

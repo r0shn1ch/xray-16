@@ -3,6 +3,7 @@
 #include "VulkanSettings.h"
 #include "ShadowStability.h"
 #include "VulkanGameDevice.h"
+#include "DeferredShaderFactory.h"
 #include "VulkanModelVisual.h"
 #include "SpecialVisuals.h"
 #include "ParticleVisual.h"
@@ -1365,7 +1366,7 @@ void VulkanLevelRender::Calculate()
         auto *object = object_specifics_[(i + Device.dwFrame) % object_specifics_.size()];
         if (object)
             object->update(environment.ambient_color, environment.hemi_color, environment.sun_color,
-                           scene_lights, &Lights.HemiLights(), &ray_budget);
+                           scene_lights, &Lights.HemiLights(), &ray_budget, game_device_);
     }
 
     std::vector<uint32_t> visible_roots;
@@ -1849,6 +1850,7 @@ void VulkanLevelRender::level_Load(IReader *reader)
     models_Clear(true);
     model_bases_.clear();
     model_gpu_cache_.clear();
+    release_visibility_materials();
     release_ray_materials();
     Msg("[renderer-vulkan] level.load file=$level$/level reading geometry");
     std::string error;
@@ -1870,6 +1872,9 @@ void VulkanLevelRender::level_Load(IReader *reader)
         Msg("! [renderer-vulkan] level.load file=$level$/level failed: %s", error.c_str());
         xrDebug::Fatal(DEBUG_INFO, "Vulkan level load file=$level$/level failed: %s", error.c_str());
     }
+    if (device_owner && (device_owner->physical().graphics_queue_flags & VK_QUEUE_COMPUTE_BIT) &&
+        !level_.enable_gpu_details(device_owner->device_proc(), device_owner->physical().properties.limits, error))
+        Msg("! [renderer-vulkan] GPU detail preparation unavailable: %s", error.c_str());
     if (ray_address)
     {
         const auto& window = game_device_->window();
@@ -1947,7 +1952,7 @@ void VulkanLevelRender::level_Load(IReader *reader)
                         ready = false;
                     if (ready && ray_queries_.ready() && !game_device_->prepare_ray_frames(error))
                         ready = false;
-                    if (ready && ray_queries_.ready()) game_device_->set_ray_queries(&ray_queries_);
+                    if (ready && ray_queries_.ready()) game_device_->set_ray_queries(&ray_queries_, &ray_materials_);
                     if (ready && ray_queries_.ready() && !level_.ray_diffuse_texture_names().empty())
                     {
                         error.clear();
@@ -2013,6 +2018,8 @@ void VulkanLevelRender::level_Load(IReader *reader)
         else
             Msg("! [renderer-vulkan] level ray scene properties procedure unavailable");
     }
+    if (device_owner && !prepare_visibility_materials(*device_owner, error))
+        Msg("! [renderer-vulkan] visibility buffer materials unavailable: %s", error.c_str());
     Lights.Load(*reader);
     Msg("[renderer-vulkan] level.load ready visuals=%zu models=%zu textures=%zu", level_.visual_count(),
         level_.model_count(), textures_->resident_count());
@@ -2041,8 +2048,95 @@ void VulkanLevelRender::level_Unload()
     models_Clear(true);
     model_bases_.clear();
     model_gpu_cache_.clear();
+    release_visibility_materials();
     release_ray_materials();
     level_.destroy();
+}
+
+bool VulkanLevelRender::prepare_visibility_materials(const VulkanWindowDevice& window, std::string& error)
+{
+    const auto& names = level_.visibility_textures();
+    error.clear();
+    const char* enabled = SDL_getenv("XRAY_VK_VISIBILITY_BUFFER");
+    if (!enabled || std::strcmp(enabled, "1") != 0 || names.empty() || !window.bindless_textures_enabled() ||
+        !(window.physical().graphics_queue_flags & VK_QUEUE_COMPUTE_BIT))
+        return true;
+
+    auto get_properties = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(
+        window.instance_proc()(window.instance(), "vkGetPhysicalDeviceProperties2"));
+    if (!get_properties)
+    {
+        error = "descriptor indexing properties unavailable";
+        return false;
+    }
+    VkPhysicalDeviceDescriptorIndexingProperties indexing{};
+    indexing.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES;
+    VkPhysicalDeviceProperties2 properties{};
+    properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    properties.pNext = &indexing;
+    get_properties(window.physical().handle, &properties);
+    const uint64_t total = uint64_t(ray_materials_.capacity()) + ray_diffuse_materials_.capacity() + names.size();
+    const auto per_stage = std::min({indexing.maxPerStageDescriptorUpdateAfterBindSamplers,
+        indexing.maxPerStageDescriptorUpdateAfterBindSampledImages,
+        indexing.maxDescriptorSetUpdateAfterBindSamplers, indexing.maxDescriptorSetUpdateAfterBindSampledImages});
+    if (names.size() >= per_stage || total > indexing.maxUpdateAfterBindDescriptorsInAllPools)
+    {
+        error = "visibility materials exceed descriptor indexing limits";
+        return false;
+    }
+    if (!visibility_materials_.initialize(device_, window.device_proc(), static_cast<uint32_t>(names.size()), error))
+        return false;
+
+    bool ready = true;
+    visibility_material_views_.reserve(names.size());
+    for (uint32_t slot = 0; slot < names.size(); ++slot)
+    {
+        VkImageView view{};
+        const auto& texture = names[slot];
+        if (!textures_->projection_texture(texture.name, view, error))
+        {
+            ready = false;
+            break;
+        }
+        visibility_material_views_.push_back(view);
+        const auto sampler = texture.lightmap ? textures_->lightmap_sampler() : textures_->sampler();
+        if (!visibility_materials_.write(slot, view, sampler, error, VK_IMAGE_LAYOUT_GENERAL))
+        {
+            ready = false;
+            break;
+        }
+    }
+    if (ready && !textures_->finish_uploads())
+    {
+        error = "visibility texture uploads did not complete";
+        ready = false;
+    }
+    if (ready)
+    {
+        auto passes = std::make_unique<VisibilityPasses>();
+        if (passes->initialize(device_, window.device_proc(), properties.properties.limits,
+                FrameContext::FramesInFlight, static_cast<uint32_t>(level_.visibility_draw_ranges().size()),
+                pass_->pipeline_cache(), visibility_materials_, read_engine_shader, error))
+        {
+            visibility_passes_ = std::move(passes);
+            game_device_->set_level_visibility(visibility_passes_.get(), &visibility_materials_);
+            return true;
+        }
+    }
+    release_visibility_materials();
+    return false;
+}
+
+void VulkanLevelRender::release_visibility_materials()
+{
+    if (visibility_passes_ && game_device_)
+        game_device_->set_level_visibility(nullptr, nullptr);
+    visibility_passes_.reset();
+    visibility_materials_.destroy();
+    if (textures_)
+        for (VkImageView view : visibility_material_views_)
+            textures_->release_environment(view);
+    visibility_material_views_.clear();
 }
 
 void VulkanLevelRender::release_ray_materials()

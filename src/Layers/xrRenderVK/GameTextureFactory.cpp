@@ -825,21 +825,26 @@ bool GameTextureFactory::texture_detail_metadata(const std::string &diffuse, Det
 {
     detail = {};
     const std::string name = trim_texture_name(diffuse);
-    const auto find_implicit_pbr = [&] {
-        if (name.empty() || !detail.pbr_texture.empty()) return;
+    const auto find_implicit_maps = [&] {
+        if (name.empty()) return;
         std::string base = name;
         if (base.size() > 2 && base.compare(base.size() - 2, 2, "_d") == 0)
             base.resize(base.size() - 2);
-        const std::string candidate = base + "_pbr";
-        string_path pbr_path;
-        if (FS.exist(pbr_path, "$level$", candidate.c_str(), ".dds") ||
-            FS.exist(pbr_path, "$game_textures$", candidate.c_str(), ".dds"))
-            detail.pbr_texture = candidate;
+        const auto find = [&](std::string& texture, const char* suffix) {
+            if (!texture.empty()) return;
+            const auto candidate = base + suffix;
+            string_path map_path;
+            if (FS.exist(map_path, "$level$", candidate.c_str(), ".dds") ||
+                FS.exist(map_path, "$game_textures$", candidate.c_str(), ".dds"))
+                texture = candidate;
+        };
+        find(detail.pbr_texture, "_pbr");
+        find(detail.parallax_texture, "_parallax");
     };
     string_path path;
     if (!FS.exist(path, "$level$", name.c_str(), ".thm") && !FS.exist(path, "$game_textures$", name.c_str(), ".thm"))
     {
-        find_implicit_pbr();
+        find_implicit_maps();
         error.clear();
         return true;
     } // Metadata is optional for implicit detail.
@@ -849,7 +854,7 @@ bool GameTextureFactory::texture_detail_metadata(const std::string &diffuse, Det
         found->second.age == age && found->second.bytes == bytes)
     {
         detail = found->second.value;
-        find_implicit_pbr();
+        find_implicit_maps();
         error.clear();
         return true;
     }
@@ -895,7 +900,7 @@ bool GameTextureFactory::texture_detail_metadata(const std::string &diffuse, Det
         return false;
     }
     detail_metadata_cache_.insert_or_assign(path, CachedMetadata{detail, age, bytes});
-    find_implicit_pbr();
+    find_implicit_maps();
     error.clear();
     return true;
 }

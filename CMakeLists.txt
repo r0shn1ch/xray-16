@@ -107,6 +107,8 @@ target_include_directories(xrLuaFix PRIVATE
     "${XRAY_SOURCE_DIR}/Externals"
     "${XRAY_SOURCE_DIR}/Externals/luabind")
 
+add_subdirectory("${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers" EXCLUDE_FROM_ALL)
+include(NvrhiDependencies)
 include(VulkanDependencies)
 add_subdirectory(src)
 add_subdirectory(res)

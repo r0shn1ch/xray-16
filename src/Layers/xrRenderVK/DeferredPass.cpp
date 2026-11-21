@@ -275,6 +275,22 @@ void viewport_scissor(const FrameRecordingContext &frame, const ScenePassDispatc
 }
 } // namespace
 
+bool DeferredPass::create_visibility_gbuffer_pipeline(VkRenderPass render_pass, VkPipelineLayout layout,
+    VkShaderModule vertex, VkShaderModule fragment, VkPipeline& pipeline, std::string& error) const
+{
+    return make_pipeline(device_, render_pass, layout, vertex, fragment, PipelineFlag::GBuffer,
+        vk_, pipeline, error, "visibility G-buffer resolve");
+}
+
+void DeferredPass::draw_visibility_gbuffer(const FrameRecordingContext& frame, VkPipeline pipeline,
+    VkPipelineLayout layout, VkDescriptorSet sources) const
+{
+    viewport_scissor(frame, vk_);
+    vk_.cmd_bind_pipeline(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &sources, 0, nullptr);
+    vk_.cmd_draw(frame.command_buffer, 3, 1, 0, 0);
+}
+
 DeferredLight make_environment_deferred_light(const DeferredEnvironment &environment)
 {
     const auto safe_nonnegative = [](float value) { return std::isfinite(value) ? std::max(value, 0.f) : 0.f; };
@@ -1962,7 +1978,7 @@ bool DeferredPass::record_sun_shadow(const FrameRecordingContext &frame, VkBuffe
     const auto layout = pose ? skinned_layout_ : geometry_layout_;
     if (!pipeline || !frame.command_buffer ||
         (frame.render_pass != shadow_pass_ && frame.render_pass != local_shadow_pass_ &&
-         frame.render_pass != local_shadow_graph_pass_ &&
+         frame.render_pass != local_shadow_load_pass_ && frame.render_pass != local_shadow_graph_pass_ &&
          frame.render_pass != local_shadow_graph_load_pass_ &&
          frame.render_pass != rain_shadow_pass_ &&
          frame.render_pass != vsm_shadow_pass_ && frame.render_pass != vsm_dynamic_shadow_pass_) || !vertices || !indices ||
@@ -2388,7 +2404,7 @@ void DeferredPass::destroy()
             vk_.destroy_descriptor_set_layout(device_, forward_layout_, nullptr);
     }
     device_ = VK_NULL_HANDLE;
-    geometry_pass_ = light_pass_ = shadow_pass_ = local_shadow_pass_ = local_shadow_graph_pass_ =
+    geometry_pass_ = light_pass_ = shadow_pass_ = local_shadow_pass_ = local_shadow_load_pass_ = local_shadow_graph_pass_ =
         local_shadow_graph_load_pass_ = vsm_shadow_pass_ = overlay_pass_ = VK_NULL_HANDLE;
     vsm_dynamic_shadow_pass_ = VK_NULL_HANDLE;
     rain_shadow_pass_ = VK_NULL_HANDLE;

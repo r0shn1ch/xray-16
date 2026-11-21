@@ -19,7 +19,8 @@ public:
 
     bool initialize(VkDevice device, PFN_vkGetDeviceProcAddr get,
         uint32_t capacity, std::string& error);
-    bool write(uint32_t index, VkImageView view, VkSampler sampler, std::string& error);
+    bool write(uint32_t index, VkImageView view, VkSampler sampler, std::string& error,
+        VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     void destroy();
 
     VkDescriptorSetLayout layout() const { return layout_; }

@@ -83,14 +83,15 @@ bool BindlessTextureTable::initialize(VkDevice device, PFN_vkGetDeviceProcAddr g
 }
 
 bool BindlessTextureTable::write(uint32_t index, VkImageView view, VkSampler sampler,
-    std::string& error)
+    std::string& error, VkImageLayout layout)
 {
-    if (!set_ || index >= capacity_ || !view || !sampler)
+    if (!set_ || index >= capacity_ || !view || !sampler ||
+        (layout != VK_IMAGE_LAYOUT_GENERAL && layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
     {
         error = "bindless texture descriptor write is invalid";
         return false;
     }
-    VkDescriptorImageInfo image{sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkDescriptorImageInfo image{sampler, view, layout};
     VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     write.dstSet = set_;
     write.dstBinding = 0;

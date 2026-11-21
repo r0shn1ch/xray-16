@@ -484,9 +484,9 @@ bool ClusterVisibility::record(const FrameRecordingContext& frame, const float (
 
     // This no-op consumer represents the first shadow draw, which is recorded
     // immediately after culling returns. Its indirect read makes the graph
-    // emit the compute-write-to-draw-indirect barrier before that draw begins.
-    const auto shadow_indirect_consumer = graph.add_pass("cluster DAG first indirect draw", [] {});
-    if (!graph.read_buffer(shadow_indirect_consumer, written_commands, BufferUse::IndirectRead, error))
+    // emit the barrier for indirect draws and for compute reading the camera commands.
+    const auto draw_consumer = graph.add_pass("cluster DAG draw command consumers", [] {});
+    if (!graph.read_buffer(draw_consumer, written_commands, BufferUse::IndirectAndComputeRead, error))
         return false;
 
     if (!graph.execute(frame.command_buffer, image_states, {barrier_}, error,

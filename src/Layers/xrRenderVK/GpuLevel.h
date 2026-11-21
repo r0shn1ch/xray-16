@@ -9,6 +9,8 @@
 #include "LevelHierarchyBounds.h"
 #include "ClusterLodBuilder.h"
 #include "ClusterVisibility.h"
+#include "Layers/xrRenderGraph/VisibilityId.h"
+#include "DetailGeneratePass.h"
 #include "ResourceIssueCounter.h"
 #include "xrCore/_matrix.h"
 #include <algorithm>
@@ -29,6 +31,21 @@ class GpuLevel
 {
   public:
     using RayGeometryBatch = xray::render::vulkan::RayGeometryBatch;
+    struct VisibilityDrawRange
+    {
+        uint32_t geometry_batch;
+        uint32_t first_draw;
+        uint32_t draw_count;
+    };
+    const std::vector<VisibilityDrawRange>& visibility_draw_ranges() const { return visibility_draw_ranges_; }
+    struct VisibilityTexture { std::string name; bool lightmap; };
+    const std::vector<VisibilityTexture>& visibility_textures() const { return visibility_textures_; }
+    VkDescriptorBufferInfo visibility_draw_entries() const
+    { return {visibility_draw_entries_.handle(), 0, visibility_draw_entries_.size()}; }
+    VkDescriptorBufferInfo visibility_camera_commands(uint32_t frame) const
+    { return cluster_visibility_.camera_commands(frame); }
+    bool visibility_geometry(uint32_t batch, VkDescriptorBufferInfo& vertices, VkDescriptorBufferInfo& indices) const;
+    void mark_visibility_draws(uint32_t visual, float lod, uint32_t* words, size_t word_count) const;
     GpuLevel() = default;
     ~GpuLevel();
     GpuLevel(const GpuLevel &) = delete;
@@ -66,7 +83,8 @@ class GpuLevel
                 GeometryPhase phase) const;
     bool record_visual(size_t index, const FrameRecordingContext &frame, const DeferredPass &pass,
                        const float (&mvp)[16], GeometryPhase phase = GeometryPhase::OpaqueAndAlphaTest, float lod = 1.f,
-                       bool cull_static = true, bool secondary_only = false, int priority_filter = -1) const;
+                       bool cull_static = true, bool secondary_only = false, int priority_filter = -1,
+                       bool visibility_rasterized = false) const;
     bool record_hud_visual(size_t index, const FrameRecordingContext &frame, const DeferredPass &pass,
                            const float (&mvp)[16], float lod = 1.f) const;
     bool record_object_velocity_visual(size_t index, const FrameRecordingContext& frame,
@@ -128,6 +146,8 @@ class GpuLevel
     bool visible_sector_roots(size_t camera_sector, const Fmatrix &view_projection, const Fvector &camera_position,
                               std::vector<uint32_t> &roots) const;
     void all_level_roots(std::vector<uint32_t> &roots) const;
+    bool enable_gpu_details(PFN_vkGetDeviceProcAddr get, const VkPhysicalDeviceLimits& limits, std::string& error);
+    bool record_detail_cull(const FrameRecordingContext& frame, const float (&mvp)[16], std::string& error) const;
     void prepare_details(const Fvector &camera_position, float max_distance = 40.f);
     bool record_details(const FrameRecordingContext &frame, const DeferredPass &pass, const float (&mvp)[16]) const;
     bool prepare_transparent_details(const FrameRecordingContext &frame, const float (&mvp)[16],
@@ -150,6 +170,8 @@ class GpuLevel
         };
         BufferResource vertices, indices;
         VkBuffer packed_vertices{}, packed_indices{};
+        uint32_t geometry_batch{UINT32_MAX};
+        bool visibility_rasterizable{};
         uint32_t first_vertex{}, first_index{};
         uint64_t vertex_bytes{}, index_bytes{};
         uint64_t cluster_index_bytes{};
@@ -176,6 +198,7 @@ class GpuLevel
             uint32_t first_draw_command{};
             uint32_t cull_group_first{}, cull_group_count{};
             uint32_t cull_cluster_first{}, cull_cluster_count{};
+            bool visibility_rasterizable{};
         };
         std::vector<ClusterWindow> cluster_lod_windows;
         size_t cluster_index_count() const
@@ -205,6 +228,7 @@ class GpuLevel
         bool glow_alpha_add{};
         bool fog{};
         bool lightmapped{};
+        std::string lightmap_texture_name;
         bool lod_atlas{};
         bool terrain{};
         bool surface{};
@@ -252,6 +276,9 @@ class GpuLevel
         BufferResource vertices, indices, cluster_indices;
     };
     std::vector<GeometryBatch> geometry_batches_;
+    BufferResource visibility_draw_entries_;
+    std::vector<VisibilityDrawRange> visibility_draw_ranges_;
+    std::vector<VisibilityTexture> visibility_textures_;
     // CPU-authored indirect arguments use one fenced buffer per frame slot.
     // The command array is also storage-capable for the planned GPU culler.
     mutable std::array<BufferResource, FrameContext::FramesInFlight> cluster_draw_commands_;
@@ -276,6 +303,22 @@ class GpuLevel
     std::vector<DetailPlacement> visible_details_;
     // Each frame slot is reused only after FrameContext has waited on its fence.
     mutable std::array<std::vector<DetailBatch>, FrameContext::FramesInFlight> detail_batches_;
+    struct GpuDetailBatch { BufferResource placements, instances, arguments; uint32_t count{}; };
+    std::unique_ptr<DetailCullPass> detail_cull_;
+    std::unique_ptr<DetailGeneratePass> detail_generate_;
+    mutable bool detail_gpu_generation_failed_{};
+    bool detail_cache_gpu_only_{};
+    struct DetailGenerationFrame { BufferResource cells, triangles, prototypes, placed; };
+    mutable std::array<DetailGenerationFrame, FrameContext::FramesInFlight> detail_generation_frames_;
+    std::unordered_map<size_t, std::vector<DetailGroundTriangle>> detail_ground_cache_;
+    std::vector<DetailGenerateSlot> detail_generation_cells_;
+    std::vector<DetailGroundTriangle> detail_generation_triangles_;
+    DetailGeneratePass::Parameters detail_generation_params_;
+    bool record_generated_details(const FrameRecordingContext& frame, const float (&mvp)[16], std::string& error) const;
+
+    mutable std::array<std::vector<GpuDetailBatch>, FrameContext::FramesInFlight> gpu_detail_batches_;
+    mutable std::array<bool, FrameContext::FramesInFlight> gpu_detail_recorded_{};
+
     mutable std::array<uint64_t, FrameContext::FramesInFlight> detail_signatures_{};
     mutable std::array<std::vector<DetailBatch>, FrameContext::FramesInFlight> transparent_detail_batches_;
     struct TransparentDetailDraw

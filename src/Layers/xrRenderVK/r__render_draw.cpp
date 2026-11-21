@@ -278,14 +278,19 @@ void VulkanGameDevice::record_level_visuals(const FrameRecordingContext &frame, 
     auto &owner = *static_cast<VulkanGameDevice *>(user);
     PassCpuSample timing{"opaque-level", owner.deferred_, owner.deferred_.draw_calls()};
     auto command_batch = owner.deferred_.geometry_batch();
+    const bool visibility_ready = frame.frame_index < owner.visibility_recorded_.size() &&
+        owner.visibility_recorded_[frame.frame_index] &&
+        owner.visibility_targets_[frame.frame_index].extent.width == frame.extent.width &&
+        owner.visibility_targets_[frame.frame_index].extent.height == frame.extent.height;
     for (const auto &draw : owner.level_draws_)
     {
         if (draw.hud)
             continue;
         float mvp[16];
         std::copy(draw.mvp.begin(), draw.mvp.end(), mvp);
+        const bool use_visibility = visibility_ready && !draw.instance && draw.mvp == owner.scene_mvp_;
         if (!owner.current_level_->record_visual(draw.index, frame, owner.deferred_, mvp,
-                                                 GeometryPhase::OpaqueAndAlphaTest, draw.lod, draw.instance == nullptr))
+                GeometryPhase::OpaqueAndAlphaTest, draw.lod, draw.instance == nullptr, false, -1, use_visibility))
         {
             owner.level_recorded_ = false;
             owner.level_error_ = "Vulkan opaque level visual " + std::to_string(draw.index) +

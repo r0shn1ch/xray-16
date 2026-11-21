@@ -2,9 +2,12 @@
 
 #include "ImageStateTracker.h"
 #include "FrameSubmissionGraph.h"
+#include "../xrRenderGraph/ResourceDependencies.h"
+#include "../xrRenderGraph/ResourceRetirement.h"
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -15,7 +18,7 @@ enum class BufferUse
 {
     Undefined, HostWrite, HostRead, TransferSource, TransferDestination,
     ComputeRead, ComputeWrite, ComputeReadWrite, VertexRead, FragmentRead,
-    IndirectRead, AllCommandsReadWrite
+    IndirectRead, IndirectAndComputeRead, AllCommandsReadWrite
 };
 // A frame-local dependency graph for imported image subresources and buffer ranges.
 // Repeated and overlapping imports must agree on producer and sharing metadata
@@ -28,12 +31,11 @@ class FrameImageGraph
 public:
     explicit FrameImageGraph(FrameSubmissionGraph::Queue default_queue =
         FrameSubmissionGraph::Queue::Graphics) : default_queue_(default_queue) {}
+    FrameImageGraph(const FrameImageGraph&) = delete;
+    FrameImageGraph& operator=(const FrameImageGraph&) = delete;
 
-    struct Resource
-    {
-        uint32_t id = ~0u;
-        uint32_t version = ~0u;
-    };
+    struct ImageResourceKind;
+    using Resource = framegraph::TypedResourceHandle<ImageResourceKind>;
     using Pass = uint32_t;
     using Record = std::function<void()>;
     using CheckedRecord = std::function<bool(std::string&)>;
@@ -47,11 +49,8 @@ public:
         RequireCallerRelease,
         DeferToGeneratedGroups,
     };
-    struct BufferResource
-    {
-        uint32_t id = ~0u;
-        uint32_t version = ~0u;
-    };
+    struct BufferResourceKind;
+    using BufferResource = framegraph::TypedResourceHandle<BufferResourceKind>;
     struct QueueGroup
     {
         struct OwnershipTransfer
@@ -112,6 +111,31 @@ public:
         VkSharingMode sharing_mode = VK_SHARING_MODE_EXCLUSIVE,
         std::vector<uint32_t> sharing_queue_families = {},
         FrameSubmissionGraph::Pass initial_producer_pass = FrameSubmissionGraph::InvalidPass);
+    struct TransientBuffer
+    {
+        VkBuffer handle{};
+        VkSharingMode sharing_mode = VK_SHARING_MODE_EXCLUSIVE;
+        std::vector<uint32_t> queue_families;
+        std::shared_ptr<void> owner;
+    };
+    using AllocateBuffer = std::function<bool(VkDeviceSize, VkBufferUsageFlags,
+        TransientBuffer&, std::string&)>;
+    bool declare_buffer(VkDeviceSize size, VkBufferUsageFlags usage,
+        BufferResource& resource, std::string& error);
+    bool materialize_buffers(const AllocateBuffer& allocate, std::string& error);
+    VkBuffer buffer_handle(BufferResource resource) const;
+    struct TransientImage
+    {
+        VkImage handle{};
+        std::shared_ptr<void> owner;
+    };
+    using AllocateImage = std::function<bool(const VkImageCreateInfo&, TransientImage&, std::string&)>;
+    bool declare_image(const VkImageCreateInfo& info, VkImageAspectFlags aspects,
+        Resource& resource, std::string& error);
+    bool materialize_images(const AllocateImage& allocate, std::string& error);
+    VkImage image_handle(Resource resource) const;
+    // Call after recording the last use. The slots must cover every submitted use.
+    void retire_allocations(framegraph::ResourceRetirement& retirement, uint32_t slots);
     Pass add_pass(const char* name, Record record);
     Pass add_checked_pass(const char* name, CheckedRecord record);
     Pass add_pass(const char* name, FrameSubmissionGraph::Queue queue, Record record);
@@ -138,6 +162,15 @@ public:
         BufferResource& next, std::string& error);
     // Orders command groups by resource hazards.
     bool build_queue_groups(std::vector<QueueGroup>& groups, std::string& error) const;
+    struct ResourceLifetimes
+    {
+        // First and last use are positions in pass_order, across all queues.
+        // They describe recording order. GPU reuse additionally requires completion.
+        std::vector<Pass> pass_order;
+        std::vector<framegraph::ResourceLifetime> images;
+        std::vector<framegraph::ResourceLifetime> buffers;
+    };
+    bool compile_resource_lifetimes(ResourceLifetimes& lifetimes, std::string& error) const;
     // Adds submissions, cross-queue waits and ownership transfers for exclusive resources.
     bool generate_submission_groups(FrameSubmissionGraph& submissions,
         const QueueFamilyForQueue& queue_family_for_queue,
@@ -169,11 +202,7 @@ public:
         bool semaphore_handoff = false) const;
 
 private:
-    struct Version
-    {
-        Pass producer = ~0u;
-        std::vector<Pass> readers;
-    };
+    using Version = framegraph::ResourceVersion;
     struct Image
     {
         VkImage image = VK_NULL_HANDLE;
@@ -185,6 +214,8 @@ private:
         VkSharingMode sharing_mode = VK_SHARING_MODE_EXCLUSIVE;
         std::vector<uint32_t> sharing_queue_families;
         std::vector<Version> versions{{}};
+        VkImageCreateInfo transient_info{};
+        std::shared_ptr<void> allocation;
     };
     struct Access
     {
@@ -203,6 +234,8 @@ private:
         VkSharingMode sharing_mode = VK_SHARING_MODE_EXCLUSIVE;
         std::vector<uint32_t> sharing_queue_families;
         std::vector<Version> versions{{}};
+        VkBufferUsageFlags transient_usage{};
+        std::shared_ptr<void> allocation;
     };
     struct BufferAccess
     {
@@ -252,6 +285,7 @@ private:
     std::vector<Buffer> m_buffers;
     std::vector<PassInfo> m_passes;
     std::vector<Dependency> m_dependencies;
+    const uint64_t generation_ = framegraph::allocate_graph_generation();
     FrameSubmissionGraph::Queue default_queue_;
 };
 }

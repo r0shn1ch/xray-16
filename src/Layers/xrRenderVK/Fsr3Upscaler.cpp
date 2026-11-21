@@ -196,7 +196,7 @@ bool Fsr3Upscaler::initialize(VkInstance instance, PFN_vkGetInstanceProcAddr get
         return false;
     }
     if (!context_initialized_ && !create_context(render_extent_, display_extent_,
-            VK_FORMAT_R8G8B8A8_UNORM, false, error))
+            display_format_, false, scene_format_ == VK_FORMAT_R16G16B16A16_SFLOAT, error))
     {
         destroy();
         return false;
@@ -575,7 +575,7 @@ bool Fsr3Upscaler::initialize_backend_interfaces(std::string& error)
 }
 
 bool Fsr3Upscaler::create_context(VkExtent2D render_extent, VkExtent2D display_extent,
-    VkFormat back_buffer_format, bool frame_generation, std::string& error)
+    VkFormat back_buffer_format, bool frame_generation, bool hdr_input, std::string& error)
 {
     if (!backend_interfaces_initialized_ || context_initialized_ || !render_extent.width ||
         !render_extent.height || !display_extent.width || !display_extent.height)
@@ -586,6 +586,8 @@ bool Fsr3Upscaler::create_context(VkExtent2D render_extent, VkExtent2D display_e
     FfxFsr3ContextDescription description{};
     description.flags = FFX_FSR3_ENABLE_AUTO_EXPOSURE |
         FFX_FSR3_ENABLE_MOTION_VECTORS_JITTER_CANCELLATION;
+    if (hdr_input)
+        description.flags |= FFX_FSR3_ENABLE_HIGH_DYNAMIC_RANGE;
     if (!frame_generation)
         description.flags |= FFX_FSR3_ENABLE_UPSCALING_ONLY;
     description.maxRenderSize = {render_extent.width, render_extent.height};
@@ -711,7 +713,7 @@ bool Fsr3Upscaler::create_frame_generation_swapchain(VkSwapchainCreateInfoKHR& c
     dispatch.queue_present = replacement_functions.queuePresentKHR;
     frame_interpolation_swapchain_ = swapchain;
     if (!create_context(frame_context.scene_extent, create_info.imageExtent,
-            VK_FORMAT_R8G8B8A8_UNORM, true, error))
+            VK_FORMAT_R8G8B8A8_UNORM, true, false, error))
     {
         replacement_functions.destroySwapchainKHR(device_, swapchain, nullptr);
         swapchain = VK_NULL_HANDLE;

@@ -148,7 +148,7 @@ void test_msaa_resolve(Device& vk, uint32_t instance_version, const FrameDispatc
         image.extent = {1, 1, 1}; image.mipLevels = image.arrayLayers = 1;
         image.samples = i < 4 ? samples : VK_SAMPLE_COUNT_1_BIT; image.tiling = VK_IMAGE_TILING_OPTIMAL;
         image.usage = (is_depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) |
-            (i >= 4 ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
+            VK_IMAGE_USAGE_SAMPLED_BIT | (i >= 4 ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
         check(vkCreateImage(vk.device, &image, nullptr, &resources.images[i]));
         VkMemoryRequirements req{}; vkGetImageMemoryRequirements(vk.device, resources.images[i], &req);
         uint32_t memory_type = UINT32_MAX;

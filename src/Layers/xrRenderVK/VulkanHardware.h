@@ -59,6 +59,7 @@ struct PhysicalDevice
     bool create_render_pass2_extension{};
     bool depth_stencil_resolve_extension{};
     bool frame_generation_queues{};
+    bool hdr_metadata{};
 };
 
 struct FrameGenerationQueues

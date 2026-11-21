@@ -372,8 +372,9 @@ bool upload_texture(VkDevice device, VkQueue queue, VkCommandPool pool,
         VkMemoryBarrier ready{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
         ready.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         ready.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        // Immutable textures also feed compute passes, including material resolve.
         vk.cmd_pipeline_barrier(upload.command, VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &ready, 0, nullptr, 0, nullptr);
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &ready, 0, nullptr, 0, nullptr);
     }
     const VkResult ended = vk.end_command_buffer(upload.command);
     if (ended != VK_SUCCESS)

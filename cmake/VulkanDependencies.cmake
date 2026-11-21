@@ -1,40 +1,5 @@
 include(FetchContent)
 
-add_subdirectory("${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers" EXCLUDE_FROM_ALL)
-
-set(NVRHI_BUILD_SHARED OFF CACHE BOOL "Build NVRHI as a static library" FORCE)
-set(NVRHI_WITH_DX11 OFF CACHE BOOL "Build the NVRHI D3D11 backend" FORCE)
-set(NVRHI_WITH_DX12 OFF CACHE BOOL "Build the NVRHI D3D12 backend" FORCE)
-set(NVRHI_WITH_METAL3 OFF CACHE BOOL "Build the NVRHI Metal backend" FORCE)
-set(NVRHI_WITH_RTXMU OFF CACHE BOOL "Build NVRHI with RTXMU" FORCE)
-# The pinned Vulkan backend expects non-dispatchable handles to be pointers.
-# On 32-bit targets the renderer uses its direct Vulkan path.
-if (CMAKE_SIZEOF_VOID_P EQUAL 8)
-    set(NVRHI_WITH_VULKAN ON CACHE BOOL "Build the NVRHI Vulkan backend" FORCE)
-else()
-    set(NVRHI_WITH_VULKAN OFF CACHE BOOL "Build the NVRHI Vulkan backend" FORCE)
-endif()
-set(NVRHI_FETCH_VULKAN_HEADERS OFF CACHE BOOL "Use the engine's Vulkan headers" FORCE)
-set(NVRHI_INSTALL OFF CACHE BOOL "Install NVRHI" FORCE)
-FetchContent_Declare(xray_nvrhi
-    GIT_REPOSITORY https://github.com/OpenXRay/NVRHI.git
-    GIT_TAG 1f503c0e06465025b73e6357f7b7ea82a710555c
-)
-FetchContent_MakeAvailable(xray_nvrhi)
-set(XRAY_NVRHI_LIBRARIES nvrhi)
-if (TARGET nvrhi_vk)
-    target_link_libraries(nvrhi_vk PUBLIC nvrhi)
-    target_compile_definitions(nvrhi_vk INTERFACE XRAY_HAS_NVRHI_VULKAN)
-    list(PREPEND XRAY_NVRHI_LIBRARIES nvrhi_vk)
-    if (MSVC)
-        target_compile_options(nvrhi_vk PRIVATE /EHsc)
-    endif()
-endif()
-get_target_property(XRAY_NVRHI_INCLUDE_DIRS nvrhi INTERFACE_INCLUDE_DIRECTORIES)
-if (MSVC)
-    target_compile_options(nvrhi PRIVATE /EHsc)
-endif()
-
 # The renderer uses the header directly. The dependency's CMake project builds its demo.
 FetchContent_Declare(xray_bcdec
     GIT_REPOSITORY https://github.com/iOrange/bcdec.git

@@ -38,7 +38,7 @@ struct FrameImageSharing
 FrameImageSharing frame_image_sharing(uint32_t graphics_family, uint32_t compute_family);
 
 // Exact-match Vulkan image pool for renderer-owned offscreen targets.
-// release() is called only after GPU idle; views and framebuffers must be
+// release() is called only after all GPU use has completed; views and framebuffers must be
 // destroyed before releasing their image. In-use entries are never recycled.
 class FrameImagePool
 {

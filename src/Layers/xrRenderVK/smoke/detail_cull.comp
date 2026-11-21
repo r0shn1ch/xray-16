@@ -1,0 +1,68 @@
+#version 450
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std430) readonly buffer DetailPlacements { uint placements[]; };
+layout(set = 0, binding = 1, std430) writeonly buffer DetailInstances { float instances[]; };
+layout(set = 0, binding = 2, std430) buffer DrawArguments
+{
+    uint index_count;
+    uint instance_count;
+    uint first_index;
+    int vertex_offset;
+    uint first_instance;
+};
+layout(push_constant) uniform DetailCull
+{
+    mat4 view_projection;
+    uint placement_count;
+    uint instance_capacity;
+    float radius;
+    uint source_stride; // five floats for legacy placements, eight for GPU generation
+    uint model;
+} settings;
+
+bool visible(vec3 position)
+{
+    mat4 m = transpose(settings.view_projection);
+    vec4 planes[6] = vec4[6](m[3] + m[0], m[3] - m[0], m[3] + m[1],
+        m[3] - m[1], m[2], m[3] - m[2]);
+    for (int i = 0; i < 6; ++i)
+        if (dot(planes[i], vec4(position, 1.0)) < -settings.radius * length(planes[i].xyz))
+            return false;
+    return true;
+}
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= settings.placement_count || index >= placements.length() / settings.source_stride)
+        return;
+
+    uint source = index * settings.source_stride;
+    bool generated = settings.source_stride == 8u;
+    if (generated && placements[source + 5u] != settings.model)
+        return;
+    vec3 position = uintBitsToFloat(uvec3(placements[source], placements[source + 1u], placements[source + 2u]));
+    if (!visible(position))
+        return;
+
+    uint capacity = min(settings.instance_capacity, uint(instances.length()) / 6u);
+    uint destination = atomicAdd(instance_count, 0u);
+    for (;;)
+    {
+        if (destination >= capacity)
+            return;
+        uint previous = atomicCompSwap(instance_count, destination, destination + 1u);
+        if (previous == destination)
+            break;
+        destination = previous;
+    }
+    uint output_offset = destination * 6u;
+    float yaw = uintBitsToFloat(placements[source + (generated ? 4u : 3u)]);
+    instances[output_offset] = position.x;
+    instances[output_offset + 1u] = position.y;
+    instances[output_offset + 2u] = position.z;
+    instances[output_offset + 3u] = uintBitsToFloat(placements[source + (generated ? 3u : 4u)]);
+    instances[output_offset + 4u] = cos(yaw);
+    instances[output_offset + 5u] = sin(yaw);
+}

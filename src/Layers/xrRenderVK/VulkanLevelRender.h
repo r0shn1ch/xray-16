@@ -2,6 +2,7 @@
 
 #include "GpuLevel.h"
 #include "BindlessTextureTable.h"
+#include "VisibilityPasses.h"
 #include "RayQueryBatch.h"
 #include "RaySurface.h"
 #include "ShaderModule.h"
@@ -28,6 +29,7 @@
 namespace xray::render::vulkan
 {
 class VulkanGameDevice;
+class VulkanWindowDevice;
 class VulkanFontRender;
 class VulkanUIShader;
 class VulkanModelVisual;
@@ -156,6 +158,8 @@ private:
   void refresh_engine_shader_defines();
   void release_ray_materials();
   void release_ray_diffuse_materials();
+  bool prepare_visibility_materials(const VulkanWindowDevice& window, std::string& error);
+  void release_visibility_materials();
   bool acquire_model_ray_materials(const std::vector<RayModelGeometry>& geometry,
       std::vector<RayModelTextureSlots>& slots, std::string& error);
   bool prepare_model_ray_batch(GpuModel& model, IKinematics* skeleton, uint32_t slot, VkCommandBuffer command,
@@ -177,6 +181,9 @@ private:
   BindlessTextureTable ray_materials_;
   RayQueryBatch ray_queries_;
   BindlessTextureTable ray_diffuse_materials_;
+  BindlessTextureTable visibility_materials_;
+  std::unique_ptr<VisibilityPasses> visibility_passes_;
+  std::vector<VkImageView> visibility_material_views_;
   RaySurfacePass ray_surfaces_;
   std::vector<VkImageView> ray_material_views_;
   std::vector<VkImageView> ray_diffuse_material_views_;

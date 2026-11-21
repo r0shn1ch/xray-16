@@ -110,6 +110,11 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
         return result;
     };
     const auto global_extensions = collect_extensions(nullptr);
+    if (contains_name(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME, global_extensions) &&
+        std::none_of(extensions.begin(), extensions.end(), [](const char* name) {
+            return std::strcmp(name, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME) == 0;
+        }))
+        extensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
     const char* rt_requested_env = SDL_getenv("XRAY_VK_RAY_TRACING");
 #if defined(XR_PLATFORM_ANDROID)
     // Mobile Vulkan requests RT features when available; devices without them
@@ -409,6 +414,8 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
         swapchain_context.api_version = m_physical.properties.apiVersion;
         swapchain_context.scene_extent = scene_extent.width ? scene_extent : extent;
     }
+    const char* linear_scene = SDL_getenv("XRAY_VK_HDR_LINEAR_SCENE");
+    const char* hdr10 = SDL_getenv("XRAY_VK_HDR10");
     if (!m_frame.initialize(m_physical.handle, m_device, m_surface, m_queue,
             m_physical.graphics_present_family, extent, frame_dispatch, error,
             allow_readback, use_depth, preserve_prepass_depth, postprocess,
@@ -421,12 +428,13 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
             swapchain_create, swapchain_destroyed, swapchain_data,
             m_transfer_queue && m_transfer_queue != m_queue && m_transfer_queue != m_compute_queue,
             m_physical.transfer_queue_flags, m_physical.compute_queue_family,
-            m_physical.transfer_queue_family))
+            m_physical.transfer_queue_family, linear_scene && std::strcmp(linear_scene, "1") == 0,
+            hdr10 && std::strcmp(hdr10, "1") == 0))
         return fail();
-    SDL_Log("[renderer-vulkan] swapchain.ready extent=%ux%u scene=%ux%u images=%zu format=%d timestamps=%u bits",
+    SDL_Log("[renderer-vulkan] swapchain.ready extent=%ux%u scene=%ux%u images=%zu format=%d scene_format=%d HDR10=%d timestamps=%u bits",
         m_frame.presentation_extent().width, m_frame.presentation_extent().height,
         m_frame.extent().width, m_frame.extent().height, m_frame.image_count(),
-        static_cast<int>(m_frame.format()), timestamp_bits);
+        static_cast<int>(m_frame.format()), static_cast<int>(m_frame.scene_format()), int(m_frame.hdr10_active()), timestamp_bits);
     error.clear();
     return true;
 }

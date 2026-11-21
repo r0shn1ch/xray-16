@@ -185,7 +185,9 @@ int main(int argc, char** argv)
     vk.make_image(3, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
         VK_FORMAT_B8G8R8A8_UNORM);
     vk.make_buffer(80, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vk.upload, vk.upload_memory);
-    vk.make_buffer(64, VK_BUFFER_USAGE_TRANSFER_DST_BIT, vk.readback, vk.readback_memory);
+    constexpr VkDeviceSize blit_offset = 64;
+    constexpr VkDeviceSize readback_size = blit_offset + 2 * 2 * 4;
+    vk.make_buffer(readback_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, vk.readback, vk.readback_memory);
     VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pool_info.queueFamilyIndex = family;
     pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -350,7 +352,7 @@ int main(int argc, char** argv)
             transition(vk.command, vk.input[3], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
                 VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-            copy.bufferOffset = 32;
+            copy.bufferOffset = blit_offset;
             vkCmdCopyImageToBuffer(vk.command, vk.input[3], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                 vk.readback, 1, &copy);
         }
@@ -393,7 +395,7 @@ int main(int argc, char** argv)
         submit.pCommandBuffers = &vk.command;
         check(vkQueueSubmit(vk.queue, 1, &submit, VK_NULL_HANDLE));
         check(vkQueueWaitIdle(vk.queue));
-        check(vkMapMemory(vk.device, vk.readback_memory, 0, 64, 0, &mapped));
+        check(vkMapMemory(vk.device, vk.readback_memory, 0, readback_size, 0, &mapped));
         const auto* values = static_cast<const uint16_t*>(mapped);
         if (std::abs(half_to_float(values[23]) - .8f) > .01f)
             throw std::runtime_error("indirect temporal did not sample scaled depth");
@@ -422,7 +424,7 @@ int main(int argc, char** argv)
         if (iteration == 3)
         {
             const auto* bytes = static_cast<const uint8_t*>(mapped);
-            if (std::abs(int(bytes[34]) - 230) > 4)
+            if (std::abs(int(bytes[blit_offset + 2]) - 230) > 4)
                 throw std::runtime_error("temporal resolve RGBA16F-to-BGRA8 blit mismatch");
         }
         vkUnmapMemory(vk.device, vk.readback_memory);

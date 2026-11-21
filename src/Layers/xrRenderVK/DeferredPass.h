@@ -347,10 +347,11 @@ class DeferredPass
             rain_shadow_pass_ = rain_shadow_pass;
     }
     void set_rain_shadow_pass(VkRenderPass pass) { rain_shadow_pass_ = pass; }
-    void set_local_shadow_graph_passes(VkRenderPass clear_pass, VkRenderPass load_pass)
+    void set_local_shadow_graph_passes(VkRenderPass clear_pass, VkRenderPass load_pass, VkRenderPass legacy_load_pass)
     {
         local_shadow_graph_pass_ = clear_pass;
         local_shadow_graph_load_pass_ = load_pass;
+        local_shadow_load_pass_ = legacy_load_pass;
     }
     // Caller guarantees compatibility with the depth-only shadow render pass
     // (same depth format and sample count) and clears this before destroying it.
@@ -378,6 +379,10 @@ class DeferredPass
     bool supports_multi_draw_indirect() const { return vk_.multi_draw_indirect; }
     bool is_sun_shadow_pass(VkRenderPass render_pass) const { return render_pass && render_pass == shadow_pass_; }
     VkPipelineCache pipeline_cache() const { return vk_.pipeline_cache; }
+    bool create_visibility_gbuffer_pipeline(VkRenderPass render_pass, VkPipelineLayout layout,
+        VkShaderModule vertex, VkShaderModule fragment, VkPipeline& pipeline, std::string& error) const;
+    void draw_visibility_gbuffer(const FrameRecordingContext& frame, VkPipeline pipeline,
+        VkPipelineLayout layout, VkDescriptorSet sources) const;
     bool record_hud(const FrameRecordingContext &frame, VkBuffer vertices, VkBuffer indices, uint32_t index_count,
                     const float (&mvp)[16], VkDescriptorSet material_set, uint32_t first_index = 0,
                     const char *vertex_name = nullptr, const char *fragment_name = nullptr, float alpha_ref = 0.f,
@@ -463,7 +468,7 @@ class DeferredPass
                       uint32_t offset = 80) const;
     VkDevice device_{};
     VkRenderPass geometry_pass_{}, light_pass_{}, shadow_pass_{}, local_shadow_pass_{},
-        local_shadow_graph_pass_{}, local_shadow_graph_load_pass_{}, vsm_shadow_pass_{},
+        local_shadow_load_pass_{}, local_shadow_graph_pass_{}, local_shadow_graph_load_pass_{}, vsm_shadow_pass_{},
         vsm_dynamic_shadow_pass_{}, rain_shadow_pass_{}, overlay_pass_{};
     bool lighting_compatible(const FrameRecordingContext &frame) const
     {

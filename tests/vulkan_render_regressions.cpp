@@ -1,4 +1,6 @@
 #include "src/Layers/xrRenderVK/DetailInstance.h"
+#include "src/Layers/xrRenderGraph/SkyProbeLayout.h"
+#include "src/Layers/xrRenderGraph/LocalAtlasAllocator.h"
 #include "src/Layers/xrRenderVK/LevelLightmap.h"
 #include "src/Layers/xrRenderVK/LevelModels.h"
 #include "src/Layers/xrRenderVK/ModelPoseConstants.h"
@@ -18,6 +20,38 @@
 using namespace xray::render::vulkan;
 int main()
 {
+    {
+        xray::render::framegraph::LocalAtlasAllocator atlas;
+        std::array<uint32_t, 6> faces{};
+        assert(!atlas.AllocateFaces(atlas.LevelOf(2048), 6, faces));
+        assert(atlas.UsedTexels() == 0);
+        assert(atlas.AllocateFaces(atlas.LevelOf(512), 6, faces));
+        assert(atlas.UsedTexels() == 6 * 512 * 512);
+        std::array<uint32_t, 6> origins{};
+        for (size_t face = 0; face < faces.size(); ++face)
+        {
+            uint32_t x{}, y{}, size{};
+            atlas.Rect(faces[face], x, y, size);
+            assert(size == 512 && x + size <= 4096 && y + size <= 4096);
+            origins[face] = y * 4096 + x;
+            atlas.Free(faces[face]);
+        }
+        std::sort(origins.begin(), origins.end());
+        assert(std::adjacent_find(origins.begin(), origins.end()) == origins.end());
+        assert(atlas.UsedTexels() == 0 && atlas.Alloc(0) == 0);
+    }
+    {
+        xray::render::framegraph::SkyProbeLayout sky;
+        assert(sky.initialize({-4.f, 0.f, 2.f}, {4.f, 4.f, 6.f}, 2.f, 64));
+        assert(sky.count == 45 && sky.spacing == 2.f);
+        std::array<float, 3> position{};
+        assert(sky.position(sky.count - 1, position));
+        assert((position == std::array<float, 3>{4.f, 4.f, 6.f}));
+        assert(sky.initialize({-4.f, 0.f, 2.f}, {4.f, 4.f, 6.f}, 2.f, 8));
+        assert(sky.count == 8 && sky.spacing == 8.f);
+        assert(!sky.position(8, position));
+        assert(!sky.initialize({0.f, 0.f, 1.f}, {0.f, 0.f, 0.f}, 2.f, 64));
+    }
     const auto blade = detail_instance(10, 2, 3, 1.57079632679f, 2);
     const float point[]{1, 0, 0};
     const auto transformed = detail_transform(blade, point);
@@ -53,6 +87,16 @@ int main()
     assert(deleted == 3);
     retirement.complete(1);
     assert(deleted == 4);
+    retirement.defer_for_slots(1u << 1, [&] {
+        ++deleted;
+        retirement.defer_for_slots(1u << 0, [&] { ++deleted; });
+    });
+    retirement.complete(0);
+    assert(deleted == 4);
+    retirement.complete(1);
+    assert(deleted == 5 && retirement.size() == 1);
+    retirement.complete(0);
+    assert(deleted == 6 && retirement.size() == 0);
     assert(glow_facing({0, 0, 0}, {0, 0, 1}, {0, 0, -1}, .1f) == 0);
     assert(glow_facing({0, 0, 0}, {0, 0, 1}, {0, 0, .05f}, .1f) == 0);
     assert(glow_facing({0, 0, 0}, {0, 0, 1}, {0, 0, 1}, .1f) == 1);

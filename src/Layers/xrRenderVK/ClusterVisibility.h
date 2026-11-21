@@ -68,6 +68,8 @@ public:
         const float (&camera)[3], float fov_degrees, std::string& error) const;
     VkBuffer command_buffer(uint32_t frame_index) const
     { return frame_index < commands_.size() ? commands_[frame_index].handle() : VK_NULL_HANDLE; }
+    VkDescriptorBufferInfo camera_commands(uint32_t frame_index) const
+    { return {command_buffer(frame_index), 0, VkDeviceSize(command_count_) * sizeof(VkDrawIndexedIndirectCommand)}; }
     VkDeviceSize command_offset(uint32_t view, uint32_t command) const
     { return (VkDeviceSize(view) * command_count_ + command) * sizeof(VkDrawIndexedIndirectCommand); }
     bool ready() const { return pipeline_ != VK_NULL_HANDLE; }

@@ -66,7 +66,7 @@ private:
         size_t max_contexts, std::string& error);
     bool initialize_backend_interfaces(std::string& error);
     bool create_context(VkExtent2D render_extent, VkExtent2D display_extent,
-        VkFormat back_buffer_format, bool frame_generation, std::string& error);
+        VkFormat back_buffer_format, bool frame_generation, bool hdr_input, std::string& error);
     bool create_frame_generation_swapchain(VkSwapchainCreateInfoKHR& create_info,
         const FrameSwapchainCreateContext& context, FrameDispatch& dispatch,
         VkSwapchainKHR& swapchain, std::string& error);

@@ -221,10 +221,6 @@ int run_test(int argc, char** argv)
         transition(vk.command, vk.scene, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT, 1);
-        VkClearColorValue dark{};
-        const VkImageSubresourceRange scene_range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        vkCmdClearColorImage(vk.command, vk.scene, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            &dark, 1, &scene_range);
         VkBufferImageCopy upload_region{};
         upload_region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         upload_region.imageExtent = {16, 16, 1};

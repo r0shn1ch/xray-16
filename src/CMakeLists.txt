@@ -267,7 +267,8 @@ if (XRAY_BUILD_VULKAN_TESTS)
         target_link_libraries(vulkan_gbuffer_depth_gpu_test PRIVATE Vulkan::Vulkan ${XRAY_NVRHI_LIBRARIES})
         target_compile_definitions(vulkan_gbuffer_depth_gpu_test PRIVATE NOMINMAX)
         add_test(NAME vulkan_gbuffer_depth_gpu COMMAND vulkan_gbuffer_depth_gpu_test ${_xray_vk_gpu_device_args})
-        set_tests_properties(vulkan_gbuffer_depth_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+        set_tests_properties(vulkan_gbuffer_depth_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30
+            FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
         add_executable(vulkan_hiz_gpu_test
             "${XRAY_SOURCE_DIR}/tests/vulkan_hiz_gpu.cpp"
             "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/HiZPyramid.cpp"
@@ -715,7 +716,8 @@ if (XRAY_BUILD_VULKAN_TESTS)
         add_test(NAME vulkan_particle_frame_gpu COMMAND vulkan_particle_frame_gpu_test
             "${XRAY_SOURCE_DIR}/res/gamedata/shaders" ${_xray_vk_gpu_device_option_args})
         set_tests_properties(vulkan_particle_frame_gpu PROPERTIES
-            SKIP_RETURN_CODE 77 TIMEOUT 120 WORKING_DIRECTORY "${XRAY_SOURCE_DIR}")
+            SKIP_RETURN_CODE 77 TIMEOUT 120 WORKING_DIRECTORY "${XRAY_SOURCE_DIR}"
+            FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
     endif()
 
     add_executable(vulkan_renderer_module_test

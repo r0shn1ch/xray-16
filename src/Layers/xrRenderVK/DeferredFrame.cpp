@@ -35,6 +35,14 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
     }
     if (context.render_world_ && context.light_grid_)
         context.light_grid_(compute_frame, context.light_grid_data_);
+    if (context.render_world_)
+    {
+        float camera_mvp[16];
+        std::memcpy(camera_mvp, context.mvp_, sizeof(camera_mvp));
+        std::string error;
+        if (!context.level_->record_detail_cull(frame, camera_mvp, error) && Device.dwFrame % 300 == 0)
+            Msg("! [renderer-vulkan] GPU details use CPU preparation: %s", error.c_str());
+    }
     if (context.render_world_ && context.level_->has_cluster_visibility())
     {
         float camera_mvp[16];
@@ -59,6 +67,8 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
             context.recorded_ = false;
             return;
         }
+        if (context.visibility_)
+            context.visibility_(frame, *context.level_, camera_mvp, context.visibility_data_);
     }
     const auto has_local_shadow_inputs = [&context] {
         return context.local_shadows_ && context.render_world_ && context.local_lights_ &&
@@ -149,7 +159,7 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
                 {
                     const bool gpu_cluster_visibility = context.level_->has_cluster_visibility();
                     FrameRecordingContext visibility_frame = commands;
-                    visibility_frame.extent = {LocalShadowSize, LocalShadowSize};
+                    visibility_frame.extent = context.local_shadows_->face_extent(slot, face);
                     if (gpu_cluster_visibility && !context.level_->record_cluster_shadow_visibility(
                             visibility_frame, light.shadow_matrices[face], error))
                     {
@@ -197,13 +207,11 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
         FrameImageGraph::Resource rain_shadow{};
         FrameImageGraph::Resource local_current_array{};
         FrameImageGraph::Resource local_cache_array{};
-        std::vector<FrameImageGraph::Resource> local_current_faces;
-        std::vector<FrameImageGraph::Resource> local_cache_faces;
         const bool local_shadow_graph = has_local_shadow_inputs();
         const bool local_shadow_cache = local_shadow_graph && context.local_shadows_->caching();
         const VkImageSubresourceRange local_shadow_range{
             local_shadow_graph ? context.local_shadows_->image_aspects() : VkImageAspectFlags(VK_IMAGE_ASPECT_DEPTH_BIT),
-            0, 1, 0, LocalShadowSlots * LocalShadowFaces};
+            0, 1, 0, 1};
         const ImageUse local_current_initial = local_shadow_graph &&
             context.local_shadows_->layers_initialized(frame.image_index) ?
                 ImageUse::DepthStencilReadOnly : ImageUse::Undefined;
@@ -223,32 +231,12 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
             graph_ready = graph.import_image(context.local_shadows_->image(frame.image_index), local_shadow_range,
                 local_current_array, error, FrameSubmissionGraph::Queue::Graphics, 0,
                 VK_SHARING_MODE_EXCLUSIVE, {}, local_current_initial);
-        if (graph_ready && local_shadow_graph)
-        {
-            local_current_faces.resize(LocalShadowSlots * LocalShadowFaces);
-            for (uint32_t layer = 0; graph_ready && layer < local_current_faces.size(); ++layer)
-            {
-                const VkImageSubresourceRange layer_range{local_shadow_range.aspectMask, 0, 1, layer, 1};
-                graph_ready = graph.import_image(context.local_shadows_->image(frame.image_index), layer_range,
-                    local_current_faces[layer], error, FrameSubmissionGraph::Queue::Graphics, 0,
-                    VK_SHARING_MODE_EXCLUSIVE, {}, local_current_initial);
-            }
-        }
+
         if (graph_ready && local_shadow_cache)
             graph_ready = graph.import_image(context.local_shadows_->cache_image(), local_shadow_range,
                 local_cache_array, error, FrameSubmissionGraph::Queue::Graphics, 0,
                 VK_SHARING_MODE_EXCLUSIVE, {}, local_cache_initial);
-        if (graph_ready && local_shadow_cache)
-        {
-            local_cache_faces.resize(LocalShadowSlots * LocalShadowFaces);
-            for (uint32_t layer = 0; graph_ready && layer < local_cache_faces.size(); ++layer)
-            {
-                const VkImageSubresourceRange layer_range{local_shadow_range.aspectMask, 0, 1, layer, 1};
-                graph_ready = graph.import_image(context.local_shadows_->cache_image(), layer_range,
-                    local_cache_faces[layer], error, FrameSubmissionGraph::Queue::Graphics, 0,
-                    VK_SHARING_MODE_EXCLUSIVE, {}, local_cache_initial);
-            }
-        }
+
         const auto shadow_pass = graph.add_checked_command_pass("scene shadow maps",
             FrameSubmissionGraph::Queue::Graphics,
             [&frame, &record_shadow_maps](VkCommandBuffer command, std::string& error) {
@@ -299,13 +287,12 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
                     pass_error = "local shadow array initialization failed";
                     return false;
                 });
-            FrameImageGraph::Resource initialized{};
             if (initialize_local_current)
                 graph_ready = graph.write_render_pass(initialize_pass, local_current_array,
-                    ImageUse::DepthStencilAttachment, ImageUse::DepthStencilReadOnly, initialized, error);
+                    ImageUse::DepthStencilAttachment, ImageUse::DepthStencilReadOnly, local_current_array, error);
             if (graph_ready && initialize_local_cache)
                 graph_ready = graph.write_render_pass(initialize_pass, local_cache_array,
-                    ImageUse::DepthStencilAttachment, ImageUse::DepthStencilReadOnly, initialized, error);
+                    ImageUse::DepthStencilAttachment, ImageUse::DepthStencilReadOnly, local_cache_array, error);
         }
         const auto record_local_static_face = [&context, &graph_commands](
             VkCommandBuffer command, uint32_t slot, uint32_t face, const std::array<float, 16>& matrix,
@@ -315,7 +302,7 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
             std::memcpy(shadow_matrix, matrix.data(), sizeof(shadow_matrix));
             const bool gpu_cluster_visibility = context.level_->has_cluster_visibility();
             FrameRecordingContext visibility = commands;
-            visibility.extent = {LocalShadowSize, LocalShadowSize};
+            visibility.extent = context.local_shadows_->face_extent(slot, face);
             if (gpu_cluster_visibility && !context.level_->record_cluster_shadow_visibility(
                     visibility, shadow_matrix, pass_error))
             {
@@ -353,10 +340,9 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
                 const uint32_t face_count = light.color_type[3] >= .5f ? 1 : LocalShadowFaces;
                 for (uint32_t face = 0; graph_ready && face < face_count; ++face)
                 {
-                    const uint32_t layer = slot * LocalShadowFaces + face;
-                    if (slot >= LocalShadowSlots || layer >= local_current_faces.size())
+                    if (slot >= LocalShadowSlots)
                     {
-                        error = "local shadow light selected an invalid array layer";
+                        error = "local shadow light selected an invalid atlas slot";
                         graph_ready = false;
                         break;
                     }
@@ -365,7 +351,7 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
                     const bool cache_face = local_shadow_cache;
                     const bool render_static = !cache_face || !context.local_shadows_->cached_face(
                         slot, face, matrix.data());
-                    FrameImageGraph::Resource cached_face = cache_face ? local_cache_faces[layer] :
+                    FrameImageGraph::Resource cached_face = cache_face ? local_cache_array :
                         FrameImageGraph::Resource{};
                     if (render_static)
                     {
@@ -379,7 +365,7 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
                             });
                         FrameImageGraph::Resource rendered_cache{};
                         const FrameImageGraph::Resource destination = cache_face ? cached_face :
-                            local_current_faces[layer];
+                            local_current_array;
                         if (!graph.write_render_pass(static_pass, destination,
                                 ImageUse::DepthStencilAttachment, ImageUse::DepthStencilReadOnly,
                                 rendered_cache, error))
@@ -388,7 +374,9 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
                             break;
                         }
                         if (cache_face)
-                            cached_face = rendered_cache;
+                            cached_face = local_cache_array = rendered_cache;
+                        else
+                            local_current_array = rendered_cache;
                     }
                     if (!cache_face)
                         continue;
@@ -403,7 +391,7 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
                         });
                     FrameImageGraph::Resource copied_face{};
                     if (!graph.read(copy_pass, cached_face, ImageUse::TransferSource, error) ||
-                        !graph.write(copy_pass, local_current_faces[layer], ImageUse::TransferDestination,
+                        !graph.write(copy_pass, local_current_array, ImageUse::TransferDestination,
                             copied_face, error))
                     {
                         graph_ready = false;
@@ -445,6 +433,7 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
                         graph_ready = false;
                         break;
                     }
+                    local_current_array = dynamic_face;
                 }
             }
         }
@@ -563,6 +552,8 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
                 else
                     recorded = context.level_->record(geometry_frame, *context.pass_, transform,
                         GeometryPhase::OpaqueAndAlphaTest);
+                if (context.visibility_gbuffer_)
+                    context.visibility_gbuffer_(geometry_frame, context.visibility_data_);
                 if (context.models_)
                     context.models_(geometry_frame, context.models_data_);
             }
@@ -943,7 +934,7 @@ bool DeferredFrame::lighting_inputs(uint32_t image_index, const FrameSampledImag
         !context.local_lights_->empty())
     {
         const VkImageSubresourceRange local_range{context.local_shadows_->image_aspects(),
-            0, 1, 0, LocalShadowSlots * LocalShadowFaces};
+            0, 1, 0, 1};
         if (!sink({context.local_shadows_->image(image_index), local_range,
                 ImageUse::DepthStencilReadOnly, {}, context.shadow_input_producer_pass_,
                 ImageUse::DepthStencilReadOnly}, error))

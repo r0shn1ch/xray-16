@@ -59,6 +59,9 @@ public:
         const ScreenCopyDispatch& dispatch, std::string& error, bool additive = false);
     void record(const FrameRecordingContext& frame) const;
     void set_constants(const PostProcessConstants& constants) { m_constants = constants; }
+    // The HDR10 output shader interprets the first four push constants as
+    // display calibration instead of postprocess grading values.
+    void set_hdr_calibration(float paper_white, float peak, float black, bool pattern);
     void set_color_maps(VkImageView first, VkImageView second);
     void set_bloom_view(VkImageView bloom);
     void set_exposure_view(VkImageView exposure, VkSampler sampler);

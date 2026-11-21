@@ -1,0 +1,76 @@
+#pragma once
+#include <cstdint>
+#include <memory>
+#include <vector>
+#include <utility>
+#include <algorithm>
+namespace xray::render::framegraph
+{
+// A resource is released only after every flight slot that could reference it
+// has completed its fence. Image acquisition alone is not sufficient.
+class ResourceRetirement
+{
+    struct Entry
+    {
+        uint32_t pending;
+        std::shared_ptr<void> resource;
+    };
+    std::vector<Entry> entries_;
+    uint32_t slots_;
+
+  public:
+    explicit ResourceRetirement(uint32_t slots) : slots_(slots < 32 ? slots : 31)
+    {
+    }
+    template <class T> void retire(std::unique_ptr<T> resource)
+    {
+        if (resource && slots_)
+            entries_.push_back({all_slots(), std::shared_ptr<T>(std::move(resource))});
+    }
+    template <class Function> void defer(Function function)
+    {
+        defer_for_slots(all_slots(), std::move(function));
+    }
+    template <class Function> void defer_for_slots(uint32_t pending, Function function)
+    {
+        pending &= all_slots();
+        if (!pending)
+        {
+            function();
+            return;
+        }
+        struct Action
+        {
+            Function function;
+            explicit Action(Function f) : function(std::move(f)) {}
+            ~Action() { function(); }
+        };
+        entries_.push_back({pending, std::make_shared<Action>(std::move(function))});
+    }
+    void complete(uint32_t slot)
+    {
+        if (slot >= slots_)
+            return;
+        std::vector<std::shared_ptr<void>> completed;
+        for (auto& entry : entries_)
+        {
+            entry.pending &= ~(1u << slot);
+            if (!entry.pending)
+                completed.push_back(std::move(entry.resource));
+        }
+        entries_.erase(std::remove_if(entries_.begin(), entries_.end(),
+            [](const Entry& entry) { return !entry.pending; }), entries_.end());
+    }
+    void drain()
+    {
+        std::vector<Entry> pending;
+        pending.swap(entries_);
+    }
+    size_t size() const
+    {
+        return entries_.size();
+    }
+private:
+    uint32_t all_slots() const { return (1u << slots_) - 1; }
+};
+} // namespace xray::render::framegraph

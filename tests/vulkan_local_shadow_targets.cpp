@@ -7,27 +7,20 @@ using namespace xray::render::vulkan;
 namespace
 {
 uint32_t copies{}, barriers{};
-uint32_t array_views{}, layer_views{}, framebuffers{}, passes{}, begins{}, ends{};
+uint32_t expected_tile_size = LocalShadowSize;
+uint32_t array_views{}, framebuffers{}, passes{}, begins{}, ends{};
 bool legacy_clear_pass{}, legacy_load_pass{}, graph_clear_pass{}, graph_load_pass{};
 VkResult VKAPI_PTR image(VkDevice d, const VkImageCreateInfo *info, const VkAllocationCallbacks *a, VkImage *out)
 {
-    assert(info->arrayLayers == LocalShadowSlots * LocalShadowFaces);
-    assert(info->extent.width == LocalShadowSize && info->extent.height == LocalShadowSize);
+    assert(info->arrayLayers == 1);
+    assert(info->extent.width > LocalShadowSize && info->extent.height > LocalShadowSize);
     assert((info->usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0);
     return vk_mock::create_image(d, info, a, out);
 }
 VkResult VKAPI_PTR view(VkDevice d, const VkImageViewCreateInfo *info, const VkAllocationCallbacks *a, VkImageView *out)
 {
-    if (info->viewType == VK_IMAGE_VIEW_TYPE_2D_ARRAY)
-    {
-        assert(info->subresourceRange.layerCount == LocalShadowSlots * LocalShadowFaces);
-        ++array_views;
-    }
-    else
-    {
-        assert(info->viewType == VK_IMAGE_VIEW_TYPE_2D && info->subresourceRange.layerCount == 1);
-        ++layer_views;
-    }
+    assert(info->viewType == VK_IMAGE_VIEW_TYPE_2D_ARRAY && info->subresourceRange.layerCount == 1);
+    ++array_views;
     return vk_mock::image_view(d, info, a, out);
 }
 void VKAPI_PTR destroy_view(VkDevice d, VkImageView v, const VkAllocationCallbacks *a)
@@ -37,7 +30,7 @@ void VKAPI_PTR destroy_view(VkDevice d, VkImageView v, const VkAllocationCallbac
 VkResult VKAPI_PTR framebuffer(VkDevice, const VkFramebufferCreateInfo *info, const VkAllocationCallbacks *,
                                VkFramebuffer *out)
 {
-    assert(info->attachmentCount == 1 && info->width == LocalShadowSize);
+    assert(info->attachmentCount == 1 && info->width > LocalShadowSize);
     *out = vk_mock::handle<VkFramebuffer>(vk_mock::next_handle++);
     ++framebuffers;
     return VK_SUCCESS;
@@ -68,8 +61,7 @@ VkResult VKAPI_PTR render_pass(VkDevice, const VkRenderPassCreateInfo *info, con
         legacy_clear_pass = true;
         break;
     case VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL:
-        assert(load);
-        legacy_load_pass = true;
+        legacy_load_pass |= load;
         break;
     case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
         (load ? graph_load_pass : graph_clear_pass) = true;
@@ -87,7 +79,7 @@ void VKAPI_PTR destroy_pass(VkDevice, VkRenderPass, const VkAllocationCallbacks 
 }
 void VKAPI_PTR begin(VkCommandBuffer, const VkRenderPassBeginInfo *info, VkSubpassContents)
 {
-    assert(info->clearValueCount == 1 && info->renderArea.extent.width == LocalShadowSize);
+    assert(info->clearValueCount == 1 && info->renderArea.extent.width >= expected_tile_size);
     ++begins;
 }
 void VKAPI_PTR end(VkCommandBuffer)
@@ -98,15 +90,17 @@ void VKAPI_PTR copy_image(VkCommandBuffer, VkImage, VkImageLayout source, VkImag
                           uint32_t count, const VkImageCopy *copy)
 {
     assert(source == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL && destination == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    assert(count == 1 && copy->srcSubresource.baseArrayLayer == 7 && copy->dstSubresource.baseArrayLayer == 7);
+    assert(count == 1 && copy->srcSubresource.baseArrayLayer == 0 && copy->dstSubresource.baseArrayLayer == 0 &&
+        copy->srcOffset.x == copy->dstOffset.x && copy->srcOffset.y == copy->dstOffset.y &&
+        (copy->srcOffset.x || copy->srcOffset.y) && copy->extent.width == expected_tile_size);
     ++copies;
 }
 void VKAPI_PTR barrier(VkCommandBuffer, VkPipelineStageFlags, VkPipelineStageFlags, VkDependencyFlags, uint32_t,
                        const VkMemoryBarrier *, uint32_t, const VkBufferMemoryBarrier *, uint32_t count,
                        const VkImageMemoryBarrier *images)
 {
-    assert(count == 2 && images[0].subresourceRange.baseArrayLayer == 7 &&
-           images[1].subresourceRange.baseArrayLayer == 7);
+    assert(count == 2 && images[0].subresourceRange.baseArrayLayer == 0 &&
+           images[1].subresourceRange.baseArrayLayer == 0);
     ++barriers;
 }
 void VKAPI_PTR host_buffer_requirements(VkDevice device, VkBuffer buffer, VkMemoryRequirements *out)
@@ -146,12 +140,12 @@ int main()
     assert(targets.initialize(device, VK_FORMAT_D24_UNORM_S8_UINT, 2, memory, dispatch, buffers, vk_mock::sampler,
                               vk_mock::destroy_sampler, error, 1024));
     assert(targets.uniform_stride() == 1024);
-    assert(array_views == 2 && layer_views == 48 && framebuffers == 48 && passes == 4);
+    assert(array_views == 2 && framebuffers == 2 && passes == 5);
     assert(legacy_clear_pass && legacy_load_pass && graph_clear_pass && graph_load_pass);
     FrameRecordingContext frame{vk_mock::handle<VkCommandBuffer>(2), VK_NULL_HANDLE, VK_NULL_HANDLE, {640, 480}, 1, 0};
     assert(targets.initialize_layers(frame));
-    assert(begins == 24 && ends == 24);
-    assert(targets.initialize_layers(frame) && begins == 24);
+    assert(begins == 1 && ends == 1);
+    assert(targets.initialize_layers(frame) && begins == 1);
     LocalLightUniform light{};
     light.position_range[3] = 25.f;
     assert(targets.write_light(1, 0, light, error));
@@ -162,7 +156,8 @@ int main()
     assert(targets.uniform(0) == other_image);
     FrameRecordingContext shadow;
     assert(targets.begin_face(frame, 3, 5, shadow));
-    assert(shadow.render_pass == targets.render_pass() && shadow.extent.width == LocalShadowSize);
+    assert(shadow.render_pass == targets.render_pass() && shadow.extent.width == LocalShadowSize &&
+        (shadow.viewport_offset.x || shadow.viewport_offset.y));
     targets.end(frame.command_buffer);
     assert(targets.begin_face(frame, 3, 5, shadow, false, false, true));
     assert(shadow.render_pass == targets.graph_render_pass());
@@ -193,6 +188,21 @@ int main()
     targets.invalidate_cache();
     matrix[12] = 0;
     assert(!targets.cached_face(1, 1, matrix));
+    targets.remember_face(1, 1, matrix);
+    std::array<LocalShadowTargets::TileRequest, LocalShadowSlots> requests{};
+    requests[0] = {512, 1};
+    requests[1] = {128, LocalShadowFaces};
+    targets.layout_tiles(requests);
+    expected_tile_size = 128;
+    assert(!targets.cached_face(1, 1, matrix));
+    assert(targets.face_extent(0, 0).width == 512 && targets.face_extent(0, 1).width == 0);
+    assert(targets.face_extent(1, 5).width == 128);
+    assert(targets.begin_face(frame, 1, 1, shadow) && shadow.extent.width == 128);
+    targets.end(frame.command_buffer);
+    assert(targets.copy_cached_face(frame, 1, 1) && copies == 2);
+    targets.remember_face(1, 1, matrix);
+    targets.layout_tiles(requests);
+    assert(targets.cached_face(1, 1, matrix));
     targets.destroy();
     assert(framebuffers == 0 && passes == 0 && vk_mock::images.empty() && vk_mock::buffers.empty() &&
            vk_mock::allocations.empty());

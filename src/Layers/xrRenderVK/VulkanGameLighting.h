@@ -12,6 +12,7 @@
 namespace xray::render::vulkan
 {
 class VulkanHemiLightGrid;
+class VulkanGameDevice;
 class VulkanLight final : public IRender_Light
 {
   public:
@@ -158,7 +159,7 @@ class VulkanObjectSpecific final : public IRender_ObjectSpecific
     }
     void update(const float *ambient, const float *hemi, const float *sun,
                 const VulkanHemiLightGrid &lights, const VulkanHemiLightGrid *baked = nullptr,
-                unsigned *ray_budget = nullptr);
+                unsigned *ray_budget = nullptr, const VulkanGameDevice* game_device = nullptr);
 
   private:
     ObjectVisibility visibility_;

@@ -24,15 +24,18 @@ bool StorageComputePass::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get
     std::string& error, VkDescriptorSetLayout external_layout)
 {
     destroy();
-    if (!device || !get || !slots || slots > 16 || bindings.empty() || bindings.size() > 32 ||
+    if (!device || !get || !slots || slots > 1024 || bindings.empty() || bindings.size() > 32 ||
         push_size > 128 || push_size % 4 || !max_storage_range || !code || !code_size)
     { error = "invalid storage compute configuration"; return false; }
-    uint32_t storage_count = 0, uniform_count = 0, sampled_image_count = 0;
+    uint32_t storage_count = 0, uniform_count = 0, sampled_image_count = 0, storage_image_count = 0;
+    uint32_t texel_count = 0;
     for (size_t i = 0; i < bindings.size(); ++i)
     {
         if (bindings[i].type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) ++storage_count;
         else if (bindings[i].type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER && max_uniform_range) ++uniform_count;
         else if (bindings[i].type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) ++sampled_image_count;
+        else if (bindings[i].type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) ++storage_image_count;
+        else if (bindings[i].type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER && !texel_count) ++texel_count;
         else { error = "invalid storage compute descriptor type"; return false; }
         for (size_t j = 0; j < i; ++j)
             if (bindings[j].number == bindings[i].number)
@@ -80,6 +83,8 @@ bool StorageComputePass::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get
     if (storage_count) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, slots * storage_count});
     if (uniform_count) sizes.push_back({VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, slots * uniform_count});
     if (sampled_image_count) sizes.push_back({VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, slots * sampled_image_count});
+    if (storage_image_count) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, slots * storage_image_count});
+    if (texel_count) sizes.push_back({VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, slots * texel_count});
     VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pool_info.maxSets = slots; pool_info.poolSizeCount = static_cast<uint32_t>(sizes.size()); pool_info.pPoolSizes = sizes.data();
     if (create_pool(device, &pool_info, nullptr, &pool_) != VK_SUCCESS)
@@ -108,14 +113,17 @@ bool StorageComputePass::record(VkCommandBuffer command, uint32_t slot,
 bool StorageComputePass::record_mixed(VkCommandBuffer command, uint32_t slot,
     const std::vector<VkDescriptorBufferInfo>& buffers, const std::vector<VkDescriptorImageInfo>& images,
     const void* constants, uint32_t groups_x, uint32_t groups_y, std::string& error,
-    VkDescriptorSet external_set) const
+    VkDescriptorSet external_set, VkBufferView uniform_texels) const
 {
     const size_t expected_buffers = static_cast<size_t>(std::count_if(bindings_.begin(), bindings_.end(),
         [](const Binding& binding) { return binding.type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER ||
             binding.type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; }));
-    const size_t expected_images = bindings_.size() - expected_buffers;
+    const bool expects_texels = std::any_of(bindings_.begin(), bindings_.end(), [](const Binding& binding) {
+        return binding.type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
+    });
+    const size_t expected_images = bindings_.size() - expected_buffers - size_t(expects_texels);
     if (!pipeline_ || !command || slot >= sets_.size() || buffers.size() != expected_buffers ||
-        images.size() != expected_images || (push_size_ && !constants) ||
+        images.size() != expected_images || expects_texels != (uniform_texels != VK_NULL_HANDLE) || (push_size_ && !constants) ||
         !groups_x || !groups_y || groups_x > 65535 || groups_y > 65535 || external_layout_ != (external_set != VK_NULL_HANDLE))
     { error = "invalid storage compute dispatch"; return false; }
     std::vector<VkWriteDescriptorSet> writes(bindings_.size());
@@ -140,12 +148,16 @@ bool StorageComputePass::record_mixed(VkCommandBuffer command, uint32_t slot,
             }
             writes[i].pBufferInfo = &buffers[buffer_index++];
         }
+        else if (bindings_[i].type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER)
+            writes[i].pTexelBufferView = &uniform_texels;
         else
         {
-            if (!images[image_index].sampler || !images[image_index].imageView ||
-                images[image_index].imageLayout == VK_IMAGE_LAYOUT_UNDEFINED)
-            { error = "invalid storage compute sampled image"; return false; }
-            writes[i].pImageInfo = &images[image_index++];
+            const auto& image = images[image_index++];
+            const bool storage = bindings_[i].type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            if (!image.imageView || (storage ? image.imageLayout != VK_IMAGE_LAYOUT_GENERAL :
+                !image.sampler || image.imageLayout == VK_IMAGE_LAYOUT_UNDEFINED))
+            { error = "invalid storage compute image descriptor"; return false; }
+            writes[i].pImageInfo = &image;
         }
     }
     update_sets_(device_, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
