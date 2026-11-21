@@ -20,28 +20,28 @@
 namespace
 {
 constexpr u16 FirstExtendedVisibilityBone = 64;
-constexpr u16 MaxSerializedVisibilityBone = 256;
-
-void write_extended_visibility(NET_Packet& packet, IKinematics* kinematics)
-{
-    for (u16 word = 0; word < SPHBonesData::ExtendedVisibilityWordCount; ++word)
-    {
-        u64 mask = u64(-1);
-        if (kinematics)
-        {
-            mask = 0;
-            for (u16 bit = 0; bit < 64; ++bit)
-            {
-                const u16 bone = u16(FirstExtendedVisibilityBone + word * 64 + bit);
-                if (bone < kinematics->LL_BoneCount() && kinematics->LL_GetBoneVisible(bone))
-                    mask |= u64(1) << bit;
-            }
-        }
-        packet.w_u64(mask);
-    }
+constexpr u16 MaxSerializedVisibilityBone =
+    FirstExtendedVisibilityBone + SPHBonesData::ExtendedVisibilityWordCount * 64;
 }
 
-void apply_extended_visibility(IKinematics* kinematics, const u64* visibility)
+void CPHSkeleton::SaveExtendedVisibility(NET_Packet& packet, IKinematics* kinematics)
+{
+    u64 masks[SPHBonesData::ExtendedVisibilityWordCount]{};
+    if (kinematics)
+    {
+        const u16 end = std::min<u16>(kinematics->LL_BoneCount(), MaxSerializedVisibilityBone);
+        for (u16 bone = FirstExtendedVisibilityBone; bone < end; ++bone)
+        {
+            const u16 bit = bone - FirstExtendedVisibilityBone;
+            if (kinematics->LL_GetBoneVisible(bone))
+                masks[bit / 64] |= u64(1) << (bit % 64);
+        }
+    }
+    for (u64 mask : masks)
+        packet.w_u64(kinematics ? mask : u64(-1));
+}
+
+void CPHSkeleton::ApplyExtendedVisibility(IKinematics* kinematics, const u64* masks)
 {
     if (!kinematics)
         return;
@@ -49,10 +49,9 @@ void apply_extended_visibility(IKinematics* kinematics, const u64* visibility)
     for (u16 bone = FirstExtendedVisibilityBone; bone < end; ++bone)
     {
         const u16 relative = u16(bone - FirstExtendedVisibilityBone);
-        const bool visible = (visibility[relative / 64] & (u64(1) << (relative % 64))) != 0;
+        const bool visible = (masks[relative / 64] & (u64(1) << (relative % 64))) != 0;
         kinematics->LL_SetBoneVisible(bone, visible, FALSE);
     }
-}
 }
 
 u32 CPHSkeleton::existence_time = 5000;
@@ -130,7 +129,7 @@ bool CPHSkeleton::Spawn(CSE_Abstract* D)
             {
                 K->LL_SetBoneRoot(po->saved_bones.root_bone);
                 K->LL_SetBonesVisible(po->saved_bones.bones_mask);
-                apply_extended_visibility(K, po->saved_bones.extended_bones_visibility);
+                ApplyExtendedVisibility(K, po->saved_bones.extended_bones_visibility);
             }
         }
         SpawnInitPhysics(D);
@@ -255,7 +254,7 @@ void CPHSkeleton::SaveNetState(NET_Packet& P)
         obj->PHGetSyncItem(i)->get_State(state);
         state.net_Save(P, min, max);
     }
-    write_extended_visibility(P, K);
+    SaveExtendedVisibility(P, K);
 }
 
 void CPHSkeleton::LoadNetState(NET_Packet& P)
@@ -281,7 +280,7 @@ void CPHSkeleton::LoadNetState(NET_Packet& P)
     u64 extended_visibility[SPHBonesData::ExtendedVisibilityWordCount];
     for (u64& mask : extended_visibility)
         mask = P.r_u64();
-    apply_extended_visibility(K, extended_visibility);
+    ApplyExtendedVisibility(K, extended_visibility);
 }
 void CPHSkeleton::RestoreNetState(CSE_PHSkeleton* po)
 {
