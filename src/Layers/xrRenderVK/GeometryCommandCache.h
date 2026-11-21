@@ -40,13 +40,15 @@ public:
             enabled_ = true;
         }
         const bool fresh = !enabled_ || !command_ || extent_.width != frame.extent.width ||
-            extent_.height != frame.extent.height;
+            extent_.height != frame.extent.height || offset_.x != frame.viewport_offset.x ||
+            offset_.y != frame.viewport_offset.y;
         if (fresh || pipeline_ != pipeline)
             vk.cmd_bind_pipeline(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         if (fresh)
         {
-            const VkViewport viewport{0, 0, float(frame.extent.width), float(frame.extent.height), 0, 1};
-            const VkRect2D scissor{{0, 0}, frame.extent};
+            const VkViewport viewport{float(frame.viewport_offset.x), float(frame.viewport_offset.y),
+                float(frame.extent.width), float(frame.extent.height), 0, 1};
+            const VkRect2D scissor{frame.viewport_offset, frame.extent};
             vk.cmd_set_viewport(frame.command_buffer, 0, 1, &viewport);
             vk.cmd_set_scissor(frame.command_buffer, 0, 1, &scissor);
         }
@@ -61,6 +63,7 @@ public:
         if (enabled_)
         {
             command_ = frame.command_buffer; layout_ = layout; extent_ = frame.extent;
+            offset_ = frame.viewport_offset;
             pipeline_ = pipeline; vertices_ = vertices; indices_ = indices; material_ = material;
         }
     }
@@ -96,6 +99,7 @@ private:
     VkCommandBuffer command_{};
     VkPipelineLayout layout_{};
     VkExtent2D extent_{};
+    VkOffset2D offset_{};
     VkPipeline pipeline_{};
     VkBuffer vertices_{}, indices_{};
     VkDescriptorSet material_{};

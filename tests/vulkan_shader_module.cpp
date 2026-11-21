@@ -79,6 +79,12 @@ int main()
     assert(cache.load("vk/level_opaque.vs.spv", device, dispatch,
         vertex_entry, sizeof(vertex_entry), 0, "main", again, error));
     assert(first == again && create_count == 3);
+    uint32_t changed_entry[10]{};
+    std::memcpy(changed_entry, vertex_entry, sizeof(changed_entry));
+    changed_entry[2] = 1;
+    assert(!cache.load("vk/level_opaque.vs.spv", device, dispatch,
+        changed_entry, sizeof(changed_entry), 0, "main", again, error));
+    assert(!again && error.find("changed") != std::string::npos && create_count == 3);
     assert(!cache.load("vk/invalid.ps.spv", device, dispatch,
         vertex_entry, sizeof(vertex_entry), 4, "main", again, error));
     assert(!again && cache.size() == 1 && create_count == 3);

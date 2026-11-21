@@ -35,6 +35,7 @@ uint32_t freed_memories = 0;
 uint32_t unmapped_memories = 0;
 VkResult submit_result = VK_SUCCESS;
 VkResult fence_status = VK_SUCCESS;
+VkResult wait_result = VK_SUCCESS;
 
 VkResult VKAPI_CALL create_buffer(VkDevice, const VkBufferCreateInfo* info,
     const VkAllocationCallbacks*, VkBuffer* buffer)
@@ -176,7 +177,7 @@ VkResult VKAPI_CALL wait_for_fences(VkDevice, uint32_t count, const VkFence*, Vk
     uint64_t timeout)
 {
     assert(count == 1 && wait_all == VK_TRUE && timeout == UINT64_MAX);
-    return fence_status;
+    return wait_result;
 }
 
 xray::render::vulkan::BufferUploadDispatch make_dispatch()
@@ -247,13 +248,43 @@ int main()
     collect_completed_buffer_uploads(device, pool, dispatch, pending);
     padded_result.destroy();
 
+    fence_status = VK_NOT_READY;
+    std::vector<BufferResource> bounded_results(MaxPendingBufferUploads + 1);
+    const auto retired_before_bound = destroyed_fences;
+    for (auto& buffer : bounded_results)
+        assert(upload_buffer(device, queue, pool, memory, dispatch, source, sizeof(source),
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, buffer, pending, error));
+    assert(pending.size() == MaxPendingBufferUploads && destroyed_fences == retired_before_bound + 1);
+    fence_status = VK_SUCCESS;
+    assert(wait_for_buffer_uploads(device, pool, dispatch, pending));
+    for (auto& buffer : bounded_results)
+        buffer.destroy();
+
+    fence_status = VK_NOT_READY;
+    for (size_t i = 0; i + 1 < bounded_results.size(); ++i)
+        assert(upload_buffer(device, queue, pool, memory, dispatch, source, sizeof(source),
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, bounded_results[i], pending, error));
+    assert(pending.size() == MaxPendingBufferUploads);
+    wait_result = VK_ERROR_DEVICE_LOST;
+    BufferResource failed_wait_result;
+    assert(!upload_buffer(device, queue, pool, memory, dispatch, source, sizeof(source),
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, failed_wait_result, pending, error));
+    assert(!failed_wait_result.handle() && pending.size() == MaxPendingBufferUploads &&
+        error.find("fence wait failed") != std::string::npos);
+    wait_result = VK_SUCCESS;
+    fence_status = VK_SUCCESS;
+    assert(wait_for_buffer_uploads(device, pool, dispatch, pending));
+    for (auto& buffer : bounded_results)
+        buffer.destroy();
+
     BufferResource lost_result;
     assert(upload_buffer(device, queue, pool, memory, dispatch, source, sizeof(source),
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, lost_result, pending, error));
     const auto retired_before_loss = destroyed_fences;
-    fence_status = VK_ERROR_DEVICE_LOST;
+    wait_result = VK_ERROR_DEVICE_LOST;
     assert(!wait_for_buffer_uploads(device, pool, dispatch, pending));
     assert(pending.empty() && destroyed_fences == retired_before_loss + 1);
+    wait_result = VK_SUCCESS;
     lost_result.destroy();
 
     BufferResource failed_result;

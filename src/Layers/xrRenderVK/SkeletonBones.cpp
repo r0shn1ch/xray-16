@@ -77,9 +77,9 @@ bool parse_skeleton_bones(LevelBytes ogf, SkeletonBones& result, std::string& er
         return false;
     }
     const uint32_t count = u32(names.data);
-    if (!count || count > 64)
+    if (!count || count > MaxVulkanSkeletonBones)
     {
-        error = "OGF skeleton bone count is outside 1..64";
+        error = "OGF skeleton bone count is outside 1..256";
         return false;
     }
     SkeletonBones parsed;

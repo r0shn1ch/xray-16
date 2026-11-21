@@ -624,7 +624,8 @@ bool Run(std::string& reason)
             load_device_proc<PFN_vkDestroyShaderModule>(device, get_device_proc, "vkDestroyShaderModule")};
         xray::render::vulkan::DeferredShaderFactory factory;
         xray::render::vulkan::GameShaderResources resources;
-        xray::render::vulkan::configure_engine_shader_resources(device, shader_dispatch, resources);
+        xray::render::vulkan::configure_engine_shader_resources(device, shader_dispatch, resources,
+            physical_features.geometryShader, physical_features.tessellationShader);
         if (!factory.create(device, shader_dispatch, deferred_dispatch, deferred_targets.render_pass(), frame_context.render_pass(), deferred_pass, resources,
                             deferred_error) ||
             !deferred_targets.bind_lighting(deferred_pass, deferred_error))

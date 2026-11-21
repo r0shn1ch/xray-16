@@ -1,0 +1,54 @@
+#version 450
+layout(local_size_x = 1, local_size_y = 1) in;
+layout(set = 0, binding = 1, r32f) uniform image2D adapted_exposure;
+layout(set = 0, binding = 2, std430) readonly buffer Histogram
+{
+    uint counts[64];
+    int residual_sums[64];
+} histogram;
+layout(push_constant) uniform Parameters
+{
+    float middle_gray;
+    float blend;
+    float low_luminance;
+    uint history_valid;
+} settings;
+
+void main()
+{
+    uint total_count = 0u;
+    for (uint bin = 0u; bin < 64u; ++bin)
+        total_count += histogram.counts[bin];
+
+    // Retain the central 90% of the full-scene luminance distribution. If a
+    // percentile cuts through a bin, weight that bin proportionally.
+    uint trim_low = total_count * 5u / 100u;
+    uint trim_high = total_count * 95u / 100u;
+    uint cumulative = 0u;
+    float log_sum = 0.0;
+    float retained_count = 0.0;
+    for (uint bin = 0u; bin < 64u; ++bin)
+    {
+        uint count = histogram.counts[bin];
+        uint next = cumulative + count;
+        uint start = max(cumulative, trim_low);
+        uint end = min(next, trim_high);
+        uint kept = end > start ? end - start : 0u;
+        if (kept != 0u && count != 0u)
+        {
+            float center = -10.0 + (float(bin) + 0.5) * (20.0 / 64.0);
+            float residual_mean = float(histogram.residual_sums[bin]) / float(count) / 256.0;
+            log_sum += float(kept) * (center + residual_mean);
+            retained_count += float(kept);
+        }
+        cumulative = next;
+    }
+
+    float measured = exp2(log_sum / max(retained_count, 1.0));
+    float target = clamp(settings.middle_gray /
+        max(measured, max(settings.low_luminance, 0.0001)), 0.65, 2.0);
+    float previous = settings.history_valid != 0u
+        ? imageLoad(adapted_exposure, ivec2(0)).r : target;
+    imageStore(adapted_exposure, ivec2(0),
+        vec4(mix(previous, target, settings.blend), 0.0, 0.0, 0.0));
+}

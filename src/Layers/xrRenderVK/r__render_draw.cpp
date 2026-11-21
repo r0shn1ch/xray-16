@@ -2,6 +2,7 @@
 #include "VulkanGameDevice.h"
 #include "ShadowStability.h"
 #include "ParticleVisual.h"
+#include "GpuParticleEngine.h"
 #include "VulkanRainRender.h"
 #include "VulkanThunderboltRender.h"
 #include "SceneShaders.h"
@@ -47,6 +48,137 @@ struct PassCpuSample
 
 } // namespace
 
+bool VulkanGameDevice::record_gpu_particle_effect(const FrameRecordingContext& frame, VulkanParticleEffect& effect,
+    const ParticleDraw& draw, GeometryPhase phase, VulkanParticleEffect* root_effect)
+{
+    VulkanParticleEffect& root_visual = root_effect ? *root_effect : effect;
+    if (!gpu_particle_graphics_ || gpu_particle_graphics_failed_ || gpu_particle_failed_ || !gpu_particles_ ||
+        frame.frame_index >= gpu_particle_recorded_.size() || !gpu_particle_recorded_[frame.frame_index] ||
+        !root_visual.gpu_draw_compatible()) return false;
+    const auto* programs = root_visual.gpu_draw_programs();
+    uint32_t root{};
+    if (!programs || programs->empty() || !root_visual.gpu_visible_index(root)) return false;
+    uint32_t program = programs->front();
+    if (root_effect)
+    {
+        const auto& names = gpu_particles_->programs().names();
+        const auto effect_name = effect.Name();
+        const char* name = effect_name.c_str();
+        const auto found = std::find_if(programs->begin(), programs->end(), [&](uint32_t id) {
+            return name && id < names.size() && names[id] == name;
+        });
+        if (found == programs->end()) return false;
+        program = *found;
+    }
+    const auto* material = gpu_particle_materials_.get(program);
+    if (!material || !material->resolved || !material->set) return false;
+    if (material->distortion ? (draw.hud ? phase != GeometryPhase::Transparent && phase != GeometryPhase::Hud :
+        phase != GeometryPhase::Distortion) :
+        phase == GeometryPhase::Distortion || !particle_records_in_phase(draw.hud, material->screen, material->blend, phase))
+        return true;
+    uint32_t bucket{};
+    const uint32_t variant = material->distortion ? 2u : material->screen ? 1u : 0u;
+    if (!gpu_particles_->draw_bucket(frame.frame_index, root, program, material->blend, variant, draw.hud, bucket,
+            root_effect != nullptr))
+        return false;
+    std::string fragment, error; bool gbuffer{};
+    std::array<float, 64> constants{};
+    if (!gpu_particle_materials_.fragment(program, draw.hud, fragment, gbuffer, error) ||
+        !gpu_particle_materials_.constants(program, Device.fTimeGlobal, &Device.mView.m[0][0], deferred_, constants, error))
+        return false;
+    GpuParticleDrawParams camera{};
+    camera.camera_top = {draw.up.x, draw.up.y, draw.up.z, 0.f};
+    camera.camera_right = {draw.right.x, draw.right.y, draw.right.z, 0.f};
+    camera.camera_direction = {Device.vCameraDirection.x, Device.vCameraDirection.y, Device.vCameraDirection.z, 0.f};
+    camera.eye_position = {Device.vCameraPosition.x, Device.vCameraPosition.y, Device.vCameraPosition.z, 1.f};
+    camera.screen = {1.f / frame.extent.width, 1.f / frame.extent.height, 0.f, 0.f};
+    camera.bucket = bucket;
+    const VkDescriptorSetLayout scene_layout = draw.hud && material->distortion ? deferred_.water_scene_layout() : VK_NULL_HANDLE;
+    const VkDescriptorSet scene = scene_layout ? deferred_.water_scene_set(frame.image_index) : VK_NULL_HANDLE;
+    if (scene_layout && !scene) return false;
+    if (!draw.hud && effect.gpu_water_contact())
+    {
+        const auto& plane = effect.gpu_water_plane();
+        camera.water_origin = {plane.c.x, plane.c.y, plane.c.z, 1.f};
+        camera.water_normal = {plane.k.x, plane.k.y, plane.k.z, 0.f};
+    }
+    // The particle pipeline changes bindings behind DeferredPass's cache.
+    deferred_.invalidate_geometry_cache();
+    if (!gpu_particle_graphics_->record(frame, gpu_particles_->buffers(), material->set, fragment,
+            material->distortion ? 1u : static_cast<uint32_t>(material->blend), draw.hud && !material->distortion, gbuffer,
+            camera, constants.data(), draw.mvp.data(), error, scene_layout, scene))
+    {
+        Msg("! [renderer-vulkan] GPU particle graphics disabled: %s", error.c_str());
+        gpu_particle_graphics_failed_ = true;
+        return false;
+    }
+    if (phase == GeometryPhase::OpaqueAndAlphaTest && effect.needs_dynamic_occluder_mask(draw.hud, true))
+        effect.invalidate_dynamic_occluder_history(frame.frame_index);
+    return true;
+}
+
+bool VulkanGameDevice::record_gpu_particle_motion(const FrameRecordingContext& frame, VulkanParticleEffect& effect,
+    const ParticleDraw& draw, const float* current_mvp, const float* previous_mvp, bool transparent,
+    VulkanParticleEffect* root_effect)
+{
+    VulkanParticleEffect& root_visual = root_effect ? *root_effect : effect;
+    if (!gpu_particle_graphics_ || gpu_particle_graphics_failed_ || gpu_particle_failed_ || !gpu_particles_ ||
+        frame.frame_index >= gpu_particle_recorded_.size() || !gpu_particle_recorded_[frame.frame_index] ||
+        !root_visual.gpu_draw_compatible()) return false;
+    const auto* programs = root_visual.gpu_draw_programs();
+    uint32_t root{};
+    if (!programs || programs->empty() || !root_visual.gpu_visible_index(root)) return false;
+    uint32_t program = programs->front();
+    const bool child = root_effect != nullptr;
+    if (child)
+    {
+        const auto& names = gpu_particles_->programs().names();
+        const auto effect_name = effect.Name();
+        const char* name = effect_name.c_str();
+        const auto found = std::find_if(programs->begin(), programs->end(), [&](uint32_t id) {
+            return name && id < names.size() && names[id] == name;
+        });
+        if (found == programs->end()) return false;
+        program = *found;
+    }
+    const auto* material = gpu_particle_materials_.get(program);
+    if (!material || !material->resolved || !material->set) return false;
+    const bool gpu_transparent = material->distortion || material->screen || material->blend != 0;
+    if (gpu_transparent != transparent) return true;
+    const uint32_t variant = material->distortion ? 2u : material->screen ? 1u : 0u;
+    uint32_t bucket{};
+    if (!gpu_particles_->draw_bucket(frame.frame_index, root, program, material->blend, variant, false,
+            bucket, child)) return false;
+
+    GpuParticleDrawParams camera{};
+    camera.camera_top = {draw.up.x, draw.up.y, draw.up.z, 0.f};
+    camera.camera_right = {draw.right.x, draw.right.y, draw.right.z, 0.f};
+    camera.camera_direction = {Device.vCameraDirection.x, Device.vCameraDirection.y,
+        Device.vCameraDirection.z, 0.f};
+    camera.eye_position = {Device.vCameraPosition.x, Device.vCameraPosition.y, Device.vCameraPosition.z, 1.f};
+    camera.screen = {1.f / frame.extent.width, 1.f / frame.extent.height, 0.f, 0.f};
+    camera.bucket = bucket;
+    camera.padding[0] = gpu_transparent ? 1.f : 0.f;
+    if (effect.gpu_water_contact())
+    {
+        const auto& plane = effect.gpu_water_plane();
+        camera.water_origin = {plane.c.x, plane.c.y, plane.c.z, 1.f};
+        camera.water_normal = {plane.k.x, plane.k.y, plane.k.z, 0.f};
+    }
+    std::array<float, 64> constants{};
+    std::string error;
+    if (!gpu_particle_materials_.constants(program, Device.fTimeGlobal, &Device.mView.m[0][0], deferred_,
+            constants, error)) return false;
+    if (gpu_transparent) constants[16] = 0.01f;
+    if (!gpu_particle_graphics_->record_velocity(frame, gpu_particles_->buffers(), material->set, camera,
+            constants.data(), current_mvp, previous_mvp, gpu_transparent, error))
+    {
+        Msg("! [renderer-vulkan] GPU particle motion vectors skipped: %s", error.c_str());
+        return true;
+    }
+    return true;
+}
+
 void VulkanGameDevice::record_distortion(const FrameRecordingContext &frame, void *user)
 {
     auto &owner = *static_cast<VulkanGameDevice *>(user);
@@ -63,23 +195,39 @@ void VulkanGameDevice::record_distortion(const FrameRecordingContext &frame, voi
     for (const auto *entry : sorted)
     {
         const auto &draw = *entry;
+        if (draw.visual->getType() == 8 && owner.record_gpu_particle_effect(frame,
+                *static_cast<VulkanParticleEffect *>(draw.visual), draw, GeometryPhase::Distortion))
+            continue;
         float mvp[16];
         std::copy(draw.mvp.begin(), draw.mvp.end(), mvp);
         const bool ok = draw.visual->getType() == 8
             ? static_cast<VulkanParticleEffect *>(draw.visual)->record(
                   frame, owner.deferred_, mvp, draw.right, draw.up, false, owner.model_error_, GeometryPhase::Distortion)
             : static_cast<VulkanParticleGroup *>(draw.visual)->record(
-                  frame, owner.deferred_, mvp, draw.right, draw.up, false, owner.model_error_, GeometryPhase::Distortion);
+                  frame, owner.deferred_, mvp, draw.right, draw.up, false, owner.model_error_, GeometryPhase::Distortion, -1,
+                  [&](VulkanParticleEffect& effect) {
+                      return owner.record_gpu_particle_effect(frame, effect, draw, GeometryPhase::Distortion);
+                  }, [&](VulkanParticleEffect& root, VulkanParticleEffect& child) {
+                      return owner.record_gpu_particle_effect(frame, child, draw, GeometryPhase::Distortion, &root);
+                  });
         owner.models_recorded_ &= ok;
     }
 }
 
-void VulkanGameDevice::capture_ui(VkCommandBuffer command, VkImage image, uint32_t index, void *user)
+bool VulkanGameDevice::capture_ui(VkCommandBuffer command, VkImage image, uint32_t index, void *user,
+    std::string& error)
 {
     auto &owner = *static_cast<VulkanGameDevice *>(user);
     auto &snapshot = owner.window_.frame().presentation_render_pass() != VK_NULL_HANDLE
         ? owner.ui_snapshot_targets_ : owner.water_targets_;
-    owner.ui_recorded_ &= snapshot.capture(command, image, index);
+    if (!snapshot.capture(command, image, index))
+    {
+        owner.ui_recorded_ = false;
+        error = "UI image capture failed";
+        return false;
+    }
+    error.clear();
+    return true;
 }
 
 void VulkanGameDevice::record_ui_distortion(const FrameRecordingContext &frame, void *user)
@@ -103,7 +251,21 @@ void VulkanGameDevice::record_ui(const FrameRecordingContext &frame, void *user)
 void VulkanGameDevice::record_postprocess(const FrameRecordingContext &frame, void *user)
 {
     auto &owner = *static_cast<VulkanGameDevice *>(user);
-    owner.postprocess_passes_[frame.image_index]->record(frame);
+    if (frame.render_pass == owner.window_.frame().bloom_render_pass())
+        owner.bloom_bright_passes_[frame.image_index]->record(frame);
+    else if (frame.render_pass == owner.window_.frame().bloom_upsample_render_pass())
+        owner.bloom_upsample_passes_[frame.image_index][frame.mip_level]->record(frame);
+    else
+    {
+        if (owner.fsr3_upscaler_.active() && frame.image_index < owner.fsr3_upscale_passes_.size())
+            owner.fsr3_upscale_passes_[frame.image_index]->record(frame);
+        else if (owner.temporal_upscale_ && owner.temporal_.active())
+            owner.temporal_upscale_passes_[frame.image_index][owner.temporal_.output_slot()]->record(frame);
+        else
+            owner.postprocess_passes_[frame.image_index]->record(frame);
+        if (owner.sun_shafts_active_)
+            owner.sun_shaft_passes_[frame.image_index]->record(frame);
+    }
 }
 
 void VulkanGameDevice::record_display_grade(const FrameRecordingContext &frame, void *user)
@@ -250,6 +412,9 @@ void VulkanGameDevice::record_transparent(const FrameRecordingContext &frame, vo
         else if (draw.particle)
         {
             auto &particle = owner.particle_draws_[draw.index];
+            if (particle.visual->getType() == 8 && owner.record_gpu_particle_effect(frame,
+                    *static_cast<VulkanParticleEffect *>(particle.visual), particle, GeometryPhase::Transparent))
+                continue;
             std::copy(particle.mvp.begin(), particle.mvp.end(), mvp);
             bool ok =
                 particle.visual->getType() == 8
@@ -257,7 +422,11 @@ void VulkanGameDevice::record_transparent(const FrameRecordingContext &frame, vo
                           ->record(frame, owner.deferred_, mvp, particle.right, particle.up, false, owner.model_error_)
                     : static_cast<VulkanParticleGroup *>(particle.visual)
                           ->record(frame, owner.deferred_, mvp, particle.right, particle.up, false, owner.model_error_,
-                                   GeometryPhase::Transparent, draw.priority);
+                                   GeometryPhase::Transparent, draw.priority, [&](VulkanParticleEffect& effect) {
+                                       return owner.record_gpu_particle_effect(frame, effect, particle, GeometryPhase::Transparent);
+                                   }, [&](VulkanParticleEffect& root, VulkanParticleEffect& child) {
+                                       return owner.record_gpu_particle_effect(frame, child, particle, GeometryPhase::Transparent, &root);
+                                   });
             if (!ok)
             {
                 owner.models_recorded_ = false;
@@ -271,10 +440,11 @@ void VulkanGameDevice::record_transparent(const FrameRecordingContext &frame, vo
             std::copy(model.mvp.begin(), model.mvp.end(), mvp);
             if (model.skeleton ? !model.model->record_animated(frame, owner.deferred_, mvp, *model.skeleton,
                                                                owner.model_error_, GeometryPhase::Transparent,
-                                                               model.lod, model.normal_rows.data(), draw.priority)
+                                                               model.lod, model.normal_rows.data(), draw.priority,
+                                                               model.opacity)
                                : !model.model->record(frame, owner.deferred_, mvp, nullptr, 0, owner.model_error_,
                                                       GeometryPhase::Transparent, model.lod, nullptr,
-                                                      model.normal_rows.data(), draw.priority))
+                                                      model.normal_rows.data(), draw.priority, model.opacity))
             {
                 owner.models_recorded_ = false;
                 return;
@@ -293,6 +463,59 @@ void VulkanGameDevice::record_transparent(const FrameRecordingContext &frame, vo
                 owner.level_error_ = "Vulkan transparent level visual " + std::to_string(level.index) +
                                      " failed (lod=" + std::to_string(level.lod) + ")";
                 return;
+            }
+        }
+    }
+    if (owner.smoke_compute_ && owner.smoke_noise_ && !owner.smoke_failed_ &&
+        frame.frame_index < owner.smoke_recorded_.size() && owner.smoke_recorded_[frame.frame_index])
+    {
+        std::string error;
+        if (!owner.smoke_draw_)
+        {
+            auto pass = std::make_unique<SmokeTrailDrawPass>();
+            const auto& physical = owner.window_.physical();
+            if (pass->initialize(owner.window_.device(), owner.window_.device_proc(), physical.properties.limits,
+                    physical.memory, owner.buffer_upload_.buffer, frame.render_pass, owner.pipeline_cache_.handle(),
+                    FrameContext::FramesInFlight, engine_gpu_particle_shader_source(), error, false,
+                    owner.targets_.samples()))
+                owner.smoke_draw_ = std::move(pass);
+        }
+        owner.deferred_.invalidate_geometry_cache();
+        if (!owner.smoke_draw_ || !owner.smoke_draw_->record(frame, *owner.smoke_compute_, owner.smoke_noise_->view(),
+                owner.smoke_noise_->sampler(), owner.smoke_frames_[frame.frame_index].draw, owner.scene_mvp_.data(), error))
+        {
+            owner.smoke_failed_ = true;
+            Msg("! [renderer-vulkan] smoke trail drawing disabled: %s", error.c_str());
+        }
+    }
+    if (owner.trail_enabled_ && !owner.trail_failed_ && owner.trail_texture_)
+    {
+        owner.trail_manager_.advance(Device.dwFrame, Device.fTimeDelta);
+        auto groups = owner.trail_manager_.groups();
+        if (!groups.empty())
+        {
+            std::string error;
+            if (!owner.trail_draw_)
+            {
+                auto pass = std::make_unique<SmokeTrailDrawPass>();
+                const auto& physical = owner.window_.physical();
+                if (pass->initialize(owner.window_.device(), owner.window_.device_proc(), physical.properties.limits,
+                        physical.memory, owner.buffer_upload_.buffer, frame.render_pass, owner.pipeline_cache_.handle(),
+                        FrameContext::FramesInFlight, engine_gpu_particle_shader_source(), error, true,
+                        owner.targets_.samples()))
+                    owner.trail_draw_ = std::move(pass);
+            }
+            SmokeTrailDrawParams params{};
+            params.subdivisions = 12; params.texcoord_factor = 1.f; params.smoothing = 1;
+            params.edge_policy = 1; params.tail_fade = 1; params.use_gpu_state = 0;
+            params.camera_x = Device.vCameraPosition.x; params.camera_y = Device.vCameraPosition.y;
+            params.camera_z = Device.vCameraPosition.z; params.camera_facing = 1;
+            owner.deferred_.invalidate_geometry_cache();
+            if (!owner.trail_draw_ || !owner.trail_draw_->record_trail(frame, groups, params, owner.scene_mvp_.data(),
+                    owner.trail_texture_, owner.textures_.sampler(), error))
+            {
+                owner.trail_failed_ = true;
+                Msg("! [renderer-vulkan] projectile trails disabled: %s", error.c_str());
             }
         }
     }
@@ -319,7 +542,7 @@ void VulkanGameDevice::record_transparent(const FrameRecordingContext &frame, vo
 void VulkanGameDevice::prepare_light_grid(const FrameRecordingContext &frame, void *user)
 {
     auto &owner = *static_cast<VulkanGameDevice *>(user);
-    if (!use_light_grid)
+    if (!use_light_grid || owner.targets_.samples() != VK_SAMPLE_COUNT_1_BIT)
     {
         owner.light_grid_.discard_frame(frame.image_index);
         return;
@@ -343,13 +566,14 @@ void VulkanGameDevice::record_local_lights(const FrameRecordingContext &frame, v
     }
     if (owner.local_bound_projections_.size() != owner.local_sets_.size())
         owner.local_bound_projections_.resize(owner.local_sets_.size());
+    const bool use_grid_for_frame = use_light_grid && owner.targets_.samples() == VK_SAMPLE_COUNT_1_BIT;
     if (!owner.local_lights_recorded_ ||
-        !owner.light_grid_.record(frame, owner.targets_.lighting_set(frame.image_index)))
+        (use_grid_for_frame && !owner.light_grid_.record(frame, owner.targets_.lighting_set(frame.image_index))))
     {
         owner.local_lights_recorded_ = false;
         return;
     }
-    if (owner.light_grid_.count(frame.image_index))
+    if (use_grid_for_frame && owner.light_grid_.count(frame.image_index))
         owner.deferred_.account_light_grid_draw();
     if (Device.dwFrame % 300 == 0)
         Msg("[renderer-vulkan] light.grid frame=%u point-lights=%u total=%zu", Device.dwFrame,
@@ -372,7 +596,7 @@ void VulkanGameDevice::record_local_lights(const FrameRecordingContext &frame, v
     projections.resize(sets.size());
     for (uint32_t i = 0; i < owner.local_uniforms_.size(); ++i)
     {
-        if (owner.light_grid_.contains(frame.image_index, i))
+        if (use_grid_for_frame && owner.light_grid_.contains(frame.image_index, i))
             continue;
         VkDescriptorSet &set = owner.local_sets_[frame.image_index][i];
         auto &bound = owner.local_bound_projections_[frame.image_index][i];
@@ -404,7 +628,8 @@ void VulkanGameDevice::record_local_lights(const FrameRecordingContext &frame, v
             scissor.extent.width = (right + 1) / 2 - uint32_t(scissor.offset.x);
             scissor.extent.height = (bottom + 1) / 2 - uint32_t(scissor.offset.y);
         }
-        if (!owner.deferred_.record_local_light(frame, owner.targets_.lighting_set(frame.image_index), set, scissor))
+        if (!owner.deferred_.record_local_light(frame,
+                owner.targets_.multisampled_lighting_set(frame.image_index), set, scissor))
         {
             owner.local_lights_recorded_ = false;
             return;
@@ -440,13 +665,21 @@ void VulkanGameDevice::record_hud(const FrameRecordingContext &frame, void *user
         if (draw.particle)
         {
             auto &particle = owner.particle_draws_[draw.index];
+            if (particle.visual->getType() == 8 && owner.record_gpu_particle_effect(frame,
+                    *static_cast<VulkanParticleEffect *>(particle.visual), particle, GeometryPhase::Transparent))
+                continue;
             std::copy(particle.mvp.begin(), particle.mvp.end(), mvp);
             bool ok =
                 particle.visual->getType() == 8
                     ? static_cast<VulkanParticleEffect *>(particle.visual)
                           ->record(frame, owner.deferred_, mvp, particle.right, particle.up, true, owner.model_error_)
                     : static_cast<VulkanParticleGroup *>(particle.visual)
-                          ->record(frame, owner.deferred_, mvp, particle.right, particle.up, true, owner.model_error_);
+                          ->record(frame, owner.deferred_, mvp, particle.right, particle.up, true, owner.model_error_,
+                                   GeometryPhase::Transparent, -1, [&](VulkanParticleEffect& effect) {
+                                       return owner.record_gpu_particle_effect(frame, effect, particle, GeometryPhase::Transparent);
+                                   }, [&](VulkanParticleEffect& root, VulkanParticleEffect& child) {
+                                       return owner.record_gpu_particle_effect(frame, child, particle, GeometryPhase::Transparent, &root);
+                                   });
             if (!ok)
             {
                 owner.models_recorded_ = false;
@@ -510,14 +743,50 @@ void VulkanGameDevice::record_shadow_models(const FrameRecordingContext &frame, 
                     continue;
             }
         }
+        else if (draw.has_shadow_sphere)
+        {
+            Fvector center;
+            center.set(draw.shadow_sphere[0], draw.shadow_sphere[1], draw.shadow_sphere[2]);
+            CFrustum frustum;
+            frustum.CreateFromMatrix(mvp, FRUSTUM_P_LRTB | FRUSTUM_P_NEAR | FRUSTUM_P_FAR);
+            if (!frustum.testSphere_dirty(center, draw.shadow_sphere[3]))
+                continue;
+        }
         float transform[16];
         std::memcpy(transform, &mvp, sizeof(mvp));
-        if (!draw.model->record_shadow(frame, owner.deferred_, transform, draw.skeleton, owner.model_error_, draw.lod))
+        if (!draw.model->record_shadow(frame, owner.deferred_, transform, draw.skeleton, owner.model_error_,
+                draw.lod, draw.world.data()))
         {
             owner.models_recorded_ = false;
             return;
         }
     }
+}
+
+bool VulkanGameDevice::record_vsm_shadow_models(const FrameRecordingContext &frame, const float *vp,
+                                                const VsmPageJob &, void *user, std::string &error)
+{
+    if (!user || !vp)
+    {
+        error = "VSM model page needs a device and a light projection";
+        return false;
+    }
+    auto &owner = *static_cast<VulkanGameDevice *>(user);
+    if (!owner.models_recorded_)
+    {
+        error = owner.model_error_;
+        return false;
+    }
+    float matrix[16];
+    std::copy_n(vp, 16, matrix);
+    record_shadow_models(frame, matrix, user);
+    if (!owner.models_recorded_)
+    {
+        error = owner.model_error_;
+        return false;
+    }
+    error.clear();
+    return true;
 }
 
 void VulkanGameDevice::record_models(const FrameRecordingContext &frame, void *user)
@@ -534,9 +803,11 @@ void VulkanGameDevice::record_models(const FrameRecordingContext &frame, void *u
         std::copy(draw.mvp.begin(), draw.mvp.end(), mvp);
         if (draw.skeleton
                 ? !draw.model->record_animated(frame, owner.deferred_, mvp, *draw.skeleton, owner.model_error_,
-                                               GeometryPhase::OpaqueAndAlphaTest, draw.lod, draw.normal_rows.data())
+                                               GeometryPhase::OpaqueAndAlphaTest, draw.lod, draw.normal_rows.data(),
+                                               -1, 1.f, draw.world.data())
                 : !draw.model->record(frame, owner.deferred_, mvp, nullptr, 0, owner.model_error_,
-                                      GeometryPhase::OpaqueAndAlphaTest, draw.lod, nullptr, draw.normal_rows.data()))
+                                      GeometryPhase::OpaqueAndAlphaTest, draw.lod, nullptr, draw.normal_rows.data(),
+                                      -1, 1.f, draw.world.data()))
         {
             owner.models_recorded_ = false;
             return;
@@ -548,6 +819,9 @@ void VulkanGameDevice::record_models(const FrameRecordingContext &frame, void *u
     {
         if (particle.hud)
             continue;
+        if (particle.visual->getType() == 8 && owner.record_gpu_particle_effect(frame,
+                *static_cast<VulkanParticleEffect *>(particle.visual), particle, GeometryPhase::OpaqueAndAlphaTest))
+            continue;
         float mvp[16];
         std::copy(particle.mvp.begin(), particle.mvp.end(), mvp);
         const bool ok = particle.visual->getType() == 8
@@ -556,13 +830,221 @@ void VulkanGameDevice::record_models(const FrameRecordingContext &frame, void *u
                                            owner.model_error_, GeometryPhase::OpaqueAndAlphaTest)
                             : static_cast<VulkanParticleGroup *>(particle.visual)
                                   ->record(frame, owner.deferred_, mvp, particle.right, particle.up, false,
-                                           owner.model_error_, GeometryPhase::OpaqueAndAlphaTest);
+                                           owner.model_error_, GeometryPhase::OpaqueAndAlphaTest, -1,
+                                           [&](VulkanParticleEffect& effect) {
+                                               return owner.record_gpu_particle_effect(frame, effect, particle,
+                                                   GeometryPhase::OpaqueAndAlphaTest);
+                                           }, [&](VulkanParticleEffect& root, VulkanParticleEffect& child) {
+                                               return owner.record_gpu_particle_effect(frame, child, particle,
+                                                   GeometryPhase::OpaqueAndAlphaTest, &root);
+                                           });
         if (!ok)
         {
             owner.models_recorded_ = false;
             return;
         }
     }
+}
+
+bool VulkanGameDevice::record_object_velocity(const FrameRecordingContext &frame, void *user,
+    std::string& error)
+{
+    auto &owner = *static_cast<VulkanGameDevice *>(user);
+    const bool gpu_draw_active = owner.gpu_particle_graphics_ && !owner.gpu_particle_graphics_failed_ &&
+        !owner.gpu_particle_failed_ && frame.frame_index < owner.gpu_particle_recorded_.size() &&
+        owner.gpu_particle_recorded_[frame.frame_index];
+    if (!owner.object_velocity_.begin(frame))
+    {
+        owner.models_recorded_ = false;
+        owner.model_error_ = "object velocity render pass could not begin";
+        error = owner.model_error_;
+        return false;
+    }
+    for (const ParticleDraw& draw : owner.particle_draws_)
+    {
+        if (draw.hud) continue;
+        float particle_mvp[16];
+        std::copy(draw.mvp.begin(), draw.mvp.end(), particle_mvp);
+        bool ok = false;
+        if (draw.visual->getType() == 8)
+            ok = static_cast<VulkanParticleEffect *>(draw.visual)->prepare_motion_geometry(frame, owner.deferred_,
+                particle_mvp, draw.right, draw.up, false, gpu_draw_active, owner.model_error_);
+        else if (draw.visual->getType() == 9)
+            ok = static_cast<VulkanParticleGroup *>(draw.visual)->prepare_motion_geometry(frame, owner.deferred_,
+                particle_mvp, draw.right, draw.up, false, gpu_draw_active, owner.model_error_);
+        if (!ok)
+        {
+            owner.models_recorded_ = false;
+            owner.model_error_ = "Vulkan transparent particle motion geometry preparation failed";
+            break;
+        }
+    }
+    for (const ModelDraw& draw : owner.model_draws_)
+    {
+        if (draw.hud)
+            continue;
+        const float* previous_mvp = draw.has_previous_mvp ? draw.previous_mvp.data() : draw.mvp.data();
+        if (!draw.model->record_object_velocity(frame, owner.object_velocity_, draw.mvp.data(),
+                previous_mvp, draw.skeleton, draw.lod, owner.model_error_, draw.world.data()))
+        {
+            owner.models_recorded_ = false;
+            break;
+        }
+    }
+    if (owner.models_recorded_ && owner.scene_visibility_ && owner.current_level_)
+        for (const LevelDraw& draw : owner.level_draws_)
+        {
+            if (draw.hud)
+                continue;
+            float current[16], previous[16];
+            std::copy(draw.mvp.begin(), draw.mvp.end(), current);
+            std::copy(draw.has_previous_mvp ? draw.previous_mvp.begin() : draw.mvp.begin(),
+                draw.has_previous_mvp ? draw.previous_mvp.end() : draw.mvp.end(), previous);
+            if (!owner.current_level_->record_object_velocity_visual(draw.index, frame,
+                    owner.object_velocity_, current, previous, draw.lod, draw.instance != nullptr))
+            {
+                owner.level_recorded_ = false;
+                owner.level_error_ = "Vulkan level visual object velocity failed (index=" +
+                    std::to_string(draw.index) + ")";
+                break;
+            }
+        }
+    if (owner.models_recorded_)
+    {
+        const bool particle_history_valid = owner.motion_.history_valid();
+        for (const ParticleDraw& draw : owner.particle_draws_)
+        {
+            if (draw.hud) continue;
+            float particle_mvp[16];
+            std::copy(draw.mvp.begin(), draw.mvp.end(), particle_mvp);
+            float previous_particle_mvp[16];
+            std::copy_n(particle_history_valid ? owner.motion_.previous_view_projection() : particle_mvp,
+                16, previous_particle_mvp);
+            bool ok = false;
+            if (draw.visual->getType() == 8)
+                ok = static_cast<VulkanParticleEffect *>(draw.visual)->record_dynamic_occluder_mask(
+                    frame, owner.object_velocity_, particle_mvp, previous_particle_mvp, particle_history_valid, false,
+                    owner.gpu_particle_graphics_ && !owner.gpu_particle_graphics_failed_);
+            else if (draw.visual->getType() == 9)
+                ok = static_cast<VulkanParticleGroup *>(draw.visual)->record_dynamic_occluder_mask(
+                    frame, owner.object_velocity_, particle_mvp, previous_particle_mvp, particle_history_valid, false,
+                    owner.gpu_particle_graphics_ && !owner.gpu_particle_graphics_failed_);
+            if (!ok)
+            {
+                owner.hiz_dynamic_mask_recorded_ = false;
+                owner.frame_.set_hiz_dynamic_mask_enabled(false);
+                owner.hiz_.reset_history();
+                Msg("! [renderer-vulkan] PAPI particle depth mask unavailable; Hi-Z culling disabled for this frame");
+                break;
+            }
+        }
+    }
+    if (owner.models_recorded_)
+    {
+        const bool particle_history_valid = owner.motion_.history_valid();
+        for (const ParticleDraw& draw : owner.particle_draws_)
+        {
+            if (draw.hud) continue;
+            float current_mvp[16], previous_mvp[16];
+            std::copy(draw.mvp.begin(), draw.mvp.end(), current_mvp);
+            std::copy_n(particle_history_valid ? owner.motion_.previous_view_projection() : current_mvp,
+                16, previous_mvp);
+            if (draw.visual->getType() == 8)
+                owner.record_gpu_particle_motion(frame, *static_cast<VulkanParticleEffect *>(draw.visual), draw,
+                    current_mvp, previous_mvp, false);
+            else if (draw.visual->getType() == 9)
+                static_cast<VulkanParticleGroup *>(draw.visual)->record_particle_motion(frame, owner.object_velocity_,
+                    current_mvp, previous_mvp, particle_history_valid, false, gpu_draw_active, false, -1,
+                    [&](VulkanParticleEffect& effect) {
+                        return owner.record_gpu_particle_motion(frame, effect, draw, current_mvp, previous_mvp, false);
+                    }, [&](VulkanParticleEffect& root, VulkanParticleEffect& child) {
+                        return owner.record_gpu_particle_motion(frame, child, draw, current_mvp, previous_mvp,
+                            false, &root);
+                    });
+        }
+    }
+    if (owner.models_recorded_ && owner.level_recorded_ && owner.current_level_)
+    {
+        const bool have_previous_view = owner.motion_.history_valid();
+        float current[16], previous[16];
+        std::copy(owner.scene_mvp_.begin(), owner.scene_mvp_.end(), current);
+        std::copy_n(have_previous_view ? owner.motion_.previous_view_projection() : current, 16, previous);
+        if (!owner.current_level_->record_tree_velocity(frame, owner.object_velocity_, current, previous,
+                owner.current_tree_wind_, have_previous_view ? owner.previous_tree_wind_ : owner.current_tree_wind_))
+        {
+            owner.level_recorded_ = false;
+            owner.level_error_ = "Vulkan tree wind velocity recording failed";
+        }
+    }
+    if (owner.models_recorded_ && owner.level_recorded_)
+    {
+        std::vector<TransparentDrawRef> particle_draws;
+        for (size_t i = 0; i < owner.particle_draws_.size(); ++i)
+        {
+            const ParticleDraw& particle = owner.particle_draws_[i];
+            if (particle.hud) continue;
+            if (particle.visual->getType() == 8)
+                particle_draws.push_back({particle.sort_distance, false, i, true, false,
+                    static_cast<VulkanParticleEffect *>(particle.visual)->priority()});
+            else if (particle.visual->getType() == 9)
+            {
+                const auto *group = static_cast<VulkanParticleGroup *>(particle.visual);
+                for (uint8_t priority = 1; priority <= 3; ++priority)
+                    if (group->has_priority(priority))
+                        particle_draws.push_back({particle.sort_distance, false, i, true, false, priority});
+            }
+        }
+        sort_transparent_draws(particle_draws);
+        const bool particle_history_valid = owner.motion_.history_valid();
+        for (const TransparentDrawRef& item : particle_draws)
+        {
+            const ParticleDraw& particle = owner.particle_draws_[item.index];
+            float current_particle_mvp[16];
+            std::copy(particle.mvp.begin(), particle.mvp.end(), current_particle_mvp);
+            float previous_mvp[16];
+            std::copy_n(particle_history_valid ? owner.motion_.previous_view_projection() : current_particle_mvp,
+                16, previous_mvp);
+            bool ok = true;
+            if (particle.visual->getType() == 8)
+            {
+                auto& effect = *static_cast<VulkanParticleEffect *>(particle.visual);
+                const bool gpu_handled = owner.record_gpu_particle_motion(frame, effect, particle,
+                    current_particle_mvp, previous_mvp, true);
+                ok = gpu_handled || effect.record_particle_motion(frame, owner.object_velocity_,
+                    current_particle_mvp, previous_mvp, particle_history_valid, false, false);
+            }
+            else
+                ok = static_cast<VulkanParticleGroup *>(particle.visual)->record_particle_motion(frame,
+                    owner.object_velocity_, current_particle_mvp, previous_mvp, particle_history_valid, false,
+                    gpu_draw_active, true, item.priority,
+                    [&](VulkanParticleEffect& effect) {
+                        return owner.record_gpu_particle_motion(frame, effect, particle, current_particle_mvp,
+                            previous_mvp, true);
+                    }, [&](VulkanParticleEffect& root, VulkanParticleEffect& child) {
+                        return owner.record_gpu_particle_motion(frame, child, particle, current_particle_mvp,
+                            previous_mvp, true, &root);
+                    });
+            if (!ok)
+            {
+                owner.models_recorded_ = false;
+                owner.model_error_ = "Vulkan transparent particle object velocity recording failed";
+                break;
+            }
+        }
+    }
+    owner.object_velocity_.end(frame);
+    if (!owner.models_recorded_)
+    {
+        error = owner.model_error_.empty() ? "object velocity model recording failed" : owner.model_error_;
+        return false;
+    }
+    if (!owner.level_recorded_)
+    {
+        error = owner.level_error_.empty() ? "object velocity level recording failed" : owner.level_error_;
+        return false;
+    }
+    error.clear();
+    return true;
 }
 
 void VulkanGameDevice::record_readback(VkCommandBuffer command, VkImage image, VkExtent2D extent, void *user)

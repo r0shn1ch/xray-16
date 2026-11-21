@@ -1,0 +1,10 @@
+[[vk::binding(0, 0)]] Texture2D<float4> distortion_map : register(t0);
+[[vk::binding(0, 0)]] SamplerState distortion_sampler : register(s0);
+float4 main([[vk::location(1)]] float2 uv : TEXCOORD1,
+    [[vk::location(3)]] float4 tint : COLOR0) : SV_Target0
+{
+    float4 field = distortion_map.Sample(distortion_sampler, uv);
+    float weight = saturate(field.a * dot(tint.rgb, float3(0.33, 0.33, 0.33)));
+    if (weight < 0.01 / 255.0) discard;
+    return float4(field.rgb, weight);
+}

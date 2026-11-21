@@ -93,13 +93,16 @@ void CUICursor::OnRender()
     m_static->Draw();
 }
 
-void CUICursor::SetUICursorPosition(Fvector2 pos)
+void CUICursor::SetUICursorPosition(Fvector2 pos, bool warpSystemCursor)
 {
     vPos = pos;
-    Ivector2 p;
-    p.x = iFloor(vPos.x / correction.x);
-    p.y = iFloor(vPos.y / correction.y);
-    std::ignore = pInput->iSetMousePos(p);
+    if (warpSystemCursor)
+    {
+        Ivector2 p;
+        p.x = iFloor(vPos.x / correction.x);
+        p.y = iFloor(vPos.y / correction.y);
+        std::ignore = pInput->iSetMousePos(p);
+    }
 }
 
 void CUICursor::UpdateCursorPosition(Fvector2 pos)

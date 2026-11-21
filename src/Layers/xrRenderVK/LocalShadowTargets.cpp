@@ -6,7 +6,7 @@ bool LocalShadowTargets::initialize(VkDevice device, VkFormat format, uint32_t c
                                     const VkPhysicalDeviceMemoryProperties &memory, const FrameDispatch &dispatch,
                                     const BufferResourceDispatch &buffers, PFN_vkCreateSampler create_sampler,
                                     PFN_vkDestroySampler destroy_sampler, std::string &error,
-                                    VkDeviceSize uniform_alignment)
+                                    VkDeviceSize uniform_alignment, FrameImagePool* image_pool)
 {
     destroy();
     if (!device || format == VK_FORMAT_UNDEFINED || !count || count > 16 || !dispatch.create_image ||
@@ -27,6 +27,7 @@ bool LocalShadowTargets::initialize(VkDevice device, VkFormat format, uint32_t c
     vk_ = dispatch;
     memory_ = memory;
     buffers_ = buffers;
+    image_pool_ = image_pool;
     const VkDeviceSize alignment = uniform_alignment ? uniform_alignment : 1;
     uniform_stride_ = (sizeof(LocalLightUniform) + alignment - 1) / alignment * alignment;
     destroy_sampler_ = destroy_sampler;
@@ -74,6 +75,20 @@ bool LocalShadowTargets::initialize(VkDevice device, VkFormat format, uint32_t c
         destroy();
         return false;
     }
+    depth.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    if (vk_.create_render_pass(device, &pass, nullptr, &graph_load_pass_) != VK_SUCCESS)
+    {
+        error = "cannot create graph-managed local shadow load pass";
+        destroy();
+        return false;
+    }
+    depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    if (vk_.create_render_pass(device, &pass, nullptr, &graph_pass_) != VK_SUCCESS)
+    {
+        error = "cannot create graph-managed local shadow pass";
+        destroy();
+        return false;
+    }
     image_count_ = count;
     cache_index_ = dispatch.cmd_copy_image && dispatch.cmd_pipeline_barrier ? count : UINT32_MAX;
     VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -100,37 +115,49 @@ bool LocalShadowTargets::initialize(VkDevice device, VkFormat format, uint32_t c
         image.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                       VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        if (vk_.create_image(device, &image, nullptr, &target.image) != VK_SUCCESS)
+        if (image_pool_)
         {
-            error = "cannot create local shadow array";
-            destroy();
-            return false;
-        }
-        VkMemoryRequirements requirements{};
-        vk_.get_image_memory_requirements(device, target.image, &requirements);
-        uint32_t type = UINT32_MAX;
-        for (uint32_t i = 0; i < memory.memoryTypeCount; ++i)
-            if ((requirements.memoryTypeBits & (1u << i)) &&
-                (memory.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+            if (!image_pool_->acquire(image, target.image, error))
             {
-                type = i;
-                break;
+                error = "local shadow array: " + error;
+                destroy();
+                return false;
             }
-        if (type == UINT32_MAX)
-        {
-            error = "no device-local memory for local shadows";
-            destroy();
-            return false;
         }
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocation.memoryTypeIndex = type;
-        if (vk_.allocate_memory(device, &allocation, nullptr, &target.memory) != VK_SUCCESS ||
-            vk_.bind_image_memory(device, target.image, target.memory, 0) != VK_SUCCESS)
+        else
         {
-            error = "cannot bind local shadow array";
-            destroy();
-            return false;
+            if (vk_.create_image(device, &image, nullptr, &target.image) != VK_SUCCESS)
+            {
+                error = "cannot create local shadow array";
+                destroy();
+                return false;
+            }
+            VkMemoryRequirements requirements{};
+            vk_.get_image_memory_requirements(device, target.image, &requirements);
+            uint32_t type = UINT32_MAX;
+            for (uint32_t i = 0; i < memory.memoryTypeCount; ++i)
+                if ((requirements.memoryTypeBits & (1u << i)) &&
+                    (memory.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+                {
+                    type = i;
+                    break;
+                }
+            if (type == UINT32_MAX)
+            {
+                error = "no device-local memory for local shadows";
+                destroy();
+                return false;
+            }
+            VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            allocation.allocationSize = requirements.size;
+            allocation.memoryTypeIndex = type;
+            if (vk_.allocate_memory(device, &allocation, nullptr, &target.memory) != VK_SUCCESS ||
+                vk_.bind_image_memory(device, target.image, target.memory, 0) != VK_SUCCESS)
+            {
+                error = "cannot bind local shadow array";
+                destroy();
+                return false;
+            }
         }
         VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         view.image = target.image;
@@ -203,32 +230,39 @@ bool LocalShadowTargets::write_light(uint32_t image, uint32_t index, const Local
            targets_[image].constants.write(VkDeviceSize(index) * uniform_stride_, &value, sizeof(value), error);
 }
 
-bool LocalShadowTargets::initialize_layers(const FrameRecordingContext &frame)
+bool LocalShadowTargets::initialize_layers(const FrameRecordingContext &frame, bool graph_managed_layouts)
 {
     if (!frame.command_buffer || frame.image_index >= image_count_)
         return false;
-    Target &target = targets_[frame.image_index];
-    if (target.initialized)
+    const auto initialize = [&](Target& target) {
+        if (target.initialized)
+            return true;
+        for (uint32_t layer = 0; layer < target.framebuffers.size(); ++layer)
+        {
+            VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+            begin.renderPass = graph_managed_layouts ? graph_pass_ : pass_;
+            begin.framebuffer = target.framebuffers[layer];
+            begin.renderArea.extent = {LocalShadowSize, LocalShadowSize};
+            VkClearValue clear{};
+            clear.depthStencil = {1.f, 0};
+            begin.clearValueCount = 1;
+            begin.pClearValues = &clear;
+            vk_.cmd_begin_render_pass(frame.command_buffer, &begin, VK_SUBPASS_CONTENTS_INLINE);
+            vk_.cmd_end_render_pass(frame.command_buffer);
+        }
+        target.initialized = true;
         return true;
-    for (uint32_t layer = 0; layer < target.framebuffers.size(); ++layer)
-    {
-        VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-        begin.renderPass = pass_;
-        begin.framebuffer = target.framebuffers[layer];
-        begin.renderArea.extent = {LocalShadowSize, LocalShadowSize};
-        VkClearValue clear{};
-        clear.depthStencil = {1.f, 0};
-        begin.clearValueCount = 1;
-        begin.pClearValues = &clear;
-        vk_.cmd_begin_render_pass(frame.command_buffer, &begin, VK_SUBPASS_CONTENTS_INLINE);
-        vk_.cmd_end_render_pass(frame.command_buffer);
-    }
-    target.initialized = true;
+    };
+    if (!initialize(targets_[frame.image_index]))
+        return false;
+    if (caching() && !initialize(targets_[cache_index_]))
+        return false;
     return true;
 }
 
 bool LocalShadowTargets::begin_face(const FrameRecordingContext &frame, uint32_t slot, uint32_t face,
-                                    FrameRecordingContext &shadow_frame, bool cached, bool preserve) const
+                                    FrameRecordingContext &shadow_frame, bool cached, bool preserve,
+                                    bool graph_managed_layouts) const
 {
     if (!frame.command_buffer || frame.image_index >= image_count_ || slot >= LocalShadowSlots ||
         face >= LocalShadowFaces || (cached && !caching()))
@@ -236,7 +270,8 @@ bool LocalShadowTargets::begin_face(const FrameRecordingContext &frame, uint32_t
     const VkFramebuffer framebuffer =
         targets_[cached ? cache_index_ : frame.image_index].framebuffers[slot * LocalShadowFaces + face];
     VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    begin.renderPass = preserve ? load_pass_ : pass_;
+    begin.renderPass = graph_managed_layouts ?
+        (preserve ? graph_load_pass_ : graph_pass_) : (preserve ? load_pass_ : pass_);
     begin.framebuffer = framebuffer;
     begin.renderArea.extent = {LocalShadowSize, LocalShadowSize};
     VkClearValue clear{};
@@ -244,8 +279,10 @@ bool LocalShadowTargets::begin_face(const FrameRecordingContext &frame, uint32_t
     begin.clearValueCount = 1;
     begin.pClearValues = &clear;
     vk_.cmd_begin_render_pass(frame.command_buffer, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    shadow_frame = {frame.command_buffer, pass_, framebuffer, {LocalShadowSize, LocalShadowSize}, frame.image_index,
-                    frame.frame_index};
+    shadow_frame = frame;
+    shadow_frame.render_pass = begin.renderPass;
+    shadow_frame.framebuffer = framebuffer;
+    shadow_frame.extent = {LocalShadowSize, LocalShadowSize};
     return true;
 }
 
@@ -270,6 +307,20 @@ void LocalShadowTargets::remember_face(uint32_t slot, uint32_t face, const float
     if (slot < LocalShadowSlots && face < LocalShadowFaces)
         cache_signatures_[slot * LocalShadowFaces + face] = shadow_signature(matrix);
 }
+bool LocalShadowTargets::record_cached_face_copy(VkCommandBuffer command, uint32_t image,
+    uint32_t slot, uint32_t face) const
+{
+    if (!caching() || !command || image >= image_count_ || slot >= LocalShadowSlots || face >= LocalShadowFaces)
+        return false;
+    const uint32_t layer = slot * LocalShadowFaces + face;
+    VkImageCopy copy{};
+    copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, layer, 1};
+    copy.extent = {LocalShadowSize, LocalShadowSize, 1};
+    vk_.cmd_copy_image(command, targets_[cache_index_].image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        targets_[image].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+    return true;
+}
+
 bool LocalShadowTargets::copy_cached_face(const FrameRecordingContext &frame, uint32_t slot, uint32_t face) const
 {
     if (!caching() || frame.image_index >= image_count_ || slot >= LocalShadowSlots || face >= LocalShadowFaces)
@@ -289,8 +340,8 @@ bool LocalShadowTargets::copy_cached_face(const FrameRecordingContext &frame, ui
         b.dstAccessMask = i ? VK_ACCESS_TRANSFER_WRITE_BIT : VK_ACCESS_TRANSFER_READ_BIT;
     }
     vk_.cmd_pipeline_barrier(frame.command_buffer,
-                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | (VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                                                                      VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT),
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
     VkImageCopy copy{};
     copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, layer, 1};
@@ -344,7 +395,10 @@ void LocalShadowTargets::destroy()
             if (target.array_view)
                 vk_.destroy_image_view(device_, target.array_view, nullptr);
             if (target.image)
-                vk_.destroy_image(device_, target.image, nullptr);
+            {
+                if (image_pool_) image_pool_->release(target.image);
+                else vk_.destroy_image(device_, target.image, nullptr);
+            }
             if (target.memory)
                 vk_.free_memory(device_, target.memory, nullptr);
         }
@@ -354,16 +408,21 @@ void LocalShadowTargets::destroy()
             vk_.destroy_render_pass(device_, pass_, nullptr);
         if (load_pass_)
             vk_.destroy_render_pass(device_, load_pass_, nullptr);
+        if (graph_load_pass_)
+            vk_.destroy_render_pass(device_, graph_load_pass_, nullptr);
+        if (graph_pass_)
+            vk_.destroy_render_pass(device_, graph_pass_, nullptr);
     }
     targets_.clear();
     device_ = VK_NULL_HANDLE;
-    pass_ = load_pass_ = VK_NULL_HANDLE;
+    pass_ = load_pass_ = graph_pass_ = graph_load_pass_ = VK_NULL_HANDLE;
     image_count_ = 0;
     cache_index_ = UINT32_MAX;
     invalidate_cache();
     sampler_ = VK_NULL_HANDLE;
     destroy_sampler_ = nullptr;
     vk_ = {};
+    image_pool_ = nullptr;
     uniform_stride_ = sizeof(LocalLightUniform);
 }
 } // namespace xray::render::vulkan

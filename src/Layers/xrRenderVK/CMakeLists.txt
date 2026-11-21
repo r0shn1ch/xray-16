@@ -1,8 +1,28 @@
 add_library(xrRenderVK STATIC)
 
+include("${XRAY_SOURCE_DIR}/cmake/GenerateRuntimeGameShaderVariants.cmake")
+set(XRAY_RUNTIME_GAME_SHADER_VARIANTS "${CMAKE_CURRENT_BINARY_DIR}/generated/RuntimeGameShaderVariants.h")
+xray_generate_runtime_game_shader_variants(
+    "${XRAY_SOURCE_DIR}/res/gamedata/shaders/vk/opaque-variants.json"
+    "${XRAY_RUNTIME_GAME_SHADER_VARIANTS}"
+)
+target_sources(xrRenderVK PRIVATE "${XRAY_RUNTIME_GAME_SHADER_VARIANTS}")
+target_include_directories(xrRenderVK PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_include_directories(xrRenderVK PRIVATE "${xray_bcdec_SOURCE_DIR}")
+
+if (ANDROID AND CMAKE_HOST_WIN32)
+    # llvm-ar on Windows can round the archive's timestamp below the newest
+    # Android object file. Keep Ninja's post-link freshness check stable.
+    add_custom_command(TARGET xrRenderVK POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E touch "$<TARGET_FILE:xrRenderVK>"
+        VERBATIM
+    )
+endif()
+
 target_sources(xrRenderVK PRIVATE
     PipelineCache.h
     VulkanRendererModule.cpp
+    NvrhiVulkanDispatch.cpp
     VulkanProbe.cpp
     VulkanProbe.h
     SlidingWindows.cpp
@@ -11,20 +31,166 @@ target_sources(xrRenderVK PRIVATE
     SpecialVisuals.h
     BufferResource.cpp
     BufferResource.h
+    AccelerationStructure.cpp
+    AccelerationStructure.h
+    LevelRayScene.cpp
+    LevelRayScene.h
+    RayQueryBatch.cpp
+    ReferencePathTracePass.cpp
+    ReferencePathTracePass.h
+    RaySurface.cpp
+    IndirectRayFrames.cpp
+    IndirectRayFrames.h
+    IndirectSunPass.cpp
+    StorageComputePass.cpp
+    VsmPageAllocator.cpp
+    VsmPageAllocator.h
+    VsmDemandPass.cpp
+    VsmDemandPass.h
+    VsmStaticCache.cpp
+    VsmStaticCache.h
+    VsmFrameResources.cpp
+    VsmFrameResources.h
+    VsmClipmap.cpp
+    VsmClipmap.h
+    VsmAtlas.cpp
+    VsmAtlas.h
+    VsmPageRender.cpp
+    VsmPageRender.h
+    VsmLevelPageRender.cpp
+    VsmResolvePass.cpp
+    VsmResolvePass.h
+    VsmCasterBinning.cpp
+    VsmCasterBinning.h
+    VsmInvalidation.cpp
+    VsmInvalidation.h
+    GpuParticleCollisionData.h
+    GpuParticleStaticCollision.cpp
+    GpuParticleStaticCollision.h
+    GpuParticleLevelCollision.cpp
+    GpuParticleLevelCollision.h
+    GpuParticleDynamicCollision.cpp
+    GpuParticleDynamicCollision.h
+    GpuParticleBuffers.cpp
+    GpuParticleBuffers.h
+    GpuParticleUpload.cpp
+    GpuParticleUpload.h
+    GpuParticleUniforms.cpp
+    GpuParticleUniforms.h
+    GpuParticleFrame.cpp
+    GpuParticleFrame.h
+    GpuParticleFrameInput.cpp
+    GpuParticleFrameInput.h
+    GpuParticleReadback.cpp
+    GpuParticleReadback.h
+    GpuParticleRuntime.cpp
+    GpuParticleRuntime.h
+    GpuParticleDrawBindings.cpp
+    GpuParticleDrawBindings.h
+    GpuParticleDrawPass.cpp
+    GpuParticleDrawPass.h
+    GpuParticleGraphics.cpp
+    GpuParticleGraphics.h
+    SmokeTrailCompute.cpp
+    SmokeTrailCompute.h
+    SmokeTrailDrawPass.cpp
+    SmokeTrailDrawPass.h
+    SmokeTrailNoise.cpp
+    SmokeTrailNoise.h
+    SmokeTrailController.h
+    TrailState.h
+    GpuParticleDrawBuckets.h
+    GpuParticleEngine.cpp
+    GpuParticleEngine.h
+    GpuParticleNoise.cpp
+    GpuParticleNoise.h
+    GpuParticleCommands.cpp
+    GpuParticleCommands.h
+    GpuParticleEmitters.cpp
+    GpuParticleEmitters.h
+    GpuParticlePrograms.cpp
+    GpuParticlePrograms.h
+    GpuParticleMaterials.cpp
+    GpuParticleMaterials.h
+    GpuParticleCompute.cpp
+    GpuParticleCompute.h
+    GpuParticleTranslate.cpp
+    GpuParticleTranslate.h
+    RayQueryBatch.h
+    RayQueryBatchShaders.h
+    RayGenerateShaders.h
+    IndirectRadianceShaders.h
+    WorldRadianceCacheShaders.h
+    ReferencePathTraceShaders.h
+    RestirGIShaders.h
+    RayGeneratePass.cpp
+    RayGeneratePass.h
+    RayVisibilityShaders.h
+    RayVisibilityPass.cpp
+    RayVisibilityPass.h
+    RayFrameResources.cpp
+    RayFrameResources.h
+    smoke/ray_visibility.comp
+    smoke/ray_generate.comp
+    smoke/indirect_radiance.comp
+    smoke/world_radiance_cache.glsl
+    smoke/world_radiance_cache_update.comp
+    smoke/reference_path_trace.comp
+    smoke/restir_gi_spatial.comp
+    BindlessTextureTable.cpp
+    BindlessTextureTable.h
     BufferUpload.cpp
     BufferUpload.h
     Bc7Decoder.cpp
     Bc7Decoder.h
+    Bc6Decoder.cpp
+    Bc6Decoder.h
     DdsTexture.cpp
     DdsTexture.h
     DetailAssets.cpp
     DetailAssets.h
     DeferredPass.cpp
     DeferredPass.h
+    ClusterVisibility.cpp
+    ClusterVisibility.h
+    ClusterVisibilityShaders.h
+    smoke/cluster_visibility.comp
+    GBufferRenderPass.cpp
     LightGrid.cpp
+    ComputePipeline.cpp
+    ComputePipeline.h
     LightingLimits.h
     LightGrid.h
     LightGridShaders.h
+    HiZPyramid.cpp
+    HiZPyramid.h
+    HiZShaders.h
+    smoke/hiz_build.comp
+    MotionVectors.cpp
+    MotionVectors.h
+    MotionVectorShaders.h
+    smoke/motion_vectors.comp
+    ObjectMotionHistory.h
+    ObjectVelocityPass.cpp
+    ObjectVelocityPass.h
+    ObjectVelocityShaders.h
+    smoke/object_velocity.vert
+    smoke/object_velocity_skinned.vert
+    smoke/object_velocity.frag
+    smoke/object_velocity_particle.vert
+    smoke/object_velocity_particle.frag
+    TemporalExposure.cpp
+    TemporalExposure.h
+    TemporalExposureShaders.h
+    smoke/temporal_exposure_adapt.comp
+    smoke/temporal_exposure_histogram.comp
+    TemporalResolve.cpp
+    TemporalResolve.h
+    TemporalResolveShaders.h
+    Fsr3Upscaler.cpp
+    Fsr3Upscaler.h
+    smoke/temporal_resolve.comp
+    TemporalJitter.h
     DeferredFrame.cpp
     DeferredFrame.h
     ForwardLighting.h
@@ -34,21 +200,40 @@ target_sources(xrRenderVK PRIVATE
     DeferredShaderFactory.h
     GameShaderResources.cpp
     GameShaderResources.h
+    RuntimeSlangCompiler.cpp
+    RuntimeSlangCompiler.h
+    GameShaderPipeline.cpp
+    GameShaderInterface.h
+    GraphicsShaderStages.h
+    GameComputePipeline.cpp
     ShaderMaterialLibrary.cpp
     ShaderMaterialLibrary.h
     DeferredShaders.h
     WeatherShaders.h
     smoke/weather.frag
+    smoke/deferred.frag
+    smoke/local_light.frag
+    smoke/rain_wetness.glsl
     EngineTextureSource.cpp
+    EmbeddedShaderFingerprint.cpp
+    EmbeddedShaderFingerprint.h
     EngineTextureSource.h
     EngineLevelModels.cpp
     EngineLevelModels.h
     FrameContext.cpp
     FrameContext.h
+    FrameImageGraph.cpp
+    FrameImageGraph.h
+    FrameBufferPool.cpp
+    FrameBufferPool.h
+    FrameSubmissionGraph.h
+    FrameImagePool.cpp
+    FrameImagePool.h
     GameTextureFactory.cpp
     GameTextureFactory.h
     GBufferTargets.cpp
     GBufferTargets.h
+    GBufferLightingBindings.cpp
     SunShadowTargets.cpp
     SunShadowTargets.h
     LocalShadowTargets.cpp
@@ -60,6 +245,14 @@ target_sources(xrRenderVK PRIVATE
     ShadowShaders.h
     GpuLevel.cpp
     GpuLevel.h
+    ClusterLodImplementation.cpp
+    ClusterLodBuilder.cpp
+    ClusterLodBuilder.h
+    clusterlod.h
+    ClusterBasis.cpp
+    ClusterBasis.h
+    ClusterDeviation.cpp
+    ClusterDeviation.h
     GpuModel.cpp
     GpuModel.h
     ImageStateTracker.cpp
@@ -88,11 +281,17 @@ target_sources(xrRenderVK PRIVATE
     ScreenCopyPass.h
     PostProcessShaders.h
     smoke/postprocess.frag
+    smoke/bloom_bright.frag
+    smoke/bloom_upsample.frag
+    smoke/sun_shafts.frag
+    smoke/bloom.glsl
     smoke/fxaa.glsl
     ScenePass.cpp
     ScenePass.h
     ShaderModule.cpp
     ShaderModule.h
+    ShaderReflection.cpp
+    ShaderReflection.h
     SmokeShaders.h
     SmokeTrianglePass.cpp
     SmokeTrianglePass.h
@@ -115,6 +314,8 @@ target_sources(xrRenderVK PRIVATE
     VulkanImGuiRender.h
     VulkanVideoTexture.cpp
     VulkanVideoTexture.h
+    AndroidMediaVideoDecoder.cpp
+    AndroidMediaVideoDecoder.h
     VulkanUISequenceVideoItem.cpp
     VulkanUISequenceVideoItem.h
     VulkanFontRender.cpp
@@ -179,7 +380,62 @@ target_include_directories(xrRenderVK
     "${CMAKE_SOURCE_DIR}/Externals/gli/external"
 )
 
-target_link_libraries(xrRenderVK PRIVATE SDL2::SDL2 xrCDB)
+# Public renderer headers expose NVRHI types to consumers such as xrEngine's
+# Android Vulkan smoke path, so propagate NVRHI's include directories as well
+# as its static link dependencies.
+target_link_libraries(xrRenderVK
+    PUBLIC nvrhi_vk nvrhi
+    PRIVATE SDL2::SDL2 xrCDB xrImGui meshoptimizer
+)
+
+if (MSVC)
+    # ReleaseMasterGold disables exceptions project-wide, but the Vulkan
+    # renderer uses catch handlers to recover from NVRHI/resource failures.
+    target_compile_options(xrRenderVK PRIVATE /EHsc)
+endif()
+
+if (ANDROID AND ANDROID_ABI STREQUAL "arm64-v8a")
+    target_link_libraries(xrRenderVK PRIVATE
+        ffx_backend_vk_android_arm64
+        ffx_fsr3_android_arm64
+        ffx_fsr3upscaler_android_arm64
+        ffx_frameinterpolation_android_arm64
+        ffx_opticalflow_android_arm64
+    )
+    target_compile_definitions(xrRenderVK PRIVATE XRAY_HAS_FSR3_ANDROID=1)
+endif()
+
+# Slang provides runtime HLSL compilation for 64-bit Android Vulkan builds.
+# Its Android binaries are built from the pinned source release by
+# android/build-slang.sh; the checked-in renderer remains usable on other
+# platforms with its precompiled SPIR-V assets.
+if (ANDROID AND (ANDROID_ABI STREQUAL "arm64-v8a" OR ANDROID_ABI STREQUAL "x86_64"))
+    if (NOT XRAY_SLANG_ROOT)
+        message(FATAL_ERROR
+            "XRAY_SLANG_ROOT is required for Android ${ANDROID_ABI}. Run android/build-android-native.sh "
+            "or set XRAY_SLANG_ROOT to a Slang Android install prefix.")
+    endif()
+    set(slang_DIR "${XRAY_SLANG_ROOT}/lib/cmake/slang")
+    find_package(slang CONFIG REQUIRED NO_DEFAULT_PATH)
+    if (NOT TARGET slang::slang)
+        message(FATAL_ERROR "Slang package at XRAY_SLANG_ROOT does not define slang::slang")
+    endif()
+    target_link_libraries(xrRenderVK PRIVATE slang::slang)
+    target_compile_definitions(xrRenderVK PRIVATE XRAY_HAS_SLANG=1)
+elseif (NOT ANDROID AND XRAY_SLANG_ROOT)
+    set(slang_DIR "${XRAY_SLANG_ROOT}/lib/cmake/slang")
+    find_package(slang CONFIG QUIET NO_DEFAULT_PATH)
+    if (TARGET slang::slang)
+        target_link_libraries(xrRenderVK PRIVATE slang::slang)
+        target_compile_definitions(xrRenderVK PRIVATE XRAY_HAS_SLANG=1)
+    endif()
+endif()
+
+if (WIN32)
+    # NVRHI's Vulkan backend publishes VK_USE_PLATFORM_WIN32_KHR; keep the
+    # Windows min/max macros out of renderer translation units using std::min/max.
+    target_compile_definitions(xrRenderVK PRIVATE NOMINMAX)
+endif()
 
 set_target_properties(xrRenderVK PROPERTIES
     PREFIX ""

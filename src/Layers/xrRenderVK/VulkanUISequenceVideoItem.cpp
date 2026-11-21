@@ -14,9 +14,10 @@ void VulkanUISequenceVideoItem::Copy(IUISequenceVideoItem& source)
 
 void VulkanUISequenceVideoItem::CaptureTexture()
 {
+    video_.reset();
     auto* shader = device_.ui().current_shader();
-    R_ASSERT2(shader && shader->video(), "UI video capture needs an active movie shader");
-    video_ = shader->video();
+    if (shader)
+        video_ = shader->video();
 }
 
 void VulkanUISequenceVideoItem::video_Play(BOOL looped, u32 time)

@@ -57,6 +57,8 @@ struct LevelVertex
     float baked[4]{1.f, 1.f, 1.f, 1.f};
     int8_t tangent[4]{}, bitangent[4]{};
 };
+static_assert(offsetof(LevelVertex, uv) == 24);
+static_assert(sizeof(LevelVertex) == 64);
 
 struct LevelModel
 {
@@ -68,8 +70,26 @@ struct LevelModel
     std::vector<LevelVertex> vertices;
     std::vector<uint32_t> indices;
     std::vector<SlideWindow> windows;
+    // Authored tree-wave rigidity, parallel to vertices. Positions are
+    // transformed into world space; base height is the tree transform origin.
+    std::vector<float> tree_wind_weights;
+    float tree_wind_base_y{};
     std::shared_ptr<LevelModel> fast;
 };
+
+// D_TREE wave materials do not use the lightmap UV channel. Pack only after
+// material selection so other tree materials retain their original lightmap.
+inline bool pack_tree_wind_attributes(LevelModel& model)
+{
+    if (!model.tree || (!model.tree_wind_weights.empty() &&
+            model.tree_wind_weights.size() != model.vertices.size())) return false;
+    for (size_t i = 0; i < model.vertices.size(); ++i)
+    {
+        model.vertices[i].lightmap_uv[0] = model.tree_wind_weights.empty() ? 0.f : model.tree_wind_weights[i];
+        model.vertices[i].lightmap_uv[1] = model.tree_wind_base_y;
+    }
+    return true;
+}
 
 inline void offset_level_wallmark(LevelModel &model)
 {

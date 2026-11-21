@@ -31,7 +31,7 @@ public:
     void WarpToWindow(const CUIWindow* wnd, bool center = false);
     void UpdateCursorPosition(Fvector2 pos);
 
-    void SetUICursorPosition(Fvector2 pos);
+    void SetUICursorPosition(Fvector2 pos, bool warpSystemCursor = true);
 
     [[nodiscard]]
     Fvector2 GetCursorPosition() const;

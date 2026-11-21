@@ -20,6 +20,7 @@ struct SBullet_Hit
 //структура, описывающая пулю и ее свойства в полете
 struct SBullet
 {
+    u64 trail_id{};
     u32 init_frame_num; //номер кадра на котором была запущена пуля
     union
     {

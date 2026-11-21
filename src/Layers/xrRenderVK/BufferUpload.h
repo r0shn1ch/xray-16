@@ -6,6 +6,9 @@
 
 namespace xray::render::vulkan
 {
+constexpr size_t MaxPendingBufferUploads = 16;
+constexpr VkDeviceSize MaxPendingBufferStagingBytes = 64u * 1024u * 1024u;
+
 struct BufferUploadDispatch
 {
     BufferResourceDispatch buffer{};

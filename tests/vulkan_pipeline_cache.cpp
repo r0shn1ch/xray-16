@@ -1,4 +1,5 @@
 #include "src/Layers/xrRenderVK/PipelineCache.h"
+#include "src/Layers/xrRenderVK/EmbeddedShaderFingerprint.h"
 #include <cassert>
 #include <string>
 using namespace xray::render::vulkan;
@@ -54,6 +55,10 @@ int main()
     PipelineCacheFingerprint assets("build-a");
     assets.append("vk\\level.vs.spv", "shader-a", 8);
     const uint64_t shader_fingerprint = assets.value();
+    PipelineCacheFingerprint embedded_assets("build-a");
+    append_embedded_shader_fingerprint(embedded_assets);
+    embedded_assets.append("vk\\level.vs.spv", "shader-a", 8);
+    assert(embedded_assets.value() != shader_fingerprint);
     PipelineCacheFingerprint changed_bytes("build-a");
     changed_bytes.append("vk\\level.vs.spv", "shader-b", 8);
     PipelineCacheFingerprint changed_name("build-a");
@@ -69,6 +74,7 @@ int main()
     auto disk = cache.snapshot(shader_fingerprint);
     assert(PipelineCache::compatible(disk, p, shader_fingerprint));
     assert(!PipelineCache::compatible(disk, p, changed_bytes.value()));
+    assert(!PipelineCache::compatible(disk, p, embedded_assets.value()));
     assert(!PipelineCache::compatible(disk, p, changed_name.value()));
     assert(!PipelineCache::compatible(disk, p, changed_build.value()));
     assert(!PipelineCache::compatible(disk, p, removed_shader.value()));

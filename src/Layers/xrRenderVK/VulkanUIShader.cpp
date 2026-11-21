@@ -85,13 +85,20 @@ void VulkanUIShader::create(LPCSTR shader, LPCSTR texture)
     }
     if (texture_.empty()) { use_transparent_fallback(); return; }
     string_path video_path;
-    if (FS.exist(video_path, "$game_textures$", texture_.c_str(), ".ogm"))
+    bool has_video = FS.exist(video_path, "$game_textures$", texture_.c_str(), ".ogm");
+    if (!has_video)
+        has_video = FS.exist(video_path, "$game_textures$", texture_.c_str(), ".ogv");
+#if defined(XR_PLATFORM_WINDOWS)
+    if (!has_video)
+        has_video = FS.exist(video_path, "$game_textures$", texture_.c_str(), ".avi");
+#endif
+    if (has_video)
     {
         video_ = std::make_shared<VulkanVideoTexture>(*textures_, *pass_, clamp_);
         std::string error;
         if (!video_->load(video_path, Device.dwTimeContinual, error))
         {
-            Msg("! [renderer-vulkan] UI movie '%s': %s", texture_.c_str(), error.c_str());
+            Msg("! [renderer-vulkan] UI video '%s': %s", texture_.c_str(), error.c_str());
             destroy();
             use_transparent_fallback();
             return;
@@ -218,8 +225,7 @@ VkDescriptorSet VulkanUIShader::current_descriptor(u32 time)
     }
     if (video_)
     {
-        video_->update(time);
-        descriptor_ = video_->descriptor();
+        descriptor_ = video_->descriptor(Device.dwFrame % FrameContext::FramesInFlight);
     }
     return descriptor_;
 }

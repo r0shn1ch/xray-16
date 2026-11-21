@@ -1,6 +1,9 @@
 #pragma once
 
 #include "GpuLevel.h"
+#include "BindlessTextureTable.h"
+#include "RayQueryBatch.h"
+#include "RaySurface.h"
 #include "ShaderModule.h"
 #include "VulkanCameraState.h"
 #include "VulkanDeviceResourceState.h"
@@ -15,6 +18,7 @@
 #include "ResourceIssueCounter.h"
 #include "xrEngine/Render.h"
 #include "xrEngine/pure.h"
+#include "xrCommon/xr_vector.h"
 
 #include <chrono>
 #include <memory>
@@ -28,8 +32,11 @@ class VulkanFontRender;
 class VulkanUIShader;
 class VulkanModelVisual;
 class GpuModel;
+struct RayModelGeometry;
+struct RayModelTextureSlots;
 class VulkanParticleEffect;
 class VulkanParticleGroup;
+class GpuParticleEmitters;
 struct ParticleCatalog;
 // IRender adapter for the Vulkan device, level geometry and model resources.
 class VulkanLevelRender : public IRender, public pureAppDeactivate
@@ -39,6 +46,8 @@ public:
     explicit VulkanLevelRender(VulkanGameDevice& device);
     ~VulkanLevelRender() override;
     void bind_level_device(VulkanGameDevice& resources);
+    // The manager must outlive attached visuals; detach before its teardown.
+    void set_gpu_particle_emitters(GpuParticleEmitters* emitters);
     std::unique_ptr<VulkanUIShader> create_ui_shader();
     std::unique_ptr<VulkanFontRender> create_font_render();
     void bind_level_device(VkDevice device, VkQueue queue, VkCommandPool pool,
@@ -61,6 +70,7 @@ public:
     void Destroy() override;
     bool start_benchmark(uint32_t frames);
     void interrupt_benchmark(const char* reason);
+    void request_sampler_settings_reset();
     void OnAppDeactivate() override { interrupt_benchmark("application deactivated"); }
     void Reset(SDL_Window* window, u32& width, u32& height,
         float& half_width, float& half_height) override;
@@ -70,6 +80,8 @@ public:
     void Begin() override;
     void Calculate() override;
     void Render() override;
+    void UpdateSmokeTrail(const Fvector& position, const Fvector& direction, float dt, bool hud) override;
+    bool UpdateProjectileTrail(u64 id, const Fvector& start, const Fvector& end, float width, u32 frame, float dt, u32 color) override;
     void RenderMenu() override;
     void Clear() override;
     void End() override;
@@ -114,6 +126,7 @@ public:
     void BeforeWorldRender() override;
     void AfterWorldRender() override;
     void Screenshot(ScreenshotMode mode = SM_NORMAL, pcstr name = nullptr) override;
+    bool ScreenshotPending() const override { return screenshot_ != nullptr; }
     void SetPostProcessParams(const SPPInfo& ppi) override;
     void setGamma(float value) override;
     void setBrightness(float value) override;
@@ -140,10 +153,20 @@ protected:
     const GpuLevel& gpu_level() const { return level_; }
 
 private:
+  void refresh_engine_shader_defines();
+  void release_ray_materials();
+  void release_ray_diffuse_materials();
+  bool acquire_model_ray_materials(const std::vector<RayModelGeometry>& geometry,
+      std::vector<RayModelTextureSlots>& slots, std::string& error);
+  bool prepare_model_ray_batch(GpuModel& model, IKinematics* skeleton, uint32_t slot, VkCommandBuffer command,
+      const VkTransformMatrixKHR& transform, RayGeometryBatch& batch, std::vector<TextureMatrixSet>& matrices,
+      bool& recorded_update, std::string& error);
   void flush_render_failures();
   void flush_resource_failures();
+  void retire_model_uploads();
   std::unique_ptr<VulkanModelVisual> create_model_tree(const VisualRecord &record, const std::string &inherited_texture, const std::string &cache_name,
-                                                       std::string &error, bool skeletal_child = false);
+                                                       std::string &error, bool skeletal_child = false,
+                                                       unsigned skeleton_lod_depth = 0);
   std::unique_ptr<VulkanModelVisual> load_model_base(pcstr name, IReader *data, const std::string &cache_name, std::string &error, bool skeletal_child = false);
   VulkanModelVisual *get_model_base(pcstr name, IReader *data, const std::string &cache_name, std::string &error, bool skeletal_child = false);
   void destroy_all_models();
@@ -151,6 +174,14 @@ private:
   Fmatrix current_view_projection() const;
   void update_view_frustum();
   GpuLevel level_;
+  BindlessTextureTable ray_materials_;
+  RayQueryBatch ray_queries_;
+  BindlessTextureTable ray_diffuse_materials_;
+  RaySurfacePass ray_surfaces_;
+  std::vector<VkImageView> ray_material_views_;
+  std::vector<VkImageView> ray_diffuse_material_views_;
+  std::vector<std::string> ray_material_names_, ray_diffuse_material_names_;
+  std::vector<uint8_t> ray_diffuse_material_linear_;
   std::string last_render_error_;
   uint32_t repeated_render_errors_{};
   ResourceIssueCounter resource_failures_;
@@ -158,9 +189,11 @@ private:
   std::unordered_map<IRenderVisual *, std::unique_ptr<VulkanParticleEffect>> particle_effects_;
   std::unordered_map<IRenderVisual *, std::unique_ptr<VulkanParticleGroup>> particle_groups_;
   std::shared_ptr<const ParticleCatalog> particle_catalog_;
+  GpuParticleEmitters* gpu_particle_emitters_{};
   std::unordered_multimap<std::string, std::unique_ptr<VulkanModelVisual>> model_pool_;
   std::unordered_map<std::string, std::unique_ptr<VulkanModelVisual>> model_bases_;
   std::unordered_map<std::string, std::weak_ptr<GpuModel>> model_gpu_cache_;
+  xr_vector<std::weak_ptr<GpuModel>> pending_model_uploads_;
   VulkanCameraState camera_state_;
   VulkanRenderContextState context_state_;
   VkDevice device_{};
@@ -180,6 +213,7 @@ private:
   std::unordered_map<IRenderVisual*, std::pair<const VulkanModelVisual*, const void*>> model_visual_index_;
   CLight_DB Lights;
   std::vector<VulkanGlow *> glows_;
+  IRender_Sector::sector_id_t last_camera_sector_{IRender_Sector::INVALID_SECTOR_ID};
   // World glows use screen-space UI quads. Cache static-geometry visibility
   // briefly so they do not shine through walls without a ray test per frame.
   std::unordered_map<const VulkanGlow*, std::pair<u32, bool>> glow_visibility_;
@@ -190,7 +224,9 @@ private:
       IKinematics *skeleton{};
       const Fmatrix *transform{};
       Fvector center{};
-      float expires{};
+      u16 bone{UINT16_MAX};
+      float remaining_ttl{}, lifetime{}, radius{};
+      std::string texture;
   };
     std::vector<Wallmark> wallmarks_;
     VulkanDeviceResourceState device_resource_state_;

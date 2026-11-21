@@ -14,6 +14,7 @@
 
 #include "Include/xrRender/UIRender.h"
 #include "Include/xrRender/Kinematics.h"
+#include <atomic>
 
 #ifdef DEBUG
 #include "debug_renderer.h"
@@ -36,6 +37,8 @@ SBullet::SBullet(const Fvector& position, const Fvector& direction, float starti
     float impulse, u16 sender_id, u16 sendersweapon_id, ALife::EHitType e_hit_type, float maximum_distance,
     const CCartridge& cartridge, float const air_resistance_factor, bool SendHit, int iShotNum /*= 0*/)
 {
+    static std::atomic<u64> next_trail_id{1};
+    trail_id = next_trail_id.fetch_add(1, std::memory_order_relaxed);
     bullet_pos = position;
     speed = max_speed = starting_speed;
     VERIFY(speed > 0.f);
@@ -861,6 +864,13 @@ void CBulletManager::Render()
             continue;
 
         if (!bullet->CanBeRenderedNow())
+            continue;
+
+        const bool gpu_trail = GEnv.Render->UpdateProjectileTrail(bullet->trail_id, bullet->tracer_start_position, bullet->bullet_pos,
+            m_fTracerWidth * .5f, Device.dwFrame, Device.fTimeDelta,
+            bullet->m_u8ColorID < tracers.m_aColors.size() ? tracers.m_aColors[bullet->m_u8ColorID] : 0xffffffffu);
+
+        if (gpu_trail)
             continue;
 
         Fvector const tracer = Fvector().sub(bullet->bullet_pos, bullet->tracer_start_position);

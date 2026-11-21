@@ -1,0 +1,33 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D source_depth;
+layout(set = 0, binding = 1, r32f) uniform writeonly image2D destination;
+layout(set = 0, binding = 2) uniform sampler2D dynamic_occluder_mask;
+layout(push_constant) uniform BuildOptions
+{
+    uint reject_dynamic_occluders;
+} options;
+
+void main()
+{
+    ivec2 dst = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(destination);
+    if (any(greaterThanEqual(dst, size))) return;
+    ivec2 source_size = textureSize(source_depth, 0);
+    ivec2 base = dst * 2;
+    float farthest = 0.0;
+    // Vulkan floors each mip dimension. Include the odd edge in its last block.
+    ivec2 end = min(base + ivec2(2) + ivec2(
+        dst.x == size.x - 1 && (source_size.x & 1) != 0,
+        dst.y == size.y - 1 && (source_size.y & 1) != 0), source_size);
+    for (int y = base.y; y < end.y; ++y)
+        for (int x = base.x; x < end.x; ++x)
+        {
+            float depth = texelFetch(source_depth, ivec2(x, y), 0).r;
+            if (options.reject_dynamic_occluders != 0u &&
+                texelFetch(dynamic_occluder_mask, ivec2(x, y), 0).a > 0.5)
+                depth = 1.0;
+            farthest = max(farthest, depth);
+        }
+    imageStore(destination, dst, vec4(farthest));
+}

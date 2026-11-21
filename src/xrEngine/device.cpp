@@ -742,7 +742,7 @@ void CLoadScreenRenderer::Stop()
 
 void CLoadScreenRenderer::OnFrame()
 {
-    g_pGamePersistent->LoadStage(false);
+    g_pGamePersistent->UpdateLoadScreen();
 }
 
 void CLoadScreenRenderer::OnRender()

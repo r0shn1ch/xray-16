@@ -23,6 +23,25 @@ std::string trim_texture_name(const std::string &name)
     const size_t last = name.find_last_not_of(" \t");
     return name.substr(first, last - first + 1);
 }
+
+void resolve_texture_quality(const std::string &name, bool quality_managed, uint32_t &maximum_dimension,
+                             unsigned &mip_skip)
+{
+    maximum_dimension = 0;
+    mip_skip = 0;
+    if (!quality_managed)
+        return;
+    maximum_dimension = render_quality(quality_preset).texture_limit;
+    bool reduce_first = false;
+    if (pSettings && pSettings->section_exist("reduce_lod_texture_list"))
+        for (const auto &entry : pSettings->r_section("reduce_lod_texture_list").Data)
+            if (name.find(entry.first.c_str()) != std::string::npos)
+            {
+                reduce_first = true;
+                break;
+            }
+    mip_skip = world_texture_mip_skip(psTextureLOD, reduce_first);
+}
 } // namespace
 bool GameTextureFactory::retirement_idle() const
 {
@@ -42,8 +61,10 @@ bool GameTextureFactory::initialize(VkDevice device, VkQueue queue, VkCommandPoo
 {
     destroy();
     if (!device || !queue || !pool || !create_sampler || !destroy_sampler || !wait_idle || !dispatch.create_image ||
+        !dispatch.get_image_memory_requirements ||
         !dispatch.create_buffer || !dispatch.queue_submit || !dispatch.destroy_image || !dispatch.destroy_image_view ||
-        !dispatch.free_memory || !dispatch.wait_for_fences || !dispatch.free_command_buffers)
+        !dispatch.free_memory || !dispatch.wait_for_fences || !dispatch.free_command_buffers ||
+        !dispatch.reset_command_buffer || !dispatch.reset_fences)
     {
         error = "game texture factory needs a Vulkan device and upload procedures";
         return false;
@@ -56,17 +77,27 @@ bool GameTextureFactory::initialize(VkDevice device, VkQueue queue, VkCommandPoo
     dispatch_ = dispatch;
     // Preserve the Adreno no-barrier workaround, but wait once per batch.
     dispatch_.defer_fence_wait = dispatch_.fence_after_copy;
+    create_sampler_ = create_sampler;
     destroy_sampler_ = destroy_sampler;
     wait_idle_ = wait_idle;
+    sampler_anisotropy_supported_ = features.samplerAnisotropy && properties.limits.maxSamplerAnisotropy > 1.f;
+    max_sampler_anisotropy_ = std::max(1.f, properties.limits.maxSamplerAnisotropy);
+    max_sampler_lod_bias_ = std::max(0.f, properties.limits.maxSamplerLodBias);
     VkSamplerCreateInfo info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     info.magFilter = info.minFilter = VK_FILTER_LINEAR;
     info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     info.addressModeU = info.addressModeV = info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     info.maxLod = VK_LOD_CLAMP_NONE;
-    if (features.samplerAnisotropy && properties.limits.maxSamplerAnisotropy > 1.f)
+    active_anisotropy_ = sampler_anisotropy_supported_ ?
+        std::clamp(requested_anisotropy, 1.f, max_sampler_anisotropy_) : 1.f;
+    active_mip_bias_ = std::clamp(texture_mip_bias, -max_sampler_lod_bias_, max_sampler_lod_bias_);
+    active_texture_lod_ = psTextureLOD;
+    active_quality_preset_ = quality_preset;
+    info.mipLodBias = active_mip_bias_;
+    if (sampler_anisotropy_supported_)
     {
         info.anisotropyEnable = VK_TRUE;
-        info.maxAnisotropy = std::clamp(requested_anisotropy, 1.f, properties.limits.maxSamplerAnisotropy);
+        info.maxAnisotropy = active_anisotropy_;
     }
     if (create_sampler(device_, &info, nullptr, &sampler_) != VK_SUCCESS)
     {
@@ -77,6 +108,7 @@ bool GameTextureFactory::initialize(VkDevice device, VkQueue queue, VkCommandPoo
     info.addressModeU = info.addressModeV = info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     info.anisotropyEnable = VK_FALSE;
     info.maxAnisotropy = 1.f;
+    info.mipLodBias = 0.f;
     if (create_sampler(device_, &info, nullptr, &ui_sampler_) != VK_SUCCESS)
     {
         error = "could not create UI texture sampler";
@@ -94,7 +126,97 @@ bool GameTextureFactory::initialize(VkDevice device, VkQueue queue, VkCommandPoo
     return true;
 }
 
-bool GameTextureFactory::load(const std::string &name, Asset *&asset, std::string &error, bool preserve_resolution)
+bool GameTextureFactory::update_sampler_settings(float requested_anisotropy, float requested_mip_bias,
+                                                 std::string &error,
+                                                 const std::function<void()> &before_rebind,
+                                                 const std::function<void()> &after_rebind)
+{
+    if (!device_ || !create_sampler_ || !destroy_sampler_ || !sampler_ || !wait_idle_)
+    {
+        error = "Vulkan texture sampler update needs an initialized factory";
+        return false;
+    }
+    const float anisotropy = sampler_anisotropy_supported_ ?
+        std::clamp(requested_anisotropy, 1.f, max_sampler_anisotropy_) : 1.f;
+    const float mip_bias = std::clamp(requested_mip_bias, -max_sampler_lod_bias_, max_sampler_lod_bias_);
+    if (anisotropy == active_anisotropy_ && mip_bias == active_mip_bias_)
+    {
+        error.clear();
+        return true;
+    }
+
+    VkSamplerCreateInfo info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    info.magFilter = info.minFilter = VK_FILTER_LINEAR;
+    info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    info.addressModeU = info.addressModeV = info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    info.maxLod = VK_LOD_CLAMP_NONE;
+    info.mipLodBias = mip_bias;
+    if (sampler_anisotropy_supported_)
+    {
+        info.anisotropyEnable = VK_TRUE;
+        info.maxAnisotropy = anisotropy;
+    }
+    VkSampler replacement{};
+    if (create_sampler_(device_, &info, nullptr, &replacement) != VK_SUCCESS)
+    {
+        error = "could not create updated game texture sampler";
+        return false;
+    }
+    if (wait_idle_(device_) != VK_SUCCESS || !finish_uploads())
+    {
+        destroy_sampler_(device_, replacement, nullptr);
+        error = "Vulkan texture sampler update needs idle frames and completed uploads";
+        return false;
+    }
+
+    if (before_rebind)
+        before_rebind();
+
+    const VkSampler previous = sampler_;
+    sampler_ = replacement;
+    active_anisotropy_ = anisotropy;
+    active_mip_bias_ = mip_bias;
+
+    for (auto &[path, asset] : assets_)
+    {
+        if (asset.material_set && asset.material_pass)
+            asset.material_pass->update_material(asset.material_set, asset.texture.view, sampler_);
+        if (asset.wrap_ui_set && asset.ui_pass)
+            asset.ui_pass->update_ui_texture_set(asset.wrap_ui_set, asset.texture.view, sampler_);
+    }
+    for (auto &[name, pair] : lightmapped_)
+        pair.pass->update_lightmapped_material(pair.set, pair.diffuse->texture.view,
+            pair.lightmap->texture.view, sampler_, lightmap_sampler_);
+    for (auto &[name, item] : terrain_)
+    {
+        std::array<VkImageView, SurfaceMaterialBaseTextureCount> views{};
+        for (size_t i = 0; i < views.size(); ++i)
+            views[i] = item.assets[i]->texture.view;
+        const VkSampler material_sampler = item.clamp ? ui_sampler_ : sampler_;
+        item.pass->update_terrain_material(item.set, views, material_sampler, lightmap_sampler_);
+        std::array<VkImageView, SurfaceMaterialExtraTextureCount> extra{};
+        if (item.count == SurfaceMaterialTextureCount)
+        {
+            for (size_t i = 0; i < extra.size(); ++i)
+                extra[i] = item.assets[i + 7]->texture.view;
+            item.pass->update_surface_textures(item.set, extra, material_sampler);
+        }
+        else
+        {
+            extra.fill(item.assets[0]->texture.view);
+            item.pass->update_surface_textures(item.set, extra, sampler_);
+        }
+    }
+
+    if (after_rebind)
+        after_rebind();
+    destroy_sampler_(device_, previous, nullptr);
+    error.clear();
+    return true;
+}
+
+bool GameTextureFactory::load(const std::string &name, Asset *&asset, std::string &error, bool preserve_resolution,
+                              bool force_linear)
 {
     asset = nullptr;
     if (!device_ || !sampler_ || name.empty())
@@ -115,14 +237,28 @@ bool GameTextureFactory::load(const std::string &name, Asset *&asset, std::strin
     }
     string_path path;
     if (!FS.exist(path, "$level$", normalized.c_str(), ".dds") &&
+        !FS.exist(path, "$game_saves$", normalized.c_str(), ".dds") &&
         !FS.exist(path, "$game_textures$", normalized.c_str(), ".dds"))
     {
-        error = "game DDS not found: " + normalized;
-        return false;
+        const auto ends_with = [&normalized](const char *suffix) {
+            const size_t length = std::strlen(suffix);
+            return normalized.size() >= length && normalized.compare(normalized.size() - length, length, suffix) == 0;
+        };
+        const char *fallback = ends_with("_bump#") ? "ed\\ed_dummy_bump#" :
+            ends_with("_bump") ? "ed\\ed_dummy_bump" : nullptr;
+        if (!fallback || !FS.exist(path, "$game_textures$", fallback, ".dds"))
+        {
+            error = "game DDS not found: " + normalized;
+            return false;
+        }
+        Msg("[renderer-vulkan] using legacy dummy bump texture '%s' for missing '%s'",
+            fallback, normalized.c_str());
+        normalized = fallback;
     }
     // A new level may have a different $level$ texture with the same name.
     // Cache by the resolved VFS path, not the material's local texture name.
-    const std::string key = std::string(path) + (preserve_resolution ? "|atlas-native" : "");
+    const std::string key = std::string(path) + (preserve_resolution ? "|atlas-native" : "") +
+        (force_linear ? "|linear" : "");
     auto existing = assets_.find(key);
     if (existing != assets_.end())
     {
@@ -139,27 +275,19 @@ bool GameTextureFactory::load(const std::string &name, Asset *&asset, std::strin
     }
     UploadedTexture texture;
     VkExtent3D extent{};
+    uint32_t layers = 1;
     bool cube = false;
+    bool volume = false;
     // An atlas limit applies to the entire sheet, not one tree facet. Keep
     // authored LOD texel density while still selecting mip levels on the GPU.
-    const bool use_world_quality = !preserve_resolution && world_texture_uses_quality(normalized);
-    const uint32_t maximum_dimension = use_world_quality ? render_quality(quality_preset).texture_limit : 0;
+    const bool quality_managed = !preserve_resolution && world_texture_uses_quality(normalized);
+    uint32_t maximum_dimension = 0;
     unsigned mip_skip = 0;
-    if (use_world_quality)
-    {
-        bool reduce_first = false;
-        if (pSettings && pSettings->section_exist("reduce_lod_texture_list"))
-            for (const auto& entry : pSettings->r_section("reduce_lod_texture_list").Data)
-                if (normalized.find(entry.first.c_str()) != std::string::npos)
-                {
-                    reduce_first = true;
-                    break;
-                }
-        mip_skip = world_texture_mip_skip(psTextureLOD, reduce_first);
-    }
+    resolve_texture_quality(normalized, quality_managed, maximum_dimension, mip_skip);
     const bool uploaded =
         upload_engine_texture(device_, queue_, pool_, memory_, dispatch_, reader->pointer(), reader->length(),
-                              bc_supported_, texture, pending_, states_, error, &extent, &cube, maximum_dimension, mip_skip);
+                              bc_supported_, texture, pending_, states_, error, &extent, &cube, maximum_dimension, mip_skip,
+                              force_linear, &layers, &volume);
     FS.r_close(reader);
     const auto elapsed =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - load_begin).count();
@@ -175,12 +303,16 @@ bool GameTextureFactory::load(const std::string &name, Asset *&asset, std::strin
     auto inserted = assets_.emplace(key, Asset{}).first;
     inserted->second.texture = texture;
     inserted->second.source_path = path;
+    inserted->second.quality_name = normalized;
     inserted->second.extent = {extent.width, extent.height};
+    inserted->second.layers = layers;
     inserted->second.cube = cube;
+    inserted->second.volume = volume;
     inserted->second.maximum_dimension = maximum_dimension;
     inserted->second.mip_skip = mip_skip;
-    // Conservative RGBA-equivalent residency estimate for DDS mip chains.
-    inserted->second.bytes = uint64_t(extent.width) * extent.height * 4;
+    inserted->second.force_linear = force_linear;
+    inserted->second.quality_managed = quality_managed;
+    inserted->second.bytes = texture.required_bytes;
     asset = &inserted->second;
     return true;
 }
@@ -199,7 +331,7 @@ bool GameTextureFactory::material(const std::string &texture_list, DeferredPass 
     Asset *asset;
     if (!load(diffuse, asset, error, preserve_resolution))
         return false;
-    if (asset->cube)
+    if (asset->volume || asset->cube || asset->layers != 1)
     {
         error = "base texture slot 0 requires 2D DDS: " + diffuse;
         return false;
@@ -237,10 +369,12 @@ bool GameTextureFactory::lightmapped_material(const std::string &diffuse_name, c
     Asset *lightmap = nullptr;
     if (!load(trim(diffuse_name), diffuse, error, atlas) || !load(trim(lightmap_name), lightmap, error, atlas))
         return false;
-    if (diffuse->cube || lightmap->cube)
+    if (diffuse->volume || diffuse->cube || diffuse->layers != 1 ||
+        lightmap->volume || lightmap->cube || lightmap->layers != 1)
     {
+        const bool invalid_diffuse = diffuse->volume || diffuse->cube || diffuse->layers != 1;
         error = std::string("lightmapped texture slot ") +
-                (diffuse->cube ? "0 (base): " + diffuse_name : "1 (lightmap): " + lightmap_name) + " requires 2D DDS";
+                (invalid_diffuse ? "0 (base): " + diffuse_name : "1 (lightmap): " + lightmap_name) + " requires 2D DDS";
         return false;
     }
     const auto diffuse_it =
@@ -328,7 +462,7 @@ bool GameTextureFactory::terrain_material(const std::string &diffuse_name, const
     {
         if (!load(names[i], item.assets[i], error))
             return false;
-        if (item.assets[i]->cube)
+        if (item.assets[i]->volume || item.assets[i]->cube || item.assets[i]->layers != 1)
         {
             constexpr const char *roles[]{"base", "lightmap", "mask", "R2-R", "R2-G", "R2-B", "R2-A"};
             error = "terrain texture slot " + std::to_string(i) + " (" + roles[i] + ") requires 2D DDS: " + names[i];
@@ -344,7 +478,7 @@ bool GameTextureFactory::terrain_material(const std::string &diffuse_name, const
     auto found = terrain_.find(key);
     if (found == terrain_.end())
     {
-        std::array<VkImageView, 7> views{};
+        std::array<VkImageView, SurfaceMaterialBaseTextureCount> views{};
         for (size_t i = 0; i < views.size(); ++i)
             views[i] = item.assets[i]->texture.view;
         if (!pass.terrain_material(views, sampler_, item.set, error, lightmap_sampler_))
@@ -378,7 +512,7 @@ bool GameTextureFactory::detail_material(const std::string &diffuse_name, const 
     {
         if (!load(names[i], item.assets[i], error))
             return false;
-        if (item.assets[i]->cube)
+        if (item.assets[i]->volume || item.assets[i]->cube || item.assets[i]->layers != 1)
         {
             error = "single detail texture slot " + std::to_string(i) +
                     (i == 0   ? " (base)"
@@ -397,7 +531,7 @@ bool GameTextureFactory::detail_material(const std::string &diffuse_name, const 
     auto found = terrain_.find(key);
     if (found == terrain_.end())
     {
-        std::array<VkImageView, 7> views{};
+        std::array<VkImageView, SurfaceMaterialBaseTextureCount> views{};
         for (size_t i = 0; i < views.size(); ++i)
             views[i] = item.assets[i]->texture.view;
         if (!pass.terrain_material(views, sampler_, item.set, error, lightmap_sampler_))
@@ -431,7 +565,7 @@ bool GameTextureFactory::environment_material(const std::string &diffuse_name, c
     {
         if (!load(names[i], item.assets[i], error))
             return false;
-        if (i < 2 && item.assets[i]->cube)
+        if (i < 2 && (item.assets[i]->volume || item.assets[i]->cube || item.assets[i]->layers != 1))
         {
             error = "environment texture slot " + std::to_string(i) + " requires 2D DDS: " + names[i];
             return false;
@@ -443,7 +577,11 @@ bool GameTextureFactory::environment_material(const std::string &diffuse_name, c
         key += it->first;
         key.push_back('\0');
     }
-    if (item.assets[2]->cube != cube)
+    const bool valid_environment_shape = cube ?
+        !item.assets[2]->volume && item.assets[2]->cube &&
+            item.assets[2]->layers >= 6u && item.assets[2]->layers % 6u == 0 :
+        !item.assets[2]->volume && !item.assets[2]->cube && item.assets[2]->layers == 1u;
+    if (!valid_environment_shape)
     {
         error = "environment texture '" + environment_name + (cube ? "' must be a cubemap DDS" : "' must be a 2D DDS");
         return false;
@@ -451,11 +589,16 @@ bool GameTextureFactory::environment_material(const std::string &diffuse_name, c
     auto found = terrain_.find(key);
     if (found == terrain_.end())
     {
-        std::array<VkImageView, 7> views{};
+        std::array<VkImageView, SurfaceMaterialBaseTextureCount> views{};
         for (size_t i = 0; i < views.size(); ++i)
             views[i] = item.assets[i]->texture.view;
         if (!pass.terrain_material(views, sampler_, item.set, error, lightmap_sampler_))
             return false;
+        std::array<ShaderImageShape, SurfaceMaterialTextureCount> image_shapes{};
+        image_shapes.fill({ShaderImageDimension::TwoD, false, false});
+        if (cube)
+            image_shapes[2] = {ShaderImageDimension::Cube, item.assets[2]->layers > 6u, false};
+        pass.set_material_image_shapes(item.set, image_shapes);
         item.pass = &pass;
         for (size_t i = 0; i < item.count; ++i)
             if (std::find(item.assets.begin(), item.assets.begin() + i, item.assets[i]) == item.assets.begin() + i)
@@ -496,7 +639,8 @@ void GameTextureFactory::release_terrain_material(VkDescriptorSet set, DeferredP
     R_ASSERT2(false, "unknown Vulkan terrain descriptor");
 }
 
-bool GameTextureFactory::surface_material(const std::array<std::string, 20> &names, const SurfaceParameters &parameters,
+bool GameTextureFactory::surface_material(
+    const std::array<std::string, SurfaceMaterialTextureCount> &names, const SurfaceParameters &parameters,
                                           DeferredPass &pass, VkDescriptorSet &result, std::string &error,
                                           bool cube_environment, bool clamp)
 {
@@ -504,23 +648,51 @@ bool GameTextureFactory::surface_material(const std::array<std::string, 20> &nam
     TerrainMaterial item;
     item.count = names.size();
     item.clamp = clamp;
+    std::array<ShaderImageShape, SurfaceMaterialTextureCount> image_shapes{};
+    image_shapes.fill({ShaderImageDimension::TwoD, false, false});
     std::string key = "surface";
     key.push_back('\0');
     key.push_back(clamp ? '\1' : '\0');
+    key.push_back(cube_environment ? '\1' : '\0');
     for (size_t i = 0; i < names.size(); ++i)
     {
         const std::string name = trim_texture_name(names[i].empty() ? names[0] : names[i]);
-        if (!load(name, item.assets[i], error))
+        const uint32_t surface_map_flags = static_cast<uint32_t>(parameters.external_normal + 0.5f);
+        const uint32_t terrain_map_flags = static_cast<uint32_t>(parameters.terrain_bump + 0.5f);
+        uint32_t terrain_pbr_flag = 0u;
+        if (i >= 20 && i < 24) terrain_pbr_flag = 1u << (4 + (i - 20));
+        else if (i < 28 && i >= 24) terrain_pbr_flag = 1u << (8 + (i - 24));
+        else if (i < 32 && i >= 28) terrain_pbr_flag = 1u << (12 + (i - 28));
+        else if (i < 36 && i >= 32) terrain_pbr_flag = 1u << (16 + (i - 32));
+        const bool pbr_data = (i == 19 && (surface_map_flags & SurfaceMapPackedPbr)) ||
+            (i == 16 && (surface_map_flags & SurfaceMapMetallic)) ||
+            (i == 17 && (surface_map_flags & SurfaceMapRoughness)) ||
+            (i == 18 && (surface_map_flags & SurfaceMapAo)) ||
+            (i == 36 && (surface_map_flags & SurfaceMapParallax)) ||
+            (i >= 37 && i < 41 && (terrain_map_flags & (1u << (20 + i - 37)))) ||
+            (terrain_pbr_flag != 0u && (terrain_map_flags & terrain_pbr_flag) != 0u);
+        if (!load(name, item.assets[i], error, false, pbr_data))
         {
             error = "surface slot " + std::to_string(i) + " ('" + name + "'): " + error;
             return false;
         }
-        if (item.assets[i]->cube != (i == 2 && cube_environment))
+        const bool expects_cube = i == 2 && cube_environment;
+        const bool valid_shape = expects_cube ?
+            !item.assets[i]->volume && item.assets[i]->cube &&
+                item.assets[i]->layers >= 6u && item.assets[i]->layers % 6u == 0 :
+            !item.assets[i]->cube;
+        if (!valid_shape)
         {
             error = "surface slot " + std::to_string(i) +
-                    (i == 2 && cube_environment ? " requires cube DDS: " : " requires 2D DDS: ") + name;
+                    (expects_cube ? " requires cube DDS: " : " requires a 2D or 2D-array DDS: ") + name;
             return false;
         }
+        if (expects_cube)
+            image_shapes[i] = {ShaderImageDimension::Cube, item.assets[i]->layers > 6u, false};
+        else if (item.assets[i]->volume)
+            image_shapes[i] = {ShaderImageDimension::ThreeD, false, false};
+        else if (item.assets[i]->layers > 1)
+            image_shapes[i] = {ShaderImageDimension::TwoD, true, false};
         const auto it = std::find_if(assets_.begin(), assets_.end(),
                                      [asset = item.assets[i]](const auto &entry) { return &entry.second == asset; });
         R_ASSERT(it != assets_.end());
@@ -533,8 +705,8 @@ bool GameTextureFactory::surface_material(const std::array<std::string, 20> &nam
     auto found = terrain_.find(key);
     if (found == terrain_.end())
     {
-        std::array<VkImageView, 7> first{};
-        std::array<VkImageView, 13> extra{};
+        std::array<VkImageView, SurfaceMaterialBaseTextureCount> first{};
+        std::array<VkImageView, SurfaceMaterialExtraTextureCount> extra{};
         for (size_t i = 0; i < first.size(); ++i)
             first[i] = item.assets[i]->texture.view;
         for (size_t i = 0; i < extra.size(); ++i)
@@ -543,6 +715,7 @@ bool GameTextureFactory::surface_material(const std::array<std::string, 20> &nam
         if (!pass.terrain_material(first, material_sampler, item.set, error, lightmap_sampler_))
             return false;
         pass.update_surface_textures(item.set, extra, material_sampler);
+        pass.set_material_image_shapes(item.set, image_shapes);
         pass.set_surface_parameters(item.set, parameters);
         item.pass = &pass;
         for (size_t i = 0; i < item.count; ++i)
@@ -620,7 +793,8 @@ bool GameTextureFactory::height_field(const std::string &bump_aux, const HeightF
         error = "HM auxiliary DDS '" + bump_aux + "': " + error;
         return false;
     }
-    if (decoded.cube || decoded.extent.width > 4096 || decoded.extent.height > 4096 || decoded.copies.empty() ||
+    if (decoded.volume || decoded.cube || decoded.extent.width > 4096 || decoded.extent.height > 4096 ||
+        decoded.extent.depth != 1 || decoded.copies.empty() ||
         (decoded.format != VK_FORMAT_R8G8B8A8_UNORM && decoded.format != VK_FORMAT_R8G8B8A8_SRGB &&
          decoded.format != VK_FORMAT_B8G8R8A8_UNORM && decoded.format != VK_FORMAT_B8G8R8A8_SRGB))
     {
@@ -651,9 +825,21 @@ bool GameTextureFactory::texture_detail_metadata(const std::string &diffuse, Det
 {
     detail = {};
     const std::string name = trim_texture_name(diffuse);
+    const auto find_implicit_pbr = [&] {
+        if (name.empty() || !detail.pbr_texture.empty()) return;
+        std::string base = name;
+        if (base.size() > 2 && base.compare(base.size() - 2, 2, "_d") == 0)
+            base.resize(base.size() - 2);
+        const std::string candidate = base + "_pbr";
+        string_path pbr_path;
+        if (FS.exist(pbr_path, "$level$", candidate.c_str(), ".dds") ||
+            FS.exist(pbr_path, "$game_textures$", candidate.c_str(), ".dds"))
+            detail.pbr_texture = candidate;
+    };
     string_path path;
     if (!FS.exist(path, "$level$", name.c_str(), ".thm") && !FS.exist(path, "$game_textures$", name.c_str(), ".thm"))
     {
+        find_implicit_pbr();
         error.clear();
         return true;
     } // Metadata is optional for implicit detail.
@@ -663,6 +849,7 @@ bool GameTextureFactory::texture_detail_metadata(const std::string &diffuse, Det
         found->second.age == age && found->second.bytes == bytes)
     {
         detail = found->second.value;
+        find_implicit_pbr();
         error.clear();
         return true;
     }
@@ -694,6 +881,11 @@ bool GameTextureFactory::texture_detail_metadata(const std::string &diffuse, Det
     extras.bump = bounded_chunk(0x0817, extras.bump_size);
     extras.material = bounded_chunk(0x0816, extras.material_size);
     extras.external_normal = bounded_chunk(0x0818, extras.external_normal_size);
+    extras.metallic = bounded_chunk(0x081a, extras.metallic_size);
+    extras.roughness = bounded_chunk(0x081b, extras.roughness_size);
+    extras.ao = bounded_chunk(0x081c, extras.ao_size);
+    extras.parallax = bounded_chunk(0x081d, extras.parallax_size);
+    extras.pbr = bounded_chunk(0x081e, extras.pbr_size);
     const bool valid =
         decode_detail_metadata(params, bounded_params, extension, bounded_extension, detail, error, extras);
     FS.r_close(reader);
@@ -703,6 +895,7 @@ bool GameTextureFactory::texture_detail_metadata(const std::string &diffuse, Det
         return false;
     }
     detail_metadata_cache_.insert_or_assign(path, CachedMetadata{detail, age, bytes});
+    find_implicit_pbr();
     error.clear();
     return true;
 }
@@ -800,6 +993,12 @@ bool GameTextureFactory::decode_detail_metadata(const uint8_t *params, size_t pa
     if (extras.external_normal && !bounded_name(extras.external_normal, extras.external_normal_size,
                                                 detail.external_normal_texture, "THM_CHUNK_EXT_NORMALMAP"))
         return false;
+    if ((extras.metallic && !bounded_name(extras.metallic, extras.metallic_size, detail.metallic_texture, "THM_CHUNK_PBR_METALLIC")) ||
+        (extras.roughness && !bounded_name(extras.roughness, extras.roughness_size, detail.roughness_texture, "THM_CHUNK_PBR_ROUGHNESS")) ||
+        (extras.ao && !bounded_name(extras.ao, extras.ao_size, detail.ao_texture, "THM_CHUNK_PBR_AO")) ||
+        (extras.parallax && !bounded_name(extras.parallax, extras.parallax_size, detail.parallax_texture, "THM_CHUNK_PBR_PARALLAX")) ||
+        (extras.pbr && !bounded_name(extras.pbr, extras.pbr_size, detail.pbr_texture, "THM_CHUNK_PBR_PACKED")))
+        return false;
     error.clear();
     return true;
 }
@@ -811,6 +1010,11 @@ bool GameTextureFactory::ui(const std::string &texture_name, ScenePass &pass, Vk
     Asset *asset;
     if (!load(texture_name, asset, error))
         return false;
+    if (asset->volume || asset->cube || asset->layers != 1)
+    {
+        error = "UI texture requires a 2D DDS: " + texture_name;
+        return false;
+    }
     VkDescriptorSet &set = clamp ? asset->ui_set : asset->wrap_ui_set;
     if (!set && !pass.create_ui_texture_set(asset->texture.view, clamp ? ui_sampler_ : sampler_, set, error))
     {
@@ -861,13 +1065,40 @@ bool GameTextureFactory::ui_pixels(const uint8_t *rgba, uint32_t width, uint32_t
         return false;
     }
     asset.extent = {width, height};
-    asset.bytes = size_t(width) * height * 4;
+    asset.bytes = asset.texture.required_bytes;
     (clamp ? asset.ui_refs : asset.wrap_ui_refs) = 1;
     asset.ui_pass = &pass;
     result = clamp ? asset.ui_set : asset.wrap_ui_set;
-    assets_.emplace("#dynamic-ui-" + std::to_string(++transient_id_), std::move(asset));
+    const std::string asset_name = "#dynamic-ui-" + std::to_string(++transient_id_);
+    const auto [it, inserted] = assets_.emplace(asset_name, std::move(asset));
+    R_ASSERT2(inserted, "dynamic Vulkan UI texture key collision");
+    dynamic_ui_assets_.emplace(result, &it->second);
     error.clear();
     return true;
+}
+
+bool GameTextureFactory::update_ui_pixels(VkDescriptorSet set, const uint8_t *rgba,
+    uint32_t width, uint32_t height, std::string &error)
+{
+    if (!set || !rgba || !width || !height)
+    {
+        error = "invalid persistent dynamic UI texture update";
+        return false;
+    }
+    const auto found = dynamic_ui_assets_.find(set);
+    if (found != dynamic_ui_assets_.end())
+    {
+        const Asset& asset = *found->second;
+        if (asset.extent.width != width || asset.extent.height != height || !asset.texture.image)
+        {
+            error = "persistent dynamic UI texture extent or image does not match its descriptor";
+            return false;
+        }
+        return xray::render::vulkan::update_texture_pixels(device_, queue_, pool_, memory_, dispatch_,
+            asset.texture.image, width, height, rgba, found->second->ui_upload, error);
+    }
+    error = "persistent dynamic UI texture descriptor is not owned by this factory";
+    return false;
 }
 
 void GameTextureFactory::evict_if_unused(const std::string &name)
@@ -878,19 +1109,23 @@ void GameTextureFactory::evict_if_unused(const std::string &name)
         return;
     R_ASSERT2(wait_for_uploads(device_, pool_, dispatch_, pending_),
               "Vulkan texture upload did not complete before release");
+    destroy_persistent_texture_upload(device_, pool_, dispatch_, it->second.ui_upload);
+    if (it->second.ui_set) dynamic_ui_assets_.erase(it->second.ui_set);
+    if (it->second.wrap_ui_set) dynamic_ui_assets_.erase(it->second.wrap_ui_set);
     states_.forget_image(it->second.texture.image);
     destroy_texture(device_, dispatch_, it->second.texture);
     assets_.erase(it);
 }
 
-bool GameTextureFactory::projection_texture(const std::string &name, VkImageView &view, std::string &error)
+bool GameTextureFactory::projection_texture(const std::string &name, VkImageView &view, std::string &error,
+                                            bool force_linear)
 {
     if (!name.empty())
     {
         Asset *asset = nullptr;
-        if (!load(name, asset, error))
+        if (!load(name, asset, error, false, force_linear))
             return false;
-        if (asset->cube)
+        if (asset->volume || asset->cube || asset->layers != 1)
         {
             error = "spot projection needs a 2D texture";
             return false;
@@ -930,9 +1165,32 @@ bool GameTextureFactory::environment(const std::string &name, VkImageView &view,
     Asset *asset = nullptr;
     if (!load(name, asset, error))
         return false;
+    if (asset->volume || (asset->cube && asset->layers != 6) || (!asset->cube && asset->layers != 1))
+    {
+        error = "weather and environment descriptors require a 2D texture or single cubemap DDS: " + name;
+        return false;
+    }
     ++asset->environment_refs;
     view = asset->texture.view;
     return true;
+}
+
+bool GameTextureFactory::image_shape(VkImageView view, ShaderImageShape& shape) const
+{
+    shape = {};
+    if (!view)
+        return false;
+    for (const auto& [name, asset] : assets_)
+    {
+        if (asset.texture.view != view)
+            continue;
+        shape.dimension = asset.volume ? ShaderImageDimension::ThreeD :
+            asset.cube ? ShaderImageDimension::Cube : ShaderImageDimension::TwoD;
+        shape.arrayed = asset.cube ? asset.layers > 6u : !asset.volume && asset.layers > 1u;
+        shape.multisampled = false;
+        return true;
+    }
+    return false;
 }
 
 void GameTextureFactory::release_environment(VkImageView view)
@@ -1008,7 +1266,10 @@ void GameTextureFactory::release_ui(VkDescriptorSet set, ScenePass &pass)
         if (--refs)
             return;
         R_ASSERT2(retirement_idle(), "Vulkan device did not become idle before UI texture release");
-        pass.release_ui_texture_set(clamp ? asset.ui_set : asset.wrap_ui_set);
+        VkDescriptorSet &released = clamp ? asset.ui_set : asset.wrap_ui_set;
+        pass.release_ui_texture_set(released);
+        dynamic_ui_assets_.erase(released);
+        released = VK_NULL_HANDLE;
         if (!asset.ui_set && !asset.wrap_ui_set)
             asset.ui_pass = nullptr;
         evict_if_unused(name);
@@ -1039,6 +1300,7 @@ void GameTextureFactory::destroy()
                 asset.ui_pass->release_ui_texture_set(asset.ui_set);
             if (asset.wrap_ui_set && asset.ui_pass)
                 asset.ui_pass->release_ui_texture_set(asset.wrap_ui_set);
+            destroy_persistent_texture_upload(device_, pool_, dispatch_, asset.ui_upload);
             states_.forget_image(asset.texture.image);
             destroy_texture(device_, dispatch_, asset.texture);
         }
@@ -1050,6 +1312,7 @@ void GameTextureFactory::destroy()
             destroy_sampler_(device_, lightmap_sampler_, nullptr);
     }
     assets_.clear();
+    dynamic_ui_assets_.clear();
     detail_metadata_cache_.clear();
     lightmapped_.clear();
     terrain_.clear();
@@ -1063,14 +1326,28 @@ void GameTextureFactory::destroy()
     sampler_ = VK_NULL_HANDLE;
     ui_sampler_ = VK_NULL_HANDLE;
     lightmap_sampler_ = VK_NULL_HANDLE;
+    create_sampler_ = nullptr;
     destroy_sampler_ = nullptr;
     wait_idle_ = nullptr;
+    sampler_anisotropy_supported_ = false;
+    max_sampler_anisotropy_ = 1.f;
+    max_sampler_lod_bias_ = 0.f;
+    active_anisotropy_ = 1.f;
+    active_mip_bias_ = 0.f;
+    active_texture_lod_ = 0;
+    active_quality_preset_ = 0;
     dispatch_ = {};
 }
 
 bool GameTextureFactory::finish_uploads()
 {
     return !device_ || wait_for_uploads(device_, pool_, dispatch_, pending_);
+}
+
+void GameTextureFactory::retire_completed_uploads()
+{
+    if (device_)
+        collect_completed_uploads(device_, pool_, dispatch_, pending_);
 }
 
 void GameTextureFactory::retire_unused()
@@ -1099,8 +1376,13 @@ void GameTextureFactory::invalidate_unused()
     retire_unused();
 }
 
+bool GameTextureFactory::texture_quality_changed() const
+{
+    return active_texture_lod_ != psTextureLOD || active_quality_preset_ != quality_preset;
+}
+
 bool GameTextureFactory::reload_assets(std::string &error, const std::function<void()> &before_rebind,
-                                       const std::function<void()> &after_rebind)
+                                       const std::function<void()> &after_rebind, bool refresh_texture_quality)
 {
     if (!device_)
     {
@@ -1117,6 +1399,11 @@ bool GameTextureFactory::reload_assets(std::string &error, const std::function<v
         Asset *asset{};
         UploadedTexture texture;
         VkExtent3D extent{};
+        uint32_t layers{1};
+        bool cube{};
+        bool volume{};
+        uint32_t maximum_dimension{};
+        unsigned mip_skip{};
     };
     std::vector<Staged> staged;
     auto discard = [&] {
@@ -1141,9 +1428,17 @@ bool GameTextureFactory::reload_assets(std::string &error, const std::function<v
         }
         UploadedTexture replacement;
         VkExtent3D extent{};
+        uint32_t layers = 1;
+        bool cube = false;
+        bool volume = false;
+        uint32_t maximum_dimension = asset.maximum_dimension;
+        unsigned mip_skip = asset.mip_skip;
+        if (refresh_texture_quality)
+            resolve_texture_quality(asset.quality_name, asset.quality_managed, maximum_dimension, mip_skip);
         const bool loaded = upload_engine_texture(device_, queue_, pool_, memory_, dispatch_, source->pointer(),
                                                   source->length(), bc_supported_, replacement, pending_, states_,
-                                                  error, &extent, nullptr, asset.maximum_dimension, asset.mip_skip);
+                                                  error, &extent, &cube, maximum_dimension, mip_skip,
+                                                  asset.force_linear, &layers, &volume);
         FS.r_close(source);
         if (!loaded)
         {
@@ -1151,7 +1446,7 @@ bool GameTextureFactory::reload_assets(std::string &error, const std::function<v
             discard();
             return false;
         }
-        staged.push_back({&asset, replacement, extent});
+        staged.push_back({&asset, replacement, extent, layers, cube, volume, maximum_dimension, mip_skip});
     }
     if (!finish_uploads())
     {
@@ -1187,28 +1482,33 @@ bool GameTextureFactory::reload_assets(std::string &error, const std::function<v
         destroy_texture(device_, dispatch_, asset.texture);
         asset.texture = item.texture;
         asset.extent = {item.extent.width, item.extent.height};
-        asset.bytes = uint64_t(item.extent.width) * item.extent.height * 4;
+        asset.layers = item.layers;
+        asset.cube = item.cube;
+        asset.volume = item.volume;
+        asset.bytes = item.texture.required_bytes;
+        asset.maximum_dimension = item.maximum_dimension;
+        asset.mip_skip = item.mip_skip;
     }
     for (auto &[name, pair] : lightmapped_)
         pair.pass->update_lightmapped_material(pair.set, pair.diffuse->texture.view, pair.lightmap->texture.view,
                                                sampler_, lightmap_sampler_);
     for (auto &[name, item] : terrain_)
     {
-        std::array<VkImageView, 7> views{};
+        std::array<VkImageView, SurfaceMaterialBaseTextureCount> views{};
         for (size_t i = 0; i < views.size(); ++i)
             views[i] = item.assets[i]->texture.view;
         const VkSampler material_sampler = item.clamp ? ui_sampler_ : sampler_;
         item.pass->update_terrain_material(item.set, views, material_sampler, lightmap_sampler_);
-        if (item.count == 20)
+        if (item.count == SurfaceMaterialTextureCount)
         {
-            std::array<VkImageView, 13> extra{};
+            std::array<VkImageView, SurfaceMaterialExtraTextureCount> extra{};
             for (size_t i = 0; i < extra.size(); ++i)
                 extra[i] = item.assets[i + 7]->texture.view;
             item.pass->update_surface_textures(item.set, extra, material_sampler);
         }
         else
         {
-            std::array<VkImageView, 13> fallback{};
+            std::array<VkImageView, SurfaceMaterialExtraTextureCount> fallback{};
             fallback.fill(item.assets[0]->texture.view);
             item.pass->update_surface_textures(item.set, fallback, sampler_);
         }
@@ -1219,6 +1519,11 @@ bool GameTextureFactory::reload_assets(std::string &error, const std::function<v
     {
         R_ASSERT2(asset->environment_refs, "Vulkan weather reload lost its staging lease");
         --asset->environment_refs;
+    }
+    if (refresh_texture_quality)
+    {
+        active_texture_lod_ = psTextureLOD;
+        active_quality_preset_ = quality_preset;
     }
     retire_unused();
     error.clear();

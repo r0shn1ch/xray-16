@@ -48,6 +48,8 @@ class VulkanModelVisual final : public IRenderVisual
             skeleton_ = std::make_unique<VulkanKinematics>(*other.skeleton_, this);
         for (const auto &child : other.children_)
             children_.push_back(std::make_unique<VulkanModelVisual>(*child));
+        if (other.skeleton_lod_)
+            skeleton_lod_ = std::make_unique<VulkanModelVisual>(*other.skeleton_lod_);
     }
 
     ~VulkanModelVisual() override
@@ -92,6 +94,8 @@ class VulkanModelVisual final : public IRenderVisual
             skeleton_->reset_instance_state();
         for (auto &child : children_)
             child->reset_instance_state();
+        if (skeleton_lod_)
+            skeleton_lod_->reset_instance_state();
     }
 
     void release_pose_buffers(IKinematics *owner = nullptr)
@@ -102,6 +106,8 @@ class VulkanModelVisual final : public IRenderVisual
             gpu_->release_instance(owner);
         for (auto &child : children_)
             child->release_pose_buffers(owner);
+        if (skeleton_lod_)
+            skeleton_lod_->release_pose_buffers(owner);
     }
     const auto &children() const
     {
@@ -128,9 +134,21 @@ class VulkanModelVisual final : public IRenderVisual
     {
         return !!lod_gpu_[0];
     }
+    void set_skeleton_lod(std::unique_ptr<VulkanModelVisual> visual)
+    {
+        skeleton_lod_ = std::move(visual);
+    }
+    const VulkanModelVisual *skeleton_lod() const
+    {
+        return skeleton_lod_.get();
+    }
     GpuModel &lod_gpu(uint8_t facet) const
     {
         return *lod_gpu_[facet];
+    }
+    const auto &lod_gpu_handles() const
+    {
+        return lod_gpu_;
     }
     const auto &lod_normals() const
     {
@@ -198,6 +216,7 @@ class VulkanModelVisual final : public IRenderVisual
     std::array<std::shared_ptr<GpuModel>, 8> lod_gpu_{};
     std::array<std::array<float, 3>, 8> lod_normals_{};
     std::unique_ptr<VulkanKinematics> skeleton_;
+    std::unique_ptr<VulkanModelVisual> skeleton_lod_;
     std::string cache_name_;
     u32 type_{};
     std::vector<std::unique_ptr<VulkanModelVisual>> children_;

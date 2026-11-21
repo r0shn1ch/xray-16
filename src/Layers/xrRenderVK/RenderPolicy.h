@@ -12,7 +12,7 @@ struct RenderQuality
     float sun_span;
 };
 inline constexpr std::array<RenderQuality, 5> RenderQualities{{{512, 0, 8, 0, 1, 64},
-                                                               {1024, 20, 12, 0, 1, 96},
+                                                               {512, 20, 12, 0, 1, 96},
                                                                {1024, 40, 16, 1, 1, 120},
                                                                {0, 60, 24, 1, 2, 160},
                                                                {0, 80, 32, 2, 2, 180}}};

@@ -1,0 +1,161 @@
+#version 460
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+#extension GL_EXT_nonuniform_qualifier : require
+
+layout(local_size_x = 64) in;
+
+struct Ray
+{
+    vec4 origin_min;
+    vec4 direction_max;
+};
+struct Hit
+{
+    uint found;
+    float distance;
+    uint instance;
+    uint geometry;
+    uint primitive;
+    uint material_id;
+    vec2 barycentric;
+};
+struct BatchInfo
+{
+    uint first_geometry;
+    uint geometry_count;
+    uvec2 padding;
+    vec4 row0; vec4 row1; vec4 row2;
+};
+struct GeometryInfo
+{
+    uvec2 vertices;
+    uvec2 indices;
+    uint vertex_stride;
+    uint max_vertex;
+    uint material_id;
+    uint material_flags;
+    float alpha_cutoff;
+    uint texture_slot;
+    uint diffuse_texture_slot;
+    uint pbr_texture_slot;
+    uint metallic_texture_slot;
+    uint roughness_texture_slot;
+    uint ao_texture_slot;
+    uint normal_texture_slot;
+    uint normal_aux_texture_slot;
+    uint terrain_texture_slots[33];
+    float terrain_scale;
+    float parallax_height;
+};
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer IndexBuffer
+{
+    uint values[];
+};
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer VertexBuffer
+{
+    uint values[];
+};
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
+layout(set = 0, binding = 1, std430) readonly buffer RayInput { Ray rays[]; };
+layout(set = 0, binding = 2, std430) writeonly buffer HitOutput { Hit hits[]; };
+layout(set = 0, binding = 3, std430) readonly buffer BatchTable { BatchInfo batches[]; };
+layout(set = 0, binding = 4, std430) readonly buffer GeometryTable { GeometryInfo geometries[]; };
+struct TextureTransform { vec4 row0; vec4 row1; vec4 detail_row0; vec4 detail_row1; };
+layout(set = 0, binding = 5, std430) readonly buffer TransformTable { TextureTransform transforms[]; };
+layout(set = 1, binding = 0) uniform sampler2D material_textures[];
+layout(push_constant) uniform Parameters { uint count; uint texture_count; uint groups_x; } parameters;
+
+bool candidate_visible(rayQueryEXT query)
+{
+    uint batch_index = rayQueryGetIntersectionInstanceCustomIndexEXT(query, false);
+    uint geometry_index = rayQueryGetIntersectionGeometryIndexEXT(query, false);
+    if (batch_index >= batches.length()) return true;
+    BatchInfo batch = batches[batch_index];
+    if (geometry_index >= batch.geometry_count ||
+        batch.first_geometry + geometry_index >= geometries.length()) return true;
+    uint flat_geometry = batch.first_geometry + geometry_index;
+    GeometryInfo geometry = geometries[flat_geometry];
+    if (geometry.alpha_cutoff <= 0.0 || geometry.texture_slot >= parameters.texture_count)
+        return true;
+    if (geometry.vertex_stride < 32u || geometry.vertex_stride % 4u != 0u)
+        return true;
+    uint primitive = rayQueryGetIntersectionPrimitiveIndexEXT(query, false);
+    IndexBuffer indices = IndexBuffer(geometry.indices);
+    VertexBuffer vertices = VertexBuffer(geometry.vertices);
+    uint stride = geometry.vertex_stride / 4u;
+    uint i0 = indices.values[primitive * 3u];
+    uint i1 = indices.values[primitive * 3u + 1u];
+    uint i2 = indices.values[primitive * 3u + 2u];
+    if (i0 > geometry.max_vertex || i1 > geometry.max_vertex || i2 > geometry.max_vertex)
+        return true;
+    vec2 uv0 = vec2(uintBitsToFloat(vertices.values[i0 * stride + 6u]),
+                    uintBitsToFloat(vertices.values[i0 * stride + 7u]));
+    vec2 uv1 = vec2(uintBitsToFloat(vertices.values[i1 * stride + 6u]),
+                    uintBitsToFloat(vertices.values[i1 * stride + 7u]));
+    vec2 uv2 = vec2(uintBitsToFloat(vertices.values[i2 * stride + 6u]),
+                    uintBitsToFloat(vertices.values[i2 * stride + 7u]));
+    vec2 bary = rayQueryGetIntersectionBarycentricsEXT(query, false);
+    vec2 uv = uv0 * (1.0 - bary.x - bary.y) + uv1 * bary.x + uv2 * bary.y;
+    if (flat_geometry < transforms.length())
+    {
+        TextureTransform transform = transforms[flat_geometry];
+        vec4 coord = vec4(uv, 0.0, 1.0);
+        uv = vec2(dot(transform.row0, coord), dot(transform.row1, coord));
+    }
+    return textureLod(material_textures[nonuniformEXT(geometry.texture_slot)], uv, 0.0).a >=
+        geometry.alpha_cutoff;
+}
+
+void main()
+{
+    uint row_width = parameters.groups_x * 64u;
+    if (gl_GlobalInvocationID.y > (parameters.count - 1u) / row_width) return;
+    uint row = gl_GlobalInvocationID.y * row_width;
+    if (gl_GlobalInvocationID.x >= parameters.count - row) return;
+    uint index = row + gl_GlobalInvocationID.x;
+    Ray ray = rays[index];
+    if (ray.direction_max.w <= ray.origin_min.w)
+    {
+        Hit miss;
+        miss.found = 0u;
+        miss.distance = -1.0;
+        miss.instance = miss.geometry = miss.primitive = miss.material_id = 0xffffffffu;
+        miss.barycentric = vec2(0.0);
+        hits[index] = miss;
+        return;
+    }
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, scene, 0,
+        0xff, ray.origin_min.xyz, ray.origin_min.w,
+        ray.direction_max.xyz, ray.direction_max.w);
+    while (rayQueryProceedEXT(query))
+    {
+        if (rayQueryGetIntersectionTypeEXT(query, false) ==
+                gl_RayQueryCandidateIntersectionTriangleEXT && candidate_visible(query))
+            rayQueryConfirmIntersectionEXT(query);
+    }
+    Hit hit;
+    hit.found = uint(rayQueryGetIntersectionTypeEXT(query, true) ==
+        gl_RayQueryCommittedIntersectionTriangleEXT);
+    hit.distance = hit.found != 0u ? rayQueryGetIntersectionTEXT(query, true) : -1.0;
+    hit.instance = hit.found != 0u ?
+        rayQueryGetIntersectionInstanceCustomIndexEXT(query, true) : 0xffffffffu;
+    hit.geometry = hit.found != 0u ?
+        rayQueryGetIntersectionGeometryIndexEXT(query, true) : 0xffffffffu;
+    hit.primitive = hit.found != 0u ?
+        rayQueryGetIntersectionPrimitiveIndexEXT(query, true) : 0xffffffffu;
+    hit.material_id = 0xffffffffu;
+    if (hit.found != 0u && hit.instance < batches.length())
+    {
+        BatchInfo batch = batches[hit.instance];
+        if (hit.geometry < batch.geometry_count &&
+            batch.first_geometry + hit.geometry < geometries.length())
+            hit.material_id = geometries[batch.first_geometry + hit.geometry].material_id;
+    }
+    hit.barycentric = hit.found != 0u ?
+        rayQueryGetIntersectionBarycentricsEXT(query, true) : vec2(0.0);
+    hits[index] = hit;
+}

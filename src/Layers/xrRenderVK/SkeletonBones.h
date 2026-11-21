@@ -3,11 +3,14 @@
 #include "LevelModels.h"
 
 #include <array>
+#include <cstddef>
 #include <string>
 #include <vector>
 
 namespace xray::render::vulkan
 {
+constexpr size_t MaxVulkanSkeletonBones = 256;
+
 struct SkeletonBone
 {
     std::string name;

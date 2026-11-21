@@ -10,6 +10,7 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace
@@ -214,7 +215,7 @@ void run(Fixture& vk, bool srgb, const std::vector<uint8_t>& compressed, const s
 }
 }
 
-int main()
+int main(int argc, char** argv)
 {
     try
     {
@@ -225,8 +226,12 @@ int main()
         check(vkEnumeratePhysicalDevices(vk.instance, &count, nullptr));
         std::vector<VkPhysicalDevice> devices(count);
         if (count) check(vkEnumeratePhysicalDevices(vk.instance, &count, devices.data()));
-        for (auto device : devices)
+        const int selected = argc > 1 ? std::stoi(argv[1]) : -1;
+        if (selected >= 0 && size_t(selected) >= devices.size()) return 77;
+        for (size_t index = 0; index < devices.size(); ++index)
         {
+            if (selected >= 0 && size_t(selected) != index) continue;
+            const VkPhysicalDevice device = devices[index];
             VkPhysicalDeviceFeatures features{};
             vkGetPhysicalDeviceFeatures(device, &features);
             bool supported = features.textureCompressionBC;

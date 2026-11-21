@@ -2,6 +2,7 @@
 #include "src/Layers/xrRenderVK/ShaderMaterialLibrary.h"
 #include "src/Layers/xrRenderVK/LevelPassGraph.h"
 
+#undef NDEBUG
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -211,9 +212,8 @@ static void screen_context_matrix()
                     particle ? blend <= 5 && (flags & ~(1u | 2u | 4u)) == 0 &&
                         (flags & 2u) && bool(flags & 4u) == (blend == 0) :
                     (flags & 2u) && (flags & ~(1u | 2u | (blend == 0 ? 4u : 0u) |
-                        (blend == 1 && context == 2 ? 16u : 0u))) == 0 &&
-                        (blend != 0 || (flags & 4u)) &&
-                        (context != 3 || !(flags & 16u));
+                        (blend == 1 ? 16u : 0u))) == 0 &&
+                        (blend != 0 || (flags & 4u));
                 SurfaceMode mode{};
                 int alpha = -1, selected = -1;
                 uint32_t extracted_flags = 0;
@@ -280,10 +280,14 @@ static void screen_context_matrix()
                         RenderPassSelection selection{RenderConsumer::Model, mode};
                         selection.hud = hud;
                         selection.screen_blend = int(blend);
+                        selection.fog = bool(flags & 16);
                         assert(build_render_pass_graph(selection, graph, error));
                         assert(graph.count == 1 && graph.passes[0].depth_test &&
                             graph.passes[0].depth_write == (blend == 0) &&
                             graph.passes[0].target == (hud ? LevelPassTarget::Hud : LevelPassTarget::Forward));
+                        if (selection.fog)
+                            assert(graph.passes[0].fragment == (hud ? "vk\\hud_model_set_blended.ps" :
+                                "vk\\model_set_fog_blended.ps"));
                     }
                 }
             }
@@ -958,7 +962,11 @@ int main()
         IReader reader(file.data(), file.size());
         ShaderMaterialLibrary tested;
         assert(tested.load(reader, error));
-        assert(!tested.resolve(shader_name, mode, error));
+        if (tested.resolve(shader_name, mode, error))
+        {
+            std::fprintf(stderr, "unexpectedly accepted material id=%u shader=%s\n", id, shader_name);
+            assert(false);
+        }
         assert(error.find("id=" + std::to_string(id)) != std::string::npos);
         assert(error.find(expected) != std::string::npos);
     };
@@ -1011,7 +1019,24 @@ int main()
     rejected_semantics(base_matrix, 71, "mod\\double_sided", "missing shaders.xr matrix");
     Bytes base_selector = record("LM      ", "mod\\base_selector", false);
     replace_saved_string_property(base_selector, 3, "Name", "textures\\nondefault");
-    rejected_semantics(base_selector, 112, "mod\\base_selector", "base texture selector");
+    {
+        Bytes records, file;
+        chunk(records, 112, base_selector);
+        chunk(file, 2, records);
+        IReader reader(file.data(), file.size());
+        ShaderMaterialLibrary parsed_library;
+        assert(parsed_library.load(reader, error));
+        const auto* parsed = parsed_library.find("mod\\base_selector");
+        assert(parsed && parsed->pipeline_supported &&
+            std::any_of(parsed->properties.begin(), parsed->properties.end(),
+                [](const BlenderProperty& property)
+                {
+                    return property.scope == "Base Texture" && property.name == "Name" &&
+                        property.data.size() == 64 &&
+                        std::strcmp(reinterpret_cast<const char*>(property.data.data()),
+                            "textures\\nondefault") == 0;
+                }));
+    }
     {
         Bytes records, file;
         chunk(records, 71, base_matrix);

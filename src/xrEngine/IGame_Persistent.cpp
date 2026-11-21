@@ -551,6 +551,12 @@ void IGame_Persistent::LoadStage(bool draw /*= true*/)
     ++load_stage;
 }
 
+void IGame_Persistent::UpdateLoadScreen() const
+{
+    if (max_load_stage > 0)
+        m_pLoadingScreen->Update(std::min(load_stage, max_load_stage), max_load_stage);
+}
+
 void IGame_Persistent::LoadDraw() const
 {
     if (loaded)

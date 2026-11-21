@@ -1,6 +1,8 @@
 #include "LightGrid.h"
 #include "LightGridShaders.h"
 #include "DeferredShaders.h"
+#include "ComputePipeline.h"
+#include "FrameImageGraph.h"
 #include <cstring>
 #include <algorithm>
 
@@ -71,17 +73,14 @@ bool LightGrid::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, VkRende
         destroy();
         return false;
     }
-    VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-    ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                nullptr,
-                0,
-                VK_SHADER_STAGE_COMPUTE_BIT,
-                compute.handle(),
-                "main",
-                nullptr};
-    ci.layout = layout_;
-    if (create_compute(device_, vk_.pipeline_cache, 1, &ci, nullptr, &cull_) != VK_SUCCESS)
-        return fail("light grid compute pipeline failed");
+    if (!create_compute_pipeline(device_, vk_.pipeline_cache, layout_, compute.handle(), "main",
+            create_compute, vk_.destroy_pipeline, cull_, error))
+    {
+        const std::string reason = "light grid compute pipeline: " + error;
+        error = reason;
+        destroy();
+        return false;
+    }
     const VkPipelineShaderStageCreateInfo stages[]{{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
                                                     VK_SHADER_STAGE_VERTEX_BIT, vertex.handle(), "main", nullptr},
                                                    {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
@@ -95,7 +94,7 @@ bool LightGrid::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, VkRende
     rs.polygonMode = VK_POLYGON_MODE_FILL;
     rs.lineWidth = 1;
     VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    ms.rasterizationSamples = graphics.gbuffer_samples;
     VkPipelineColorBlendAttachmentState attachment{};
     attachment.blendEnable = VK_TRUE;
     attachment.srcColorBlendFactor = attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
@@ -147,7 +146,8 @@ bool LightGrid::prepare(const FrameRecordingContext &frame, const std::vector<Lo
     for (size_t i = 0; i < lights.size() && i < LocalLightCapacity; ++i)
     {
         const auto &light = lights[i];
-        if (light.color_type[3] >= .5f || light.shadow_params[2] >= .5f || light.debug_mode[0] > .5f)
+        if (light.color_type[3] >= .5f || light.shadow_params[2] >= .5f || light.debug_mode[0] > .5f ||
+            light.debug_mode[1] > 0.f)
             continue;
         auto &point = data.points[image.count++];
         std::copy_n(light.position_range, 4, point.position);
@@ -183,8 +183,10 @@ bool LightGrid::prepare(const FrameRecordingContext &frame, const std::vector<Lo
     if (image.tiles.size() < tile_bytes)
     {
         if (!image.tiles.initialize(device_, tile_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, memory_, buffers_, error))
+                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, memory_, buffers_, error, true,
+                                    VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT))
             return false;
+        image.tiles_ready = false;
         changed = true;
     }
     if (!image.set)
@@ -219,18 +221,70 @@ bool LightGrid::prepare(const FrameRecordingContext &frame, const std::vector<Lo
     if (!image.lights.write(0, &data, sizeof(data), error))
         return false;
     image.extent = frame.extent;
-    vk_.cmd_bind_pipeline(frame.command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, cull_);
-    vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, layout_, 1, 1, &image.set, 0,
-                                 nullptr);
-    dispatch_(frame.command_buffer, tiles_x, tiles_y, 1);
-    VkBufferMemoryBarrier barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
-    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.buffer = image.tiles.handle();
-    barrier.size = VK_WHOLE_SIZE;
-    barrier_(frame.command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
-             nullptr, 1, &barrier, 0, nullptr);
+    const bool use_async_compute = frame.compute_command_buffer != VK_NULL_HANDLE &&
+        frame.compute_submission_pass != FrameSubmissionGraph::InvalidPass;
+    const VkCommandBuffer cull_command = use_async_compute ? frame.compute_command_buffer : frame.command_buffer;
+    const FrameSubmissionGraph::Queue cull_queue = use_async_compute ?
+        FrameSubmissionGraph::Queue::Compute : frame.command_queue;
+    const VkQueueFlags cull_queue_flags = use_async_compute ? frame.compute_queue_flags : frame.command_queue_flags;
+    FrameImageGraph graph(cull_queue);
+    FrameImageGraph::BufferResource light_data, tiles, written_tiles;
+    if (!graph.import_buffer(image.lights.handle(), 0, sizeof(data), BufferUse::HostWrite, light_data, error) ||
+        !graph.import_buffer(image.tiles.handle(), 0, tile_bytes,
+            image.tiles_ready ? BufferUse::FragmentRead : BufferUse::Undefined, tiles, error,
+            FrameSubmissionGraph::Queue::Graphics,
+            image.tiles_ready ? frame.previous_graphics_submission : 0,
+            image.tiles.sharing_mode(), image.tiles.sharing_queue_families()))
+        return false;
+    const auto cull = graph.add_command_pass("cull point lights", cull_queue,
+        [&](VkCommandBuffer recording_command) {
+        vk_.cmd_bind_pipeline(recording_command, VK_PIPELINE_BIND_POINT_COMPUTE, cull_);
+        vk_.cmd_bind_descriptor_sets(recording_command, VK_PIPELINE_BIND_POINT_COMPUTE,
+            layout_, 1, 1, &image.set, 0, nullptr);
+        dispatch_(recording_command, tiles_x, tiles_y, 1);
+    });
+    const auto shade = graph.add_pass("make light tiles visible to fragment shader",
+        FrameSubmissionGraph::Queue::Graphics, {});
+    if (!graph.read_buffer(cull, light_data, BufferUse::ComputeRead, error) ||
+        !graph.write_buffer(cull, tiles, BufferUse::ComputeWrite, written_tiles, error) ||
+        !graph.read_buffer(shade, written_tiles, BufferUse::FragmentRead, error))
+        return false;
+    ImageStateTracker image_states;
+    if (use_async_compute && frame.submission_graph && frame.request_submission_command_buffer)
+    {
+        std::vector<FrameImageGraph::QueueGroup> groups;
+        std::vector<FrameSubmissionGraph::Pass> submission_for_pass;
+        if (!graph.generate_submission_groups(*frame.submission_graph,
+                [&frame](FrameSubmissionGraph::Queue queue) {
+                    if (queue == FrameSubmissionGraph::Queue::Compute) return frame.compute_queue_family;
+                    if (queue == FrameSubmissionGraph::Queue::Graphics) return frame.graphics_queue_family;
+                    return frame.copy_queue_family;
+                }, groups, submission_for_pass, error))
+            return false;
+
+        FrameImageGraph::ExecutionState execution;
+        if (!graph.begin_execution(execution, error))
+            return false;
+        for (const FrameImageGraph::QueueGroup& group : groups)
+        {
+            const FrameSubmissionGraph::Pass submission = group.submission;
+            VkCommandBuffer group_command = VK_NULL_HANDLE;
+            if (submission == FrameSubmissionGraph::InvalidPass ||
+                !frame.request_submission_command_buffer(submission, group.queue,
+                    group_command, error))
+                return false;
+            const VkQueueFlags group_queue_flags = group.queue == FrameSubmissionGraph::Queue::Compute ?
+                frame.compute_queue_flags : group.queue == FrameSubmissionGraph::Queue::Copy ?
+                    frame.copy_queue_flags : frame.command_queue_flags;
+            if (!graph.execute_group(group, group_command, image_states, execution,
+                    {barrier_}, error, group_queue_flags, frame.semaphore_handoff))
+                return false;
+        }
+    }
+    else if (!graph.execute(cull_command, image_states, {barrier_}, error,
+            cull_queue_flags, use_async_compute && frame.semaphore_handoff, cull_queue))
+        return false;
+    image.tiles_ready = true;
     return true;
 }
 bool LightGrid::record(const FrameRecordingContext &frame, VkDescriptorSet gbuffer) const

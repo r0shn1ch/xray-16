@@ -146,6 +146,8 @@ void SPHNetState::net_Load(IReader& P, const Fvector& min, const Fvector& max)
 SPHBonesData::SPHBonesData()
 {
     bones_mask = u64(-1);
+    for (u16 i = 0; i < ExtendedVisibilityWordCount; ++i)
+        extended_bones_visibility[i] = u64(-1);
     root_bone = 0;
 
     Fvector _mn, _mx;
@@ -154,7 +156,7 @@ SPHBonesData::SPHBonesData()
     _mx.set(100.f, 100.f, 100.f);
     set_min_max(_mn, _mx);
 }
-void SPHBonesData::net_Save(NET_Packet& P)
+void SPHBonesData::net_Save(NET_Packet& P, bool save_extended_visibility)
 {
     P.w_u64(bones_mask);
     P.w_u16(root_bone);
@@ -167,6 +169,9 @@ void SPHBonesData::net_Save(NET_Packet& P)
     {
         (*i).net_Save(P, get_min(), get_max());
     }
+    if (save_extended_visibility)
+        for (u16 i = 0; i < ExtendedVisibilityWordCount; ++i)
+            P.w_u64(extended_bones_visibility[i]);
     // XXX Xottab_DUTY: Research the problem Dima encountered
     //	this comment is added by Dima (correct me if this is wrong)
     //  if we call 2 times in a row StateWrite then we get different results
@@ -174,9 +179,11 @@ void SPHBonesData::net_Save(NET_Packet& P)
     //	bones.clear		();
 }
 
-void SPHBonesData::net_Load(NET_Packet& P)
+void SPHBonesData::net_Load(NET_Packet& P, bool load_extended_visibility)
 {
     bones.clear();
+    for (u16 i = 0; i < ExtendedVisibilityWordCount; ++i)
+        extended_bones_visibility[i] = u64(-1);
 
     bones_mask = P.r_u64();
     root_bone = P.r_u16();
@@ -192,6 +199,9 @@ void SPHBonesData::net_Load(NET_Packet& P)
         S.net_Load(P, get_min(), get_max());
         bones.push_back(S);
     }
+    if (load_extended_visibility)
+        for (u16 i = 0; i < ExtendedVisibilityWordCount; ++i)
+            extended_bones_visibility[i] = P.r_u64();
 }
 
 void SPHBonesData::set_min_max(const Fvector& _min, const Fvector& _max)

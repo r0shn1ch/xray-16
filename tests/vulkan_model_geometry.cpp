@@ -4,6 +4,7 @@
 #include "src/Layers/xrRenderVK/VulkanModelVisual.h"
 #include "src/Layers/xrRenderVK/VulkanVisual.h"
 
+#undef NDEBUG
 #include <cassert>
 #include <cmath>
 #include <cstring>
@@ -60,6 +61,7 @@ VisualRecord record(unsigned links)
 int main()
 {
     Core.Initialize("vulkan_model_geometry_test", nullptr, false);
+    {
     VisualRecord static_record;
     static_record.type = 0;
     static_record.bounds = { -1, -2, -3, 1, 2, 3 };
@@ -284,8 +286,12 @@ int main()
     for (auto& v : level_patch.vertices) v.normal[2] = 1;
     level_patch.vertices[1].lightmap_uv[0] = 1;
     level_patch.vertices[1].baked[0] = 0;
+    for (auto& v : level_patch.vertices) v.lightmap_uv[1] = 2.f;
     assert(tessellate_level(level_patch, 2, &heights, 1.f, error));
     assert(level_patch.vertices.size() == 6 && level_patch.indices.size() == 12 &&
         std::abs(level_patch.vertices[3].lightmap_uv[0] - .5f) < 1e-5f &&
-        std::abs(level_patch.vertices[3].baked[0] - .5f) < 1e-5f);
+        std::abs(level_patch.vertices[3].baked[0] - .5f) < 1e-5f &&
+        level_patch.vertices[3].lightmap_uv[1] == 2.f);
+    }
+    Core._destroy();
 }

@@ -1,0 +1,85 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D scene_depth;
+layout(set = 0, binding = 1) uniform sampler2D static_atlas;
+layout(set = 0, binding = 2) uniform sampler2D dynamic_atlas;
+layout(set = 0, binding = 3, std430) readonly buffer StaticTable { uint static_pages[]; };
+layout(set = 0, binding = 4, std430) readonly buffer DynamicTable { uint dynamic_pages[]; };
+layout(set = 0, binding = 5, std430) readonly buffer Parameters {
+    mat4 inverse_view_projection;
+    mat4 light_view;
+    vec4 level[6];
+    uvec4 config; // axis, levels, page size, static atlas columns
+    uvec4 dynamic_config; // dynamic columns, enabled, static slots, dynamic slots
+    vec4 zparams; // near, inverse depth range, bias, reserved
+} params;
+layout(set = 0, binding = 6, r32f) uniform writeonly image2D visibility_image;
+layout(set = 0, binding = 7) uniform sampler2D ray_visibility;
+
+float sample_page(sampler2D atlas, uint slot, uint columns, vec2 local_uv, float depth, float bias)
+{
+    int size = int(params.config.z);
+    ivec2 origin = ivec2(int(slot % columns), int(slot / columns)) * size;
+    ivec2 atlas_size = textureSize(atlas, 0);
+    if (any(lessThan(origin, ivec2(0))) || any(greaterThan(origin + ivec2(size), atlas_size))) return 1.0;
+    ivec2 center = clamp(ivec2(local_uv * float(size)), ivec2(0), ivec2(size - 1));
+    float visible = 0.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x)
+        {
+            ivec2 p = origin + clamp(center + ivec2(x, y), ivec2(0), ivec2(size - 1));
+            visible += depth <= texelFetch(atlas, p, 0).r + bias ? 1.0 : 0.0;
+        }
+    return visible / 9.0;
+}
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy), extent = imageSize(visibility_image);
+    if (any(greaterThanEqual(pixel, extent))) return;
+    float z = texelFetch(scene_depth, pixel, 0).r;
+    float result = 1.0;
+    if (z >= 0.0 && z < 0.99999)
+    {
+        vec2 uv = (vec2(pixel) + 0.5) / vec2(extent);
+        vec4 world = params.inverse_view_projection * vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, z, 1.0);
+        if (abs(world.w) > 1e-8)
+        {
+            vec3 light = (params.light_view * vec4(world.xyz / world.w, 1.0)).xyz;
+            float depth = (light.z - params.zparams.x) * params.zparams.y;
+            if (depth >= 0.0 && depth <= 1.0)
+            {
+                bool static_found = false, dynamic_found = params.dynamic_config.y == 0u;
+                uint axis = params.config.x;
+                for (uint i = 0u; i < params.config.y && !(static_found && dynamic_found); ++i)
+                {
+                    vec2 coord = (light.xy - params.level[i].xy) / params.level[i].z;
+                    if (any(lessThan(coord, vec2(0.0))) || any(greaterThanEqual(coord, vec2(1.0)))) continue;
+                    vec2 page_coord = coord * float(axis);
+                    uvec2 page = uvec2(page_coord);
+                    uint index = i * axis * axis + page.y * axis + page.x;
+                    if (!static_found && index < static_pages.length())
+                    {
+                        uint slot = static_pages[index];
+                        if (slot < params.dynamic_config.z)
+                        {
+                            result = min(result, sample_page(static_atlas, slot, params.config.w, fract(page_coord), depth, params.zparams.z));
+                            static_found = true;
+                        }
+                    }
+                    if (!dynamic_found && index < dynamic_pages.length())
+                    {
+                        uint slot = dynamic_pages[index];
+                        if (slot < params.dynamic_config.w)
+                        {
+                            result = min(result, sample_page(dynamic_atlas, slot, params.dynamic_config.x, fract(page_coord), depth, params.zparams.z));
+                            dynamic_found = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (params.zparams.w > 0.5)
+        result = min(result, texelFetch(ray_visibility, pixel, 0).r);
+    imageStore(visibility_image, pixel, vec4(result));
+}

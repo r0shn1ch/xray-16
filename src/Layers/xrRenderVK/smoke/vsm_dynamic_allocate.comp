@@ -1,0 +1,27 @@
+#version 450
+// Allocate compact physical pages for the current frame's dynamic casters.
+// Entries are rebuilt every frame; static-page residency is a separate cache.
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std430) readonly buffer Needed { uint needed[]; };
+layout(set = 0, binding = 1, std430) writeonly buffer PageTable { uint table[]; };
+layout(set = 0, binding = 2, std430) writeonly buffer PageList { uvec4 pages[]; };
+layout(set = 0, binding = 3, std430) buffer Counters { uint counts[]; };
+layout(push_constant) uniform Parameters { uint count; uint axis; uint max_pages; uint groups_x; } params;
+void main()
+{
+    uint row_width = params.groups_x * 64u;
+    if (params.count == 0u || row_width == 0u || gl_GlobalInvocationID.y > (params.count - 1u) / row_width) return;
+    uint row = gl_GlobalInvocationID.y * row_width;
+    if (gl_GlobalInvocationID.x >= params.count - row) return;
+    uint page = row + gl_GlobalInvocationID.x;
+    table[page] = 0xffffffffu;
+    if (needed[page] == 0u) return;
+    uint slot = atomicAdd(counts[0], 1u);
+    if (slot >= params.max_pages) return;
+    uint per_level = params.axis * params.axis;
+    uint level = page / per_level;
+    uint within = page % per_level;
+    table[page] = slot;
+    pages[slot] = uvec4(level, within % params.axis, within / params.axis, 0u);
+    atomicAdd(counts[1u + level], 1u);
+}

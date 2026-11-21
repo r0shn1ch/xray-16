@@ -19,7 +19,8 @@ class AndroidMenuContractTest(unittest.TestCase):
         script = (ROOT / "res/gamedata/scripts/ui_mm_opt_video_adv.script").read_text()
         self.assertIn('aa("r_vk_aa", &antialiasing, aa_tokens)', module)
         self.assertIn('Console->AddCommand(&aa)', module)
-        self.assertIn('render_world && antialiasing == 1', device)
+        self.assertRegex(device, r'render_world\s*&&\s*!temporal_jitter_active_')
+        self.assertIn('antialiasing == 1 || antialiasing == 2 || spatial_upscaler == 2', device)
         self.assertIn('pass->set_constants(frame_postprocess)', device)
         self.assertIn('xml:HasNode("video_adv:combo_vk_aa")', script)
         layouts = list((ROOT / "res/gamedata/configs/ui").rglob("ui_mm_opt*.xml"))
@@ -36,7 +37,13 @@ class AndroidMenuContractTest(unittest.TestCase):
             option = control.find("options_item")
             self.assertEqual(option.get("entry"), "r_vk_aa")
             self.assertIsNone(option.get("depend"))
-            self.assertEqual(control.get("list_length"), "2")
+            self.assertEqual(control.get("list_length"), "3")
+            start = text.index('<combo_vk_upscale ')
+            end = text.index('</combo_vk_upscale>', start) + len('</combo_vk_upscale>')
+            upscaler = ET.fromstring(text[start:end])
+            self.assertEqual(upscaler.find('options_item').get('entry'), 'r_vk_upscaler')
+            self.assertEqual(upscaler.get('list_length'), '4')
+            self.assertEqual(upscaler.find('options_item').get('depend'), 'vid')
             found += 1
         self.assertGreaterEqual(found, 4)
 
@@ -56,7 +63,8 @@ class AndroidMenuContractTest(unittest.TestCase):
     def test_vulkan_anisotropy_has_persisted_console_value_and_uses_sampler(self):
         module = (ENGINE / "VulkanRendererModule.cpp").read_text()
         device = (ENGINE / "VulkanGameDevice.cpp").read_text()
-        self.assertIn('anisotropy("r__tf_aniso", &texture_anisotropy, 1, 16)', module)
+        self.assertIn('CCC_Integer("r__tf_aniso", &texture_anisotropy, 1, 16)', module)
+        self.assertIn('renderer_.request_sampler_settings_reset()', module)
         self.assertIn("Console->AddCommand(&anisotropy)", module)
         self.assertIn("float(texture_anisotropy)", device)
         self.assertNotIn("apply_vulkan_launch_settings", device)
@@ -72,6 +80,7 @@ class AndroidMenuContractTest(unittest.TestCase):
         }
         self.assertIn("render_id~=7", functions["desktop_modes"])
         self.assertIn("render_id==7", functions["vulkan_mode"])
+        self.assertIn("vulkan_mode(render_id)", functions["mode_ge_25_or_vulkan"])
         for name in ("mode_ge_2a", "mode_ge_2", "mode_ge_25", "mode_ge_3", "mode_ge_4"):
             self.assertIn("render_id~=7", functions[name])
 
@@ -90,10 +99,12 @@ class AndroidMenuContractTest(unittest.TestCase):
             "track_texture_lod": "all_modes",
             "track_aniso": "all_modes",
             "combo_vk_aa": "vulkan_mode",
+            "combo_vk_upscale": "vulkan_mode",
             "track_detail_density": "all_modes",
             "track_detail_radius": "all_modes",
             "check_npc_torch": "all_modes",
             "check_always_active": "all_modes",
+            "check_volumetric_light": "mode_ge_25_or_vulkan",
             "track_fps_limit": "all_modes",
             "track_fps_limit_in_menu": "all_modes",
         }
@@ -116,8 +127,7 @@ class AndroidMenuContractTest(unittest.TestCase):
             "check_soft_water": "mode_ge_25",
             "check_soft_particles": "mode_ge_25",
             "check_dof": "mode_ge_25",
-            "check_volumetric_light": "mode_ge_25",
-            "check_r3_dynamic_wet_surfaces": "mode_ge_3",
+            "check_r3_dynamic_wet_surfaces": "mode_ge_3_or_vulkan",
             "check_r3_volumetric_smoke": "mode_ge_3",
             "check_r3_msaa_opt": "mode_3",
             "check_vsync": "desktop_modes",

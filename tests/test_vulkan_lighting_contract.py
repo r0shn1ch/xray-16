@@ -54,7 +54,8 @@ class LightingContractTest(unittest.TestCase):
             with self.subTest(header=header):
                 code = list(embedded_shader(header, shader))
                 offsets = named_struct_offsets(code, "ShadowConstants")
-                self.assertEqual(offsets, {0: 0, 1: 64, 2: 128, 3: 144, 4: 160})
+                self.assertEqual(offsets, {0: 0, 1: 64, 2: 128, 3: 144, 4: 160,
+                                           5: 176, 6: 240, 7: 256, 8: 272, 9: 288})
                 decorated = {(args[0], args[1]): args[2] for op, args in code
                              if op == 71 and len(args) >= 3}
                 self.assertTrue(any(decorated.get((key, 33)) == 5 and value == 0
@@ -75,7 +76,7 @@ class LightingContractTest(unittest.TestCase):
                                          f"{shader}.ps.spv"))
                 offsets = named_struct_offsets(code, "ForwardLighting")
                 self.assertEqual(offsets, {0: 0, 1: 64, 2: 80, 3: 96, 4: 112,
-                                           5: 128, 6: 144, 7: 160, 8: 176})
+                                           5: 128, 6: 144, 7: 160, 8: 176, 9: 192})
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 #include "ModelGeometry.h"
+#include "SkeletonBones.h"
 
 #include <cmath>
 #include <cstring>
@@ -269,7 +270,7 @@ bool skin_model_mesh(const ModelGeometry& source, const float* matrices,
     size_t bone_count, std::vector<LevelVertex>& result, std::string& error)
 {
     if ((source.type != 4 && source.type != 5) || source.vertices.empty() ||
-        !matrices || !bone_count || bone_count > 256)
+        !matrices || !bone_count || bone_count > MaxVulkanSkeletonBones)
     {
         error = "skinned model needs vertices and a valid bone pose";
         return false;

@@ -1,7 +1,13 @@
 #version 450
+#ifdef GBUFFER_MSAA
+layout(set = 0, binding = 0) uniform sampler2DMS albedo_buffer;
+layout(set = 0, binding = 1) uniform sampler2DMS normal_buffer;
+layout(set = 0, binding = 2) uniform sampler2DMS depth_buffer;
+#else
 layout(set = 0, binding = 0) uniform sampler2D albedo_buffer;
 layout(set = 0, binding = 1) uniform sampler2D normal_buffer;
 layout(set = 0, binding = 2) uniform sampler2D depth_buffer;
+#endif
 layout(set = 0, binding = 3) uniform sampler2D sun_shadow;
 layout(set = 0, binding = 4, std140) uniform ShadowConstants {
     mat4 inverse_view_projection;
@@ -9,8 +15,22 @@ layout(set = 0, binding = 4, std140) uniform ShadowConstants {
     vec4 options;
     vec4 ambient_color;
     vec4 hemi_color;
+    mat4 rain_view_projection;
+    vec4 rain_params;
+    vec4 fog_plane;
+    vec4 fog_color;
+    vec4 ao_settings;
 } shadow;
+#ifdef GBUFFER_MSAA
+layout(set = 0, binding = 5) uniform sampler2DMS surface_buffer;
+#else
 layout(set = 0, binding = 5) uniform sampler2D surface_buffer;
+#endif
+layout(set = 0, binding = 6) uniform sampler2D ray_visibility;
+layout(set = 0, binding = 7) uniform sampler2D indirect_radiance;
+layout(set = 0, binding = 8) uniform sampler2D resolved_depth_buffer;
+layout(set = 0, binding = 9) uniform sampler2D resolved_normal_buffer;
+layout(set = 0, binding = 10) uniform sampler2D rain_shadow;
 layout(set = 1, binding = 0) uniform samplerCube sky_a;
 layout(set = 1, binding = 1) uniform samplerCube sky_b;
 layout(set = 1, binding = 2) uniform sampler2D clouds_a;
@@ -29,8 +49,54 @@ layout(push_constant) uniform Weather {
 } weather;
 layout(location = 0) in vec2 texcoord;
 layout(location = 0) out vec4 pixel_color;
+#extension GL_GOOGLE_include_directive : require
+#include "ambient_occlusion.glsl"
+#include "indirect_upsample.glsl"
+#include "pbr_material.glsl"
+#include "rain_wetness.glsl"
 
-float sun_visibility(float depth, vec2 screen_uv)
+ivec2 gbuffer_pixel(vec2 uv, ivec2 size)
+{
+    return clamp(ivec2(uv * vec2(size)), ivec2(0), size - 1);
+}
+
+float gbuffer_depth(vec2 uv, int sample_index)
+{
+#ifdef GBUFFER_MSAA
+    return texelFetch(depth_buffer, gbuffer_pixel(uv, textureSize(depth_buffer)), sample_index).r;
+#else
+    return texture(depth_buffer, uv).r;
+#endif
+}
+
+vec4 gbuffer_albedo(vec2 uv, int sample_index)
+{
+#ifdef GBUFFER_MSAA
+    return texelFetch(albedo_buffer, gbuffer_pixel(uv, textureSize(albedo_buffer)), sample_index);
+#else
+    return texture(albedo_buffer, uv);
+#endif
+}
+
+vec4 gbuffer_normal(vec2 uv, int sample_index)
+{
+#ifdef GBUFFER_MSAA
+    return texelFetch(normal_buffer, gbuffer_pixel(uv, textureSize(normal_buffer)), sample_index);
+#else
+    return texture(normal_buffer, uv);
+#endif
+}
+
+vec4 gbuffer_surface(vec2 uv, int sample_index)
+{
+#ifdef GBUFFER_MSAA
+    return texelFetch(surface_buffer, gbuffer_pixel(uv, textureSize(surface_buffer)), sample_index);
+#else
+    return texture(surface_buffer, uv);
+#endif
+}
+
+float shadow_map_visibility(float depth, vec2 screen_uv)
 {
     vec4 world = shadow.inverse_view_projection *
         vec4(screen_uv.x * 2.0 - 1.0, 1.0 - screen_uv.y * 2.0, depth, 1.0);
@@ -62,6 +128,13 @@ float sun_visibility(float depth, vec2 screen_uv)
     float edge = min(min(uv.x, uv.y), min(1.0-uv.x, 1.0-uv.y));
     float coverage = shadow.options.z > 0.0 ? smoothstep(0.0, shadow.options.z, edge) : 1.0;
     return mix(1.0, visibility, coverage);
+}
+float sun_visibility(float depth, vec2 screen_uv)
+{
+    float visibility = shadow_map_visibility(depth, screen_uv);
+    if (shadow.ambient_color.a > 0.5)
+        visibility = min(visibility, texture(ray_visibility, screen_uv).r);
+    return visibility;
 }
 
 // R2's hmodel samples the weather environment in the world-normal direction,
@@ -108,10 +181,11 @@ float material_specular(float hemi, float reflection, float material)
         mix(phong, metal, category - 2.0);
 }
 
-void main()
+void shade_weather_sample(int sample_index, out vec4 output_color)
 {
     // The four-pane view repeats one G-buffer; modes 2..5 fill the screen
-    // with the corresponding panel at its native resolution.
+    // with the corresponding panel at its native resolution. Mode 10 shows
+    // rain wetness in grayscale and leaves sky pixels black.
     bool diagnostic = shadow.options.y > 0.5;
     bool comparison = diagnostic && shadow.options.y > 5.5;
     bool four_panes = diagnostic && (shadow.options.y < 1.5 ||
@@ -125,12 +199,18 @@ void main()
     int comparison_mode = comparison ? (four_panes ? panel :
         int(shadow.options.y) == 7 ? 4 : int(shadow.options.y) - 7) : 0;
     vec2 screen_uv = four_panes ? fract(texcoord * 2.0) : texcoord;
-    if (texture(depth_buffer, screen_uv).r < 0.99999)
+    if (diagnostic && shadow.options.y > 9.5 &&
+        gbuffer_depth(screen_uv, sample_index) >= 0.99999)
     {
-        float depth = texture(depth_buffer, screen_uv).r;
-        vec4 albedo = texture(albedo_buffer, screen_uv);
-        vec4 encoded_normal = texture(normal_buffer, screen_uv);
-        vec4 surface = texture(surface_buffer, screen_uv);
+        output_color = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+    if (gbuffer_depth(screen_uv, sample_index) < 0.99999)
+    {
+        float depth = gbuffer_depth(screen_uv, sample_index);
+        vec4 albedo = gbuffer_albedo(screen_uv, sample_index);
+        vec4 encoded_normal = gbuffer_normal(screen_uv, sample_index);
+        vec4 surface = gbuffer_surface(screen_uv, sample_index);
         vec4 world_clip = shadow.inverse_view_projection *
             vec4(screen_uv.x * 2.0 - 1.0, 1.0 - screen_uv.y * 2.0, depth, 1.0);
         vec3 world_position = world_clip.xyz / world_clip.w;
@@ -141,9 +221,18 @@ void main()
             eye_clip = shadow.inverse_view_projection * vec4(0.0, 0.0, 0.0, 1.0);
         vec3 camera_position = eye_clip.xyz / eye_clip.w;
         vec3 normal = normalize(encoded_normal.rgb * 2.0 - 1.0);
+        float wetness = rain_wetness(world_position, normal, camera_position);
+        if (diagnostic && shadow.options.y > 9.5)
+        {
+            output_color = vec4(vec3(wetness), 1.0);
+            return;
+        }
+        normal = rain_perturb_normal(world_position, normal, wetness);
+        vec3 wet_albedo = albedo.rgb * (1.0 - 0.16 * wetness);
         float diffuse = max(dot(normal, normalize(-weather.direction_ambient.xyz)), 0.0);
-        bool static_lightmap = encoded_normal.a < 0.8;
-        float hemisphere = static_lightmap ? clamp(encoded_normal.a / 0.75, 0.0, 1.0) :
+        bool is_pbr = pbr_material(encoded_normal.a);
+        bool static_lightmap = is_pbr ? pbr_static_lightmap(encoded_normal.a) : encoded_normal.a < 0.8;
+        float hemisphere = is_pbr ? pbr_hemisphere(encoded_normal.a) : static_lightmap ? clamp(encoded_normal.a / 0.75, 0.0, 1.0) :
             clamp((encoded_normal.a - 0.875) * 8.0, 0.0, 1.0);
         float sun_scale = 0.0;
         vec3 sunlight = vec3(0.0);
@@ -152,20 +241,20 @@ void main()
         if (diagnostic && !comparison && panel == 1)
         {
             float visibility = sun_visibility(depth, screen_uv);
-            pixel_color = vec4(vec3(visibility), 1.0);
+            output_color = vec4(vec3(visibility), 1.0);
             return;
         }
         if (diagnostic && !comparison && panel == 2)
         {
             // R: baked static-sun channel (unused by dynamic sun), G: hemisphere,
             // B: blue denotes an object without a static lightmap.
-            pixel_color = vec4(static_lightmap ? albedo.a : 1.0,
+            output_color = vec4(static_lightmap ? albedo.a : 1.0,
                 hemisphere, static_lightmap ? 0.0 : 1.0, 1.0);
             return;
         }
         if (diagnostic && !comparison && panel == 3)
         {
-            pixel_color = vec4(albedo.rgb, 1.0);
+            output_color = vec4(albedo.rgb, 1.0);
             return;
         }
         if (max(max(weather.light_color.r, weather.light_color.g), weather.light_color.b) > 0.0001)
@@ -177,9 +266,35 @@ void main()
         float tested_hemi = (comparison_mode == 1 || comparison_mode == 3) ? 1.0 : hemisphere;
         vec3 indirect = comparison_mode == 4 ?
             shadow.hemi_color.rgb * tested_hemi :
-            environment_indirect(normal, tested_hemi, surface.g);
-        vec3 lit = albedo.rgb * (shadow.ambient_color.rgb + indirect + sunlight);
-        if (surface.r > 0.0 && comparison_mode != 4)
+            environment_indirect(normal, tested_hemi, is_pbr ? 1.0 / 3.0 : surface.g);
+        float ao = diagnostic ? 1.0 : ambient_occlusion(depth, screen_uv, normal);
+        vec3 lit = wet_albedo * ((shadow.ambient_color.rgb + indirect) * ao + sunlight);
+        if (is_pbr)
+        {
+            float wet_roughness = mix(surface.r, 0.08, wetness * 0.8);
+            lit = wet_albedo * (1.0 - surface.g) * surface.b * (shadow.ambient_color.rgb + indirect) * ao;
+            if (comparison_mode != 4)
+            {
+                vec3 view = normalize(camera_position - world_position);
+                vec3 reflection = reflect(-view, normal);
+                reflection.y = reflection.y * 2.0 - 1.0;
+                float roughness = clamp(wet_roughness, 0.04, 1.0);
+                float lod_a = roughness * float(max(textureQueryLevels(environment_a) - 1, 0));
+                float lod_b = roughness * float(max(textureQueryLevels(environment_b) - 1, 0));
+                float blend = clamp(weather.light_color.a, 0.0, 1.0);
+                vec3 environment = mix(textureLod(environment_a, reflection, lod_a).rgb,
+                    textureLod(environment_b, reflection, lod_b).rgb, blend);
+                lit += environment * shadow.hemi_color.rgb * tested_hemi * surface.b * ao *
+                    pbr_environment_brdf(wet_albedo, surface.g, roughness, max(dot(normal, view), 0.0));
+            }
+            if (sun_scale > 0.0 && dot(weather.direction_ambient.xyz, weather.direction_ambient.xyz) > 1e-8)
+                lit += pbr_direct(wet_albedo, surface.g, wet_roughness, normal, normalize(camera_position - world_position),
+                    normalize(-weather.direction_ambient.xyz)) * weather.light_color.rgb * sun_scale;
+        }
+        if (shadow.hemi_color.a > 0.0)
+            lit += wet_albedo * (is_pbr ? (1.0 - surface.g) : 1.0) *
+                sample_indirect_radiance(screen_uv, depth, normal) * shadow.hemi_color.a;
+        if (!is_pbr && surface.r > 0.0 && comparison_mode != 4)
         {
             vec3 incident = normalize(world_position - camera_position);
             vec3 reflection = reflect(incident, normal);
@@ -190,34 +305,30 @@ void main()
                 textureLod(environment_b, reflection, 0.0).rgb, blend);
             vec3 tinted = environment * shadow.hemi_color.rgb * 4.0;
             lit += tinted * tinted * material_specular(tested_hemi, angle, surface.g) *
-                surface.r;
+                clamp(surface.r + wetness * 0.35, 0.0, 1.0);
         }
-        if (surface.r > 0.0 && sun_scale > 0.0)
+        if (!is_pbr && surface.r > 0.0 && sun_scale > 0.0)
         {
             vec3 view_ray = normalize(camera_position - world_position);
             vec3 half_dir = normalize(view_ray - normalize(weather.direction_ambient.xyz));
+            float wet_gloss = clamp(surface.r + wetness * 0.35, 0.0, 1.0);
             float specular = pow(max(dot(normal, half_dir), 0.0),
-                mix(4.0, 64.0, surface.r));
-            lit += specular * surface.r * mix(0.04, 0.2, surface.g) *
+                mix(4.0, 64.0, wet_gloss));
+            lit += specular * clamp(surface.r + wetness * 0.2, 0.0, 1.0) * mix(0.04, 0.25, surface.g) *
                 weather.light_color.rgb * sun_scale;
         }
-        lit += albedo.rgb * surface.b;
-        vec2 fog_rg = unpackHalf2x16(floatBitsToUint(weather.ray_base.w));
-        vec2 fog_b_near = unpackHalf2x16(floatBitsToUint(weather.ray_dx.w));
-        vec2 fog_far_projection = unpackHalf2x16(floatBitsToUint(weather.ray_dy.w));
-        float view_distance = length(world_position - camera_position);
-        float fog = clamp((view_distance - fog_b_near.y) /
-            max(fog_far_projection.x - fog_b_near.y, 0.01), 0.0, 1.0);
-        lit = mix(lit, vec3(fog_rg, fog_b_near.x), fog);
+        lit += albedo.rgb * (is_pbr ? surface.a : surface.b);
+        float fog_visibility = clamp(dot(vec4(world_position, 1.0), shadow.fog_plane), 0.0, 1.0);
+        lit = mix(shadow.fog_color.rgb, lit, fog_visibility);
         lit = (lit - 0.5) * weather.grade.z + 0.5;
         lit = pow(max(lit * weather.grade.y, 0.0), vec3(1.0 / max(weather.grade.x, 0.01)));
-        pixel_color = vec4(lit, albedo.a);
+        output_color = vec4(lit, albedo.a);
         return;
     }
 
     if (diagnostic && !comparison && panel != 0)
     {
-        pixel_color = vec4(0.04, 0.08, 0.18, 1.0);
+        output_color = vec4(0.04, 0.08, 0.18, 1.0);
         return;
     }
     vec3 direction = normalize(weather.ray_base.xyz + screen_uv.x * weather.ray_dx.xyz +
@@ -246,5 +357,22 @@ void main()
     vec3 lit = mix(sky, cloud.rgb * weather.clouds_color.rgb, alpha);
     lit = (lit - 0.5) * weather.grade.z + 0.5;
     lit = pow(max(lit * weather.grade.y, 0.0), vec3(1.0 / max(weather.grade.x, 0.01)));
-    pixel_color = vec4(lit, 1.0);
+    output_color = vec4(lit, 1.0);
+}
+
+void main()
+{
+#ifdef GBUFFER_MSAA
+    int samples = textureSamples(albedo_buffer);
+    vec4 resolved = vec4(0.0);
+    for (int sample_index = 0; sample_index < samples; ++sample_index)
+    {
+        vec4 sample_color;
+        shade_weather_sample(sample_index, sample_color);
+        resolved += sample_color;
+    }
+    pixel_color = resolved / float(max(samples, 1));
+#else
+    shade_weather_sample(0, pixel_color);
+#endif
 }

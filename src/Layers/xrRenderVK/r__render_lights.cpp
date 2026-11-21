@@ -90,12 +90,23 @@ void VulkanGameDevice::render_lights(const float (&mvp)[16], bool render_world, 
         {
             const auto &light_snapshot = *candidate.light;
             const bool spot = light_snapshot.type == VulkanLightType::Spot;
+            const bool volumetric = volumetric_lights_enabled && light_snapshot.volumetric;
             const int slot = shadows.reserve(light_snapshot.shadow, spot, candidate.distance, light_snapshot.range);
-            const VkRect2D scissor = light_scissor(camera, light_snapshot, extent);
+            auto scissor_light = light_snapshot;
+            if (volumetric)
+                scissor_light.range = std::min(1000.f,
+                    scissor_light.range * std::max(1.f, light_snapshot.volumetric_distance));
+            const VkRect2D scissor = light_scissor(camera, scissor_light, extent);
             if (!scissor.extent.width || !scissor.extent.height)
                 continue;
             LocalLightUniform local{};
             local.debug_mode[0] = sun_uniform.options[1];
+            if (volumetric)
+            {
+                local.debug_mode[1] = std::min(light_snapshot.volumetric_intensity, 1000.f);
+                local.debug_mode[2] = std::min(light_snapshot.volumetric_quality, 4.f);
+                local.debug_mode[3] = std::min(light_snapshot.volumetric_distance, 1000.f / std::max(light_snapshot.range, .2f));
+            }
             std::memcpy(local.inverse_view_projection, &inverse, sizeof(inverse));
             const auto &position = light_snapshot.position;
             local.position_range[0] = position[0];

@@ -21,9 +21,9 @@ protected:
         om_count
     } m_orient_mode{ om_horz };
 
-    bool m_bUseColor          : 1 { false };
-    bool m_bUseMiddleColor    : 1 { false }; // Hrust: optional middle color for CS/SoC compatibility, without middle color it doesn't looks correctly
-    bool m_bUseGradient       : 1 { true }; //Alundaio: if false then use only solid color with m_maxColor
+    bool m_bUseColor          : 1;
+    bool m_bUseMiddleColor    : 1; // Hrust: optional middle color for CS/SoC compatibility, without middle color it doesn't looks correctly
+    bool m_bUseGradient       : 1; //Alundaio: if false then use only solid color with m_maxColor
 
     Fvector2 m_ProgressPos{}; // x-current y-dest
     float m_MinPos{ 1.0f };

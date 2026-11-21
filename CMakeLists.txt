@@ -65,6 +65,11 @@ include(XRay.Build)
 include(XRay.Packaging)
 
 add_subdirectory(Externals)
+target_include_directories(xrLuaFix PRIVATE
+    "${XRAY_SOURCE_DIR}/Externals"
+    "${XRAY_SOURCE_DIR}/Externals/luabind")
+
+include(VulkanDependencies)
 add_subdirectory(src)
 add_subdirectory(res)
 add_subdirectory(misc)

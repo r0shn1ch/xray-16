@@ -24,6 +24,15 @@
 #include "xrEngine/ObjectDump.h"
 #endif
 
+namespace
+{
+constexpr u16 PHSaveStateExtendedVisibilityFlag = 0x8000;
+constexpr u16 PHSaveStateFirstExtendedBone = 64;
+constexpr u16 PHSaveStateMaxVisibilityBone = 256;
+constexpr u16 PHSaveStateExtendedVisibilityWordCount =
+    (PHSaveStateMaxVisibilityBone - PHSaveStateFirstExtendedBone) / 64;
+}
+
 CPhysicsShellHolder::CPhysicsShellHolder()
 {
     init();
@@ -390,7 +399,7 @@ void CPhysicsShellHolder::PHSaveState(NET_Packet& P)
     max.set(-flt_max, -flt_max, -flt_max);
     /////////////////////////////////////
 
-    u16 bones_number = PHGetSyncItemsNumber();
+    const u16 bones_number = PHGetSyncItemsNumber();
     for (u16 i = 0; i < bones_number; i++)
     {
         SPHNetState state;
@@ -418,7 +427,8 @@ void CPhysicsShellHolder::PHSaveState(NET_Packet& P)
     P.w_vec3(min);
     P.w_vec3(max);
 
-    P.w_u16(bones_number);
+    VERIFY(!(bones_number & PHSaveStateExtendedVisibilityFlag));
+    P.w_u16(u16(bones_number | PHSaveStateExtendedVisibilityFlag));
 
     for (u16 i = 0; i < bones_number; i++)
     {
@@ -426,16 +436,34 @@ void CPhysicsShellHolder::PHSaveState(NET_Packet& P)
         PHGetSyncItem(i)->get_State(state);
         state.net_Save(P, min, max);
     }
+
+    for (u16 word = 0; word < PHSaveStateExtendedVisibilityWordCount; ++word)
+    {
+        u64 mask = u64(-1);
+        if (K)
+        {
+            mask = 0;
+            for (u16 bit = 0; bit < 64; ++bit)
+            {
+                const u16 bone = u16(PHSaveStateFirstExtendedBone + word * 64 + bit);
+                if (bone < K->LL_BoneCount() && K->LL_GetBoneVisible(bone))
+                    mask |= u64(1) << bit;
+            }
+        }
+        P.w_u64(mask);
+    }
 }
 void CPhysicsShellHolder::PHLoadState(IReader& P)
 {
     //	Flags8 lflags;
     IKinematics* K = smart_cast<IKinematics*>(Visual());
     //	P.r_u8 (lflags.flags);
+    const u64 visible_bones = P.r_u64();
+    const u16 root_bone = P.r_u16();
     if (K)
     {
-        K->LL_SetBonesVisible(P.r_u64());
-        K->LL_SetBoneRoot(P.r_u16());
+        K->LL_SetBonesVisible(visible_bones);
+        K->LL_SetBoneRoot(root_bone);
     }
 
     Fvector min = P.r_vec3();
@@ -443,12 +471,32 @@ void CPhysicsShellHolder::PHLoadState(IReader& P)
 
     VERIFY(!min.similar(max));
 
-    u16 bones_number = P.r_u16();
+    const u16 encoded_bones_number = P.r_u16();
+    const bool has_extended_visibility = (encoded_bones_number & PHSaveStateExtendedVisibilityFlag) != 0;
+    const u16 bones_number = encoded_bones_number & ~PHSaveStateExtendedVisibilityFlag;
     for (u16 i = 0; i < bones_number; i++)
     {
         SPHNetState state;
         state.net_Load(P, min, max);
         PHGetSyncItem(i)->set_State(state);
+    }
+
+    if (has_extended_visibility)
+    {
+        u64 visibility[PHSaveStateExtendedVisibilityWordCount];
+        for (u16 word = 0; word < PHSaveStateExtendedVisibilityWordCount; ++word)
+            visibility[word] = P.r_u64();
+
+        if (K)
+        {
+            const u16 end = std::min<u16>(K->LL_BoneCount(), PHSaveStateMaxVisibilityBone);
+            for (u16 bone = PHSaveStateFirstExtendedBone; bone < end; ++bone)
+            {
+                const u16 relative = u16(bone - PHSaveStateFirstExtendedBone);
+                const bool visible = (visibility[relative / 64] & (u64(1) << (relative % 64))) != 0;
+                K->LL_SetBoneVisible(bone, visible, FALSE);
+            }
+        }
     }
 }
 

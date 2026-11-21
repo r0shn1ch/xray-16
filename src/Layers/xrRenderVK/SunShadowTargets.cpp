@@ -5,11 +5,11 @@ namespace xray::render::vulkan
 bool SunShadowTargets::initialize(VkDevice device, VkFormat format, uint32_t image_count,
     const VkPhysicalDeviceMemoryProperties& memory, const FrameDispatch& dispatch,
     const BufferResourceDispatch& buffers, PFN_vkCreateSampler create_sampler,
-    PFN_vkDestroySampler destroy_sampler, std::string& error)
+    PFN_vkDestroySampler destroy_sampler, std::string& error, FrameImagePool* image_pool, uint32_t size)
 {
     destroy();
-    if (!device || format == VK_FORMAT_UNDEFINED || !image_count || image_count > 16 ||
-        !dispatch.create_image || !dispatch.get_image_memory_requirements ||
+    if (!device || format == VK_FORMAT_UNDEFINED || !image_count || image_count > 16 || !size ||
+        !dispatch.create_image || !dispatch.destroy_image || !dispatch.get_image_memory_requirements ||
         !dispatch.allocate_memory || !dispatch.bind_image_memory || !dispatch.create_image_view ||
         !dispatch.create_framebuffer || !dispatch.create_render_pass ||
         !dispatch.cmd_begin_render_pass || !dispatch.cmd_end_render_pass ||
@@ -18,6 +18,8 @@ bool SunShadowTargets::initialize(VkDevice device, VkFormat format, uint32_t ima
     device_ = device;
     vk_ = dispatch;
     destroy_sampler_ = destroy_sampler;
+    image_pool_ = image_pool;
+    size_ = size;
     VkAttachmentDescription depth{};
     depth.format = format;
     depth.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -61,29 +63,37 @@ bool SunShadowTargets::initialize(VkDevice device, VkFormat format, uint32_t ima
         VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         image.imageType = VK_IMAGE_TYPE_2D;
         image.format = format;
-        image.extent = {Size, Size, 1};
+        image.extent = {size_, size_, 1};
         image.mipLevels = image.arrayLayers = 1;
         image.samples = VK_SAMPLE_COUNT_1_BIT;
         image.tiling = VK_IMAGE_TILING_OPTIMAL;
         image.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        if (vk_.create_image(device, &image, nullptr, &target.image) != VK_SUCCESS)
-        { error = "cannot create shadow depth image"; destroy(); return false; }
-        VkMemoryRequirements requirements{};
-        vk_.get_image_memory_requirements(device, target.image, &requirements);
-        uint32_t type = UINT32_MAX;
-        for (uint32_t i = 0; i < memory.memoryTypeCount; ++i)
-            if ((requirements.memoryTypeBits & (1u << i)) &&
-                (memory.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
-            { type = i; break; }
-        if (type == UINT32_MAX)
-        { error = "no device-local memory for shadow image"; destroy(); return false; }
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocation.memoryTypeIndex = type;
-        if (vk_.allocate_memory(device, &allocation, nullptr, &target.memory) != VK_SUCCESS ||
-            vk_.bind_image_memory(device, target.image, target.memory, 0) != VK_SUCCESS)
-        { error = "cannot bind shadow depth image"; destroy(); return false; }
+        if (image_pool_)
+        {
+            if (!image_pool_->acquire(image, target.image, error))
+            { error = "sun shadow image: " + error; destroy(); return false; }
+        }
+        else
+        {
+            if (vk_.create_image(device, &image, nullptr, &target.image) != VK_SUCCESS)
+            { error = "cannot create shadow depth image"; destroy(); return false; }
+            VkMemoryRequirements requirements{};
+            vk_.get_image_memory_requirements(device, target.image, &requirements);
+            uint32_t type = UINT32_MAX;
+            for (uint32_t i = 0; i < memory.memoryTypeCount; ++i)
+                if ((requirements.memoryTypeBits & (1u << i)) &&
+                    (memory.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+                { type = i; break; }
+            if (type == UINT32_MAX)
+            { error = "no device-local memory for shadow image"; destroy(); return false; }
+            VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            allocation.allocationSize = requirements.size;
+            allocation.memoryTypeIndex = type;
+            if (vk_.allocate_memory(device, &allocation, nullptr, &target.memory) != VK_SUCCESS ||
+                vk_.bind_image_memory(device, target.image, target.memory, 0) != VK_SUCCESS)
+            { error = "cannot bind shadow depth image"; destroy(); return false; }
+        }
         VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         view.image = target.image;
         view.viewType = VK_IMAGE_VIEW_TYPE_2D;
@@ -96,7 +106,7 @@ bool SunShadowTargets::initialize(VkDevice device, VkFormat format, uint32_t ima
         framebuffer.renderPass = pass_;
         framebuffer.attachmentCount = 1;
         framebuffer.pAttachments = &target.view;
-        framebuffer.width = framebuffer.height = Size;
+        framebuffer.width = framebuffer.height = size_;
         framebuffer.layers = 1;
         if (vk_.create_framebuffer(device, &framebuffer, nullptr, &target.framebuffer) != VK_SUCCESS ||
             !target.constants.initialize(device, sizeof(SunShadowUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -116,20 +126,44 @@ bool SunShadowTargets::begin(const FrameRecordingContext& frame, const SunShadow
     VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     begin.renderPass = pass_;
     begin.framebuffer = targets_[frame.image_index].framebuffer;
-    begin.renderArea.extent = {Size, Size};
+    begin.renderArea.extent = {size_, size_};
     begin.clearValueCount = 1;
     VkClearValue depth_clear{};
     depth_clear.depthStencil = {1.f, 0};
     begin.pClearValues = &depth_clear;
     vk_.cmd_begin_render_pass(frame.command_buffer, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    shadow_frame = {frame.command_buffer, pass_, begin.framebuffer, {Size, Size}, frame.image_index, frame.frame_index};
+    shadow_frame = frame;
+    shadow_frame.render_pass = begin.renderPass;
+    shadow_frame.framebuffer = begin.framebuffer;
+    shadow_frame.extent = {size_, size_};
     error.clear();
     return true;
+}
+
+void SunShadowTargets::swap(SunShadowTargets& other) noexcept
+{
+    using std::swap;
+    swap(device_, other.device_);
+    swap(pass_, other.pass_);
+    swap(sampler_, other.sampler_);
+    swap(size_, other.size_);
+    swap(vk_, other.vk_);
+    swap(destroy_sampler_, other.destroy_sampler_);
+    swap(image_pool_, other.image_pool_);
+    swap(targets_, other.targets_);
 }
 
 void SunShadowTargets::end(VkCommandBuffer command) const
 {
     if (command && pass_) vk_.cmd_end_render_pass(command);
+}
+
+bool SunShadowTargets::set_visibility_enabled(uint32_t image, bool enabled, std::string& error)
+{
+    if (image >= targets_.size()) { error = "invalid sun visibility image"; return false; }
+    const float value = enabled ? 1.f : 0.f;
+    return targets_[image].constants.write(offsetof(SunShadowUniform, ambient_color) + 3 * sizeof(float),
+        &value, sizeof(value), error);
 }
 
 void SunShadowTargets::destroy()
@@ -141,7 +175,11 @@ void SunShadowTargets::destroy()
             target.constants.destroy();
             if (target.framebuffer) vk_.destroy_framebuffer(device_, target.framebuffer, nullptr);
             if (target.view) vk_.destroy_image_view(device_, target.view, nullptr);
-            if (target.image) vk_.destroy_image(device_, target.image, nullptr);
+            if (target.image)
+            {
+                if (image_pool_) image_pool_->release(target.image);
+                else vk_.destroy_image(device_, target.image, nullptr);
+            }
             if (target.memory) vk_.free_memory(device_, target.memory, nullptr);
         }
         if (sampler_) destroy_sampler_(device_, sampler_, nullptr);
@@ -151,7 +189,9 @@ void SunShadowTargets::destroy()
     device_ = VK_NULL_HANDLE;
     pass_ = VK_NULL_HANDLE;
     sampler_ = VK_NULL_HANDLE;
+    size_ = Size;
     vk_ = {};
     destroy_sampler_ = nullptr;
+    image_pool_ = nullptr;
 }
 }

@@ -198,6 +198,25 @@ int main()
     assert(result.materials[0].textures == "concrete");
     assert(result.models[0].vertices.size() == 3 && result.models[0].vertices[2].position[0] == 2);
     assert(result.models[0].indices[2] == 2);
+    for (uint8_t type : {uint8_t(10), uint8_t(11)})
+    {
+        Bytes extended_vb;
+        u32(extended_vb, 1);
+        decl(extended_vb, 0, 2, 0);
+        decl(extended_vb, 12, 2, 3);
+        decl(extended_vb, 24, 1, 5);
+        decl(extended_vb, 32, type, 5, 4);
+        extended_vb.insert(extended_vb.end(), {0xff, 0, 0, 0, 17, 0, 0, 0});
+        u32(extended_vb, 3);
+        for (int i = 0; i < 3; ++i)
+        {
+            for (float value : {float(i), 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f})
+                f32(extended_vb, value);
+            extended_vb.insert(extended_vb.end(), type == 10 ? 8 : 4, 0);
+        }
+        assert(load_level_models(input(shaders), input(extended_vb), input(ib), input(visuals), result, error));
+        assert(result.models[0].vertices[2].position[0] == 2.f);
+    }
     Bytes lit_vb;
     u32(lit_vb, 1);
     decl(lit_vb, 0, 2, 0); decl(lit_vb, 12, 2, 3);
@@ -556,7 +575,7 @@ int main()
     Bytes tree_def, tree_visual, tree_visuals, tree_table, tree_ref;
     for (int i = 0; i < 16; ++i)
         f32(tree_def, i == 0 || i == 5 || i == 10 || i == 15 ? 1.f :
-            i == 12 ? 3.f : 0.f);
+            i == 12 ? 3.f : i == 13 ? 2.f : 0.f);
     for (int i = 0; i < 10; ++i)
         f32(tree_def, i == 3 ? .6f : i == 8 ? .1f : 0.f);
     header[1] = 7;
@@ -615,7 +634,16 @@ int main()
                 assert(std::abs(uv[1] - (-1024.f + v_fraction) / 1024.f) < 1e-6f);
             }
             else
+            {
                 assert(uv[0] == .5f && uv[1] == -.5f);
+                assert(result.models[0].tree_wind_weights.size() == 3);
+                assert(std::abs(result.models[0].tree_wind_weights[0] -
+                    (uv_type == 7 ? 321.f / 2048.f : 0.f)) < 1e-6f);
+                assert(result.models[0].tree_wind_base_y == 2.f);
+                assert(pack_tree_wind_attributes(result.models[0]));
+                assert(result.models[0].vertices[0].lightmap_uv[0] == result.models[0].tree_wind_weights[0]);
+                assert(result.models[0].vertices[0].lightmap_uv[1] == 2.f);
+            }
         }
     }
     header[1] = 11;

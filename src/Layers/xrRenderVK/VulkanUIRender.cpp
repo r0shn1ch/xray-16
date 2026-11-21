@@ -33,6 +33,7 @@ void VulkanUIRender::reset_frame()
         for (const auto &batch : batches_)
             leases_.release(batch.texture);
     distortion_ = false;
+    has_world_view_projection_ = false;
     vertices_.clear();
     world_positions_.clear();
     visible_.clear();
@@ -54,6 +55,7 @@ void VulkanUIRender::setup_states()
     material_alpha_ref_ = 0;
     cull_ = cmNONE;
     world_.identity();
+    has_world_view_projection_ = false;
 }
 
 bool VulkanUIRender::ensure(BufferResource &buffer, VkDeviceSize bytes, VkBufferUsageFlags usage, std::string &error)
@@ -109,6 +111,17 @@ bool VulkanUIRender::record(const FrameRecordingContext &frame, std::string &err
             error = "world UI primitive requires captured scene depth";
             return false;
         }
+        VkDescriptorSet texture = batch.texture;
+        if (batch.video)
+        {
+            batch.video->update(Device.dwTimeContinual, frame.frame_index);
+            texture = batch.video->descriptor(frame.frame_index);
+            if (!texture)
+            {
+                error = "Vulkan UI video has no descriptor for the active frame slot";
+                return false;
+            }
+        }
         RenderPassGraph graph;
         if (!build_render_pass_graph(
                 {RenderConsumer::Ui, SurfaceMode::Transparent, false, false, false, false, 0, batch.blend_mode}, graph,
@@ -116,7 +129,7 @@ bool VulkanUIRender::record(const FrameRecordingContext &frame, std::string &err
             return false;
         if (graph.passes[0].target != LevelPassTarget::Ui ||
             !pass_->record_ui(frame, buffers.vertices.handle(), buffers.indices.handle(), VK_INDEX_TYPE_UINT32,
-                              batch.count, batch.texture, batch.has_scissor ? &batch.scissor : nullptr, 0,
+                              batch.count, texture, batch.has_scissor ? &batch.scissor : nullptr, 0,
                               VkDeviceSize(batch.first_index) * sizeof(uint32_t), batch.alpha_ref,
                               {Device.dwWidth, Device.dwHeight}, batch.distortion ? 1 : batch.blend_mode,
                               batch.distortion    ? scene
@@ -313,7 +326,7 @@ void VulkanUIRender::FlushPrimitive()
             Fvector position;
             world_.transform_tiny(position, world_positions_[i]);
             Fvector4 clip;
-            Device.mFullTransform.transform(clip, position);
+            (has_world_view_projection_ ? world_view_projection_ : Device.mFullTransform).transform(clip, position);
             if (world_depth)
             {
                 // Keep homogeneous coordinates: the GPU clips crossing
@@ -361,7 +374,8 @@ void VulkanUIRender::FlushPrimitive()
         const bool alpha_test =
             blend_mode_ == 1 || blend_mode_ == 5 || blend_mode_ == 7 || blend_mode_ == 8 || blend_mode_ == 9;
         batches_.push_back(
-            {first_index, static_cast<uint32_t>(indices_.size()) - first_index, texture_, scissor_, has_scissor_,
+            {first_index, static_cast<uint32_t>(indices_.size()) - first_index, texture_,
+             shader_ ? shader_->video() : std::shared_ptr<VulkanVideoTexture>{}, scissor_, has_scissor_,
              alpha_test ? float(std::max(alpha_ref_, blend_mode_ == 7 ? 0 : material_alpha_ref_)) / 255.0f : 0.f,
              blend_mode_, distortion_, world_depth});
     }
@@ -427,6 +441,7 @@ void VulkanUIRender::append_imgui(ImDrawData *data)
             batches_.push_back({begin,
                                 command.ElemCount,
                                 descriptor,
+                                {},
                                 {{x, y}, {static_cast<uint32_t>(right - x), static_cast<uint32_t>(bottom - y)}},
                                 true,
                                 0.f,
@@ -438,8 +453,23 @@ void VulkanUIRender::append_imgui(ImDrawData *data)
 LPCSTR VulkanUIRender::UpdateShaderName(LPCSTR texture, LPCSTR shader)
 {
     string_path path;
-    return texture && FS.exist(path, "$game_textures$", texture, ".ogm") ? "hud\\movie" : shader;
+    if (texture && FS.exist(path, "$game_textures$", texture, ".ogm"))
+        return "hud\\movie";
+    if (texture && FS.exist(path, "$game_textures$", texture, ".ogv"))
+        return "hud\\movie";
+#if defined(XR_PLATFORM_WINDOWS)
+    if (texture && FS.exist(path, "$game_textures$", texture, ".avi"))
+        return "hud\\movie";
+#endif
+    return shader;
 }
+void VulkanUIRender::set_world_view_projection(const Fmatrix* projection)
+{
+    has_world_view_projection_ = projection != nullptr;
+    if (projection)
+        world_view_projection_ = *projection;
+}
+
 void VulkanUIRender::CacheSetXformWorld(const Fmatrix &matrix)
 {
     world_ = matrix;

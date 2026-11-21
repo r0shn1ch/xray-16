@@ -31,6 +31,10 @@
 #include <string>
 #include <vector>
 
+#ifdef near
+#undef near
+#endif
+
 static void check(VkResult r)
 {
     if (r != VK_SUCCESS)
@@ -46,7 +50,7 @@ static std::vector<uint32_t> shader(const std::string &name)
     input.read(reinterpret_cast<char *>(code.data()), std::streamsize(code.size() * 4));
     return code;
 }
-struct Memory
+struct GpuMemory
 {
     VkDevice device{};
     VkPhysicalDeviceMemoryProperties types{};
@@ -74,7 +78,7 @@ struct Image
     VkDeviceMemory memory{};
     uint32_t width{1}, height{1};
 };
-static Image image(Memory &memory, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
+static Image image(GpuMemory &memory, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
                    VkMemoryPropertyFlags flags, uint32_t layers = 1, uint32_t width = 1, uint32_t levels = 1,
                    uint32_t height = 1)
 {
@@ -93,7 +97,13 @@ static Image image(Memory &memory, VkFormat format, VkImageTiling tiling, VkImag
     info.tiling = tiling;
     info.usage = usage;
     info.initialLayout = tiling == VK_IMAGE_TILING_LINEAR ? VK_IMAGE_LAYOUT_PREINITIALIZED : VK_IMAGE_LAYOUT_UNDEFINED;
-    check(vkCreateImage(memory.device, &info, nullptr, &result.image));
+    const VkResult created = vkCreateImage(memory.device, &info, nullptr, &result.image);
+    if (created != VK_SUCCESS)
+        throw std::runtime_error("vkCreateImage format=" + std::to_string(info.format) +
+            " tiling=" + std::to_string(info.tiling) + " usage=" + std::to_string(info.usage) +
+            " extent=" + std::to_string(width) + "x" + std::to_string(info.extent.height) +
+            " layers=" + std::to_string(layers) + " mips=" + std::to_string(levels) +
+            " returned " + std::to_string(created));
     VkMemoryRequirements requirements{};
     vkGetImageMemoryRequirements(memory.device, result.image, &requirements);
     result.memory = memory.allocate(requirements, flags);
@@ -109,7 +119,7 @@ static Image image(Memory &memory, VkFormat format, VkImageTiling tiling, VkImag
     check(vkCreateImageView(memory.device, &view, nullptr, &result.view));
     return result;
 }
-static void fill(Memory &memory, const Image &image, const std::array<float, 4> &rgba, uint32_t layers = 1,
+static void fill(GpuMemory &memory, const Image &image, const std::array<float, 4> &rgba, uint32_t layers = 1,
                  uint32_t width = 1)
 {
     void *mapped{};
@@ -126,6 +136,81 @@ static void fill(Memory &memory, const Image &image, const std::array<float, 4> 
                             rgba.data(), sizeof(float) * 4);
     }
     vkUnmapMemory(memory.device, image.memory);
+}
+static void upload_optimal_image(GpuMemory &memory, VkQueue queue, VkCommandPool commands,
+                                 VkCommandBuffer command, VkImage image, uint32_t levels, uint32_t layers,
+                                 const std::vector<uint8_t> &pixels,
+                                 const std::vector<VkBufferImageCopy> &regions,
+                                 VkImageLayout previous_layout)
+{
+    VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    buffer_info.size = pixels.size();
+    buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer staging{};
+    check(vkCreateBuffer(memory.device, &buffer_info, nullptr, &staging));
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(memory.device, staging, &requirements);
+    VkDeviceMemory staging_memory = memory.allocate(requirements,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    check(vkBindBufferMemory(memory.device, staging, staging_memory, 0));
+    void *mapped{};
+    check(vkMapMemory(memory.device, staging_memory, 0, pixels.size(), 0, &mapped));
+    std::memcpy(mapped, pixels.data(), pixels.size());
+    vkUnmapMemory(memory.device, staging_memory);
+
+    check(vkResetCommandPool(memory.device, commands, 0));
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    check(vkBeginCommandBuffer(command, &begin));
+    VkImageMemoryBarrier to_transfer{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    to_transfer.srcAccessMask = previous_layout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : VK_ACCESS_SHADER_READ_BIT;
+    to_transfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    to_transfer.oldLayout = previous_layout;
+    to_transfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    to_transfer.srcQueueFamilyIndex = to_transfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_transfer.image = image;
+    to_transfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, layers};
+    vkCmdPipelineBarrier(command,
+        previous_layout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT :
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_transfer);
+    vkCmdCopyBufferToImage(command, staging, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        static_cast<uint32_t>(regions.size()), regions.data());
+    VkImageMemoryBarrier to_sample{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    to_sample.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    to_sample.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    to_sample.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    to_sample.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    to_sample.srcQueueFamilyIndex = to_sample.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_sample.image = image;
+    to_sample.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, layers};
+    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_sample);
+    check(vkEndCommandBuffer(command));
+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &command;
+    check(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE));
+    check(vkQueueWaitIdle(queue));
+    vkDestroyBuffer(memory.device, staging, nullptr);
+    vkFreeMemory(memory.device, staging_memory, nullptr);
+}
+static void upload_solid_cube(GpuMemory &memory, VkQueue queue, VkCommandPool commands,
+                              VkCommandBuffer command, const Image &image,
+                              const std::array<float, 4> &rgba, VkImageLayout previous_layout)
+{
+    std::vector<uint8_t> pixels(6 * sizeof(float) * 4);
+    std::vector<VkBufferImageCopy> regions(6);
+    for (uint32_t face = 0; face < 6; ++face)
+    {
+        std::memcpy(pixels.data() + face * sizeof(float) * 4, rgba.data(), sizeof(float) * 4);
+        VkBufferImageCopy &region = regions[face];
+        region.bufferOffset = face * sizeof(float) * 4;
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, face, 1};
+        region.imageExtent = {image.width, image.height, 1};
+    }
+    upload_optimal_image(memory, queue, commands, command, image.image, 1, 6,
+        pixels, regions, previous_layout);
 }
 struct Vertex
 {
@@ -154,9 +239,24 @@ int main(int argc, char **argv)
 {
     try
     {
-        if (argc < 2 || argc > 4)
+        if (argc < 2)
             throw std::runtime_error(
-                "usage: vulkan_surface_channels <vk shader directory> [menu-preview.ppm] [weather-preview.ppm]");
+                "usage: vulkan_surface_channels <vk shader directory> [menu-preview.ppm] [weather-preview.ppm] [--device-index N]");
+        std::vector<std::string> preview_paths;
+        int selected_device = 0;
+        for (int argument = 2; argument < argc; ++argument)
+        {
+            if (std::string(argv[argument]) == "--device-index")
+            {
+                if (++argument >= argc)
+                    throw std::runtime_error("--device-index requires an adapter index");
+                selected_device = std::stoi(argv[argument]);
+            }
+            else
+                preview_paths.emplace_back(argv[argument]);
+        }
+        if (preview_paths.size() > 2)
+            throw std::runtime_error("at most two preview paths may be specified");
         VkInstance instance{};
         VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
         check(vkCreateInstance(&instance_info, nullptr, &instance));
@@ -166,7 +266,9 @@ int main(int argc, char **argv)
             throw std::runtime_error("no Vulkan physical device");
         std::vector<VkPhysicalDevice> devices(count);
         check(vkEnumeratePhysicalDevices(instance, &count, devices.data()));
-        VkPhysicalDevice physical = devices[0];
+        if (selected_device < 0 || uint32_t(selected_device) >= count)
+            throw std::runtime_error("selected Vulkan physical device index is out of range");
+        VkPhysicalDevice physical = devices[size_t(selected_device)];
         uint32_t families{};
         vkGetPhysicalDeviceQueueFamilyProperties(physical, &families, nullptr);
         std::vector<VkQueueFamilyProperties> properties(families);
@@ -193,8 +295,19 @@ int main(int argc, char **argv)
         check(vkCreateDevice(physical, &device_info, nullptr, &device));
         VkQueue queue{};
         vkGetDeviceQueue(device, family, 0, &queue);
-        Memory memory{device};
+        GpuMemory memory{device};
         vkGetPhysicalDeviceMemoryProperties(physical, &memory.types);
+        VkCommandPoolCreateInfo cmd_pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        cmd_pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        cmd_pool_info.queueFamilyIndex = family;
+        VkCommandPool commands{};
+        check(vkCreateCommandPool(device, &cmd_pool_info, nullptr, &commands));
+        VkCommandBufferAllocateInfo cmd_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        cmd_info.commandPool = commands;
+        cmd_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cmd_info.commandBufferCount = 1;
+        VkCommandBuffer cmd{};
+        check(vkAllocateCommandBuffers(device, &cmd_info, &cmd));
         constexpr VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
         VkFormatProperties support{};
         vkGetPhysicalDeviceFormatProperties(physical, format, &support);
@@ -230,30 +343,34 @@ int main(int argc, char **argv)
         pixels[8] = {.1f, .2f, .7f, .4f};
         for (size_t i = 0; i < input.size(); ++i)
             fill(memory, input[i], pixels[i]);
-        const Image material_mips =
-            image(memory, format, VK_IMAGE_TILING_LINEAR, VK_IMAGE_USAGE_SAMPLED_BIT,
-                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 1, 4, 3, 4);
-        void *material_data{};
-        check(vkMapMemory(device, material_mips.memory, 0, VK_WHOLE_SIZE, 0, &material_data));
-        for (unsigned mip = 0; mip < 3; ++mip)
+        const Image material_mips = image(memory, format, VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 1, 4, 3, 4);
+        std::vector<uint8_t> material_pixels((16 + 4 + 1) * sizeof(float) * 4);
+        std::vector<VkBufferImageCopy> material_regions(3);
+        size_t material_offset = 0;
+        for (unsigned mip = 0, dimension = 4; mip < 3; ++mip, dimension = std::max(1u, dimension / 2))
         {
-            VkImageSubresource sub{VK_IMAGE_ASPECT_COLOR_BIT, mip, 0};
-            VkSubresourceLayout sub_layout{};
-            vkGetImageSubresourceLayout(device, material_mips.image, &sub, &sub_layout);
-            for (unsigned y = 0; y < (4u >> mip); ++y)
-                for (unsigned x = 0; x < (4u >> mip); ++x)
+            for (unsigned y = 0; y < dimension; ++y)
+                for (unsigned x = 0; x < dimension; ++x)
                 {
                     const float rgba[]{mip == 2 ? .9f : mip == 1 ? .6f : x < 2 ? .2f : .8f, .5f, 1.f, 1.f};
-                    std::memcpy(static_cast<uint8_t *>(material_data) + sub_layout.offset + y * sub_layout.rowPitch +
-                                    x * 16,
-                                rgba, 16);
+                    std::memcpy(material_pixels.data() + material_offset +
+                            (y * dimension + x) * sizeof(float) * 4, rgba, sizeof(rgba));
                 }
+            VkBufferImageCopy &region = material_regions[mip];
+            region.bufferOffset = material_offset;
+            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, 1};
+            region.imageExtent = {dimension, dimension, 1};
+            material_offset += size_t(dimension) * dimension * sizeof(float) * 4;
         }
-        vkUnmapMemory(device, material_mips.memory);
-        const Image cube = image(memory, format, VK_IMAGE_TILING_LINEAR, VK_IMAGE_USAGE_SAMPLED_BIT,
-                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 6);
+        upload_optimal_image(memory, queue, commands, cmd, material_mips.image, 3, 1,
+            material_pixels, material_regions, VK_IMAGE_LAYOUT_UNDEFINED);
+        const Image cube = image(memory, format, VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 6);
         const std::array<float, 4> cube_pixel{.91f, .22f, .34f, .67f};
-        fill(memory, cube, cube_pixel, 6);
+        upload_solid_cube(memory, queue, commands, cmd, cube, cube_pixel, VK_IMAGE_LAYOUT_UNDEFINED);
         VkSampler sampler{};
         VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         sampler_info.magFilter = sampler_info.minFilter = VK_FILTER_NEAREST;
@@ -520,16 +637,6 @@ int main(int argc, char **argv)
         pipeline_info.pColorBlendState = &blend_state;
         pipeline_info.layout = pipeline_layout;
         pipeline_info.renderPass = render_pass;
-        VkCommandPoolCreateInfo cmd_pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-        cmd_pool_info.queueFamilyIndex = family;
-        VkCommandPool commands{};
-        check(vkCreateCommandPool(device, &cmd_pool_info, nullptr, &commands));
-        VkCommandBufferAllocateInfo cmd_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        cmd_info.commandPool = commands;
-        cmd_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        cmd_info.commandBufferCount = 1;
-        VkCommandBuffer cmd{};
-        check(vkAllocateCommandBuffers(device, &cmd_info, &cmd));
         auto module = [&](const std::string &filename) {
             auto code = shader(std::string(argv[1]) + "/" + filename);
             VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
@@ -577,23 +684,33 @@ int main(int argc, char **argv)
             image(memory, format, VK_IMAGE_TILING_LINEAR, VK_IMAGE_USAGE_SAMPLED_BIT,
                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 1, 128);
         const Image weather_cube =
-            image(memory, format, VK_IMAGE_TILING_LINEAR, VK_IMAGE_USAGE_SAMPLED_BIT,
-                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 6, 64, 7);
+            image(memory, format, VK_IMAGE_TILING_OPTIMAL,
+                  VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 6, 64, 7);
         // Deliberately different mip contents expose implicit-LOD selection.
-        check(vkMapMemory(device, weather_cube.memory, 0, VK_WHOLE_SIZE, 0, &mapped));
-        for (unsigned face = 0; face < 6; ++face)
-            for (unsigned mip = 0; mip < 7; ++mip)
+        constexpr uint32_t weather_mip_count = 7;
+        constexpr uint32_t weather_face_count = 6;
+        constexpr size_t weather_mip_texels = 64 * 64 + 32 * 32 + 16 * 16 + 8 * 8 + 4 * 4 + 2 * 2 + 1;
+        std::vector<uint8_t> weather_pixels(weather_mip_texels * weather_face_count * sizeof(float) * 4);
+        std::vector<VkBufferImageCopy> weather_regions(weather_mip_count * weather_face_count);
+        size_t weather_offset = 0;
+        size_t region_index = 0;
+        for (uint32_t face = 0; face < weather_face_count; ++face)
+            for (uint32_t mip = 0, dimension = 64; mip < weather_mip_count;
+                 ++mip, dimension = std::max(1u, dimension / 2))
             {
-                VkImageSubresource sub{VK_IMAGE_ASPECT_COLOR_BIT, mip, face};
-                VkSubresourceLayout layout{};
-                vkGetImageSubresourceLayout(device, weather_cube.image, &sub, &layout);
                 const float rgba[]{mip ? 0.f : .8f, mip ? 0.f : .6f, mip ? 0.f : .4f, 1.f};
-                for (unsigned y = 0; y < (64u >> mip); ++y)
-                    for (unsigned x = 0; x < (64u >> mip); ++x)
-                        std::memcpy(static_cast<uint8_t *>(mapped) + layout.offset + y * layout.rowPitch + x * 16, rgba,
-                                    16);
+                for (uint32_t texel = 0; texel < dimension * dimension; ++texel)
+                    std::memcpy(weather_pixels.data() + weather_offset +
+                        size_t(texel) * sizeof(float) * 4, rgba, sizeof(rgba));
+                VkBufferImageCopy &region = weather_regions[region_index++];
+                region.bufferOffset = weather_offset;
+                region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, face, 1};
+                region.imageExtent = {dimension, dimension, 1};
+                weather_offset += size_t(dimension) * dimension * sizeof(float) * 4;
             }
-        vkUnmapMemory(device, weather_cube.memory);
+        upload_optimal_image(memory, queue, commands, cmd, weather_cube.image, weather_mip_count,
+            weather_face_count, weather_pixels, weather_regions, VK_IMAGE_LAYOUT_UNDEFINED);
         check(vkMapMemory(device, weather_normal.memory, 0, VK_WHOLE_SIZE, 0, &mapped));
         VkImageSubresource normal_sub{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0};
         VkSubresourceLayout normal_layout{};
@@ -614,27 +731,32 @@ int main(int argc, char **argv)
         }
         vkUnmapMemory(device, weather_shadow.memory);
         VkBuffer weather_uniform{};
-        buffer_info.size = 176;
+        buffer_info.size = 288;
         buffer_info.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
         check(vkCreateBuffer(device, &buffer_info, nullptr, &weather_uniform));
         vkGetBufferMemoryRequirements(device, weather_uniform, &required);
         auto weather_memory =
             memory.allocate(required, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         check(vkBindBufferMemory(device, weather_uniform, weather_memory, 0));
-        float constants[44]{};
+        float constants[72]{};
         for (unsigned i = 0; i < 16; ++i)
-            constants[i] = constants[16 + i] = i % 5 == 0 ? 1.f : 0.f;
+            constants[i] = constants[16 + i] = constants[44 + i] = i % 5 == 0 ? 1.f : 0.f;
         constants[36] = constants[37] = constants[38] = .04f;
         constants[40] = .5f;
         constants[41] = .45f;
         constants[42] = .4f;
+        constants[67] = 1.f; // Fog plane: keep the test geometry fully visible.
         check(vkMapMemory(device, weather_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
         std::memcpy(mapped, constants, sizeof(constants));
         vkUnmapMemory(device, weather_memory);
         auto weather_bindings = bindings;
         weather_bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         layout_info.pBindings = weather_bindings.data();
-        layout_info.bindingCount = 6;
+        // Match every resource declared by weather.frag. The newer combine
+        // pass also binds ray visibility, indirect radiance, resolved depth /
+        // normal, and the rain shadow map even when a particular frame has
+        // those effects disabled.
+        layout_info.bindingCount = 11;
         VkDescriptorSetLayout weather_descriptor_layout{};
         check(vkCreateDescriptorSetLayout(device, &layout_info, nullptr, &weather_descriptor_layout));
         alloc.pSetLayouts = &weather_descriptor_layout;
@@ -648,9 +770,14 @@ int main(int argc, char **argv)
                                                {sampler, input[19].view, VK_IMAGE_LAYOUT_GENERAL},
                                                {sampler, weather_shadow.view, VK_IMAGE_LAYOUT_GENERAL},
                                                {},
-                                               {sampler, input[2].view, VK_IMAGE_LAYOUT_GENERAL}};
-        VkDescriptorBufferInfo uniform_info{weather_uniform, 0, 176};
-        for (unsigned i = 0; i < 6; ++i)
+                                               {sampler, input[2].view, VK_IMAGE_LAYOUT_GENERAL},
+                                               {sampler, input[19].view, VK_IMAGE_LAYOUT_GENERAL},
+                                               {sampler, input[0].view, VK_IMAGE_LAYOUT_GENERAL},
+                                               {sampler, input[19].view, VK_IMAGE_LAYOUT_GENERAL},
+                                               {sampler, weather_normal.view, VK_IMAGE_LAYOUT_GENERAL},
+                                               {sampler, weather_shadow.view, VK_IMAGE_LAYOUT_GENERAL}};
+        VkDescriptorBufferInfo uniform_info{weather_uniform, 0, sizeof(constants)};
+        for (unsigned i = 0; i < 11; ++i)
         {
             VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
             write.dstSet = weather_set;
@@ -662,12 +789,15 @@ int main(int argc, char **argv)
             if (i == 4)
                 write.pBufferInfo = &uniform_info;
             vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
-            VkDescriptorImageInfo cube_info{sampler, weather_cube.view, VK_IMAGE_LAYOUT_GENERAL};
-            write.dstSet = weather_environment_set;
-            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            write.pImageInfo = i == 2 || i == 3 ? &weather_images[0] : &cube_info;
-            write.pBufferInfo = nullptr;
-            vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+            if (i < 6)
+            {
+                VkDescriptorImageInfo cube_info{sampler, weather_cube.view, VK_IMAGE_LAYOUT_GENERAL};
+                write.dstSet = weather_environment_set;
+                write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                write.pImageInfo = i == 2 || i == 3 ? &weather_images[0] : &cube_info;
+                write.pBufferInfo = nullptr;
+                vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+            }
         }
         const VkDescriptorSetLayout weather_layouts[]{weather_descriptor_layout, descriptor_layout};
         const VkPushConstantRange weather_range{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 128};
@@ -688,7 +818,7 @@ int main(int argc, char **argv)
         alloc.pSetLayouts = &local_layout;
         VkDescriptorSet local_set{};
         check(vkAllocateDescriptorSets(device, &alloc, &local_set));
-        const VkDescriptorSetLayout local_layouts[]{descriptor_layout, local_layout};
+        const VkDescriptorSetLayout local_layouts[]{weather_descriptor_layout, local_layout};
         pipeline_layout_info.pSetLayouts = local_layouts;
         pipeline_layout_info.pPushConstantRanges = &range;
         VkPipelineLayout local_pipeline_layout{};
@@ -833,8 +963,8 @@ int main(int argc, char **argv)
         const auto composite_ps = embedded(distortion_shaders::Composite, sizeof(distortion_shaders::Composite));
         const auto water_ps = embedded(water_shaders::Fragment, sizeof(water_shaders::Fragment));
         const auto water_vs = embedded(deferred_shaders::GBufferVertex, sizeof(deferred_shaders::GBufferVertex));
-        bool cube_initialized = false;
-        bool material_mips_initialized = false;
+        bool cube_initialized = true;
+        bool material_mips_initialized = true;
         auto execute = [&](VkShaderModule fragment, const Push &push, bool use_cube = false,
                            VkShaderModule custom_vertex = VK_NULL_HANDLE, bool sprite = false, bool skinned = false,
                            bool coplanar = false, bool multiply_decal = false, bool cutout_bias = false) {
@@ -902,8 +1032,9 @@ int main(int argc, char **argv)
             check(vkBeginCommandBuffer(cmd, &begin));
             if ((weather || forward) && !weather_initialized)
             {
-                VkImageMemoryBarrier barriers[3]{};
-                for (unsigned i = 0; i < 3; ++i)
+                VkImageMemoryBarrier barriers[2]{};
+                const VkImage host_images[]{weather_normal.image, weather_shadow.image};
+                for (unsigned i = 0; i < 2; ++i)
                 {
                     auto &b = barriers[i];
                     b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -911,12 +1042,12 @@ int main(int argc, char **argv)
                     b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
                     b.oldLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
                     b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-                    b.image = i == 0 ? weather_normal.image : i == 1 ? weather_cube.image : weather_shadow.image;
-                    b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, i == 1 ? 7u : 1u, 0, i == 1 ? 6u : 1u};
+                    b.image = host_images[i];
+                    b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
                     b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                 }
                 vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
-                                     nullptr, 0, nullptr, 3, barriers);
+                                     nullptr, 0, nullptr, 2, barriers);
                 weather_initialized = true;
             }
             if ((use_cube || local) && !cube_initialized)
@@ -986,7 +1117,7 @@ int main(int argc, char **argv)
             rp.pClearValues = clear.data();
             vkCmdBeginRenderPass(cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-            const VkDescriptorSet draw_sets[]{weather ? weather_set : set, local     ? local_set
+            const VkDescriptorSet draw_sets[]{(weather || local) ? weather_set : set, local     ? local_set
                                                                            : weather ? weather_environment_set
                                                                            : skinned ? pose_set
                                                                            : (fragment == composite_ps || fragment == water_ps) ? composite_set
@@ -1251,6 +1382,15 @@ int main(int argc, char **argv)
         near(object_result[1][3], .875f + .125f * .2f, "packed hemi survives static rotation/material block");
         near(object_result[1][0], 1.f, "static model normal rotation X");
         near(object_result[1][2], .5f, "static model normal rotation Z");
+        fill(memory, input[19], {.8f, .25f, .4f, 1.f});
+        auto pbr_push = object_push;
+        pbr_push.modes[2] = 2.f;
+        const auto pbr_result = execute(object_fragment, pbr_push, false, object_vertex);
+        near(pbr_result[2][0], .25f, "PBR roughness from packed green channel");
+        near(pbr_result[2][1], .8f, "PBR metallic from packed red channel");
+        near(pbr_result[2][2], .4f, "PBR occlusion from packed blue channel");
+        near(pbr_result[1][3], .82f + .05f * .2f, "PBR dynamic hemisphere marker");
+        fill(memory, input[19], pixels[19]);
         object_push.modes[3] = 3;
         object_push.factors[0] = .8f;
         auto object_changed = execute(object_fragment, object_push, false, object_vertex);
@@ -1558,9 +1698,9 @@ int main(int argc, char **argv)
         execute(ui_ps, ui_push, false, ui_vs);
         for (unsigned x = 0; x < 128; ++x)
             near(last_ui_pixels[x][0], float(x) / 127.f * 1.02f, "menu selection never displaces label pixels");
-        if (argc >= 3)
+        if (!preview_paths.empty())
         {
-            std::ofstream preview(argv[2], std::ios::binary);
+            std::ofstream preview(preview_paths[0], std::ios::binary);
             preview << "P6\n128 96\n255\n";
             for (unsigned y = 0; y < 96; ++y)
                 for (unsigned x = 0; x < 128; ++x)
@@ -1739,9 +1879,9 @@ int main(int argc, char **argv)
         std::memcpy(w + 7, &near_bits, 4);
         std::memcpy(w + 11, &far_bits, 4);
         execute(weather_ps, weather_push, false, weather_vs);
-        if (argc == 4)
+        if (preview_paths.size() > 1)
         {
-            std::ofstream preview(argv[3], std::ios::binary);
+            std::ofstream preview(preview_paths[1], std::ios::binary);
             preview << "P6\n128 32\n255\n";
             for (unsigned y = 0; y < 32; ++y)
                 for (const auto &pixel : last_ui_pixels)
@@ -1765,8 +1905,39 @@ int main(int argc, char **argv)
                 near(last_ui_pixels[x][c], expected_lighting[c] + pixels[0][c] * .6f * visibility,
                      "shadow checker comparisons use continuous weighted PCF");
         }
+        // The same cube fixture has color only in mip zero. A smooth metal
+        // should reflect it; a rough metal should select the dark coarse mip.
+        w[16] = w[17] = w[18] = 0.f;
+        fill(memory, weather_normal, {.5f, .5f, 0.f, .845f});
+        fill(memory, input[2], {.04f, 1.f, 1.f, 0.f});
+        execute(weather_ps, weather_push, false, weather_vs);
+        const float smooth_reflection = last_ui_pixels[64][0];
+        fill(memory, input[2], {1.f, 1.f, 1.f, 0.f});
+        execute(weather_ps, weather_push, false, weather_vs);
+        const float rough_reflection = last_ui_pixels[64][0];
+        if (!(smooth_reflection > rough_reflection + .01f))
+            throw std::runtime_error("PBR roughness did not select environment mip");
+        fill(memory, input[2], {.04f, 1.f, 0.f, 0.f});
+        execute(weather_ps, weather_push, false, weather_vs);
+        near(last_ui_pixels[64][0], 0.f, "PBR occlusion attenuates environment reflection");
         // Execute the real local-light shader and additive blend. The lamp
         // must illuminate a receiver, follow its cone/cookie and respect depth.
+        // The local-light fixture uses the same Vulkan bindings as the scene,
+        // but its normal and surface images are the standalone input slots 1
+        // and 5 (the weather fixture above uses dedicated G-buffer images).
+        const VkDescriptorImageInfo local_gbuffer_images[]{{sampler, input[1].view, VK_IMAGE_LAYOUT_GENERAL},
+                                                           {sampler, input[5].view, VK_IMAGE_LAYOUT_GENERAL}};
+        VkWriteDescriptorSet local_gbuffer_writes[2]{};
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            local_gbuffer_writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            local_gbuffer_writes[i].dstSet = weather_set;
+            local_gbuffer_writes[i].dstBinding = i == 0 ? 1 : 5;
+            local_gbuffer_writes[i].descriptorCount = 1;
+            local_gbuffer_writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            local_gbuffer_writes[i].pImageInfo = &local_gbuffer_images[i];
+        }
+        vkUpdateDescriptorSets(device, 2, local_gbuffer_writes, 0, nullptr);
         fill(memory, input[0], {.4f, .3f, .2f, 1});
         fill(memory, input[1], {.5f, .5f, 0, 1});
         fill(memory, input[2], {.5f, 0, 0, 0});
@@ -1785,6 +1956,32 @@ int main(int argc, char **argv)
         auto lamp = execute(local_fragment, push, false, weather_vs);
         const float lamp_value = .1f + .4f * (1.f - .05f * .05f);
         near(lamp[0][0], lamp_value, "torch illuminates world through additive local pass");
+        local_uniform.debug_mode[1] = 1.f;
+        local_uniform.debug_mode[2] = 1.f;
+        local_uniform.debug_mode[3] = 1.f;
+        write_local();
+        const float volume_full = execute(local_fragment, push, false, weather_vs)[0][0];
+        if (!(volume_full > lamp_value + .001f))
+            throw std::runtime_error("volumetric light did not add in-scattering");
+        local_uniform.debug_mode[1] = .5f;
+        write_local();
+        near(execute(local_fragment, push, false, weather_vs)[0][0],
+            lamp_value + .5f * (volume_full - lamp_value), "volumetric intensity scales contribution");
+        local_uniform.debug_mode[3] = 0.f;
+        write_local();
+        near(execute(local_fragment, push, false, weather_vs)[0][0], lamp_value,
+            "zero volumetric distance disables contribution");
+        local_uniform.debug_mode[1] = local_uniform.debug_mode[2] = local_uniform.debug_mode[3] = 0.f;
+        fill(memory, input[1], {.5f, .5f, 0.f, .83f});
+        fill(memory, input[5], {.5f, 0.f, 1.f, 0.f});
+        write_local();
+        const float dielectric = execute(local_fragment, push, false, weather_vs)[0][0];
+        fill(memory, input[5], {.5f, 1.f, 1.f, 0.f});
+        const float metal = execute(local_fragment, push, false, weather_vs)[0][0];
+        if (!(dielectric > .1f && metal > dielectric))
+            throw std::runtime_error("PBR metallic did not change local-light response");
+        fill(memory, input[1], {.5f, .5f, 0.f, 1.f});
+        fill(memory, input[5], {0.f, 0.f, 0.f, 0.f});
         local_uniform.direction_cone[2] = -1;
         write_local();
         near(execute(local_fragment, push, false, weather_vs)[0][0], .1f, "torch cone excludes opposite direction");
@@ -1806,7 +2003,8 @@ int main(int argc, char **argv)
             local_uniform.shadow_matrices[0][i] = 1;
         local_uniform.shadow_params[2] = 1;
         write_local();
-        fill(memory, cube, {.25f, 0, 0, 1}, 6);
+        upload_solid_cube(memory, queue, commands, cmd, cube,
+            std::array<float, 4>{.25f, 0, 0, 1}, VK_IMAGE_LAYOUT_GENERAL);
         near(execute(local_fragment, push, false, weather_vs)[0][0], .1f, "local shadow blocks receiver");
         // A fixed eye sees the same receiver at the center and at the
         // clipped edge of the viewport. The old 5% scissor threshold
@@ -1824,7 +2022,8 @@ int main(int argc, char **argv)
             near(execute(local_fragment, push, false, weather_vs)[0][0], .1f,
                  "fixed camera position retains the lamp shadow on a turn");
         }
-        fill(memory, cube, {.75f, 0, 0, 1}, 6);
+        upload_solid_cube(memory, queue, commands, cmd, cube,
+            std::array<float, 4>{.75f, 0, 0, 1}, VK_IMAGE_LAYOUT_GENERAL);
         near(execute(local_fragment, push, false, weather_vs)[0][0], lamp_value, "local shadow keeps visible receiver");
         // At 50 m, a one-metre caster/receiver gap is only 0.00004 in
         // perspective depth. A fixed 0.002 bias incorrectly removes the shadow.
@@ -1839,10 +2038,12 @@ int main(int argc, char **argv)
         local_uniform.shadow_params[1] = LocalShadowReceiverOffset;
         write_local();
         const auto projected_depth = [&](float z) { return (projection[10] * z + projection[14]) / z; };
-        fill(memory, cube, {projected_depth(49), 0, 0, 1}, 6);
+        upload_solid_cube(memory, queue, commands, cmd, cube,
+            std::array<float, 4>{projected_depth(49), 0, 0, 1}, VK_IMAGE_LAYOUT_GENERAL);
         near(execute(local_fragment, push, false, weather_vs)[0][0], .1f,
              "world-space bias preserves distant character shadows");
-        fill(memory, cube, {projected_depth(51), 0, 0, 1}, 6);
+        upload_solid_cube(memory, queue, commands, cmd, cube,
+            std::array<float, 4>{projected_depth(51), 0, 0, 1}, VK_IMAGE_LAYOUT_GENERAL);
         near(execute(local_fragment, push, false, weather_vs)[0][0], .4f,
              "world-space bias preserves visible distant receivers");
         // Execute the paired-view foliage shaders, including both endpoint
@@ -2024,8 +2225,10 @@ int main(int argc, char **argv)
         check(vkEndCommandBuffer(cmd));
         check(vkQueueSubmit(queue, 1, &scene_submit, VK_NULL_HANDLE));
         check(vkQueueWaitIdle(queue));
-        float scene_constants[36]{};
+        float scene_constants[44]{};
         for (unsigned i = 0; i < 16; i += 5) scene_constants[16+i] = 1;
+        scene_constants[37] = -1.f;
+        scene_constants[39] = 1.f;
         check(vkMapMemory(device, weather_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
         std::memcpy(mapped, scene_constants, sizeof(scene_constants));
         vkUnmapMemory(device, weather_memory);
@@ -2236,11 +2439,21 @@ int main(int argc, char **argv)
                       << upright_above << ", flat above water " << flat_above
                       << ", flat below water " << flat_below << '\n';
 
-            update_texture(writes[0], scene_image);
-            update_texture(writes[2], wall_depth);
+            // Local-light draws bind weather_set as set 0, so updating the
+            // generic `set` descriptors above would leave the shader reading
+            // the unrelated 1x1 albedo/depth fixtures. Bind the wall scene to
+            // the actual local-light G-buffer and restore its original inputs
+            // after the camera-turn regression.
+            auto local_albedo_write = writes[0];
+            local_albedo_write.dstSet = weather_set;
+            auto local_depth_write = writes[2];
+            local_depth_write.dstSet = weather_set;
+            update_texture(local_albedo_write, scene_image);
+            update_texture(local_depth_write, wall_depth);
             fill(memory, input[1], {.5f, .5f, 0, 1});
             fill(memory, input[5], {0, 0, 0, 0});
-            fill(memory, cube, {.25f, 0, 0, 1}, 6);
+            upload_solid_cube(memory, queue, commands, cmd, cube,
+                std::array<float, 4>{.25f, 0, 0, 1}, VK_IMAGE_LAYOUT_GENERAL);
             local_uniform = {};
             constexpr Point Lamp{-.75f, 0.f, 7.75f};
             constexpr float Range = 1.65f;
@@ -2318,9 +2531,14 @@ int main(int argc, char **argv)
                 }
             }
             if (legacy_max - legacy_min < .15f || fixed_max - fixed_min > .01f)
-                throw std::runtime_error("camera turn did not reproduce shadow coverage flicker");
+                throw std::runtime_error("camera turn shadow range old=" +
+                    std::to_string(legacy_min) + ".." + std::to_string(legacy_max) +
+                    " fixed=" + std::to_string(fixed_min) + ".." +
+                    std::to_string(fixed_max));
             std::cout << "Light, same wall panel during yaw: old " << legacy_min << ".." << legacy_max
                       << ", 0.9.191 " << fixed_min << ".." << fixed_max << '\n';
+            update_texture(local_albedo_write, input[0]);
+            update_texture(local_depth_write, input[19]);
 
             check(vkMapMemory(device, vertex_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
             std::memcpy(mapped, triangle.data(), sizeof(triangle));

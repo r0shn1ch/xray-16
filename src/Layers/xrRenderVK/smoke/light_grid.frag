@@ -1,6 +1,7 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #include "../LightingLimits.h"
+#include "pbr_material.glsl"
 layout(set = 0, binding = 0) uniform sampler2D albedo_buffer;
 layout(set = 0, binding = 1) uniform sampler2D normal_buffer;
 layout(set = 0, binding = 2) uniform sampler2D depth_buffer;
@@ -38,11 +39,13 @@ void main()
     vec4 clip = vec4(uv.x * 2 - 1, 1 - uv.y * 2, depth, 1);
     vec4 wp = data.inverse_vp * clip;
     vec3 world = wp.xyz / wp.w;
-    vec3 normal = normalize(texelFetch(normal_buffer, p, 0).rgb * 2 - 1);
+    vec4 encoded_normal = texelFetch(normal_buffer, p, 0);
+    vec3 normal = normalize(encoded_normal.rgb * 2 - 1);
     vec3 albedo = texelFetch(albedo_buffer, p, 0).rgb;
     vec4 surface = texelFetch(surface_buffer, p, 0);
     vec3 view_ray = vec3(0);
-    if (surface.r > 0)
+    bool is_pbr = pbr_material(encoded_normal.a);
+    if (is_pbr || surface.r > 0)
     {
         vec4 near_clip = data.inverse_vp * vec4(clip.xy, 0, 1);
         view_ray = normalize(near_clip.xyz / near_clip.w - world);
@@ -57,7 +60,9 @@ void main()
             continue;
         vec3 ray = delta * inversesqrt(d2);
         vec3 value = albedo * max(dot(normal, -ray), 0);
-        if (surface.r > 0)
+        if (is_pbr)
+            value = pbr_direct(albedo, surface.g, surface.r, normal, view_ray, -ray);
+        else if (surface.r > 0)
         {
             float spec = pow(max(dot(normal, normalize(view_ray - ray)), 0), mix(4, 64, surface.r));
             value += spec * surface.r * mix(.04, .2, surface.g);

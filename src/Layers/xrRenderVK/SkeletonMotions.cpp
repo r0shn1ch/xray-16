@@ -1,4 +1,5 @@
 #include "SkeletonMotions.h"
+#include "SkeletonBones.h"
 
 #include <algorithm>
 #include <cctype>
@@ -339,9 +340,14 @@ bool read_slot(LevelBytes bytes, const std::vector<std::string>& bones, MotionSl
 bool parse_skeleton_motions(LevelBytes ogf, const std::vector<std::string>& bone_names, const std::string& model_name, const MotionResolver& resolve,
     std::vector<MotionSlot>& result, std::string& error)
 {
-    if (!ogf.data || bone_names.empty() || bone_names.size() > 64)
+    if (!ogf.data || bone_names.empty())
     {
         error = "motion source has no skeleton";
+        return false;
+    }
+    if (bone_names.size() > MaxVulkanSkeletonBones)
+    {
+        error = "motion skeleton exceeds the Vulkan bone limit";
         return false;
     }
     LevelBytes refs, refs2;

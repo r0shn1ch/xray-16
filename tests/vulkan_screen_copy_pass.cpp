@@ -29,17 +29,26 @@ uint32_t draw_calls = 0;
 uint32_t pushed_constants = 0;
 float expected_aa = 0.f;
 VkResult pipeline_result = VK_SUCCESS;
+bool expected_additive = false;
 
 VkResult VKAPI_CALL create_descriptor_set_layout(VkDevice, const VkDescriptorSetLayoutCreateInfo* info,
     const VkAllocationCallbacks*, VkDescriptorSetLayout* layout)
 {
-    assert(info->bindingCount == 4);
+    assert(info->bindingCount == 8);
     assert(info->pBindings[0].binding == 0);
     assert(info->pBindings[0].descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
     assert(info->pBindings[1].binding == 1);
     assert(info->pBindings[1].descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER);
     assert(info->pBindings[2].descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
     assert(info->pBindings[3].descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
+    assert(info->pBindings[4].binding == 4);
+    assert(info->pBindings[4].descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
+    assert(info->pBindings[5].binding == 5);
+    assert(info->pBindings[5].descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    assert(info->pBindings[6].binding == 6);
+    assert(info->pBindings[6].descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    assert(info->pBindings[7].binding == 7);
+    assert(info->pBindings[7].descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
     *layout = fake_handle<VkDescriptorSetLayout>(1);
     ++created_layouts;
     return VK_SUCCESS;
@@ -55,7 +64,9 @@ VkResult VKAPI_CALL create_descriptor_pool(VkDevice, const VkDescriptorPoolCreat
     const VkAllocationCallbacks*, VkDescriptorPool* pool)
 {
     assert(info->maxSets == 1);
-    assert(info->poolSizeCount == 2);
+    assert(info->poolSizeCount == 3);
+    assert(info->pPoolSizes[2].type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    assert(info->pPoolSizes[2].descriptorCount == 2);
     *pool = fake_handle<VkDescriptorPool>(2);
     ++created_pools;
     return VK_SUCCESS;
@@ -77,7 +88,20 @@ VkResult VKAPI_CALL allocate_descriptor_sets(VkDevice, const VkDescriptorSetAllo
 void VKAPI_CALL update_descriptor_sets(VkDevice, uint32_t count, const VkWriteDescriptorSet* writes,
     uint32_t, const VkCopyDescriptorSet*)
 {
-    assert(count == 4 || count == 2);
+    assert(count == 8 || count == 2 || count == 1);
+    if (count == 1)
+    {
+        assert(writes[0].dstBinding == 4 || writes[0].dstBinding == 5 || writes[0].dstBinding == 6);
+        assert(writes[0].pImageInfo->imageView ==
+            fake_handle<VkImageView>(writes[0].dstBinding == 4 ? 17 : writes[0].dstBinding == 5 ? 18 : 20));
+        if (writes[0].dstBinding == 5 || writes[0].dstBinding == 6)
+            assert(writes[0].pImageInfo->sampler == fake_handle<VkSampler>(writes[0].dstBinding == 5 ? 19 : 21));
+        if (writes[0].dstBinding == 7)
+            assert(writes[0].pImageInfo->imageView == fake_handle<VkImageView>(4));
+        assert(writes[0].pImageInfo->imageLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        ++descriptor_updates;
+        return;
+    }
     if (count == 2)
     {
         assert(writes[0].dstBinding == 2);
@@ -108,6 +132,17 @@ void VKAPI_CALL update_descriptor_sets(VkDevice, uint32_t count, const VkWriteDe
     assert(writes[1].pImageInfo->sampler == fake_handle<VkSampler>(5));
     assert(writes[2].dstBinding == 2);
     assert(writes[3].dstBinding == 3);
+    assert(writes[4].dstBinding == 4);
+    assert(writes[5].dstBinding == 5);
+    assert(writes[5].descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    assert(writes[5].pImageInfo->imageView == fake_handle<VkImageView>(4));
+    assert(writes[6].dstBinding == 6);
+    assert(writes[6].descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    assert(writes[6].pImageInfo->imageView == fake_handle<VkImageView>(4));
+    assert(writes[7].dstBinding == 7);
+    assert(writes[7].descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
+    assert(writes[7].pImageInfo->imageView == fake_handle<VkImageView>(4));
+    assert(writes[7].pImageInfo->imageLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     ++descriptor_updates;
 }
 
@@ -144,6 +179,12 @@ VkResult VKAPI_CALL create_graphics_pipelines(VkDevice, VkPipelineCache, uint32_
     assert(info->pViewportState->scissorCount == 1);
     assert(info->pRasterizationState->cullMode == VK_CULL_MODE_NONE);
     assert(info->pColorBlendState->attachmentCount == 1);
+    assert(bool(info->pColorBlendState->pAttachments[0].blendEnable) == expected_additive);
+    if (expected_additive)
+    {
+        assert(info->pColorBlendState->pAttachments[0].srcColorBlendFactor == VK_BLEND_FACTOR_ONE);
+        assert(info->pColorBlendState->pAttachments[0].dstColorBlendFactor == VK_BLEND_FACTOR_ONE);
+    }
     assert(info->pDynamicState->dynamicStateCount == 2);
     assert(info->pDynamicState->pDynamicStates[0] == VK_DYNAMIC_STATE_VIEWPORT);
     assert(info->pDynamicState->pDynamicStates[1] == VK_DYNAMIC_STATE_SCISSOR);
@@ -230,6 +271,12 @@ int main()
     assert(descriptor_updates == 2);
     pass.set_color_maps(fake_handle<VkImageView>(15), VK_NULL_HANDLE);
     assert(descriptor_updates == 3);
+    pass.set_bloom_view(fake_handle<VkImageView>(17));
+    assert(descriptor_updates == 4);
+    pass.set_exposure_view(fake_handle<VkImageView>(18), fake_handle<VkSampler>(19));
+    assert(descriptor_updates == 5);
+    pass.set_depth_view(fake_handle<VkImageView>(20), fake_handle<VkSampler>(21));
+    assert(descriptor_updates == 6);
     xray::render::vulkan::PostProcessConstants params;
     params.effect[0] = 2.f;
     pass.set_constants(params);
@@ -246,7 +293,7 @@ int main()
     expected_aa = params.color_map[3] = 0.f;
     pass.set_constants(params);
     pass.record(frame);
-    assert(pushed_constants == 3 && created_pipelines == 1 && descriptor_updates == 3);
+    assert(pushed_constants == 3 && created_pipelines == 1 && descriptor_updates == 6);
     pass.record({fake_handle<VkCommandBuffer>(12), VK_NULL_HANDLE, VK_NULL_HANDLE, {0, 480}, 0, 0});
     pass.record({fake_handle<VkCommandBuffer>(12), fake_handle<VkRenderPass>(14), VK_NULL_HANDLE, {640, 480}, 0, 0});
     assert(draw_calls == 3);
@@ -264,4 +311,11 @@ int main()
     assert(destroyed_pipeline_layouts == 2);
     assert(destroyed_pools == 2);
     assert(destroyed_layouts == 2);
+    pipeline_result = VK_SUCCESS;
+    expected_additive = true;
+    assert(pass.initialize(device, fake_handle<VkRenderPass>(9), fake_handle<VkImageView>(4),
+        fake_handle<VkSampler>(5), fake_handle<VkShaderModule>(7), fake_handle<VkShaderModule>(8),
+        dispatch, error, true));
+    pass.destroy();
+    assert(created_pipelines == destroyed_pipelines);
 }

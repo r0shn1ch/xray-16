@@ -45,6 +45,7 @@ class LightGrid
         VkExtent2D extent{};
         uint64_t mask{};
         uint32_t count{};
+        bool tiles_ready{};
     };
     VkDevice device_{};
     VkDescriptorSetLayout set_layout_{};

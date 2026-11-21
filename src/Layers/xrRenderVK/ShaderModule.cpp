@@ -11,6 +11,17 @@ namespace
 constexpr uint32_t SpirvMagic = 0x07230203;
 }
 
+uint64_t shader_bytes_fingerprint(const void* bytes, size_t size)
+{
+    uint64_t value = 14695981039346656037ull;
+    const auto* data = static_cast<const uint8_t*>(bytes);
+    for (size_t i = 0; i < size; ++i)
+        value = (value ^ data[i]) * 1099511628211ull;
+    for (unsigned i = 0; i < 8; ++i)
+        value = (value ^ uint8_t(uint64_t(size) >> (i * 8))) * 1099511628211ull;
+    return value;
+}
+
 bool has_spirv_entry(const void* bytes, size_t size, uint32_t stage, const char* entry)
 {
     if (!bytes || !entry || !*entry || size < 20 || size % sizeof(uint32_t))
@@ -31,7 +42,8 @@ bool has_spirv_entry(const void* bytes, size_t size, uint32_t stage, const char*
             const char* name = reinterpret_cast<const char*>(words.data() + offset + 3);
             const size_t capacity = (count - 3) * sizeof(uint32_t);
             const void* terminator = std::memchr(name, 0, capacity);
-            if (terminator && std::strlen(entry) == static_cast<const char*>(terminator) - name &&
+            if (terminator && std::strlen(entry) ==
+                static_cast<size_t>(static_cast<const char*>(terminator) - name) &&
                 std::memcmp(name, entry, std::strlen(entry)) == 0)
                 found = true;
         }
@@ -120,7 +132,7 @@ void ShaderModule::destroy()
 ShaderModule* ShaderModuleCache::find(const std::string& key) const
 {
     const auto it = modules_.find(key);
-    return it == modules_.end() ? nullptr : it->second.get();
+    return it == modules_.end() ? nullptr : it->second.module.get();
 }
 
 bool ShaderModuleCache::load(const std::string& key, VkDevice device, const ShaderModuleDispatch& dispatch,
@@ -133,9 +145,15 @@ bool ShaderModuleCache::load(const std::string& key, VkDevice device, const Shad
         error = "invalid SPIR-V stage or entry for '" + key + "'";
         return false;
     }
-    if (auto* existing = find(key))
+    const uint64_t fingerprint = shader_bytes_fingerprint(bytes, size);
+    if (const auto found = modules_.find(key); found != modules_.end())
     {
-        result = existing;
+        if (found->second.fingerprint != fingerprint || found->second.device != device)
+        {
+            error = "cached SPIR-V changed for '" + key + "'; rebuild after GPU idle";
+            return false;
+        }
+        result = found->second.module.get();
         error.clear();
         return true;
     }
@@ -143,7 +161,7 @@ bool ShaderModuleCache::load(const std::string& key, VkDevice device, const Shad
     if (!module->initialize_bytes(device, dispatch, bytes, size, error))
         return false;
     result = module.get();
-    modules_.emplace(key, std::move(module));
+    modules_.emplace(key, Entry{std::move(module), fingerprint, device});
     return true;
 }
 }

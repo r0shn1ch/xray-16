@@ -1,0 +1,42 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+layout(local_size_x = 64) in;
+struct Surface { vec4 position_valid; vec4 normal; vec2 uv; uint material_id; uint texture_slot; vec4 albedo; vec4 pbr; vec4 geometric_normal; };
+struct LocalLight { vec4 position_range; vec4 direction_cone; vec4 color_type; vec4 spot_right; uvec4 projection; };
+struct Ray { vec4 origin_min; vec4 direction_max; };
+layout(set = 0, binding = 0, std430) readonly buffer Surfaces { Surface surfaces[]; };
+layout(set = 0, binding = 1, std430) readonly buffer LocalLights { LocalLight local_lights[]; };
+layout(set = 0, binding = 2, std430) writeonly buffer Rays { Ray rays[]; };
+layout(push_constant) uniform Parameters { uvec4 dimensions; } parameters;
+#include "indirect_light_selection.glsl"
+void main()
+{
+    uint count = parameters.dimensions.x;
+    uint width = parameters.dimensions.y * 64u;
+    if (count == 0u || width == 0u || gl_GlobalInvocationID.y > (count - 1u) / width) return;
+    uint row = gl_GlobalInvocationID.y * width;
+    if (gl_GlobalInvocationID.x >= count - row) return;
+    uint index = row + gl_GlobalInvocationID.x;
+    Ray ray;
+    ray.origin_min = vec4(0.0);
+    ray.direction_max = vec4(0.0);
+    uint light_count = min(parameters.dimensions.z, uint(local_lights.length()));
+    Surface surface = surfaces[index];
+    uint selected; float multiplier;
+    if (surface.position_valid.w > 0.0 &&
+        select_indirect_light(surface, index, parameters.dimensions.w, light_count, selected, multiplier))
+    {
+        LocalLight light = local_lights[selected];
+        vec3 delta = light.position_range.xyz - surface.position_valid.xyz;
+        float distance = length(delta);
+        if (light.color_type.w >= 2.0 && distance > .02 && distance < light.position_range.w &&
+            dot(surface.normal.xyz, delta) > 0.0)
+        {
+            ray.origin_min = vec4(surface.position_valid.xyz + surface.geometric_normal.xyz * .01, .001);
+            vec3 offset_delta = light.position_range.xyz - ray.origin_min.xyz;
+            float offset_distance = length(offset_delta);
+            ray.direction_max = vec4(offset_delta / max(offset_distance, 1e-6), max(offset_distance - .01, 0.0));
+        }
+    }
+    rays[index] = ray;
+}

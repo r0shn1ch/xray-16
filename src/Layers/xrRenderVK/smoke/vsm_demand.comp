@@ -1,0 +1,37 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D depth_image;
+layout(set = 0, binding = 1, std430) readonly buffer Parameters {
+    mat4 inverse_view_projection;
+    mat4 light_view;
+    vec4 level[6];
+    uvec4 settings; // axis, level count, sampling step, lod bias
+} params;
+layout(set = 0, binding = 2, std430) buffer Needed { uint pages[]; };
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy * params.settings.z);
+    ivec2 extent = textureSize(depth_image, 0);
+    if (any(greaterThanEqual(pixel, extent))) return;
+    float depth = texelFetch(depth_image, pixel, 0).r;
+    if (!(depth >= 0.0 && depth < 0.99999)) return;
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(extent);
+    vec4 world = params.inverse_view_projection * vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
+    if (abs(world.w) < 1e-8) return;
+    vec2 light_xy = (params.light_view * vec4(world.xyz / world.w, 1.0)).xy;
+    uint axis = params.settings.x, levels = params.settings.y;
+    uint first = levels;
+    for (uint i = 0u; i < levels; ++i)
+    {
+        vec2 coord = (light_xy - params.level[i].xy) / params.level[i].z;
+        if (all(greaterThanEqual(coord, vec2(0.0))) && all(lessThan(coord, vec2(1.0))))
+        { first = min(i + params.settings.w, levels - 1u); break; }
+    }
+    for (uint i = first; i < levels; ++i)
+    {
+        vec2 coord = (light_xy - params.level[i].xy) / params.level[i].z;
+        if (any(lessThan(coord, vec2(0.0))) || any(greaterThanEqual(coord, vec2(1.0)))) continue;
+        uvec2 page = uvec2(coord * float(axis));
+        atomicOr(pages[i * axis * axis + page.y * axis + page.x], 1u);
+    }
+}

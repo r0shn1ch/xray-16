@@ -1,0 +1,96 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D scene_depth;
+layout(set = 0, binding = 1) uniform sampler2D scene_normal;
+struct Ray { vec4 origin_min; vec4 direction_max; };
+layout(set = 0, binding = 2, std430) writeonly buffer RayOutput { Ray rays[]; };
+#ifdef INDIRECT
+layout(set = 0, binding = 3, std430) writeonly buffer PrimarySurfaceOutput { uvec2 primary_surfaces[]; };
+#endif
+layout(push_constant) uniform Parameters
+{
+    mat4 inverse_view_projection;
+    vec4 direction_distance;
+} parameters;
+
+#ifdef INDIRECT
+uint hash_value(uint x)
+{
+    x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15;
+    x *= 0x846ca68bu; return x ^ (x >> 16);
+}
+vec3 diffuse_direction(vec3 normal, uint index)
+{
+    uint seed = hash_value(index ^ floatBitsToUint(parameters.direction_distance.x));
+    vec2 sample_value = vec2(float(seed & 0x00ffffffu),
+        float(hash_value(seed) & 0x00ffffffu)) / 16777216.0;
+    float radius = sqrt(sample_value.x);
+    float phi = 6.28318530718 * sample_value.y;
+    vec3 local = vec3(radius * cos(phi), radius * sin(phi), sqrt(1.0 - sample_value.x));
+    vec3 axis = abs(normal.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+    vec3 tangent = normalize(cross(axis, normal));
+    return tangent * local.x + cross(normal, tangent) * local.y + normal * local.z;
+}
+vec2 octahedral_encode(vec3 normal)
+{
+    normal /= abs(normal.x) + abs(normal.y) + abs(normal.z);
+    vec2 encoded = normal.xy;
+    if (normal.z < 0.0)
+    {
+        vec2 signs = vec2(encoded.x < 0.0 ? -1.0 : 1.0, encoded.y < 0.0 ? -1.0 : 1.0);
+        encoded = (1.0 - abs(encoded.yx)) * signs;
+    }
+    return encoded;
+}
+#endif
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 input_size = textureSize(scene_depth, 0);
+#ifdef INDIRECT
+    ivec2 output_size = ivec2(parameters.direction_distance.yz);
+#else
+    ivec2 output_size = input_size;
+#endif
+    if (any(lessThanEqual(output_size, ivec2(0))) || any(greaterThanEqual(pixel, output_size))) return;
+    uint index = uint(pixel.y * output_size.x + pixel.x);
+    vec2 output_uv = (vec2(pixel) + 0.5) / vec2(output_size);
+    ivec2 source_pixel = clamp(ivec2(output_uv * vec2(input_size)), ivec2(0), input_size - 1);
+    float depth = texelFetch(scene_depth, source_pixel, 0).r;
+    Ray ray;
+    ray.origin_min = vec4(0.0);
+    ray.direction_max = vec4(0.0);
+#ifdef INDIRECT
+    uvec2 primary_surface = uvec2(packSnorm2x16(vec2(0.0)), packHalf2x16(vec2(1.0, 0.0)));
+#endif
+    if (depth < 1.0 && parameters.direction_distance.w > 0.0)
+    {
+        vec2 uv = (vec2(source_pixel) + 0.5) / vec2(input_size);
+        vec4 world = parameters.inverse_view_projection *
+            vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
+        vec3 normal = texelFetch(scene_normal, source_pixel, 0).rgb * 2.0 - 1.0;
+        float normal_length = length(normal);
+        if (abs(world.w) > 1e-6 && normal_length > 1e-6)
+        {
+            normal /= normal_length;
+#ifdef INDIRECT
+            primary_surface = uvec2(packSnorm2x16(octahedral_encode(normal)),
+                packHalf2x16(vec2(depth, 0.0)));
+            vec3 direction = diffuse_direction(normal, index);
+#else
+            float direction_length = length(parameters.direction_distance.xyz);
+            vec3 direction = direction_length > 1e-6 ? parameters.direction_distance.xyz / direction_length : vec3(0.0);
+#endif
+            if (dot(normal, direction) > 0.0)
+            {
+                ray.origin_min = vec4(world.xyz / world.w + normal * 0.01, 0.001);
+                ray.direction_max = vec4(direction, parameters.direction_distance.w);
+            }
+        }
+    }
+    rays[index] = ray;
+#ifdef INDIRECT
+    primary_surfaces[index] = primary_surface;
+#endif
+}

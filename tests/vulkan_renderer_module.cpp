@@ -11,8 +11,12 @@
 #include "Include/xrRender/RenderFactory.h"
 #include "xrEngine/XR_IOConsole.h"
 
+#ifdef NDEBUG
+#undef NDEBUG // Keep ABI-compatible Release headers, then enable test assertions.
+#endif
 #include <cassert>
 #include <array>
+#include <cmath>
 #include <new>
 
 static void check_camera_frustum()
@@ -25,10 +29,10 @@ static void check_camera_frustum()
     auto* renderer = new (storage.data()) VulkanLevelRender;
     IRender& render = *renderer;
     assert(render.ViewBase.p_count == 0);
-    Fvector inside, outside, far;
+    Fvector inside, outside, far_sphere;
     inside.set(0.f, 0.f, .5f);
     outside.set(2.f, 0.f, .5f);
-    far.set(0.f, 0.f, 2.f);
+    far_sphere.set(0.f, 0.f, 2.f);
     assert(render.ViewBase.testSphere_dirty(outside, .05f));
 
     const Fmatrix saved_transform = Device.mFullTransform;
@@ -37,7 +41,7 @@ static void check_camera_frustum()
     assert(render.ViewBase.p_count == 5);
     assert(render.ViewBase.testSphere_dirty(inside, .05f));
     assert(!render.ViewBase.testSphere_dirty(outside, .05f));
-    assert(!render.ViewBase.testSphere_dirty(far, .05f));
+    assert(!render.ViewBase.testSphere_dirty(far_sphere, .05f));
 
     Fmatrix view, project;
     view.translate(-10.f, 0.f, 0.f);
@@ -69,13 +73,29 @@ namespace xray::render::vulkan
 RendererModule* GetRendererModule();
 }
 
-int main()
+static void check_module()
 {
-    Core.Initialize("vulkan_renderer_module_test", nullptr, false);
-    check_camera_frustum();
     // SetupEnv registers renderer commands in the engine-owned console.
     CConsole console;
     Console = &console;
+    {
+        xray::render::vulkan::VulkanLight light;
+        assert(light.snapshot().indirect);
+        light.set_indirect(false);
+        assert(!light.snapshot().indirect);
+        light.set_indirect(true);
+        light.set_volumetric(true);
+        light.set_volumetric_quality(.75f);
+        light.set_volumetric_intensity(1.5f);
+        light.set_volumetric_distance(2.f);
+        const auto snapshot = light.snapshot();
+        assert(snapshot.indirect && snapshot.volumetric);
+        assert(snapshot.volumetric_quality == .75f && snapshot.volumetric_intensity == 1.5f &&
+            snapshot.volumetric_distance == 2.f);
+        light.set_volumetric_intensity(-1.f);
+        assert(light.snapshot().volumetric_intensity == 0.f);
+        assert(snapshot.volumetric_intensity == 1.5f); // A queued snapshot owns its values.
+    }
     {
         xray::render::vulkan::ResourceIssueCounter issues;
         const std::string source = "file=$level$/level.geom visual=2 material=7 shader='mod\\plain' reason=missing TEXCOORD1";
@@ -131,6 +151,29 @@ int main()
     for (int i = 0; i < 2; ++i)
     {
         module->SetupEnv("renderer_vulkan");
+        console.Execute("r_vk_upscaler Cubic");
+        assert(std::strcmp(console.GetToken("r_vk_upscaler"), "Cubic") == 0);
+        console.Execute("r_vk_upscaler Temporal");
+        assert(std::strcmp(console.GetToken("r_vk_upscaler"), "Temporal") == 0);
+        console.Execute("r_vk_upscaler Bilinear");
+        assert(std::strcmp(console.GetToken("r_vk_upscaler"), "Bilinear") == 0);
+        int switch_min = 0, switch_max = 0;
+        console.Execute("r2_volumetric_lights off");
+        assert(console.GetInteger("r2_volumetric_lights", switch_min, switch_max) == 0);
+        console.Execute("r2_volumetric_lights on");
+        assert(console.GetInteger("r2_volumetric_lights", switch_min, switch_max) == 1);
+        assert(switch_min == 0 && switch_max == 1);
+        float min_strength = 0.f, max_strength = 0.f;
+        console.Execute("r_vk_rtgi_strength 0.25");
+        assert(std::abs(console.GetFloat("r_vk_rtgi_strength", min_strength, max_strength) - .25f) < .001f);
+        assert(min_strength == 0.f && max_strength == 2.f);
+        console.Execute("r_vk_rtgi_strength 0");
+        assert(console.GetFloat("r_vk_rtgi_strength", min_strength, max_strength) == 0.f);
+        console.Execute("r_vk_rtgi_strength 1");
+        int min_available = 0, max_available = 0;
+        assert(console.GetInteger("r_vk_rtgi_available", min_available, max_available) == 0);
+        console.Execute("r_vk_rtgi_available 1");
+        assert(console.GetInteger("r_vk_rtgi_available", min_available, max_available) == 0);
         assert(dynamic_cast<xray::render::vulkan::VulkanLevelRender*>(GEnv.Render));
         assert(dynamic_cast<xray::render::vulkan::VulkanRenderFactory *>(GEnv.RenderFactory));
         auto* environment = GEnv.RenderFactory->CreateEnvironmentRender();
@@ -162,4 +205,12 @@ int main()
         assert(!GEnv.Render && !GEnv.RenderFactory && !GEnv.DU && !GEnv.UIRender && !GEnv.DRender);
     }
     Console = nullptr;
+}
+
+int main()
+{
+    Core.Initialize("vulkan_renderer_module_test", nullptr, false);
+    check_camera_frustum();
+    check_module();
+    Core._destroy();
 }

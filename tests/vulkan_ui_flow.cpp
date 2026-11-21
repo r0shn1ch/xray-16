@@ -170,25 +170,26 @@ int main()
         empty.destroy();
         empty.destroy();
     }
-    ScenePassDispatch scene{layout,
-                            destroy_layout,
-                            pipeline,
-                            destroy_pipeline,
-                            bind_pipeline,
-                            viewport,
-                            scissor,
-                            bind_vertices,
-                            bind_indices,
-                            push,
-                            draw,
-                            descriptor_layout,
-                            destroy_descriptor_layout,
-                            pool,
-                            destroy_pool,
-                            descriptor,
-                            free_descriptor,
-                            update,
-                            bind_descriptor};
+    ScenePassDispatch scene{};
+    scene.create_pipeline_layout = layout;
+    scene.destroy_pipeline_layout = destroy_layout;
+    scene.create_graphics_pipelines = pipeline;
+    scene.destroy_pipeline = destroy_pipeline;
+    scene.cmd_bind_pipeline = bind_pipeline;
+    scene.cmd_set_viewport = viewport;
+    scene.cmd_set_scissor = scissor;
+    scene.cmd_bind_vertex_buffers = bind_vertices;
+    scene.cmd_bind_index_buffer = bind_indices;
+    scene.cmd_push_constants = push;
+    scene.cmd_draw_indexed = draw;
+    scene.create_descriptor_set_layout = descriptor_layout;
+    scene.destroy_descriptor_set_layout = destroy_descriptor_layout;
+    scene.create_descriptor_pool = pool;
+    scene.destroy_descriptor_pool = destroy_pool;
+    scene.allocate_descriptor_sets = descriptor;
+    scene.free_descriptor_sets = free_descriptor;
+    scene.update_descriptor_sets = update;
+    scene.cmd_bind_descriptor_sets = bind_descriptor;
     const auto device = handle<VkDevice>(1);
     const auto render_pass = handle<VkRenderPass>(2);
     ScenePass pass;

@@ -113,6 +113,11 @@ int main()
     assert(!tessellation_enabled && !legacy_level_lights);
     assert(is_water_contact_effect("hit_fx\\effects\\hit_water_hit_distort_big"));
     assert(!is_water_contact_effect("hit_fx\\effects\\hit_water_hit_splash"));
+    const ParticleEmitterBasis emitter_basis{{1.f, 0.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}};
+    const auto water_normal = particle_water_plane_normal(emitter_basis);
+    assert(water_normal[0] == 0.f && water_normal[1] == 1.f && water_normal[2] == 0.f);
+    const auto water_basis = particle_face_basis(water_normal);
+    assert(water_basis.right[1] == 0.f && water_basis.up[1] == 0.f);
     const auto anchored = project_particle_to_water({1, 12, 2}, {0, 4, 0}, {0, -2, 0});
     assert(std::abs(anchored[1] - 4.015f) < .0001f && anchored[0] == 1 && anchored[2] == 2);
     {
@@ -149,6 +154,7 @@ int main()
         }
     }
     assert(render_quality(0).texture_limit < render_quality(2).texture_limit);
+    assert(render_quality(1).texture_limit == 512 && render_quality(2).texture_limit == 1024);
     assert(render_quality(4).point_shadows == 2 && render_quality(0).point_shadows == 0);
 
     for (float pitch : {0.f, .5f, 1.4f, 1.57079632679f})
@@ -274,7 +280,7 @@ int main()
                              "sky\\sky_1_cube", "wpn\\wpn_crosshair"})
         assert(world_texture_limit(name, minimum) == 0);
     assert(world_texture_limit("act\\stalker", minimum) == 512);
-    assert(world_texture_limit("act\\stalker", "-android-mobile-preset Low") == 1024);
+    assert(world_texture_limit("act\\stalker", "-android-mobile-preset Low") == 512);
     assert(world_texture_mip_skip(1, false) == 0 && world_texture_mip_skip(2, false) == 1);
     assert(world_texture_mip_skip(3, false) == 1 && world_texture_mip_skip(4, false) == 2);
     assert(world_texture_mip_skip(1, true) == 1 && world_texture_mip_skip(3, true) == 2);

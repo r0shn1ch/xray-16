@@ -3,6 +3,7 @@
 #include <vulkan/vulkan.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -16,7 +17,7 @@ struct ShaderModuleDispatch
 };
 
 // Reject malformed binaries before creating a Vulkan shader module. SPIR-V
-// execution model 0 is vertex, 4 is fragment.
+// execution models 0..5 cover vertex, tessellation, geometry, fragment and compute.
 bool has_spirv_entry(const void* bytes, size_t size, uint32_t stage, const char* entry);
 
 class ShaderModule
@@ -57,6 +58,14 @@ public:
     size_t size() const { return modules_.size(); }
 
 private:
-    std::unordered_map<std::string, std::unique_ptr<ShaderModule>> modules_;
+    struct Entry
+    {
+        std::unique_ptr<ShaderModule> module;
+        uint64_t fingerprint{};
+        VkDevice device{};
+    };
+    std::unordered_map<std::string, Entry> modules_;
 };
+
+uint64_t shader_bytes_fingerprint(const void* bytes, size_t size);
 }

@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import struct
 import sys
@@ -17,6 +18,8 @@ import tempfile
 STAGES = ("vs", "ps", "cs", "gs", "hs", "ds")
 SPIRV_MAGIC = b"\x03\x02\x23\x07"
 EXECUTION_MODEL = {"vs": 0, "hs": 1, "ds": 2, "gs": 3, "ps": 4, "cs": 5}
+SHADER_METADATA_MAGIC = "XRAY_VULKAN_SHADER_METADATA_V1"
+INCLUDE_DIRECTIVE = re.compile(r'^\s*#\s*include\s*["<]([^">]+)[">]', re.MULTILINE)
 
 
 def _valid_spirv(data, stage, entry):
@@ -39,13 +42,25 @@ def _valid_spirv(data, stage, entry):
     return found
 
 
-def _variant(source, stage, entry, output, includes, defines):
+def _fingerprint(data):
+    value = 14695981039346656037
+    for byte in data:
+        value = ((value ^ byte) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    for shift in range(0, 64, 8):
+        value = ((value ^ ((len(data) >> shift) & 0xFF)) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return value
+
+
+def _variant(source, stage, entry, output, includes, defines, runtime_source=None, shader_root=None):
     if stage not in STAGES or not entry or not source.is_file():
         raise ValueError(f"invalid shader source/stage/entry: {source} ({stage}, {entry})")
     if not isinstance(defines, list) or not all(isinstance(x, str) and x for x in defines):
         raise ValueError(f"invalid defines for {source}")
+    if any("|" in definition or "\n" in definition or "\r" in definition for definition in defines):
+        raise ValueError(f"shader defines contain reserved metadata characters: {source}")
     return dict(source=source, stage=stage, entry=entry, output=output,
-                includes=includes, defines=defines)
+                includes=includes, defines=defines,
+                runtime_source=runtime_source or source.as_posix(), shader_root=shader_root)
 
 
 def _manifest(path, output_dir):
@@ -71,8 +86,67 @@ def _manifest(path, output_dir):
         source = root / item["source"]
         includes = [root / x for x in [*common, *item.get("include", [])]]
         variants.append(_variant(source, item["stage"], item.get("entry", "main"),
-                                 output, includes, item.get("define", [])))
+                                 output, includes, item.get("define", []),
+                                 f"vk/{Path(item['source']).as_posix()}", root.parent))
     return variants
+
+
+def _shader_source_metadata(variant):
+    source_data = variant["source"].read_bytes()
+    lines = [
+        f"source={variant['runtime_source']}",
+        f"stage={variant['stage']}",
+        f"entry={variant['entry']}",
+        f"defines={'|'.join(variant['defines'])}",
+        f"source-fingerprint={_fingerprint(source_data):016x}",
+    ]
+
+    shader_root = variant.get("shader_root")
+    if shader_root:
+        root = Path(shader_root).resolve()
+        visited = set()
+        dependencies = {}
+
+        def visit(path):
+            path = path.resolve()
+            if path in visited:
+                return
+            visited.add(path)
+            try:
+                text = path.read_text(encoding="utf-8-sig", errors="replace")
+            except OSError:
+                return
+            for include in INCLUDE_DIRECTIVE.findall(text):
+                resolved = None
+                for directory in [path.parent, *variant["includes"]]:
+                    candidate = (directory / include).resolve()
+                    if candidate.is_file():
+                        resolved = candidate
+                        break
+                if resolved is None:
+                    continue
+                try:
+                    relative = resolved.relative_to(root).as_posix()
+                except ValueError:
+                    relative = None
+                if relative and relative != variant["runtime_source"][3:]:
+                    dependencies[relative] = _fingerprint(resolved.read_bytes())
+                visit(resolved)
+
+        visit(variant["source"])
+        for path, fingerprint in sorted(dependencies.items()):
+            # `relative` is already rooted at the game shader directory, so
+            # retain that VFS path verbatim (`vk/LightingLimits.h`, not
+            # `vk/vk/LightingLimits.h`).
+            lines.append(f"dependency={path}={fingerprint:016x}")
+
+    return lines
+
+
+def _shader_metadata(variant, spirv_data, source_metadata=None):
+    lines = [SHADER_METADATA_MAGIC, *(source_metadata or _shader_source_metadata(variant))]
+    lines.append(f"spirv-fingerprint={_fingerprint(spirv_data):016x}")
+    return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 def _compile(variant, dxc, temporary, compiler="dxc"):
@@ -148,21 +222,33 @@ def compile_shader(argv=None):
     # Compile the complete set before replacing any existing output. Failed
     # variants cannot leave a mixture of new and old shader permutations.
     pending = []
+    temporary_paths = []
     try:
         for variant in variants:
             output = variant["output"]
             output.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(dir=output.parent, suffix=".spv", delete=False) as tmp:
                 temporary = Path(tmp.name)
-            pending.append((temporary, output))
+            with tempfile.NamedTemporaryFile(dir=output.parent, suffix=".spv.meta", delete=False) as tmp:
+                metadata_temporary = Path(tmp.name)
+            temporary_paths.extend((temporary, metadata_temporary))
+            pending.append((temporary, output, metadata_temporary, Path(str(output) + ".meta")))
+            source_metadata = _shader_source_metadata(variant)
             status = _compile(variant, args.dxc, temporary, args.compiler)
             if status:
                 return status
-        for temporary, output in pending:
+            if source_metadata != _shader_source_metadata(variant):
+                print(f"Shader source or include changed during compilation: {variant['source']}",
+                      file=sys.stderr)
+                return 1
+            metadata_temporary.write_bytes(_shader_metadata(
+                variant, temporary.read_bytes(), source_metadata))
+        for temporary, output, metadata_temporary, metadata_output in pending:
             temporary.replace(output)
+            metadata_temporary.replace(metadata_output)
         return 0
     finally:
-        for temporary, _ in pending:
+        for temporary in temporary_paths:
             temporary.unlink(missing_ok=True)
 
 

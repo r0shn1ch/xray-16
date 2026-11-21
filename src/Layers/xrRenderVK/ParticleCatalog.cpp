@@ -133,6 +133,13 @@ bool effect(LevelBytes bytes, ParticleEffectDef& def, std::string& reason)
         if (!limit.real(def.time_limit) || def.time_limit < 0.f)
             return reject("time limit chunk");
     }
+    if (def.flags & (1u << 16))
+    {
+        Cursor collision{find(parts, 0x21)};
+        if (!collision.real(def.collision_friction) || !collision.real(def.collision_resilience) ||
+            !collision.real(def.collision_cutoff))
+            return reject("collision chunk");
+    }
     if(def.flags & (1u<<18))
     {
         const auto scale_bytes = find(parts, 0x22);

@@ -4,6 +4,14 @@
 namespace xray::render::vulkan {
 struct ParticleSpriteCorner { float right, up, u, v; };
 struct ParticleSpriteBasis { std::array<float,3> right,up; };
+struct ParticleEmitterBasis
+{
+    std::array<float, 3> i, j, k;
+};
+inline std::array<float, 3> particle_water_plane_normal(const ParticleEmitterBasis& basis)
+{
+    return basis.j;
+}
 inline ParticleSpriteBasis particle_path_basis(std::array<float,3> direction,
     const std::array<float,3>& camera_direction)
 {

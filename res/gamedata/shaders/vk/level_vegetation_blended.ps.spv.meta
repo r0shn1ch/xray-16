@@ -1,0 +1,8 @@
+XRAY_VULKAN_SHADER_METADATA_V1
+source=vk/opaque.ps
+stage=ps
+entry=main
+defines=LEVEL_GEOMETRY=1|VK_TRANSPARENT=1|VK_FOG=1
+source-fingerprint=e544c312ff3e177c
+dependency=vk/LightingLimits.h=0e1ec7bd3e15c3d0
+spirv-fingerprint=4951665a1fd55bc9

@@ -910,6 +910,13 @@ void CWeapon::UpdateCL()
 
     if (m_zoom_params.m_pVision)
         m_zoom_params.m_pVision->Update();
+
+    if (GEnv.Render && IsGameTypeSingle())
+    {
+        CActor* actor = smart_cast<CActor*>(H_Parent());
+        if (actor && actor->inventory().ActiveItem() == this)
+            GEnv.Render->UpdateSmokeTrail(get_LastFP(), get_LastFD(), Device.fTimeDelta, !!GetHUDmode());
+    }
 }
 void CWeapon::EnableActorNVisnAfterZoom()
 {

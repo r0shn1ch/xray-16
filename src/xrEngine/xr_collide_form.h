@@ -150,8 +150,8 @@ private:
     u64 vis_mask;
     ElementVec elements;
 
-    u32 dwFrame; // The model itself
-    u32 dwFrameTL; // Top level
+    u32 dwFrame{u32(-1)}; // The model itself
+    u32 dwFrameTL{u32(-1)}; // Top level
 
     void BuildState();
     void BuildTopLevel();
@@ -161,6 +161,7 @@ public:
 
     virtual bool _RayQuery(const collide::ray_defs& Q, collide::rq_results& R);
     bool _ElementCenter(u16 elem_id, Fvector& e_center);
+    void RefreshCollisionGeometry();
     const ElementVec& _GetElements() { return elements; }
 #ifdef DEBUG
     void _dbg_refresh()

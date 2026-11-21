@@ -29,6 +29,9 @@ ImageUseInfo describe(ImageUse use)
         return {VK_IMAGE_LAYOUT_UNDEFINED, 0, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT};
     case ImageUse::TransferSource:
         return {VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT};
+    case ImageUse::ColorAttachmentWriteTransferSource:
+        return {VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     case ImageUse::TransferDestination:
         return {VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT};
     case ImageUse::TransferDestinationGeneral:
@@ -36,6 +39,21 @@ ImageUseInfo describe(ImageUse use)
     case ImageUse::Sampled:
         return {VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT};
+    case ImageUse::ComputeSampled:
+        return {VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT};
+    case ImageUse::SampledGraphicsCompute:
+        return {VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT};
+    case ImageUse::StorageRead:
+        return {VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_READ_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT};
+    case ImageUse::StorageWrite:
+        return {VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_WRITE_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT};
+    case ImageUse::StorageReadWrite:
+        return {VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT};
     case ImageUse::ColorAttachment:
         return {VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
@@ -44,6 +62,13 @@ ImageUseInfo describe(ImageUse use)
         return {VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT};
+    case ImageUse::DepthStencilProduced:
+        return {VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT};
+    case ImageUse::DepthStencilReadOnly:
+        return {VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_SHADER_READ_BIT,
+            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT};
     case ImageUse::Present:
         return {VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 0, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT};
     }
@@ -56,11 +81,19 @@ bool valid_use(ImageUse use)
     {
     case ImageUse::Undefined:
     case ImageUse::TransferSource:
+    case ImageUse::ColorAttachmentWriteTransferSource:
     case ImageUse::TransferDestination:
     case ImageUse::TransferDestinationGeneral:
     case ImageUse::Sampled:
+    case ImageUse::ComputeSampled:
+    case ImageUse::SampledGraphicsCompute:
+    case ImageUse::StorageRead:
+    case ImageUse::StorageWrite:
+    case ImageUse::StorageReadWrite:
     case ImageUse::ColorAttachment:
     case ImageUse::DepthStencilAttachment:
+    case ImageUse::DepthStencilProduced:
+    case ImageUse::DepthStencilReadOnly:
     case ImageUse::Present:
         return true;
     }
@@ -85,6 +118,13 @@ bool contains_range(const VkImageSubresourceRange& outer, const VkImageSubresour
     const uint32_t layer_offset = inner.baseArrayLayer - outer.baseArrayLayer;
     return mip_offset <= outer.levelCount && inner.levelCount <= outer.levelCount - mip_offset &&
         layer_offset <= outer.layerCount && inner.layerCount <= outer.layerCount - layer_offset;
+}
+
+bool writes_image(ImageUse use)
+{
+    return use == ImageUse::StorageWrite || use == ImageUse::StorageReadWrite ||
+        use == ImageUse::ColorAttachment || use == ImageUse::DepthStencilAttachment ||
+        use == ImageUse::DepthStencilProduced;
 }
 
 size_t state_index(size_t aspect_index, uint32_t mip_level, uint32_t array_layer,
@@ -134,7 +174,9 @@ bool ImageStateTracker::register_image(VkImage image, const VkImageSubresourceRa
             error = "Vulkan image subresource range is too large to track";
             return false;
         }
-        state.uses.resize(mip_count * layer_count * state.aspects.size(), initial_use);
+        const size_t state_count = mip_count * layer_count * state.aspects.size();
+        state.uses.resize(state_count, initial_use);
+        state.pending_ownership.resize(state_count, 0);
         m_images.push_back(std::move(state));
     }
     catch (...)
@@ -147,27 +189,224 @@ bool ImageStateTracker::register_image(VkImage image, const VkImageSubresourceRa
 }
 
 bool ImageStateTracker::transition(VkCommandBuffer command, VkImage image, ImageUse next_use,
-    const ImageStateDispatch& vk, std::string& error)
+    const ImageStateDispatch& vk, std::string& error, VkQueueFlags queue_flags, bool semaphore_handoff)
 {
-    return transition_range(command, image, nullptr, next_use, vk, error);
+    return transition_range(command, image, nullptr, next_use, vk, error, queue_flags, semaphore_handoff);
 }
 
 bool ImageStateTracker::transition(VkCommandBuffer command, VkImage image,
-    const VkImageSubresourceRange& range, ImageUse next_use, const ImageStateDispatch& vk, std::string& error)
+    const VkImageSubresourceRange& range, ImageUse next_use, const ImageStateDispatch& vk, std::string& error,
+    VkQueueFlags queue_flags, bool semaphore_handoff)
 {
-    return transition_range(command, image, &range, next_use, vk, error);
+    return transition_range(command, image, &range, next_use, vk, error, queue_flags, semaphore_handoff);
+}
+
+bool ImageStateTracker::release_ownership(VkCommandBuffer command, VkImage image,
+    const VkImageSubresourceRange& range, ImageUse source_use, ImageUse destination_use,
+    uint32_t source_family, uint32_t destination_family,
+    const ImageStateDispatch& vk, std::string& error, VkQueueFlags queue_flags)
+{
+    return transition_ownership(command, image, range, source_use, destination_use,
+        source_family, destination_family, vk, error, queue_flags, false);
+}
+
+bool ImageStateTracker::acquire_ownership(VkCommandBuffer command, VkImage image,
+    const VkImageSubresourceRange& range, ImageUse source_use, ImageUse destination_use,
+    uint32_t source_family, uint32_t destination_family,
+    const ImageStateDispatch& vk, std::string& error, VkQueueFlags queue_flags)
+{
+    return transition_ownership(command, image, range, source_use, destination_use,
+        source_family, destination_family, vk, error, queue_flags, true);
+}
+
+bool ImageStateTracker::transition_ownership(VkCommandBuffer command, VkImage image,
+    const VkImageSubresourceRange& range, ImageUse source_use, ImageUse destination_use,
+    uint32_t source_family, uint32_t destination_family,
+    const ImageStateDispatch& vk, std::string& error, VkQueueFlags queue_flags, bool acquire)
+{
+    if (command == VK_NULL_HANDLE || !vk.cmd_pipeline_barrier ||
+        source_family == VK_QUEUE_FAMILY_IGNORED ||
+        destination_family == VK_QUEUE_FAMILY_IGNORED ||
+        source_family == destination_family || !valid_use(source_use) ||
+        !valid_use(destination_use) || source_use == ImageUse::Undefined ||
+        destination_use == ImageUse::Undefined || destination_use == ImageUse::DepthStencilProduced)
+    {
+        error = "Vulkan image ownership transfer has invalid procedures, families, or states";
+        return false;
+    }
+    if (!image_use_supported_on_queue(acquire ? destination_use : source_use, queue_flags))
+    {
+        error = "Vulkan image ownership transfer state is unsupported by this queue family";
+        return false;
+    }
+
+    const auto found = std::find_if(m_images.begin(), m_images.end(), [image](const ImageState& state)
+        { return state.image == image; });
+    if (found == m_images.end())
+    {
+        error = "Vulkan image ownership transfer references an unregistered image";
+        return false;
+    }
+    if (!contains_range(found->range, range))
+    {
+        error = "Vulkan image ownership transfer range is outside the registered subresources";
+        return false;
+    }
+
+    const uint64_t ownership_token = (uint64_t(source_family) << 32) | destination_family;
+    for (size_t aspect_index = 0; aspect_index < found->aspects.size(); ++aspect_index)
+    {
+        const VkImageAspectFlags aspect = found->aspects[aspect_index];
+        if (!(range.aspectMask & aspect))
+            continue;
+        for (uint32_t mip = range.baseMipLevel; mip < range.baseMipLevel + range.levelCount; ++mip)
+        {
+            for (uint32_t layer = range.baseArrayLayer;
+                layer < range.baseArrayLayer + range.layerCount; ++layer)
+            {
+                const size_t index = state_index(aspect_index, mip, layer, found->range);
+                if (found->uses[index] != source_use)
+                {
+                    error = "Vulkan image ownership transfer source state does not match the tracked state";
+                    return false;
+                }
+                if (acquire ? found->pending_ownership[index] != ownership_token :
+                        found->pending_ownership[index] != 0)
+                {
+                    error = acquire ?
+                        "Vulkan image ownership acquire has no matching release" :
+                        "Vulkan image already has a pending ownership release";
+                    return false;
+                }
+            }
+        }
+    }
+
+    const ImageUseInfo before = describe(source_use);
+    const ImageUseInfo after = describe(destination_use);
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.srcAccessMask = acquire ? 0 : before.access;
+    barrier.dstAccessMask = acquire ? after.access : 0;
+    barrier.oldLayout = before.layout;
+    barrier.newLayout = after.layout;
+    barrier.srcQueueFamilyIndex = source_family;
+    barrier.dstQueueFamilyIndex = destination_family;
+    barrier.image = image;
+    barrier.subresourceRange = range;
+    vk.cmd_pipeline_barrier(command,
+        acquire ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : before.stage,
+        acquire ? after.stage : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    for (size_t aspect_index = 0; aspect_index < found->aspects.size(); ++aspect_index)
+    {
+        const VkImageAspectFlags aspect = found->aspects[aspect_index];
+        if (!(range.aspectMask & aspect))
+            continue;
+        for (uint32_t mip = range.baseMipLevel; mip < range.baseMipLevel + range.levelCount; ++mip)
+        {
+            for (uint32_t layer = range.baseArrayLayer;
+                layer < range.baseArrayLayer + range.layerCount; ++layer)
+            {
+                const size_t index = state_index(aspect_index, mip, layer, found->range);
+                if (acquire)
+                {
+                    found->uses[index] = destination_use;
+                    found->pending_ownership[index] = 0;
+                }
+                else
+                    found->pending_ownership[index] = ownership_token;
+            }
+        }
+    }
+    error.clear();
+    return true;
+}
+
+bool ImageStateTracker::can_transition(VkImage image, const VkImageSubresourceRange& range,
+    ImageUse next_use, std::string& error) const
+{
+    if (!valid_use(next_use) || next_use == ImageUse::Undefined ||
+        next_use == ImageUse::DepthStencilProduced)
+    {
+        error = "Vulkan image transitions cannot target an invalid or undefined state";
+        return false;
+    }
+    const auto found = std::find_if(m_images.begin(), m_images.end(), [image](const ImageState& state)
+        { return state.image == image; });
+    if (found == m_images.end())
+    {
+        error = "Vulkan image is not registered with the state tracker";
+        return false;
+    }
+    if (!contains_range(found->range, range))
+    {
+        error = "Vulkan image transition range is outside the registered subresources";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool ImageStateTracker::set_render_pass_final_state(VkImage image,
+    const VkImageSubresourceRange& range, ImageUse final_use, std::string& error)
+{
+    if (!valid_use(final_use) || final_use == ImageUse::Undefined ||
+        final_use == ImageUse::DepthStencilProduced)
+    {
+        error = "Vulkan render pass reported an invalid final image state";
+        return false;
+    }
+    auto found = std::find_if(m_images.begin(), m_images.end(), [image](const ImageState& state)
+        { return state.image == image; });
+    if (found == m_images.end() || !contains_range(found->range, range))
+    {
+        error = "Vulkan render pass final state is outside the tracked image range";
+        return false;
+    }
+
+    for (size_t aspect_index = 0; aspect_index < found->aspects.size(); ++aspect_index)
+    {
+        const VkImageAspectFlags aspect = found->aspects[aspect_index];
+        if (!(range.aspectMask & aspect))
+            continue;
+        for (uint32_t mip = range.baseMipLevel; mip < range.baseMipLevel + range.levelCount; ++mip)
+        {
+            for (uint32_t layer = range.baseArrayLayer;
+                layer < range.baseArrayLayer + range.layerCount; ++layer)
+            {
+                const size_t index = state_index(aspect_index, mip, layer, found->range);
+                if (found->pending_ownership[index])
+                {
+                    error = "Vulkan render pass final state has a pending queue-family transfer";
+                    return false;
+                }
+                found->uses[index] = final_use;
+            }
+        }
+    }
+    error.clear();
+    return true;
+}
+
+bool ImageStateTracker::has_image(VkImage image) const
+{
+    return image != VK_NULL_HANDLE && std::any_of(m_images.begin(), m_images.end(),
+        [image](const ImageState& state) { return state.image == image; });
 }
 
 bool ImageStateTracker::transition_range(VkCommandBuffer command, VkImage image,
     const VkImageSubresourceRange* requested_range, ImageUse next_use, const ImageStateDispatch& vk,
-    std::string& error)
+    std::string& error, VkQueueFlags queue_flags, bool semaphore_handoff)
 {
     if (command == VK_NULL_HANDLE || !vk.cmd_pipeline_barrier)
     {
         error = "Vulkan image transition procedures are unavailable";
         return false;
     }
-    if (!valid_use(next_use) || next_use == ImageUse::Undefined)
+    if (!valid_use(next_use) || next_use == ImageUse::Undefined ||
+        next_use == ImageUse::DepthStencilProduced)
     {
         error = "Vulkan image transitions cannot target an invalid or undefined state";
         return false;
@@ -212,7 +451,7 @@ bool ImageStateTracker::transition_range(VkCommandBuffer command, VkImage image,
                 while (layer < layer_end)
                 {
                     const ImageUse previous_use = found->uses[state_index(aspect_index, mip, layer, found->range)];
-                    if (previous_use == next_use)
+                    if (previous_use == next_use && !writes_image(next_use))
                     {
                         ++layer;
                         continue;
@@ -224,7 +463,9 @@ bool ImageStateTracker::transition_range(VkCommandBuffer command, VkImage image,
                         ++layer;
                     const uint32_t run_layer_count = layer - first_layer;
                     has_transition = true;
-                    source_stages |= describe(previous_use).stage;
+                    const bool source_supported = image_use_supported_on_queue(previous_use, queue_flags);
+                    source_stages |= semaphore_handoff && !source_supported ?
+                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : describe(previous_use).stage;
 
                     size_t barrier_index = barriers.size();
                     for (size_t previous_index : previous_row)
@@ -245,10 +486,11 @@ bool ImageStateTracker::transition_range(VkCommandBuffer command, VkImage image,
                     if (barrier_index == barriers.size())
                     {
                         const ImageUseInfo before = describe(previous_use);
+                        const bool use_semaphore_acquire = semaphore_handoff && !source_supported;
                         ImageBarrier entry;
                         entry.previous_use = previous_use;
                         entry.barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                        entry.barrier.srcAccessMask = before.access;
+                        entry.barrier.srcAccessMask = use_semaphore_acquire ? 0 : before.access;
                         entry.barrier.dstAccessMask = after.access;
                         entry.barrier.oldLayout = before.layout;
                         entry.barrier.newLayout = after.layout;

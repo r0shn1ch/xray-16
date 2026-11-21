@@ -61,9 +61,14 @@ SlideWindow select_slide_window(const std::vector<SlideWindow>& windows, float l
     size_t full_index_count)
 {
     if (windows.empty()) return {0, static_cast<uint32_t>(full_index_count), 0};
+    return windows[select_slide_window_index(windows, lod)];
+}
+
+size_t select_slide_window_index(const std::vector<SlideWindow>& windows, float lod)
+{
+    if (windows.empty()) return 0;
     const float clamped = std::isfinite(lod) ? std::clamp(lod, 0.f, 1.f) : 1.f;
-    const size_t index = static_cast<size_t>((1.f - clamped) * float(windows.size() - 1) + 0.5f);
-    return windows[index];
+    return static_cast<size_t>((1.f - clamped) * float(windows.size() - 1) + 0.5f);
 }
 
 float lod_for_distance(float radius, float distance_squared)

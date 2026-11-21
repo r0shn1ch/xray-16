@@ -10,16 +10,19 @@ template<class T> T h(uintptr_t n) { if constexpr(std::is_pointer_v<T>) return r
 struct State {
     VkPipeline pipeline{}; VkBuffer vertices{}, indices{}; VkDescriptorSet material{};
     VkExtent2D viewport{}, scissor{};
+    VkOffset2D viewport_offset{}, scissor_offset{};
     std::array<std::array<uint8_t,256>,2> constants{};
     bool operator==(const State& b) const { return pipeline==b.pipeline && vertices==b.vertices &&
         indices==b.indices && material==b.material && viewport.width==b.viewport.width &&
         viewport.height==b.viewport.height && scissor.width==b.scissor.width &&
-        scissor.height==b.scissor.height && constants==b.constants; }
+        scissor.height==b.scissor.height && viewport_offset.x==b.viewport_offset.x &&
+        viewport_offset.y==b.viewport_offset.y && scissor_offset.x==b.scissor_offset.x &&
+        scissor_offset.y==b.scissor_offset.y && constants==b.constants; }
 } current;
 unsigned commands{};
 void VKAPI_PTR pipeline(VkCommandBuffer,VkPipelineBindPoint,VkPipeline p) { current.pipeline=p; ++commands; }
-void VKAPI_PTR viewport(VkCommandBuffer,uint32_t,uint32_t,const VkViewport* p) { current.viewport={uint32_t(p->width),uint32_t(p->height)}; ++commands; }
-void VKAPI_PTR scissor(VkCommandBuffer,uint32_t,uint32_t,const VkRect2D* p) { current.scissor=p->extent; ++commands; }
+void VKAPI_PTR viewport(VkCommandBuffer,uint32_t,uint32_t,const VkViewport* p) { current.viewport={uint32_t(p->width),uint32_t(p->height)}; current.viewport_offset={int32_t(p->x),int32_t(p->y)}; ++commands; }
+void VKAPI_PTR scissor(VkCommandBuffer,uint32_t,uint32_t,const VkRect2D* p) { current.scissor=p->extent; current.scissor_offset=p->offset; ++commands; }
 void VKAPI_PTR vertices(VkCommandBuffer,uint32_t,uint32_t,const VkBuffer* p,const VkDeviceSize*) {current.vertices=*p;++commands;}
 void VKAPI_PTR indices(VkCommandBuffer,VkBuffer p,VkDeviceSize,VkIndexType) {current.indices=p;++commands;}
 void VKAPI_PTR descriptor(VkCommandBuffer,VkPipelineBindPoint,VkPipelineLayout,uint32_t,uint32_t,const VkDescriptorSet* p,uint32_t,const uint32_t*) {current.material=*p;++commands;}
@@ -43,7 +46,7 @@ int main() {
         current={};commands=0;
         auto run=[&] {
             for(unsigned i=0;i<5000;++i) {
-                auto f=frame;if(i>=4900)f.extent={320,240};if(i>=4950)f.command_buffer=h<VkCommandBuffer>(9);
+                auto f=frame;if(i>=4850)f.viewport_offset={8,16};if(i>=4900)f.extent={320,240};if(i>=4950)f.command_buffer=h<VkCommandBuffer>(9);
                 cache.bind(vk,f,h<VkPipeline>(i/1250+10),h<VkPipelineLayout>(20+i/4800),
                     h<VkBuffer>(30+i/2000),h<VkBuffer>(40+i/3000),h<VkDescriptorSet>(50+i/100));
                 float mvp[16]{};mvp[0]=float(i/500);

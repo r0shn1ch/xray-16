@@ -122,9 +122,9 @@ void VulkanThunderboltDescRender::CreateModel(LPCSTR name)
         }
         for (auto& index : indices)
         {
-            uint16_t small{};
-            if (!(valid = valid && cursor.read(&small, 2) && small < count_vertices)) break;
-            index = small;
+            uint16_t index_value{};
+            if (!(valid = valid && cursor.read(&index_value, 2) && index_value < count_vertices)) break;
+            index = index_value;
         }
     }
     FS.r_close(reader);

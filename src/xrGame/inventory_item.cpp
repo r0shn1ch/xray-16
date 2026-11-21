@@ -368,7 +368,7 @@ void CInventoryItem::save(NET_Packet& packet)
         return;
     }
 
-    u8 _num_items = (u8)object().PHGetSyncItemsNumber();
+    const u8 _num_items = object().PHGetSyncItemsNumber() ? 1 : 0;
     packet.w_u8(_num_items);
     object().PHSaveState(packet);
 }

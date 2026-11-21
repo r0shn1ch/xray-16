@@ -182,6 +182,7 @@ bool CUIZoneMap::ZoomOut() { return true; }
 void CUIZoneMap::SetupCurrentMap()
 {
     m_activeMap->Initialize(Level().name(), "hud" DELIMITER "default");
+    m_current_map_idx = u8(-1);
 
     Frect r;
     m_clipFrame.GetAbsoluteRect(r);
@@ -207,26 +208,29 @@ void CUIZoneMap::SetupCurrentMap()
 
 void CUIZoneMap::OnSectorChanged(IRender_Sector::sector_id_t sector)
 {
-    if (!g_pGameLevel->pLevel->section_exist("sub_level_map"))
-        return;
-    u8 map_idx = u8(-1);
-    string64 s_sector;
-    xr_sprintf(s_sector, "%zd", sector);
-
-    if (!g_pGameLevel->pLevel->line_exist("sub_level_map", s_sector))
+    if (!m_activeMap)
         return;
 
-    map_idx = g_pGameLevel->pLevel->r_u8("sub_level_map", s_sector);
+    const u8 no_sub_map = u8(-1);
+    u8 map_idx = no_sub_map;
+    if (g_pGameLevel && g_pGameLevel->pLevel && sector != IRender_Sector::INVALID_SECTOR_ID &&
+        g_pGameLevel->pLevel->section_exist("sub_level_map"))
+    {
+        string64 s_sector;
+        xr_sprintf(s_sector, "%zd", sector);
+        if (g_pGameLevel->pLevel->line_exist("sub_level_map", s_sector))
+            map_idx = g_pGameLevel->pLevel->r_u8("sub_level_map", s_sector);
+    }
     if (m_current_map_idx == map_idx)
         return;
 
     m_current_map_idx = map_idx;
 
     string_path sub_texture;
-    xr_sprintf(sub_texture, "%s#%d", m_activeMap->m_texture.c_str(), m_current_map_idx);
-
-    if (map_idx == u8(-1))
+    if (map_idx == no_sub_map)
         xr_sprintf(sub_texture, "%s", m_activeMap->m_texture.c_str());
+    else
+        xr_sprintf(sub_texture, "%s#%u", m_activeMap->m_texture.c_str(), unsigned(map_idx));
 
     m_activeMap->InitTextureEx(sub_texture, m_activeMap->m_shader_name.c_str());
 }

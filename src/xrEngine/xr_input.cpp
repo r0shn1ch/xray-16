@@ -11,6 +11,7 @@
 #include "xr_level_controller.h"
 #endif
 
+#include <algorithm>
 #include <locale>
 
 CInput* pInput = nullptr;
@@ -202,6 +203,17 @@ void CInput::MouseUpdate()
         switch (event.type)
         {
         case SDL_MOUSEMOTION:
+#if defined(XR_PLATFORM_ANDROID)
+            if (event.motion.which == SDL_TOUCH_MOUSEID &&
+                event.motion.state == AndroidTouchMousePositionState)
+            {
+                constexpr float MaxTouchCoordinate = 65535.f;
+                touchMousePositionX = std::clamp(event.motion.x / MaxTouchCoordinate, 0.f, 1.f);
+                touchMousePositionY = std::clamp(event.motion.y / MaxTouchCoordinate, 0.f, 1.f);
+                touchMousePositionPending = true;
+                break;
+            }
+#endif
             mouseMoved = true;
             offs[0] += event.motion.xrel;
             offs[1] += event.motion.yrel;
@@ -221,7 +233,13 @@ void CInput::MouseUpdate()
 #if defined(XR_PLATFORM_ANDROID)
             // Touch sends motion and a click together. Move the UI cursor
             // before dispatching the click so its hit test uses this touch.
-            if (offs[0] || offs[1])
+            if (touchMousePositionPending)
+            {
+                cbStack.back()->IR_OnMouseMoveTo(touchMousePositionX, touchMousePositionY);
+                touchMousePositionPending = false;
+                offs[0] = offs[1] = 0;
+            }
+            else if (offs[0] || offs[1])
             {
                 cbStack.back()->IR_OnMouseMove(offs[0], offs[1]);
                 offs[0] = offs[1] = 0;

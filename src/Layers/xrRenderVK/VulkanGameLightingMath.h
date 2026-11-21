@@ -21,6 +21,11 @@ struct VulkanLightSnapshot
     VulkanLightType type{VulkanLightType::Point};
     bool active{};
     bool shadow{};
+    bool volumetric{};
+    bool indirect{};
+    float volumetric_quality{1.f};
+    float volumetric_intensity{1.f};
+    float volumetric_distance{1.f};
     std::array<float, 3> position{};
     std::array<float, 3> direction{0.f, -1.f, 0.f};
     std::array<float, 3> color{1.f, 1.f, 1.f};

@@ -1,0 +1,334 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "pbr_material.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer InputRadiance
+{
+    vec4 values[];
+} input_radiance;
+layout(set = 0, binding = 1, std430) readonly buffer PrimarySurfaces
+{
+    uvec2 values[];
+} primary_surfaces;
+struct Ray { vec4 origin_min; vec4 direction_max; };
+layout(set = 0, binding = 2, std430) readonly buffer PrimaryRays
+{
+    Ray values[];
+} primary_rays;
+struct Reservoir
+{
+    vec4 radiance;
+    uvec2 packed_direction;
+    float weight_sum;
+    uint sample_count;
+    float target;
+    float proposal_pdf;
+    uvec2 packed_surface;
+};
+layout(set = 0, binding = 3, std430) readonly buffer PreviousReservoirs
+{
+    Reservoir values[];
+} previous_reservoirs;
+layout(set = 0, binding = 4, std430) writeonly buffer OutputReservoirs
+{
+    Reservoir values[];
+} output_reservoirs;
+layout(set = 0, binding = 5, std430) writeonly buffer OutputRadiance
+{
+    vec4 values[];
+} output_radiance;
+layout(set = 0, binding = 6) uniform sampler2D receiver_albedo;
+layout(set = 0, binding = 7) uniform sampler2D receiver_normal;
+layout(set = 0, binding = 8) uniform sampler2D receiver_surface;
+layout(set = 0, binding = 9) uniform sampler2D motion_vectors;
+
+layout(push_constant) uniform Parameters
+{
+    uvec4 dimensions_seed_history;
+    uint material_inputs_valid;
+} parameters;
+
+uint hash_value(uint value)
+{
+    value ^= value >> 16;
+    value *= 0x7feb352du;
+    value ^= value >> 15;
+    value *= 0x846ca68bu;
+    return value ^ (value >> 16);
+}
+
+float random_value(uint value)
+{
+    return float(hash_value(value) & 0x00ffffffu) * (1.0 / 16777216.0);
+}
+
+float luminance(vec3 value)
+{
+    return max(dot(max(value, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722)), 0.0);
+}
+
+vec3 octahedral_decode(vec2 encoded)
+{
+    vec3 normal = vec3(encoded, 1.0 - abs(encoded.x) - abs(encoded.y));
+    if (normal.z < 0.0)
+    {
+        vec2 signs = vec2(normal.x < 0.0 ? -1.0 : 1.0, normal.y < 0.0 ? -1.0 : 1.0);
+        normal.xy = (1.0 - abs(normal.yx)) * signs;
+    }
+    return normalize(normal);
+}
+
+vec2 octahedral_encode(vec3 normal)
+{
+    normal /= max(abs(normal.x) + abs(normal.y) + abs(normal.z), 1e-8);
+    vec2 encoded = normal.xy;
+    if (normal.z < 0.0)
+    {
+        vec2 signs = vec2(encoded.x < 0.0 ? -1.0 : 1.0, encoded.y < 0.0 ? -1.0 : 1.0);
+        encoded = (1.0 - abs(encoded.yx)) * signs;
+    }
+    return encoded;
+}
+
+vec4 decode_surface(uvec2 packed_surface)
+{
+    vec2 encoded_normal = unpackSnorm2x16(packed_surface.x);
+    float depth = unpackHalf2x16(packed_surface.y).x;
+    return vec4(octahedral_decode(encoded_normal), depth);
+}
+
+vec3 octahedral_decode_direction(uvec2 packed_direction)
+{
+    return octahedral_decode(unpackSnorm2x16(packed_direction.x));
+}
+
+uint encode_direction(vec3 direction)
+{
+    return packSnorm2x16(octahedral_encode(direction));
+}
+
+struct Receiver
+{
+    vec3 normal;
+    float depth;
+    vec3 albedo;
+    float metallic;
+    float ao;
+    bool valid;
+};
+
+ivec2 gbuffer_pixel(ivec2 pixel, ivec2 output_size, ivec2 input_size)
+{
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(output_size);
+    return clamp(ivec2(uv * vec2(input_size)), ivec2(0), input_size - 1);
+}
+
+Receiver load_receiver(ivec2 pixel, ivec2 output_size, uvec2 packed_surface)
+{
+    vec4 surface = decode_surface(packed_surface);
+    Receiver receiver;
+    receiver.normal = surface.xyz;
+    receiver.depth = surface.w;
+    receiver.albedo = vec3(1.0);
+    receiver.metallic = 0.0;
+    receiver.ao = 1.0;
+    receiver.valid = surface.w < 1.0 && dot(surface.xyz, surface.xyz) > 1e-5;
+    if (parameters.material_inputs_valid != 0u && receiver.valid)
+    {
+        ivec2 input_size = textureSize(receiver_albedo, 0);
+        ivec2 input_pixel = gbuffer_pixel(pixel, output_size, input_size);
+        vec4 encoded_normal = texelFetch(receiver_normal, input_pixel, 0);
+        receiver.albedo = max(texelFetch(receiver_albedo, input_pixel, 0).rgb, vec3(0.0));
+        vec4 material = texelFetch(receiver_surface, input_pixel, 0);
+        if (pbr_material(encoded_normal.a))
+        {
+            receiver.metallic = clamp(material.g, 0.0, 1.0);
+            receiver.ao = clamp(material.b, 0.0, 1.0);
+        }
+    }
+    return receiver;
+}
+
+vec3 diffuse_contribution(Receiver receiver, vec3 incoming, vec3 direction)
+{
+    float cosine = max(dot(receiver.normal, direction), 0.0);
+    if (!receiver.valid || cosine <= 0.0)
+        return vec3(0.0);
+    const float inverse_pi = 0.31830988618;
+    vec3 diffuse = receiver.albedo * (1.0 - receiver.metallic) * receiver.ao;
+    return max(incoming, vec3(0.0)) * diffuse * (cosine * inverse_pi);
+}
+
+void main()
+{
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    uint width = parameters.dimensions_seed_history.x;
+    uint height = parameters.dimensions_seed_history.y;
+    if (pixel.x >= width || pixel.y >= height) return;
+
+    uint index = pixel.y * width + pixel.x;
+    uvec2 packed_center_surface = primary_surfaces.values[index];
+    vec4 center_radiance = input_radiance.values[index];
+    Receiver center = load_receiver(ivec2(pixel), ivec2(width, height), packed_center_surface);
+    if (!center.valid)
+    {
+        Reservoir invalid_reservoir;
+        invalid_reservoir.radiance = vec4(0.0);
+        invalid_reservoir.packed_direction = uvec2(0u);
+        invalid_reservoir.weight_sum = 0.0;
+        invalid_reservoir.sample_count = 0u;
+        invalid_reservoir.target = 0.0;
+        invalid_reservoir.proposal_pdf = 0.0;
+        invalid_reservoir.packed_surface = packed_center_surface;
+        output_reservoirs.values[index] = invalid_reservoir;
+        output_radiance.values[index] = center_radiance;
+        return;
+    }
+
+    Reservoir reservoir;
+    reservoir.radiance = vec4(0.0);
+    reservoir.packed_direction = uvec2(0u);
+    reservoir.weight_sum = 0.0;
+    reservoir.sample_count = 0u;
+    reservoir.target = 0.0;
+    reservoir.proposal_pdf = 0.0;
+    reservoir.packed_surface = packed_center_surface;
+    uint random_seed = index ^ parameters.dimensions_seed_history.z;
+    uint candidate_id = 0u;
+    const float inverse_pi = 0.31830988618;
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            ivec2 candidate_pixel = ivec2(pixel) + ivec2(x, y);
+            if (any(lessThan(candidate_pixel, ivec2(0))) ||
+                candidate_pixel.x >= int(width) || candidate_pixel.y >= int(height))
+            {
+                ++candidate_id;
+                continue;
+            }
+
+            uint candidate_index = uint(candidate_pixel.y) * width + uint(candidate_pixel.x);
+            uvec2 packed_candidate_surface = primary_surfaces.values[candidate_index];
+            Receiver source = load_receiver(candidate_pixel, ivec2(width, height), packed_candidate_surface);
+            if (!source.valid)
+            {
+                ++candidate_id;
+                continue;
+            }
+
+            float normal_similarity = dot(center.normal, source.normal);
+            float depth_difference = abs(center.depth - source.depth);
+            float depth_tolerance = max(0.001, max(abs(center.depth), abs(source.depth)) * 0.02);
+            if (normal_similarity < 0.9 || depth_difference > depth_tolerance)
+            {
+                ++candidate_id;
+                continue;
+            }
+
+            Ray ray = primary_rays.values[candidate_index];
+            float direction_length = length(ray.direction_max.xyz);
+            if (ray.direction_max.w <= ray.origin_min.w || direction_length < 1e-6 ||
+                any(isnan(ray.direction_max.xyz)) || any(isinf(ray.direction_max.xyz)))
+            {
+                ++candidate_id;
+                continue;
+            }
+            vec3 direction = ray.direction_max.xyz / direction_length;
+            float source_pdf = max(dot(source.normal, direction), 0.0) * inverse_pi;
+            if (source_pdf <= 1e-8)
+            {
+                ++candidate_id;
+                continue;
+            }
+            vec3 incoming = max(input_radiance.values[candidate_index].rgb, vec3(0.0));
+            vec3 contribution = diffuse_contribution(center, incoming, direction);
+            float target = luminance(contribution);
+            float weight = target / source_pdf;
+            ++reservoir.sample_count;
+            if (weight > 1e-8 && !isnan(weight) && !isinf(weight))
+            {
+                reservoir.weight_sum += weight;
+                if (random_value(random_seed ^ (candidate_id * 0x9e3779b9u)) * reservoir.weight_sum < weight)
+                {
+                    reservoir.radiance = vec4(incoming, 1.0);
+                    reservoir.packed_direction = uvec2(encode_direction(direction), 0u);
+                    reservoir.target = target;
+                    reservoir.proposal_pdf = source_pdf;
+                }
+            }
+            ++candidate_id;
+        }
+    }
+
+    // Re-evaluate the selected temporal sample with the current receiver diffuse BSDF.
+    if (parameters.dimensions_seed_history.w != 0u)
+    {
+        ivec2 motion_size = textureSize(motion_vectors, 0);
+        ivec2 motion_pixel = gbuffer_pixel(ivec2(pixel), ivec2(width, height), motion_size);
+        vec2 motion = texelFetch(motion_vectors, motion_pixel, 0).xy;
+        if (!any(isnan(motion)) && !any(isinf(motion)))
+        {
+            vec2 uv = (vec2(pixel) + 0.5) / vec2(width, height);
+            vec2 previous_uv = uv + motion;
+            if (all(greaterThan(previous_uv, vec2(0.0))) &&
+                all(lessThan(previous_uv, vec2(1.0))))
+            {
+                ivec2 previous_pixel = clamp(ivec2(previous_uv * vec2(width, height)),
+                    ivec2(0), ivec2(int(width) - 1, int(height) - 1));
+                uint previous_index = uint(previous_pixel.y) * width + uint(previous_pixel.x);
+                Reservoir previous = previous_reservoirs.values[previous_index];
+                vec4 previous_surface = decode_surface(previous.packed_surface);
+                float normal_similarity = dot(center.normal, previous_surface.xyz);
+                float depth_difference = abs(center.depth - previous_surface.w);
+                float depth_tolerance = max(0.001, max(abs(center.depth), abs(previous_surface.w)) * 0.02);
+                vec3 previous_direction = octahedral_decode_direction(previous.packed_direction);
+                vec3 previous_contribution = diffuse_contribution(center,
+                    previous.radiance.rgb, previous_direction);
+                float current_target = luminance(previous_contribution);
+                float previous_target = previous.target;
+                float reuse_weight = previous_target > 1e-8 ?
+                    previous.weight_sum * current_target / previous_target : 0.0;
+                if (previous.sample_count > 0u && previous.weight_sum > 0.0 &&
+                    previous.proposal_pdf > 0.0 && previous_target > 1e-8 &&
+                    previous_surface.w < 1.0 && normal_similarity >= 0.9 && depth_difference <= depth_tolerance)
+                {
+                    reservoir.sample_count += previous.sample_count;
+                    if (reuse_weight > 1e-8 && !isnan(reuse_weight) && !isinf(reuse_weight))
+                    {
+                        float combined_weight = reservoir.weight_sum + reuse_weight;
+                        if (random_value(random_seed ^ 0xa511e9b3u) * combined_weight < reuse_weight)
+                        {
+                            reservoir.radiance = previous.radiance;
+                            reservoir.packed_direction = previous.packed_direction;
+                            reservoir.target = current_target;
+                            reservoir.proposal_pdf = previous.proposal_pdf;
+                            reservoir.packed_surface = packed_center_surface;
+                        }
+                        reservoir.weight_sum = combined_weight;
+                    }
+                }
+            }
+        }
+    }
+
+    const uint max_history = 32u;
+    if (reservoir.sample_count > max_history)
+    {
+        reservoir.weight_sum *= float(max_history) / float(reservoir.sample_count);
+        reservoir.sample_count = max_history;
+    }
+    output_reservoirs.values[index] = reservoir;
+
+    if (reservoir.sample_count == 0u || reservoir.weight_sum <= 0.0 || reservoir.target <= 1e-8)
+        output_radiance.values[index] = vec4(0.0, 0.0, 0.0, center_radiance.a);
+    else
+    {
+        vec3 direction = octahedral_decode_direction(reservoir.packed_direction);
+        vec3 contribution = diffuse_contribution(center, reservoir.radiance.rgb, direction);
+        vec3 estimate = contribution *
+            (reservoir.weight_sum / (float(reservoir.sample_count) * reservoir.target));
+        output_radiance.values[index] = vec4(estimate, center_radiance.a);
+    }
+}

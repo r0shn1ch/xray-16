@@ -3,10 +3,46 @@
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace xray::render::vulkan
 {
 using LevelCullSphere = std::array<float, 4>;
+
+inline float wind_expanded_radius(float radius, float extent, float amplitude)
+{
+    if (!std::isfinite(radius) || radius <= 0.f) return radius;
+    if (!std::isfinite(extent) || !std::isfinite(amplitude) || extent < 0.f || amplitude < 0.f)
+        return std::numeric_limits<float>::infinity();
+    return radius + extent * amplitude * 1.00001f;
+}
+
+// Largest wind displacement coefficient in each subtree, before multiplying
+// by the current wind amplitude. Invalid hierarchies fail open for culling.
+inline std::vector<float> level_hierarchy_wind_extents(const std::vector<LevelVisual>& visuals,
+    const std::vector<float>& mesh_extents)
+{
+    const float unbounded = std::numeric_limits<float>::infinity();
+    std::vector<float> result(visuals.size(), 0.f);
+    std::vector<uint8_t> state(visuals.size());
+    const auto visit = [&](const auto& self, size_t index, unsigned depth) -> float {
+        if (index >= visuals.size() || state[index] == 1 || depth > 512) return unbounded;
+        if (state[index] == 2) return result[index];
+        state[index] = 1;
+        const auto& node = visuals[index];
+        float extent = 0.f;
+        if (node.mesh >= 0)
+        {
+            if (size_t(node.mesh) >= mesh_extents.size() || !std::isfinite(mesh_extents[node.mesh]) ||
+                mesh_extents[node.mesh] < 0.f) extent = unbounded;
+            else extent = mesh_extents[node.mesh];
+        }
+        for (uint32_t child : node.children) extent = std::max(extent, self(self, child, depth + 1));
+        result[index] = extent; state[index] = 2; return extent;
+    };
+    for (size_t i = 0; i < visuals.size(); ++i) visit(visit, i, 0);
+    return result;
+}
 
 inline std::vector<LevelCullSphere> level_hierarchy_bounds(const std::vector<LevelVisual>& visuals)
 {

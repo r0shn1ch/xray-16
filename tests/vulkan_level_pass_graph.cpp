@@ -117,10 +117,15 @@ int main()
     assert(graph.passes[1].blend == LevelPassBlend::Multiply2x);
     assert(graph.passes[1].previous_color_pass == 0);
     assert(graph.passes[1].depth_test && !graph.passes[1].depth_write);
+    assert(supports_cluster_lod_pass_graph(graph));
+    LevelPassGraph single_pass;
+    assert(build_level_pass_graph(LevelPassSelection{SurfaceMode::Opaque}, single_pass, error));
+    assert(supports_cluster_lod_pass_graph(single_pass));
     LevelPassGraph invalid = graph;
     invalid.passes[1].previous_color_pass = -1;
     assert(!validate_level_pass_graph(invalid, error) &&
         error.find("pass 1 missing ordered previous-color") != std::string::npos);
+    assert(!supports_cluster_lod_pass_graph(invalid));
     invalid = graph;
     invalid.passes[1].target = LevelPassTarget::Forward;
     assert(!validate_level_pass_graph(invalid, error) &&
@@ -186,9 +191,11 @@ int main()
     assert(build_render_pass_graph({RenderConsumer::Model, SurfaceMode::Transparent,
         false, true, true, false, 2}, common, error));
     assert(common.passes[0].fragment == "vk\\skinned_environment.ps");
-    assert(!build_render_pass_graph({RenderConsumer::Model, SurfaceMode::Transparent,
+    assert(build_render_pass_graph({RenderConsumer::Model, SurfaceMode::Transparent,
         true, true, true, false, 2}, common, error));
-    assert(error.find("HUD model environment cube") != std::string::npos);
+    assert(common.count == 1 && common.passes[0].target == LevelPassTarget::Hud &&
+        common.passes[0].vertex == "vk\\hud_skinned_2.vs" &&
+        common.passes[0].fragment == "vk\\skinned_hud_model_environment.ps");
     const char* world_model_fragments[]{"set", "blended", "additive", "multiply",
         "multiply_2x", "alpha_add", "wallmark_multiply_2x", "set_2r",
         "blend_2r", "blend_4r"};

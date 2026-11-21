@@ -19,7 +19,8 @@ bool complete(const ScenePassDispatch& vk)
 
 bool make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout,
     VkShaderModule vertex, VkShaderModule fragment, bool ui, bool use_depth, const ScenePassDispatch& vk,
-    int ui_mode, VkPipeline& result, bool world_ui = false)
+    int ui_mode, VkPipeline& result, bool world_ui = false,
+    VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT)
 {
     VkPipelineShaderStageCreateInfo stages[2]{};
     stages[0].sType = stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -58,7 +59,7 @@ bool make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout l
     raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     raster.lineWidth = 1.0f;
     VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    multisample.rasterizationSamples = samples;
     VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     depth.depthTestEnable = use_depth && (!ui || world_ui) ? VK_TRUE : VK_FALSE;
     depth.depthWriteEnable = use_depth && !ui ? VK_TRUE : VK_FALSE;
@@ -132,6 +133,7 @@ bool load_scene_pass_dispatch(VkDevice device, PFN_vkGetDeviceProcAddr get_proc,
     XRAY_LOAD(cmd_bind_index_buffer, "vkCmdBindIndexBuffer");
     XRAY_LOAD(cmd_push_constants, "vkCmdPushConstants");
     XRAY_LOAD(cmd_draw_indexed, "vkCmdDrawIndexed");
+    XRAY_LOAD(cmd_draw_indexed_indirect, "vkCmdDrawIndexedIndirect");
     XRAY_LOAD(cmd_draw, "vkCmdDraw");
     XRAY_LOAD(create_descriptor_set_layout, "vkCreateDescriptorSetLayout");
     XRAY_LOAD(destroy_descriptor_set_layout, "vkDestroyDescriptorSetLayout");
@@ -211,7 +213,7 @@ bool ScenePass::initialize(VkDevice device, VkRenderPass render_pass,
     layout.pSetLayouts = ui_layouts;
     if (m_vk.create_pipeline_layout(device, &layout, nullptr, &m_ui_layout) != VK_SUCCESS ||
         !make_pipeline(device, render_pass, m_scene_layout, scene_vertex, scene_fragment,
-            false, use_depth, m_vk, 0, m_scene_pipeline))
+            false, use_depth, m_vk, 0, m_scene_pipeline, false, dispatch.gbuffer_samples))
     {
         error = "could not create Vulkan geometry, lighting or UI pipeline";
         destroy();
@@ -219,7 +221,7 @@ bool ScenePass::initialize(VkDevice device, VkRenderPass render_pass,
     }
     for (int mode = 0; mode < 11; ++mode)
         if (!make_pipeline(device, render_pass, m_ui_layout, ui_vertex, ui_fragment,
-                true, use_depth, m_vk, mode, m_ui_pipelines[mode]))
+                true, use_depth, m_vk, mode, m_ui_pipelines[mode], false, dispatch.gbuffer_samples))
         {
             error = "could not create Vulkan UI blend pipeline mode=" + std::to_string(mode);
             destroy();
@@ -237,7 +239,7 @@ bool ScenePass::initialize(VkDevice device, VkRenderPass render_pass,
     if (use_depth)
         for (int mode=0;mode<11;++mode)
             if (!make_pipeline(device,render_pass,m_ui_layout,ui_vertex,ui_fragment,
-                    true,true,m_vk,mode,m_world_ui_pipelines[mode],true))
+                    true,true,m_vk,mode,m_world_ui_pipelines[mode],true,dispatch.gbuffer_samples))
             {
                 error="could not create world UI depth pipeline mode="+std::to_string(mode);
                 destroy();return false;

@@ -72,6 +72,9 @@ struct MaterialDefinition
     TextureMatrixSet matrices;
     std::array<WaveForm, 4> constant_waveforms{};
     bool has_environment_constant{};
+    // Mirrors CBlender_Compile::emissive(true) in the shader's Lua program.
+    // shaders.xr stores blender properties but not this ShaderElement flag.
+    bool emissive{};
     std::vector<BlenderProperty> properties;
     uint8_t priority{1};
     bool object_lod{}; // D_TREE's static tree_s vertex path.

@@ -6,6 +6,7 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 #include <vulkan/vulkan.h>
 using namespace xray::render::vulkan;
@@ -14,7 +15,7 @@ static void check(VkResult value)
     if (value != VK_SUCCESS)
         throw std::runtime_error("Vulkan result " + std::to_string(value));
 }
-int main()
+int main(int argc, char** argv)
 {
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     app.apiVersion = VK_API_VERSION_1_0;
@@ -28,10 +29,15 @@ int main()
     check(vkEnumeratePhysicalDevices(instance, &n, physical.data()));
     if (!n)
         return 77;
+    const int selected = argc > 1 ? std::stoi(argv[1]) : -1;
+    if (selected >= 0 && size_t(selected) >= physical.size()) return 77;
     uint32_t family = UINT32_MAX;
+    VkQueueFlags queue_flags = 0;
     VkPhysicalDevice gpu{};
-    for (auto candidate : physical)
+    for (size_t device_index = 0; device_index < physical.size(); ++device_index)
     {
+        if (selected >= 0 && size_t(selected) != device_index) continue;
+        const VkPhysicalDevice candidate = physical[device_index];
         vkGetPhysicalDeviceQueueFamilyProperties(candidate, &n, nullptr);
         std::vector<VkQueueFamilyProperties> queues(n);
         vkGetPhysicalDeviceQueueFamilyProperties(candidate, &n, queues.data());
@@ -40,6 +46,7 @@ int main()
                 (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT))
             {
                 family = i;
+                queue_flags = queues[i].queueFlags;
                 gpu = candidate;
                 break;
             }
@@ -208,7 +215,7 @@ int main()
     assert(load_scene_pass_dispatch(device, vkGetDeviceProcAddr, graphics, error));
     ShaderModuleDispatch shaders{vkCreateShaderModule, vkDestroyShaderModule};
     VkPhysicalDeviceProperties properties{};
-    vkGetPhysicalDeviceProperties(physical[0], &properties);
+    vkGetPhysicalDeviceProperties(gpu, &properties);
     PipelineCache pipeline_cache;
     assert(pipeline_cache.initialize(device, vkGetDeviceProcAddr, properties, {}, 42));
     graphics.pipeline_cache = pipeline_cache.handle();
@@ -282,7 +289,13 @@ int main()
             }
         }
         FrameRecordingContext context{command, pass, framebuffer, {32, 1}, 0, 0};
-        assert(grid.prepare(context, lights, rectangles, error));
+        context.command_queue_flags = queue_flags;
+        context.graphics_queue_flags = queue_flags;
+        if (!grid.prepare(context, lights, rectangles, error))
+        {
+            std::cerr << "light grid prepare failed frame=" << frame << ": " << error << '\n';
+            return 1;
+        }
         assert(grid.count(0) == (frame == 2 ? 0 : frame == 3 ? 64 : 2));
         assert(grid.contains(0, 2) == (frame == 3));
         VkClearValue clear{};

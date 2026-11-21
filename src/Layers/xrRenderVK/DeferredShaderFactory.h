@@ -6,7 +6,8 @@
 
 namespace xray::render::vulkan
 {
-void configure_engine_shader_resources(VkDevice device, const ShaderModuleDispatch &dispatch, GameShaderResources &resources);
+void configure_engine_shader_resources(VkDevice device, const ShaderModuleDispatch &dispatch,
+    GameShaderResources &resources, bool geometry_supported, bool tessellation_supported);
 // Owns modules after pipeline creation, including the failure path.
 class DeferredShaderFactory
 {

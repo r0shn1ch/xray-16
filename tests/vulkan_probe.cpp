@@ -18,6 +18,7 @@ bool no_loader_proc{};
 bool no_create_proc{};
 bool no_enumerate_proc{};
 bool graphics_queue{true};
+bool compute_queue{true};
 bool swapchain_extension{true};
 bool supported_format{true};
 int sdl_load_result{-1};
@@ -51,7 +52,8 @@ void VKAPI_CALL queue_families(VkPhysicalDevice, uint32_t* count, VkQueueFamilyP
     {
         queues[0] = {};
         queues[0].queueCount = 1;
-        queues[0].queueFlags = graphics_queue ? VK_QUEUE_GRAPHICS_BIT : VK_QUEUE_COMPUTE_BIT;
+        queues[0].queueFlags = (graphics_queue ? VK_QUEUE_GRAPHICS_BIT : 0) |
+            (compute_queue ? VK_QUEUE_COMPUTE_BIT : 0);
     }
 }
 
@@ -71,11 +73,11 @@ VkResult VKAPI_CALL device_extensions(VkPhysicalDevice, const char*, uint32_t* c
 void VKAPI_CALL physical_properties(VkPhysicalDevice, VkPhysicalDeviceProperties* properties)
 {
     *properties = {};
-    properties->limits.maxPushConstantsSize = 128;
-    properties->limits.maxColorAttachments = 2;
+    properties->limits.maxPushConstantsSize = 256;
+    properties->limits.maxColorAttachments = 3;
     properties->limits.maxImageDimension2D = 4096;
-    properties->limits.maxPerStageDescriptorSamplers = 8;
-    properties->limits.maxPerStageDescriptorSampledImages = 8;
+    properties->limits.maxPerStageDescriptorSamplers = 20;
+    properties->limits.maxPerStageDescriptorSampledImages = 20;
 }
 void VKAPI_CALL format_properties(VkPhysicalDevice, VkFormat format, VkFormatProperties* properties)
 {
@@ -190,6 +192,9 @@ int main()
     graphics_queue = false;
     assert(!probe_vulkan_loader(error, dispatch) && !error.empty());
     graphics_queue = true;
+    compute_queue = false;
+    assert(!probe_vulkan_loader(error, dispatch) && !error.empty());
+    compute_queue = true;
     swapchain_extension = false;
     assert(!probe_vulkan_loader(error, dispatch) && !error.empty());
     swapchain_extension = true;
@@ -197,11 +202,11 @@ int main()
     assert(!probe_vulkan_loader(error, dispatch) && !error.empty());
     supported_format = true;
     assert(probe_vulkan_loader(error, dispatch) && error.empty());
-    assert(loads == 7 && unloads == 6 && destroyed_instances == 7);
+    assert(loads == 7 && unloads == 6 && destroyed_instances == 8);
 
     loader_ready = false;
     assert(probe_vulkan_loader(error, dispatch) && error.empty());
-    assert(loads == 8 && unloads == 7 && destroyed_instances == 8);
+    assert(loads == 8 && unloads == 7 && destroyed_instances == 9);
 
     assert(!probe_vulkan_loader(error) && !error.empty());
     assert(sdl_loads == 1 && sdl_unloads == 0);

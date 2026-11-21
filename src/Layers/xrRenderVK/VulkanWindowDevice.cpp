@@ -8,10 +8,14 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <vector>
 
 namespace xray::render::vulkan
 {
+void initialize_nvrhi_vulkan_dispatch(VkInstance instance, PFN_vkGetInstanceProcAddr get_instance_proc,
+    VkDevice device);
+
 namespace
 {
 template <typename T> T load_instance_proc(VkInstance instance, PFN_vkGetInstanceProcAddr get, const char* name)
@@ -50,7 +54,8 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VulkanWindowDevice::validation_callback(
 
 bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
     bool allow_readback, std::string& error, bool use_depth, bool preserve_prepass_depth,
-    bool postprocess, VkExtent2D scene_extent)
+    bool postprocess, VkExtent2D scene_extent, FrameSwapchainCreate swapchain_create,
+    FrameSwapchainDestroyed swapchain_destroyed, void* swapchain_data)
 {
     destroy();
     if (!window || !extent.width || !extent.height)
@@ -90,6 +95,38 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
     std::vector<const char*> layers_enabled;
     VkValidationFeatureEnableEXT sync_feature = VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
     VkValidationFeaturesEXT validation_features{VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT};
+    const auto enumerate_extensions = load_instance_proc<PFN_vkEnumerateInstanceExtensionProperties>(
+        VK_NULL_HANDLE, m_instance_proc, "vkEnumerateInstanceExtensionProperties");
+    const auto collect_extensions = [&](const char* layer)
+    {
+        uint32_t count = 0;
+        if (!enumerate_extensions || enumerate_extensions(layer, &count, nullptr) != VK_SUCCESS)
+            return std::vector<VkExtensionProperties>{};
+        std::vector<VkExtensionProperties> result(count);
+        if (enumerate_extensions(layer, &count, result.data()) != VK_SUCCESS)
+            result.clear();
+        return result;
+    };
+    const auto global_extensions = collect_extensions(nullptr);
+    const char* rt_requested_env = SDL_getenv("XRAY_VK_RAY_TRACING");
+#if defined(XR_PLATFORM_ANDROID)
+    // Mobile Vulkan requests RT features when available; devices without them
+    // continue through the raster path. The environment setting can opt out.
+    const bool rt_requested = !rt_requested_env || std::strcmp(rt_requested_env, "0") != 0;
+#else
+    const bool rt_requested = rt_requested_env && std::strcmp(rt_requested_env, "0") != 0;
+#endif
+    uint32_t loader_api_version = VK_API_VERSION_1_0;
+    const auto enumerate_version = load_instance_proc<PFN_vkEnumerateInstanceVersion>(
+        VK_NULL_HANDLE, m_instance_proc, "vkEnumerateInstanceVersion");
+    if (enumerate_version && enumerate_version(&loader_api_version) != VK_SUCCESS)
+        loader_api_version = VK_API_VERSION_1_0;
+    const bool rt_instance = rt_requested && loader_api_version >= VK_API_VERSION_1_1;
+    const bool features2_enabled = contains_name(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+        global_extensions);
+    if (features2_enabled && std::none_of(extensions.begin(), extensions.end(), [](const char* name)
+        { return std::strcmp(name, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) == 0; }))
+        extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
     // Android's debug-signed APK uses ReleaseMasterGold native code. Keep the
     // explicit opt-in available there; without a packaged layer it is inert.
     const char* requested = SDL_getenv("XRAY_VK_VALIDATION");
@@ -97,8 +134,6 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
     {
         const auto enumerate_layers = load_instance_proc<PFN_vkEnumerateInstanceLayerProperties>(
             VK_NULL_HANDLE, m_instance_proc, "vkEnumerateInstanceLayerProperties");
-        const auto enumerate_extensions = load_instance_proc<PFN_vkEnumerateInstanceExtensionProperties>(
-            VK_NULL_HANDLE, m_instance_proc, "vkEnumerateInstanceExtensionProperties");
         uint32_t count = 0;
         if (enumerate_layers && enumerate_layers(&count, nullptr) == VK_SUCCESS)
         {
@@ -108,17 +143,6 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
                 { return std::strcmp(layer.layerName, "VK_LAYER_KHRONOS_validation") == 0; }))
             {
                 layers_enabled.push_back("VK_LAYER_KHRONOS_validation");
-                const auto collect_extensions = [&](const char* layer)
-                {
-                    uint32_t extension_count = 0;
-                    if (!enumerate_extensions || enumerate_extensions(layer, &extension_count, nullptr) != VK_SUCCESS)
-                        return std::vector<VkExtensionProperties>{};
-                    std::vector<VkExtensionProperties> result(extension_count);
-                    if (enumerate_extensions(layer, &extension_count, result.data()) != VK_SUCCESS)
-                        result.clear();
-                    return result;
-                };
-                const auto global_extensions = collect_extensions(nullptr);
                 const auto layer_extensions = collect_extensions("VK_LAYER_KHRONOS_validation");
                 const auto available = [&](const char* name)
                 { return contains_name(name, global_extensions) || contains_name(name, layer_extensions); };
@@ -137,7 +161,8 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
     }
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     app.pApplicationName = app.pEngineName = "OpenXRay";
-    app.apiVersion = VK_API_VERSION_1_0;
+    app.apiVersion = loader_api_version >= VK_API_VERSION_1_2 ? VK_API_VERSION_1_2 :
+        (loader_api_version >= VK_API_VERSION_1_1 ? VK_API_VERSION_1_1 : VK_API_VERSION_1_0);
     VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     instance_info.pApplicationInfo = &app;
     instance_info.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
@@ -209,19 +234,137 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
         load_instance_proc<PFN_vkGetPhysicalDeviceMemoryProperties>(m_instance, m_instance_proc,
             "vkGetPhysicalDeviceMemoryProperties"),
         load_instance_proc<PFN_vkGetPhysicalDeviceFormatProperties>(m_instance, m_instance_proc,
-            "vkGetPhysicalDeviceFormatProperties")
+            "vkGetPhysicalDeviceFormatProperties"),
+        app.apiVersion >= VK_API_VERSION_1_1 ?
+            load_instance_proc<PFN_vkGetPhysicalDeviceFeatures2KHR>(m_instance, m_instance_proc,
+            "vkGetPhysicalDeviceFeatures2") :
+            (features2_enabled ? load_instance_proc<PFN_vkGetPhysicalDeviceFeatures2KHR>(m_instance,
+                m_instance_proc, "vkGetPhysicalDeviceFeatures2KHR") : nullptr)
     };
     if (!select_physical_device(m_instance, m_surface, hardware, m_physical, error))
         return fail();
+    const uint32_t effective_api_version = std::min(app.apiVersion, m_physical.properties.apiVersion);
+    const bool core_msaa_resolve = effective_api_version >= VK_API_VERSION_1_2;
+    const bool extension_msaa_resolve = effective_api_version >= VK_API_VERSION_1_1 &&
+        m_physical.create_render_pass2_extension && m_physical.depth_stencil_resolve_extension;
+    if (core_msaa_resolve || extension_msaa_resolve)
+    {
+        const char* properties2_name = app.apiVersion >= VK_API_VERSION_1_1 ?
+            "vkGetPhysicalDeviceProperties2" : "vkGetPhysicalDeviceProperties2KHR";
+        const auto get_properties2 = load_instance_proc<PFN_vkGetPhysicalDeviceProperties2KHR>(
+            m_instance, m_instance_proc, properties2_name);
+        if (get_properties2)
+        {
+            VkPhysicalDeviceProperties2 properties2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+            properties2.pNext = &m_depth_stencil_resolve_properties;
+            get_properties2(m_physical.handle, &properties2);
+        }
+    }
     DeviceDispatch devices{load_instance_proc<PFN_vkCreateDevice>(m_instance, m_instance_proc,
         "vkCreateDevice"), m_device_proc};
-    if (!create_logical_device(m_physical, devices, m_device, m_queue, error))
-        return fail();
+    EnabledDeviceInfo enabled_device_info;
+    FrameGenerationQueues* frame_generation_queues = nullptr;
+#if defined(XRAY_HAS_FSR3_ANDROID)
+    frame_generation_queues = &m_frame_generation_queues;
+#endif
+    if (rt_instance && (m_physical.ray_tracing.ray_query ||
+            m_physical.ray_tracing.ray_tracing_pipeline))
+    {
+        m_ray_tracing_enabled = create_logical_device(m_physical, devices, m_device,
+            m_queue, error, true, app.apiVersion, m_physical.bindless_textures, &enabled_device_info,
+            &m_compute_queue, frame_generation_queues, &m_transfer_queue);
+        m_bindless_textures_enabled = m_ray_tracing_enabled && m_physical.bindless_textures;
+        if (!m_ray_tracing_enabled && m_physical.bindless_textures)
+            m_ray_tracing_enabled = create_logical_device(m_physical, devices, m_device,
+                m_queue, error, true, app.apiVersion, false, &enabled_device_info, &m_compute_queue,
+                frame_generation_queues, &m_transfer_queue);
+        if (!m_ray_tracing_enabled)
+            SDL_Log("[renderer-vulkan] ray tracing device unavailable: %s; using raster device",
+                error.c_str());
+    }
+    if (!m_ray_tracing_enabled && m_physical.bindless_textures)
+        m_bindless_textures_enabled = create_logical_device(m_physical, devices, m_device,
+            m_queue, error, false, app.apiVersion, true, &enabled_device_info, &m_compute_queue,
+            frame_generation_queues, &m_transfer_queue);
+    if (!m_ray_tracing_enabled && !m_bindless_textures_enabled &&
+        !create_logical_device(m_physical, devices, m_device, m_queue, error, false, app.apiVersion,
+            false, &enabled_device_info, &m_compute_queue, frame_generation_queues,
+            &m_transfer_queue)) return fail();
+    initialize_nvrhi_vulkan_dispatch(m_instance, m_instance_proc, m_device);
+    nvrhi::vulkan::DeviceDesc nvrhi_desc{};
+    nvrhi_desc.instance = m_instance;
+    nvrhi_desc.physicalDevice = m_physical.handle;
+    nvrhi_desc.device = m_device;
+    nvrhi_desc.graphicsQueue = m_queue;
+    nvrhi_desc.graphicsQueueIndex = static_cast<int>(m_physical.graphics_present_family);
+    if (m_compute_queue)
+    {
+        nvrhi_desc.computeQueue = m_compute_queue;
+        nvrhi_desc.computeQueueIndex = static_cast<int>(m_physical.compute_queue_family);
+    }
+    if (m_transfer_queue)
+    {
+        nvrhi_desc.transferQueue = m_transfer_queue;
+        nvrhi_desc.transferQueueIndex = static_cast<int>(m_physical.transfer_queue_family);
+    }
+    nvrhi_desc.instanceExtensions = extensions.data();
+    nvrhi_desc.numInstanceExtensions = extensions.size();
+    nvrhi_desc.deviceExtensions = enabled_device_info.extensions.data();
+    nvrhi_desc.numDeviceExtensions = enabled_device_info.extensions.size();
+    nvrhi_desc.bufferDeviceAddressSupported = enabled_device_info.buffer_device_address;
+    nvrhi_desc.descriptorBindingUniformBufferUpdateAfterBind =
+        enabled_device_info.descriptor_binding_uniform_buffer_update_after_bind;
+    if (enabled_device_info.timeline_semaphore)
+    {
+        try
+        {
+            m_nvrhi_device = nvrhi::vulkan::createDevice(nvrhi_desc);
+        }
+        catch (const std::exception& exception)
+        {
+            SDL_Log("[renderer-vulkan] NVRHI device creation failed: %s; direct Vulkan remains active",
+                exception.what());
+        }
+        if (m_nvrhi_device)
+            SDL_Log("[renderer-vulkan] nvrhi.device.ready graphics-family=%u compute-family=%u transfer-family=%u async-compute=%d copy-queue=%d",
+                m_physical.graphics_present_family, m_physical.compute_queue_family,
+                m_physical.transfer_queue_family,
+                int(m_compute_queue && m_physical.compute_queue_family == m_physical.graphics_present_family &&
+                    m_physical.compute_queue_index > 0), int(m_transfer_queue != VK_NULL_HANDLE));
+        else
+            SDL_Log("[renderer-vulkan] NVRHI could not wrap the Vulkan device; direct Vulkan remains active");
+    }
+    else
+        SDL_Log("[renderer-vulkan] NVRHI requires timeline semaphores; direct Vulkan remains active");
     SDL_Log("[renderer-vulkan] gpu.selected name='%s' vendor=0x%04x device=0x%04x driver=0x%x api=%u.%u queue=%u",
         m_physical.properties.deviceName, m_physical.properties.vendorID, m_physical.properties.deviceID,
         m_physical.properties.driverVersion, VK_VERSION_MAJOR(m_physical.properties.apiVersion),
         VK_VERSION_MINOR(m_physical.properties.apiVersion), m_physical.graphics_present_family);
+    SDL_Log("[renderer-vulkan] gpu.ray_tracing advertised acceleration=%d query=%d pipeline=%d enabled=%d",
+        int(m_physical.ray_tracing.acceleration_structure), int(m_physical.ray_tracing.ray_query),
+        int(m_physical.ray_tracing.ray_tracing_pipeline), int(m_ray_tracing_enabled));
+    if (frame_generation_queues)
+        SDL_Log("[renderer-vulkan] gpu.frame_generation distinct_queues=%d present=%u:%u compute=%u:%u acquire=%u:%u",
+            int(m_frame_generation_queues.enabled), m_physical.frame_generation_present_family,
+            m_physical.frame_generation_present_index, m_physical.frame_generation_compute_family,
+            m_physical.frame_generation_compute_index, m_physical.frame_generation_acquire_family,
+            m_physical.frame_generation_acquire_index);
+    SDL_Log("[renderer-vulkan] gpu.bindless_textures advertised=%d enabled=%d",
+        int(m_physical.bindless_textures), int(m_bindless_textures_enabled));
     m_destroy_device = reinterpret_cast<PFN_vkDestroyDevice>(m_device_proc(m_device, "vkDestroyDevice"));
+    m_image_format_properties = load_instance_proc<PFN_vkGetPhysicalDeviceImageFormatProperties>(
+        m_instance, m_instance_proc, "vkGetPhysicalDeviceImageFormatProperties");
+    const char* render_pass2_name = effective_api_version >= VK_API_VERSION_1_2 ?
+        "vkCreateRenderPass2" : "vkCreateRenderPass2KHR";
+    m_create_render_pass2 = reinterpret_cast<PFN_vkCreateRenderPass2>(m_device_proc(m_device, render_pass2_name));
+    m_gbuffer_msaa_resolve_available = (core_msaa_resolve || extension_msaa_resolve) &&
+        m_image_format_properties && m_create_render_pass2 &&
+        m_depth_stencil_resolve_properties.supportedDepthResolveModes != VK_RESOLVE_MODE_NONE;
+    SDL_Log("[renderer-vulkan] gbuffer.msaa_resolve api=%u.%u available=%d depth-modes=0x%x stencil-modes=0x%x",
+        VK_VERSION_MAJOR(effective_api_version), VK_VERSION_MINOR(effective_api_version),
+        int(m_gbuffer_msaa_resolve_available),
+        m_depth_stencil_resolve_properties.supportedDepthResolveModes,
+        m_depth_stencil_resolve_properties.supportedStencilResolveModes);
     FrameDispatch frame_dispatch;
     if (!m_destroy_device || !load_frame_dispatch(m_instance, m_instance_proc, m_device,
             m_device_proc, frame_dispatch, error))
@@ -242,12 +385,41 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
         if (m_physical.graphics_present_family < count)
             timestamp_bits = families[m_physical.graphics_present_family].timestampValidBits;
     }
+    FrameSwapchainCreateContext swapchain_context{};
+    if (swapchain_create && m_frame_generation_queues.enabled)
+    {
+        swapchain_context.instance = m_instance;
+        swapchain_context.get_instance_proc = m_instance_proc;
+        swapchain_context.physical_device = m_physical.handle;
+        swapchain_context.device = m_device;
+        swapchain_context.get_device_proc = m_device_proc;
+        swapchain_context.game_queue = m_queue;
+        swapchain_context.game_queue_family = m_physical.graphics_present_family;
+        swapchain_context.game_queue_flags = m_physical.graphics_queue_flags;
+        swapchain_context.present_queue = m_frame_generation_queues.present;
+        swapchain_context.present_queue_family = m_physical.frame_generation_present_family;
+        swapchain_context.compute_queue = m_frame_generation_queues.async_compute;
+        swapchain_context.compute_queue_family = m_physical.frame_generation_compute_family;
+        swapchain_context.image_acquire_queue = m_frame_generation_queues.image_acquire;
+        swapchain_context.image_acquire_queue_family = m_physical.frame_generation_acquire_family;
+        swapchain_context.api_version = m_physical.properties.apiVersion;
+        swapchain_context.scene_extent = scene_extent.width ? scene_extent : extent;
+    }
     if (!m_frame.initialize(m_physical.handle, m_device, m_surface, m_queue,
             m_physical.graphics_present_family, extent, frame_dispatch, error,
             allow_readback, use_depth, preserve_prepass_depth, postprocess,
-            m_physical.properties.limits.timestampPeriod, timestamp_bits, scene_extent))
+            m_physical.properties.limits.timestampPeriod, timestamp_bits, scene_extent,
+            m_nvrhi_device, m_compute_queue &&
+                (m_physical.compute_queue_family != m_physical.graphics_present_family ||
+                    m_physical.compute_queue_index > 0),
+            m_physical.graphics_queue_flags, m_physical.compute_queue_flags,
+            swapchain_context.physical_device ? &swapchain_context : nullptr,
+            swapchain_create, swapchain_destroyed, swapchain_data,
+            m_transfer_queue && m_transfer_queue != m_queue && m_transfer_queue != m_compute_queue,
+            m_physical.transfer_queue_flags, m_physical.compute_queue_family,
+            m_physical.transfer_queue_family))
         return fail();
-    SDL_Log("[renderer-vulkan] swapchain.ready extent=%ux%u scene=%ux%u images=%u format=%d timestamps=%u bits",
+    SDL_Log("[renderer-vulkan] swapchain.ready extent=%ux%u scene=%ux%u images=%zu format=%d timestamps=%u bits",
         m_frame.presentation_extent().width, m_frame.presentation_extent().height,
         m_frame.extent().width, m_frame.extent().height, m_frame.image_count(),
         static_cast<int>(m_frame.format()), timestamp_bits);
@@ -257,16 +429,31 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
 
 bool VulkanWindowDevice::recreate_frame(VkExtent2D extent, std::string& error)
 {
+    return recreate_frame(extent, m_frame.scene_samples(), error);
+}
+
+bool VulkanWindowDevice::recreate_frame(VkExtent2D extent, VkSampleCountFlagBits scene_samples,
+    std::string& error)
+{
     if (!m_device || !m_surface || !m_queue || !m_instance || !m_instance_proc || !m_device_proc ||
         !extent.width || !extent.height)
     {
         error = "Vulkan window device cannot recreate a frame for an invalid window or extent";
         return false;
     }
-    if (!m_frame.recreate(m_physical.handle, m_surface, extent, error))
+    if (!m_frame.request_scene_samples(scene_samples, error) ||
+        !m_frame.recreate(m_physical.handle, m_surface, extent, error))
         return false;
     error.clear();
     return true;
+}
+
+bool VulkanWindowDevice::recreate_frame(VkExtent2D extent, VkExtent2D scene_extent,
+    std::string& error)
+{
+    if (!m_frame.request_scene_extent(scene_extent, error))
+        return false;
+    return recreate_frame(extent, m_frame.scene_samples(), error);
 }
 
 bool VulkanWindowDevice::recreate_surface(VkExtent2D extent, std::string& error)
@@ -317,11 +504,20 @@ bool VulkanWindowDevice::recreate_surface(VkExtent2D extent, std::string& error)
     return true;
 }
 
+bool VulkanWindowDevice::recreate_surface(VkExtent2D extent, VkExtent2D scene_extent,
+    std::string& error)
+{
+    if (!m_frame.request_scene_extent(scene_extent, error))
+        return false;
+    return recreate_surface(extent, error);
+}
+
 void VulkanWindowDevice::destroy()
 {
     if (m_device && m_wait_idle)
         m_wait_idle(m_device);
     m_frame.destroy();
+    m_nvrhi_device = nullptr;
     if (m_device && m_destroy_device)
         m_destroy_device(m_device, nullptr);
     if (m_surface && m_instance && m_destroy_surface)
@@ -339,8 +535,18 @@ void VulkanWindowDevice::destroy()
     m_instance = VK_NULL_HANDLE;
     m_surface = VK_NULL_HANDLE;
     m_device = VK_NULL_HANDLE;
+    m_ray_tracing_enabled = false;
+    m_bindless_textures_enabled = false;
+    m_gbuffer_msaa_resolve_available = false;
     m_queue = VK_NULL_HANDLE;
+    m_compute_queue = VK_NULL_HANDLE;
+    m_transfer_queue = VK_NULL_HANDLE;
+    m_frame_generation_queues = {};
     m_physical = {};
+    m_depth_stencil_resolve_properties = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES};
+    m_image_format_properties = nullptr;
+    m_create_render_pass2 = nullptr;
     m_instance_proc = nullptr;
     m_device_proc = nullptr;
     m_destroy_instance = nullptr;

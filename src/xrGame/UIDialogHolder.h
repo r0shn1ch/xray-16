@@ -68,6 +68,7 @@ public:
     virtual bool IgnorePause() { return false; }
 
     virtual bool IR_UIOnMouseMove(int dx, int dy);
+    virtual bool IR_UIOnMouseMoveTo(float x, float y);
     virtual bool IR_UIOnMouseWheel(float x, float y);
 
     virtual bool IR_UIOnKeyboardPress(int dik);

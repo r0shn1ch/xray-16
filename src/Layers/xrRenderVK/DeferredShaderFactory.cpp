@@ -8,22 +8,38 @@
 #include "WaterShaders.h"
 #include "DistortionShaders.h"
 #include "VulkanGameShaders.h"
+#include <algorithm>
 
 namespace xray::render::vulkan
 {
-void configure_engine_shader_resources(VkDevice device, const ShaderModuleDispatch &dispatch, GameShaderResources &resources)
+namespace
 {
-    resources.configure(device, dispatch, [](const std::string &name, std::vector<uint8_t> &bytes, std::string &reason) {
+bool resolve_engine_shader_path(const std::string &name, string_path &path, std::string &reason)
+{
+    std::string virtual_name = name;
+    std::replace(virtual_name.begin(), virtual_name.end(), '/', '\\');
+    if (!FS.exist(path, "$game_shaders$", virtual_name.c_str()))
+    {
+        reason = "missing game shader resource: " + name;
+        return false;
+    }
+    reason.clear();
+    return true;
+}
+
+} // namespace
+
+void configure_engine_shader_resources(VkDevice device, const ShaderModuleDispatch &dispatch,
+    GameShaderResources &resources, bool geometry_supported, bool tessellation_supported)
+{
+    GameShaderResources::Source active_source = [](const std::string &name,
+        std::vector<uint8_t> &bytes, std::string &reason) {
         string_path path;
-        if (!FS.exist(path, "$game_shaders$", name.c_str()))
-        {
-            reason = "missing precompiled SPIR-V: " + name;
-            return false;
-        }
+        if (!resolve_engine_shader_path(name, path, reason)) return false;
         IReader *reader = FS.r_open(path);
         if (!reader)
         {
-            reason = "could not open SPIR-V: " + name;
+            reason = "could not open game shader resource: " + name;
             return false;
         }
         const auto *begin = static_cast<const uint8_t *>(reader->pointer());
@@ -32,7 +48,43 @@ void configure_engine_shader_resources(VkDevice device, const ShaderModuleDispat
             bytes.assign(begin, begin + reader->length());
         FS.r_close(reader);
         return true;
-    });
+    };
+    GameShaderResources::Source bundled_source;
+#if defined(XR_PLATFORM_ANDROID)
+    const FS_Path *shader_path = FS.get_path("$game_shaders$");
+    if (shader_path && shader_path->m_Overlay)
+    {
+        const std::string overlay_root = shader_path->m_Overlay;
+        bundled_source = [overlay_root](const std::string &name,
+            std::vector<uint8_t> &bytes, std::string &reason) {
+            std::string relative = name;
+            std::replace(relative.begin(), relative.end(), '/', '\\');
+            if (relative.empty() || relative.front() == '\\' || relative.find(':') != std::string::npos ||
+                relative.find("..") != std::string::npos || relative.find('\0') != std::string::npos)
+            {
+                reason = "invalid bundled shader path: " + name;
+                return false;
+            }
+            string_path path;
+            strconcat(sizeof(path), path, overlay_root.c_str(), relative.c_str());
+            IReader *reader = FS.r_open(path);
+            if (!reader)
+            {
+                reason = "could not open bundled game shader resource: " + name;
+                return false;
+            }
+            const auto *begin = static_cast<const uint8_t *>(reader->pointer());
+            bytes.clear();
+            if (reader->length())
+                bytes.assign(begin, begin + reader->length());
+            FS.r_close(reader);
+            reason.clear();
+            return true;
+        };
+    }
+#endif
+    resources.configure(device, dispatch, std::move(active_source), geometry_supported,
+        tessellation_supported, std::move(bundled_source));
 }
 
 bool DeferredShaderFactory::create(VkDevice device, const ShaderModuleDispatch &shader_dispatch, const ScenePassDispatch &pass_dispatch,
@@ -40,8 +92,10 @@ bool DeferredShaderFactory::create(VkDevice device, const ShaderModuleDispatch &
                                    VkRenderPass shadow_pass, VkRenderPass local_shadow_pass)
 {
     ShaderModule vertex, fragment, alpha_test_fragment, transparent_fragment, light_vertex, light_fragment, weather_fragment;
+    ShaderModule multisampled_light_fragment, multisampled_weather_fragment;
     ShaderModule shadow_vertex, shadow_opaque, shadow_cutout, shadow_skin;
     ShaderModule local_light;
+    ShaderModule multisampled_local_light;
     ShaderModule water;
     if (!vertex.initialize(device, shader_dispatch, deferred_shaders::GBufferVertex, sizeof(deferred_shaders::GBufferVertex), error) ||
         !fragment.initialize(device, shader_dispatch, deferred_shaders::GBufferFragment, sizeof(deferred_shaders::GBufferFragment), error) ||
@@ -50,7 +104,11 @@ bool DeferredShaderFactory::create(VkDevice device, const ShaderModuleDispatch &
         !transparent_fragment.initialize(device, shader_dispatch, game_shaders::TransparentFragment, sizeof(game_shaders::TransparentFragment), error) ||
         !light_vertex.initialize(device, shader_dispatch, deferred_shaders::LightVertex, sizeof(deferred_shaders::LightVertex), error) ||
         !light_fragment.initialize(device, shader_dispatch, deferred_shaders::LightFragment, sizeof(deferred_shaders::LightFragment), error) ||
+        !multisampled_light_fragment.initialize(device, shader_dispatch, deferred_shaders::LightFragmentMsaa,
+            sizeof(deferred_shaders::LightFragmentMsaa), error) ||
         !weather_fragment.initialize(device, shader_dispatch, weather_shaders::Fragment, sizeof(weather_shaders::Fragment), error) ||
+        !multisampled_weather_fragment.initialize(device, shader_dispatch, weather_shaders::FragmentMsaa,
+            sizeof(weather_shaders::FragmentMsaa), error) ||
         (shadow_pass && (!shadow_vertex.initialize(device, shader_dispatch, shadow_shaders::Vertex, sizeof(shadow_shaders::Vertex), error) ||
             !shadow_opaque.initialize(device, shader_dispatch, shadow_shaders::Opaque, sizeof(shadow_shaders::Opaque), error) ||
             !shadow_cutout.initialize(device, shader_dispatch, shadow_shaders::Cutout, sizeof(shadow_shaders::Cutout), error))) ||
@@ -58,13 +116,17 @@ bool DeferredShaderFactory::create(VkDevice device, const ShaderModuleDispatch &
             sizeof(shadow_shaders::SkinVertex), error)) ||
         (local_shadow_pass && !local_light.initialize(device, shader_dispatch,
             local_light_shaders::Fragment, sizeof(local_light_shaders::Fragment), error)) ||
+        (local_shadow_pass && !multisampled_local_light.initialize(device, shader_dispatch,
+            local_light_shaders::FragmentMsaa, sizeof(local_light_shaders::FragmentMsaa), error)) ||
         !water.initialize(device, shader_dispatch, water_shaders::Fragment,
             sizeof(water_shaders::Fragment), error))
         return false;
     if (!pass.initialize(device, geometry_pass, light_pass, vertex.handle(), fragment.handle(), alpha_test_fragment.handle(), transparent_fragment.handle(),
                          light_vertex.handle(), light_fragment.handle(), weather_fragment.handle(), pass_dispatch, error,
                          shadow_pass, shadow_vertex.handle(), shadow_opaque.handle(), shadow_cutout.handle(),
-                         local_shadow_pass, local_light.handle(), water.handle(), shadow_skin.handle()))
+                         local_shadow_pass, local_light.handle(), water.handle(), shadow_skin.handle(),
+                         multisampled_light_fragment.handle(), multisampled_weather_fragment.handle(),
+                         multisampled_local_light.handle()))
         return false;
     ShaderModule distortion_vertex, distortion_fragment, distortion_composite;
     if (!distortion_vertex.initialize(device, shader_dispatch, distortion_shaders::Vertex,

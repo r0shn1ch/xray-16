@@ -47,6 +47,7 @@ struct ScenePassDispatch
     PFN_vkCmdBindIndexBuffer cmd_bind_index_buffer{};
     PFN_vkCmdPushConstants cmd_push_constants{};
     PFN_vkCmdDrawIndexed cmd_draw_indexed{};
+    PFN_vkCmdDrawIndexedIndirect cmd_draw_indexed_indirect{};
     PFN_vkCreateDescriptorSetLayout create_descriptor_set_layout{};
     PFN_vkDestroyDescriptorSetLayout destroy_descriptor_set_layout{};
     PFN_vkCreateDescriptorPool create_descriptor_pool{};
@@ -57,6 +58,10 @@ struct ScenePassDispatch
     PFN_vkCmdBindDescriptorSets cmd_bind_descriptor_sets{};
     PFN_vkCmdDraw cmd_draw{};
     VkPipelineCache pipeline_cache{};
+    VkShaderStageFlags game_stage_flags{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT};
+    VkSampleCountFlagBits gbuffer_samples{VK_SAMPLE_COUNT_1_BIT};
+    uint32_t max_draw_indirect_count{1};
+    bool multi_draw_indirect{};
 };
 
 bool load_scene_pass_dispatch(VkDevice device, PFN_vkGetDeviceProcAddr get_proc,

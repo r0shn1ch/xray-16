@@ -6,6 +6,8 @@ layout(set = 1, binding = 3, std140) uniform Scene {
     mat4 view_projection;
     mat4 inverse_view_projection;
     vec4 camera_position;
+    vec4 fog_plane;
+    vec4 fog_color;
 } scene;
 layout(push_constant) uniform Water { layout(offset = 64) vec4 params; } water;
 layout(location = 0) in vec3 world_normal;
@@ -68,6 +70,8 @@ void main()
         water_color = mix(refracted, texture(refraction_scene, mirrored).rgb, fresnel);
     }
     if (!glass) water_color = mix(water_color, vec3(0.04, 0.16, 0.20), 0.18 * shore);
+    float fog_visibility = clamp(dot(vec4(surface, 1.0), scene.fog_plane), 0.0, 1.0);
+    water_color = mix(scene.fog_color.rgb, water_color, fog_visibility);
     float alpha = glass ? clamp(-water.params.w, 0.08, 0.65) :
         clamp(water.params.w * (0.25 + 0.75 * shore), 0.06, 0.88);
     pixel_color = vec4(water_color, alpha);

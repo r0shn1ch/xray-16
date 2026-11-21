@@ -4,7 +4,8 @@
 #include "xrEngine/editor_helper.h"
 
 CUIProgressBar::CUIProgressBar()
-    : CUIWindow("CUIProgressBar"), m_UIProgressItem("Progress"), m_UIBackgroundItem("Background")
+    : CUIWindow("CUIProgressBar"), m_bUseColor(false), m_bUseMiddleColor(false),
+      m_bUseGradient(true), m_UIProgressItem("Progress"), m_UIBackgroundItem("Background")
 {
     Enable(false);
 

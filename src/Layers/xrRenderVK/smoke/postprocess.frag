@@ -4,6 +4,10 @@ layout(set = 0, binding = 0) uniform texture2D frame_image;
 layout(set = 0, binding = 1) uniform sampler frame_sampler;
 layout(set = 0, binding = 2) uniform texture2D color_map_a;
 layout(set = 0, binding = 3) uniform texture2D color_map_b;
+layout(set = 0, binding = 4) uniform texture2D bloom_image;
+layout(set = 0, binding = 5) uniform sampler2D exposure_image;
+layout(set = 0, binding = 6) uniform sampler2D depth_image;
+layout(set = 0, binding = 7) uniform texture2D motion_image;
 
 layout(push_constant) uniform Settings {
     vec4 grade;
@@ -36,18 +40,116 @@ vec3 aa_sample(vec2 uv)
 }
 
 #include "fxaa.glsl"
-#include "bloom.glsl"
+
+float cubic_weight(float x)
+{
+    x = abs(x);
+    if (x < 1.0) return ((1.5 * x - 2.5) * x) * x + 1.0;
+    if (x < 2.0) return ((-0.5 * x + 2.5) * x - 4.0) * x + 2.0;
+    return 0.0;
+}
+
+vec3 cubic_upscale(vec2 uv)
+{
+    ivec2 size = textureSize(sampler2D(frame_image, frame_sampler), 0);
+    vec2 position = uv * vec2(size) - 0.5;
+    ivec2 base = ivec2(floor(position));
+    vec2 fraction = fract(position);
+    vec3 result = vec3(0.0), minimum_color = vec3(1e20), maximum_color = vec3(-1e20);
+    for (int y = -1; y <= 2; ++y)
+        for (int x = -1; x <= 2; ++x)
+        {
+            ivec2 at = clamp(base + ivec2(x, y), ivec2(0), size - 1);
+            vec3 value = texelFetch(sampler2D(frame_image, frame_sampler), at, 0).rgb;
+            result += value * cubic_weight(float(x) - fraction.x) * cubic_weight(float(y) - fraction.y);
+            if (x >= 0 && x <= 1 && y >= 0 && y <= 1)
+            {
+                minimum_color = min(minimum_color, value);
+                maximum_color = max(maximum_color, value);
+            }
+        }
+    return clamp(result, minimum_color, maximum_color);
+}
+
+vec3 reconstructed(vec2 uv, vec2 pixel)
+{
+    float upscale_mode = floor(settings.color_map.w + 0.0001);
+    vec3 filtered = fxaa(uv, pixel, mod(upscale_mode, 2.0));
+    if (upscale_mode >= 2.0)
+        filtered += cubic_upscale(uv) - aa_sample(uv);
+    return max(filtered, vec3(0.0));
+}
 
 void main()
 {
     vec2 pixel = 1.0 / vec2(textureSize(sampler2D(frame_image, frame_sampler), 0));
     // The legacy duality values are normalized screen offsets.
     vec2 dual = settings.effect.yz * 0.5;
-    vec3 image = fxaa(texcoord, pixel, settings.color_map.w);
+    vec3 image = reconstructed(texcoord, pixel);
     if (any(notEqual(dual, vec2(0.0))))
-        image = 0.5 * (fxaa(texcoord + dual, pixel, settings.color_map.w) +
-                       fxaa(texcoord - dual, pixel, settings.color_map.w));
-    if (settings.grade.w > 0.0 && textureQueryLevels(sampler2D(frame_image, frame_sampler)) > 1)
+        image = 0.5 * (reconstructed(texcoord + dual, pixel) + reconstructed(texcoord - dual, pixel));
+    float motion_blur = clamp(fract(settings.color_map.w) * 2.0, 0.0, 1.0);
+    if (motion_blur > 0.001)
+    {
+        vec2 velocity = texture(sampler2D(motion_image, frame_sampler), texcoord).rg * motion_blur;
+        vec2 motion_pixels = velocity / pixel;
+        float pixel_length = length(motion_pixels);
+        if (pixel_length > 24.0)
+        {
+            velocity *= 24.0 / pixel_length;
+            pixel_length = 24.0;
+        }
+        if (pixel_length > 0.5)
+        {
+            float depth = texture(depth_image, texcoord).r;
+            vec3 blurred = vec3(0.0);
+            float total_weight = 0.0;
+            for (int tap = 0; tap < 5; ++tap)
+            {
+                float position = float(tap) * 0.25 - 0.5;
+                vec2 sample_uv = clamp(texcoord + velocity * position,
+                    pixel * 0.5, 1.0 - pixel * 0.5);
+                float sample_depth = texture(depth_image, sample_uv).r;
+                float weight = 1.0 - smoothstep(0.002, 0.03, abs(sample_depth - depth));
+                blurred += aa_sample(sample_uv) * weight;
+                total_weight += weight;
+            }
+            if (total_weight > 0.0)
+                image = mix(image, blurred / total_weight, motion_blur);
+        }
+    }
+    if (settings.add.w > 0.0)
+    {
+        float depth = texture(depth_image, texcoord).r;
+        float defocus = abs(depth - settings.tint.w) / max(1.0 - settings.tint.w, 0.01);
+        float amount = smoothstep(0.03, 0.7, defocus) * settings.add.w;
+        if (amount > 0.001)
+        {
+            const vec2 taps[8] = vec2[8](
+                vec2(1.0, 0.0), vec2(0.7071, 0.7071), vec2(0.0, 1.0),
+                vec2(-0.7071, 0.7071), vec2(-1.0, 0.0), vec2(-0.7071, -0.7071),
+                vec2(0.0, -1.0), vec2(0.7071, -0.7071));
+            vec3 blurred = image * 2.0;
+            float total = 2.0;
+            for (int ring = 0; ring < 2; ++ring)
+            {
+                float radius = (ring == 0 ? 0.25 : 1.0) * (2.0 + 6.0 * amount);
+                float ring_weight = ring == 0 ? 1.0 : 0.5;
+                for (int i = 0; i < 8; ++i)
+                {
+                    vec2 neighbor = clamp(texcoord + taps[i] * pixel * radius,
+                        pixel * 0.5, 1.0 - pixel * 0.5);
+                    float neighbor_depth = texture(depth_image, neighbor).r;
+                    float weight = ring_weight *
+                        (1.0 - smoothstep(0.002, 0.03, abs(neighbor_depth - depth)));
+                    blurred += aa_sample(neighbor) * weight;
+                    total += weight;
+                }
+            }
+            image = mix(image, blurred / total, amount);
+        }
+    }
+    if (settings.grade.w > 0.0 && (settings.gray_weights.w > 0.5 || textureQueryLevels(sampler2D(frame_image, frame_sampler)) > 1))
     {
         // The source image's last mip is the measured scene-wide average.
         // Restrict the gain so a bright sky or dark interior cannot turn a
@@ -55,18 +157,18 @@ void main()
         int last_mip = textureQueryLevels(sampler2D(frame_image, frame_sampler)) - 1;
         vec3 average = texelFetch(sampler2D(frame_image, frame_sampler), ivec2(0), last_mip).rgb;
         float luminance = dot(average, vec3(0.2126, 0.7152, 0.0722));
-        float exposure = clamp(settings.color_map.z / max(luminance, 0.1), 0.65, 2.0);
+        float exposure = settings.gray_weights.w > 0.5
+            ? texelFetch(exposure_image, ivec2(0), 0).r
+            : clamp(settings.color_map.z / max(luminance, 0.1), 0.65, 2.0);
         vec3 exposed = max(image * exposure, 0.0);
         const float white_squared = 1.7 * 1.7;
         vec3 mapped = exposed * (1.0 + exposed / white_squared) / (1.0 + exposed);
         image = mix(image, mapped, clamp(settings.grade.w, 0.0, 1.0));
     }
-    int mip_levels = textureQueryLevels(sampler2D(frame_image, frame_sampler));
-    if (settings.bloom.x > 0.0 && mip_levels > 1)
+    int mip_levels = textureQueryLevels(sampler2D(bloom_image, frame_sampler));
+    if (settings.bloom.x > 0.0 && mip_levels > 0)
     {
-        float bloom_mip = clamp(settings.bloom.z, 1.0, float(mip_levels - 1));
-        vec3 low_frequency = textureLod(sampler2D(frame_image, frame_sampler), texcoord, bloom_mip).rgb;
-        image += bloom_highlights(low_frequency, settings.bloom.y, settings.bloom.w) * settings.bloom.x;
+        image += textureLod(sampler2D(bloom_image, frame_sampler), texcoord, 0.0).rgb * settings.bloom.x;
     }
     if (settings.effect.x > 0.0)
     {

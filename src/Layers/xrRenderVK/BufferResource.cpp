@@ -1,7 +1,10 @@
 #include "BufferResource.h"
 
+#include <nvrhi/vulkan.h>
+
 #include <algorithm>
 #include <cstring>
+#include <exception>
 #include <limits>
 #include <mutex>
 #include <utility>
@@ -112,6 +115,54 @@ bool complete(const BufferResourceDispatch& vk)
     return vk.create_buffer && vk.destroy_buffer && vk.get_buffer_memory_requirements &&
         vk.allocate_memory && vk.free_memory && vk.bind_buffer_memory && vk.map_memory && vk.unmap_memory;
 }
+
+uint32_t collect_queue_families(const BufferResourceDispatch& dispatch, VkQueueFlags queue_flags,
+    uint32_t (&families)[3])
+{
+    uint32_t count = 0;
+    const auto append = [&](uint32_t family, VkQueueFlags role)
+    {
+        if ((queue_flags && !(queue_flags & role)) || family == VK_QUEUE_FAMILY_IGNORED ||
+            std::find(families, families + count, family) != families + count)
+            return;
+        families[count++] = family;
+    };
+    append(dispatch.graphics_queue_family, VK_QUEUE_GRAPHICS_BIT);
+    append(dispatch.compute_queue_family, VK_QUEUE_COMPUTE_BIT);
+    append(dispatch.transfer_queue_family, VK_QUEUE_TRANSFER_BIT);
+    return count;
+}
+
+bool nvrhi_buffer_compatible(VkDeviceSize size, VkBufferUsageFlags usage,
+    VkMemoryPropertyFlags required_memory_properties, bool pooled, bool shared_across_queue_families,
+    const BufferResourceDispatch& dispatch)
+{
+    if (!dispatch.nvrhi_device || !size || pooled || shared_across_queue_families ||
+        required_memory_properties != VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+        return false;
+
+    constexpr VkBufferUsageFlags unsupported_usage =
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR;
+    constexpr VkBufferUsageFlags supported_usage =
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    return !(usage & unsupported_usage) && !(usage & ~supported_usage);
+}
+
+VkBuffer native_buffer(nvrhi::IBuffer* buffer)
+{
+    if (!buffer) return VK_NULL_HANDLE;
+    const nvrhi::Object object = buffer->getNativeObject(nvrhi::ObjectTypes::VK_Buffer);
+#if defined(VK_USE_64_BIT_PTR_DEFINES) && VK_USE_64_BIT_PTR_DEFINES
+    return static_cast<VkBuffer>(object.pointer);
+#else
+    return static_cast<VkBuffer>(object.integer);
+#endif
+}
 }
 
 BufferResource::~BufferResource()
@@ -132,6 +183,9 @@ BufferResource& BufferResource::operator=(BufferResource&& other) noexcept
         m_device = other.m_device;
         m_buffer = other.m_buffer;
         m_memory = other.m_memory;
+        m_sharing_mode = other.m_sharing_mode;
+        m_sharing_queue_families = std::move(other.m_sharing_queue_families);
+        m_nvrhi_buffer = other.m_nvrhi_buffer;
         m_size = other.m_size;
         m_mapped = other.m_mapped;
         m_pool_block = std::move(other.m_pool_block);
@@ -139,6 +193,9 @@ BufferResource& BufferResource::operator=(BufferResource&& other) noexcept
         other.m_device = VK_NULL_HANDLE;
         other.m_buffer = VK_NULL_HANDLE;
         other.m_memory = VK_NULL_HANDLE;
+        other.m_sharing_mode = VK_SHARING_MODE_EXCLUSIVE;
+        other.m_sharing_queue_families.clear();
+        other.m_nvrhi_buffer = nullptr;
         other.m_size = 0;
         other.m_mapped = nullptr;
         other.m_vk = {};
@@ -149,7 +206,8 @@ BufferResource& BufferResource::operator=(BufferResource&& other) noexcept
 bool BufferResource::initialize(VkDevice device, VkDeviceSize size, VkBufferUsageFlags usage,
     VkMemoryPropertyFlags required_memory_properties,
     const VkPhysicalDeviceMemoryProperties& memory_properties,
-    const BufferResourceDispatch& dispatch, std::string& error, bool pooled)
+    const BufferResourceDispatch& dispatch, std::string& error, bool pooled,
+    VkQueueFlags shared_queue_flags)
 {
     destroy();
     if (!device || !size || !usage || !complete(dispatch))
@@ -158,15 +216,88 @@ bool BufferResource::initialize(VkDevice device, VkDeviceSize size, VkBufferUsag
         return false;
     }
 
+    std::string nvrhi_error;
+    constexpr VkQueueFlags supported_queue_flags = VK_QUEUE_GRAPHICS_BIT |
+        VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT;
+    if (shared_queue_flags & ~supported_queue_flags)
+    {
+        error = "Vulkan buffer resource has invalid shared queue flags";
+        return false;
+    }
+    uint32_t queue_families[3]{};
+    const uint32_t queue_family_count = collect_queue_families(dispatch, shared_queue_flags,
+        queue_families);
+    const bool needs_concurrent_sharing = shared_queue_flags && queue_family_count > 1;
+    const bool use_pooled_memory = pooled || needs_concurrent_sharing;
+    if (nvrhi_buffer_compatible(size, usage, required_memory_properties, pooled,
+            needs_concurrent_sharing, dispatch))
+    {
+        nvrhi::BufferDesc desc;
+        desc.byteSize = size;
+        desc.isVertexBuffer = (usage & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) != 0;
+        desc.isIndexBuffer = (usage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) != 0;
+        desc.isConstantBuffer = (usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) != 0;
+        desc.canHaveUAVs = (usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) != 0;
+        desc.isDrawIndirectArgs = (usage & VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT) != 0;
+        desc.initialState = nvrhi::ResourceStates::Common;
+        desc.debugName = "xrRenderVK BufferResource";
+
+        try
+        {
+            nvrhi::BufferHandle nvrhi_buffer = dispatch.nvrhi_device->createBuffer(desc);
+            if (nvrhi_buffer)
+            {
+                const VkBuffer buffer = native_buffer(nvrhi_buffer);
+                if (buffer)
+                {
+                    nvrhi_buffer->AddRef();
+                    m_device = device;
+                    m_buffer = buffer;
+                    m_sharing_mode = VK_SHARING_MODE_EXCLUSIVE;
+                    m_sharing_queue_families.assign(queue_families,
+                        queue_families + queue_family_count);
+                    m_size = size;
+                    m_nvrhi_buffer = nvrhi_buffer.Get();
+                    m_vk = dispatch;
+                    error.clear();
+                    return true;
+                }
+                nvrhi_error = "NVRHI buffer does not expose its native VkBuffer";
+            }
+            else
+                nvrhi_error = "NVRHI returned no device-local Vulkan buffer";
+        }
+        catch (const std::exception& exception)
+        {
+            nvrhi_error = exception.what();
+        }
+        catch (...)
+        {
+            nvrhi_error = "unknown NVRHI buffer creation failure";
+        }
+    }
+    const auto set_vulkan_error = [&](const std::string& message) {
+        error = message;
+        if (!nvrhi_error.empty())
+            error += "; NVRHI buffer creation also failed: " + nvrhi_error;
+    };
+
     VkBufferCreateInfo buffer_info{};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     buffer_info.size = size;
     buffer_info.usage = usage;
-    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (queue_family_count > 1)
+    {
+        buffer_info.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        buffer_info.queueFamilyIndexCount = queue_family_count;
+        buffer_info.pQueueFamilyIndices = queue_families;
+    }
+    else
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VkBuffer buffer = VK_NULL_HANDLE;
     if (dispatch.create_buffer(device, &buffer_info, nullptr, &buffer) != VK_SUCCESS)
     {
-        error = "vkCreateBuffer failed";
+        set_vulkan_error("vkCreateBuffer failed");
         return false;
     }
 
@@ -180,20 +311,25 @@ bool BufferResource::initialize(VkDevice device, VkDeviceSize size, VkBufferUsag
     if (memory_type == UINT32_MAX)
     {
         dispatch.destroy_buffer(device, buffer, nullptr);
-        error = "no Vulkan memory type satisfies the buffer requirements";
+        set_vulkan_error("no Vulkan memory type satisfies the buffer requirements");
         return false;
     }
 
     std::shared_ptr<BufferMemoryBlock> pool_block;
     VkDeviceSize binding_offset = 0;
     VkDeviceMemory memory = VK_NULL_HANDLE;
-    if (pooled)
+    // Device-address allocations need a memory allocation flag. The general
+    // buffer pool does not partition blocks by allocation flags yet.
+    const bool device_address = (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) != 0;
+    if (use_pooled_memory && !device_address)
     {
         if (!allocate_pooled(device, memory_type, requirements,
                 (required_memory_properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0,
                 dispatch, pool_block, binding_offset, error))
         {
             dispatch.destroy_buffer(device, buffer, nullptr);
+            if (!nvrhi_error.empty())
+                error += "; NVRHI buffer creation also failed: " + nvrhi_error;
             return false;
         }
         memory = pool_block->memory;
@@ -203,10 +339,16 @@ bool BufferResource::initialize(VkDevice device, VkDeviceSize size, VkBufferUsag
         VkMemoryAllocateInfo allocate_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocate_info.allocationSize = requirements.size;
         allocate_info.memoryTypeIndex = memory_type;
+        VkMemoryAllocateFlagsInfo address_flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
+        if (device_address)
+        {
+            address_flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+            allocate_info.pNext = &address_flags;
+        }
         if (dispatch.allocate_memory(device, &allocate_info, nullptr, &memory) != VK_SUCCESS)
         {
             dispatch.destroy_buffer(device, buffer, nullptr);
-            error = "vkAllocateMemory failed for buffer resource";
+            set_vulkan_error("vkAllocateMemory failed for buffer resource");
             return false;
         }
     }
@@ -216,7 +358,7 @@ bool BufferResource::initialize(VkDevice device, VkDeviceSize size, VkBufferUsag
         dispatch.destroy_buffer(device, buffer, nullptr);
         if (pool_block) pool_block.reset();
         else dispatch.free_memory(device, memory, nullptr);
-        error = "vkBindBufferMemory failed for buffer resource";
+        set_vulkan_error("vkBindBufferMemory failed for buffer resource");
         return false;
     }
 
@@ -230,13 +372,15 @@ bool BufferResource::initialize(VkDevice device, VkDeviceSize size, VkBufferUsag
             dispatch.destroy_buffer(device, buffer, nullptr);
             if (pool_block) pool_block.reset();
             else dispatch.free_memory(device, memory, nullptr);
-            error = "vkMapMemory failed for host-visible buffer resource";
+            set_vulkan_error("vkMapMemory failed for host-visible buffer resource");
             return false;
         }
     }
 
     m_device = device;
     m_buffer = buffer;
+    m_sharing_mode = buffer_info.sharingMode;
+    m_sharing_queue_families.assign(queue_families, queue_families + queue_family_count);
     m_memory = memory;
     m_size = size;
     m_mapped = mapped;
@@ -274,16 +418,27 @@ bool BufferResource::read(VkDeviceSize offset, void* data, size_t size, std::str
 
 void BufferResource::destroy()
 {
-    if (m_device && m_memory && m_mapped && !m_pool_block && m_vk.unmap_memory)
-        m_vk.unmap_memory(m_device, m_memory);
-    if (m_device && m_buffer && m_vk.destroy_buffer)
-        m_vk.destroy_buffer(m_device, m_buffer, nullptr);
-    if (m_pool_block) m_pool_block.reset();
-    else if (m_device && m_memory && m_vk.free_memory)
-        m_vk.free_memory(m_device, m_memory, nullptr);
+    const bool nvrhi_owned = m_nvrhi_buffer != nullptr;
+    if (nvrhi_owned)
+    {
+        m_nvrhi_buffer->Release();
+        m_nvrhi_buffer = nullptr;
+    }
+    else
+    {
+        if (m_device && m_memory && m_mapped && !m_pool_block && m_vk.unmap_memory)
+            m_vk.unmap_memory(m_device, m_memory);
+        if (m_device && m_buffer && m_vk.destroy_buffer)
+            m_vk.destroy_buffer(m_device, m_buffer, nullptr);
+        if (m_pool_block) m_pool_block.reset();
+        else if (m_device && m_memory && m_vk.free_memory)
+            m_vk.free_memory(m_device, m_memory, nullptr);
+    }
     m_device = VK_NULL_HANDLE;
     m_buffer = VK_NULL_HANDLE;
     m_memory = VK_NULL_HANDLE;
+    m_sharing_mode = VK_SHARING_MODE_EXCLUSIVE;
+    m_sharing_queue_families.clear();
     m_size = 0;
     m_mapped = nullptr;
     m_vk = {};

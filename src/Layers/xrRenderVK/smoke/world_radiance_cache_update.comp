@@ -1,0 +1,299 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+layout(local_size_x = 64) in;
+
+struct Surface
+{
+    vec4 position_valid;
+    vec4 normal;
+    vec2 uv;
+    uint material_id;
+    uint texture_slot;
+    vec4 albedo;
+    vec4 pbr;
+    vec4 geometric_normal;
+};
+struct WorldRadianceCacheCell
+{
+    uint state;
+    int cell_x;
+    int cell_y;
+    int cell_z;
+    uint normal_class;
+    uint sample_count;
+    uint last_frame;
+    uint cell_level;
+    float radiance_r;
+    float radiance_g;
+    float radiance_b;
+    float radiance_padding;
+    float normal_x;
+    float normal_y;
+    float normal_z;
+    float normal_padding;
+    float direction_r_x;
+    float direction_r_y;
+    float direction_r_z;
+    float direction_r_padding;
+    float direction_g_x;
+    float direction_g_y;
+    float direction_g_z;
+    float direction_g_padding;
+    float direction_b_x;
+    float direction_b_y;
+    float direction_b_z;
+    float direction_b_padding;
+    float second_order_r[5];
+    float second_order_g[5];
+    float second_order_b[5];
+};
+struct Ray { vec4 origin_min; vec4 direction_max; };
+
+layout(set = 0, binding = 0, std430) readonly buffer Surfaces { Surface surfaces[]; };
+layout(set = 0, binding = 1, std430) readonly buffer Radiance { vec4 radiance[]; };
+layout(set = 0, binding = 2, std430) readonly buffer PrimaryRays { Ray rays[]; };
+layout(set = 0, binding = 3, std430) buffer WorldRadianceCache { WorldRadianceCacheCell cells[]; };
+layout(push_constant) uniform Parameters { uint count; uint groups_x; uint frame; uint reserved; } parameters;
+
+const uint WORLD_CACHE_EMPTY = 0u;
+const uint WORLD_CACHE_WRITING = 1u;
+const uint WORLD_CACHE_VALID = 2u;
+const uint WORLD_CACHE_UPDATING = 3u;
+const uint WORLD_CACHE_PROBES = 8u;
+const uint WORLD_CACHE_MAX_HISTORY = 128u;
+const uint WORLD_CACHE_CELL_TTL = 18000u;
+const uint WORLD_CACHE_SURFACE_PBR = 1u;
+const uint WORLD_CACHE_SURFACE_EMISSIVE = 2u;
+const uint WORLD_CACHE_FINE_LEVEL = 0u;
+const uint WORLD_CACHE_COARSE_LEVEL = 1u;
+const float WORLD_CACHE_FINE_CELL_SIZE = 4.0;
+const float WORLD_CACHE_COARSE_CELL_SIZE = 16.0;
+
+void update_second_order_moments(uint slot, vec3 directional_value, vec3 direction,
+    float alpha, bool initialize)
+{
+    float basis[5] = float[5](
+        2.0 * direction.x * direction.y,
+        2.0 * direction.x * direction.z,
+        2.0 * direction.y * direction.z,
+        direction.x * direction.x - direction.z * direction.z,
+        direction.y * direction.y - direction.z * direction.z);
+    for (uint coefficient = 0u; coefficient < 5u; ++coefficient)
+    {
+        float sample_r = directional_value.r * basis[coefficient];
+        float sample_g = directional_value.g * basis[coefficient];
+        float sample_b = directional_value.b * basis[coefficient];
+        if (initialize)
+        {
+            cells[slot].second_order_r[coefficient] = sample_r;
+            cells[slot].second_order_g[coefficient] = sample_g;
+            cells[slot].second_order_b[coefficient] = sample_b;
+        }
+        else
+        {
+            cells[slot].second_order_r[coefficient] = mix(
+                cells[slot].second_order_r[coefficient], sample_r, alpha);
+            cells[slot].second_order_g[coefficient] = mix(
+                cells[slot].second_order_g[coefficient], sample_g, alpha);
+            cells[slot].second_order_b[coefficient] = mix(
+                cells[slot].second_order_b[coefficient], sample_b, alpha);
+        }
+    }
+}
+
+uint world_cache_normal_class(vec3 normal)
+{
+    vec3 a = abs(normal);
+    if (a.x >= a.y && a.x >= a.z) return normal.x >= 0.0 ? 0u : 1u;
+    if (a.y >= a.z) return normal.y >= 0.0 ? 2u : 3u;
+    return normal.z >= 0.0 ? 4u : 5u;
+}
+
+uint world_cache_hash(ivec3 cell, uint normal_class, uint level)
+{
+    uint hash = uint(cell.x) * 0x8da6b343u ^ uint(cell.y) * 0xd8163841u ^
+        uint(cell.z) * 0xcb1ab31fu ^ (normal_class + 1u) * 0x9e3779b9u ^
+        (level + 1u) * 0x85ebca6bu;
+    hash ^= hash >> 16;
+    hash *= 0x7feb352du;
+    hash ^= hash >> 15;
+    hash *= 0x846ca68bu;
+    return hash ^ (hash >> 16);
+}
+
+void update_cache_cell(ivec3 cell, uint normal_class, uint level, vec3 radiance_value,
+    vec3 directional_value, vec3 normal, vec3 outgoing_direction)
+{
+    uint capacity = uint(cells.length());
+    if (capacity == 0u) return;
+    uint start = world_cache_hash(cell, normal_class, level) % capacity;
+    for (uint probe = 0u; probe < min(WORLD_CACHE_PROBES, capacity); ++probe)
+    {
+        uint slot = (start + probe) % capacity;
+        uint state = cells[slot].state;
+        if (state == WORLD_CACHE_EMPTY)
+        {
+            if (atomicCompSwap(cells[slot].state, WORLD_CACHE_EMPTY, WORLD_CACHE_WRITING) == WORLD_CACHE_EMPTY)
+            {
+                cells[slot].cell_x = cell.x;
+                cells[slot].cell_y = cell.y;
+                cells[slot].cell_z = cell.z;
+                cells[slot].normal_class = normal_class;
+                cells[slot].sample_count = 1u;
+                cells[slot].last_frame = parameters.frame;
+                cells[slot].cell_level = level;
+                cells[slot].radiance_r = radiance_value.r;
+                cells[slot].radiance_g = radiance_value.g;
+                cells[slot].radiance_b = radiance_value.b;
+                cells[slot].radiance_padding = 0.0;
+                cells[slot].normal_x = normal.x;
+                cells[slot].normal_y = normal.y;
+                cells[slot].normal_z = normal.z;
+                cells[slot].normal_padding = 0.0;
+                cells[slot].direction_r_x = directional_value.r * outgoing_direction.x;
+                cells[slot].direction_r_y = directional_value.r * outgoing_direction.y;
+                cells[slot].direction_r_z = directional_value.r * outgoing_direction.z;
+                cells[slot].direction_r_padding = 0.0;
+                cells[slot].direction_g_x = directional_value.g * outgoing_direction.x;
+                cells[slot].direction_g_y = directional_value.g * outgoing_direction.y;
+                cells[slot].direction_g_z = directional_value.g * outgoing_direction.z;
+                cells[slot].direction_g_padding = 0.0;
+                cells[slot].direction_b_x = directional_value.b * outgoing_direction.x;
+                cells[slot].direction_b_y = directional_value.b * outgoing_direction.y;
+                cells[slot].direction_b_z = directional_value.b * outgoing_direction.z;
+                cells[slot].direction_b_padding = 0.0;
+                update_second_order_moments(slot, directional_value, outgoing_direction, 1.0, true);
+                memoryBarrierBuffer();
+                atomicExchange(cells[slot].state, WORLD_CACHE_VALID);
+                return;
+            }
+            return;
+        }
+        if (state == WORLD_CACHE_WRITING || state == WORLD_CACHE_UPDATING)
+            return;
+        if (state != WORLD_CACHE_VALID)
+            continue;
+        bool same_cell = cells[slot].cell_x == cell.x && cells[slot].cell_y == cell.y &&
+            cells[slot].cell_z == cell.z && cells[slot].normal_class == normal_class &&
+            cells[slot].cell_level == level;
+        bool expired = parameters.frame - cells[slot].last_frame > WORLD_CACHE_CELL_TTL;
+        if (!same_cell && !expired) continue;
+        if (atomicCompSwap(cells[slot].state, WORLD_CACHE_VALID, WORLD_CACHE_UPDATING) != WORLD_CACHE_VALID)
+            return;
+        if (!same_cell || expired)
+        {
+            cells[slot].cell_x = cell.x;
+            cells[slot].cell_y = cell.y;
+            cells[slot].cell_z = cell.z;
+            cells[slot].normal_class = normal_class;
+            cells[slot].cell_level = level;
+            cells[slot].sample_count = 1u;
+            cells[slot].last_frame = parameters.frame;
+            cells[slot].radiance_r = radiance_value.r;
+            cells[slot].radiance_g = radiance_value.g;
+            cells[slot].radiance_b = radiance_value.b;
+            cells[slot].normal_x = normal.x;
+            cells[slot].normal_y = normal.y;
+            cells[slot].normal_z = normal.z;
+            cells[slot].direction_r_x = directional_value.r * outgoing_direction.x;
+            cells[slot].direction_r_y = directional_value.r * outgoing_direction.y;
+            cells[slot].direction_r_z = directional_value.r * outgoing_direction.z;
+            cells[slot].direction_g_x = directional_value.g * outgoing_direction.x;
+            cells[slot].direction_g_y = directional_value.g * outgoing_direction.y;
+            cells[slot].direction_g_z = directional_value.g * outgoing_direction.z;
+            cells[slot].direction_b_x = directional_value.b * outgoing_direction.x;
+            cells[slot].direction_b_y = directional_value.b * outgoing_direction.y;
+            cells[slot].direction_b_z = directional_value.b * outgoing_direction.z;
+            update_second_order_moments(slot, directional_value, outgoing_direction, 1.0, true);
+            cells[slot].radiance_padding = 0.0;
+            cells[slot].normal_padding = 0.0;
+            cells[slot].direction_r_padding = 0.0;
+            cells[slot].direction_g_padding = 0.0;
+            cells[slot].direction_b_padding = 0.0;
+            memoryBarrierBuffer();
+            atomicExchange(cells[slot].state, WORLD_CACHE_VALID);
+            return;
+        }
+        uint old_count = cells[slot].sample_count;
+        float alpha = old_count < WORLD_CACHE_MAX_HISTORY ? 1.0 / float(old_count + 1u) :
+            1.0 / float(WORLD_CACHE_MAX_HISTORY);
+        cells[slot].radiance_r = mix(cells[slot].radiance_r, radiance_value.r, alpha);
+        cells[slot].radiance_g = mix(cells[slot].radiance_g, radiance_value.g, alpha);
+        cells[slot].radiance_b = mix(cells[slot].radiance_b, radiance_value.b, alpha);
+        vec3 cached_normal = mix(vec3(cells[slot].normal_x, cells[slot].normal_y,
+            cells[slot].normal_z), normal, alpha);
+        float normal_length2 = dot(cached_normal, cached_normal);
+        cached_normal = normal_length2 > 1e-10 ? cached_normal * inversesqrt(normal_length2) : normal;
+        cells[slot].normal_x = cached_normal.x;
+        cells[slot].normal_y = cached_normal.y;
+        cells[slot].normal_z = cached_normal.z;
+        cells[slot].direction_r_x = mix(cells[slot].direction_r_x,
+            directional_value.r * outgoing_direction.x, alpha);
+        cells[slot].direction_r_y = mix(cells[slot].direction_r_y,
+            directional_value.r * outgoing_direction.y, alpha);
+        cells[slot].direction_r_z = mix(cells[slot].direction_r_z,
+            directional_value.r * outgoing_direction.z, alpha);
+        cells[slot].direction_g_x = mix(cells[slot].direction_g_x,
+            directional_value.g * outgoing_direction.x, alpha);
+        cells[slot].direction_g_y = mix(cells[slot].direction_g_y,
+            directional_value.g * outgoing_direction.y, alpha);
+        cells[slot].direction_g_z = mix(cells[slot].direction_g_z,
+            directional_value.g * outgoing_direction.z, alpha);
+        cells[slot].direction_b_x = mix(cells[slot].direction_b_x,
+            directional_value.b * outgoing_direction.x, alpha);
+        cells[slot].direction_b_y = mix(cells[slot].direction_b_y,
+            directional_value.b * outgoing_direction.y, alpha);
+        cells[slot].direction_b_z = mix(cells[slot].direction_b_z,
+            directional_value.b * outgoing_direction.z, alpha);
+        update_second_order_moments(slot, directional_value, outgoing_direction, alpha, false);
+        cells[slot].last_frame = parameters.frame;
+        cells[slot].sample_count = min(old_count + 1u, WORLD_CACHE_MAX_HISTORY);
+        memoryBarrierBuffer();
+        atomicExchange(cells[slot].state, WORLD_CACHE_VALID);
+        return;
+    }
+}
+
+void main()
+{
+    uint row_width = parameters.groups_x * 64u;
+    if (parameters.count == 0u || row_width == 0u ||
+        gl_GlobalInvocationID.y > (parameters.count - 1u) / row_width) return;
+    uint row = gl_GlobalInvocationID.y * row_width;
+    if (gl_GlobalInvocationID.x >= parameters.count - row) return;
+    uint index = row + gl_GlobalInvocationID.x;
+    if ((index & 3u) != 0u) return;
+    Surface surface = surfaces[index];
+    vec4 current_radiance = radiance[index];
+    if (surface.position_valid.w <= 0.0 || current_radiance.w <= 0.0 ||
+        any(isnan(current_radiance.rgb)) || any(isinf(current_radiance.rgb))) return;
+    float normal_length2 = dot(surface.normal.xyz, surface.normal.xyz);
+    if (!(normal_length2 > 1e-10) || isnan(normal_length2) || isinf(normal_length2)) return;
+    vec3 normal = surface.normal.xyz * inversesqrt(normal_length2);
+    uint normal_class = world_cache_normal_class(normal);
+    vec3 radiance_value = clamp(current_radiance.rgb, vec3(0.0), vec3(32.0));
+    vec3 outgoing_direction = -rays[index].direction_max.xyz;
+    float direction_length2 = dot(outgoing_direction, outgoing_direction);
+    if (!(direction_length2 > 1e-10) || isnan(direction_length2) || isinf(direction_length2)) return;
+    outgoing_direction *= inversesqrt(direction_length2);
+    uint material_flags = uint(max(surface.pbr.w, 0.0) + 0.5);
+    float directional_fraction = 0.0;
+    if ((material_flags & WORLD_CACHE_SURFACE_PBR) != 0u &&
+        (material_flags & WORLD_CACHE_SURFACE_EMISSIVE) == 0u)
+    {
+        float metallic = clamp(surface.pbr.x, 0.0, 1.0);
+        float roughness = clamp(surface.pbr.y, 0.04, 1.0);
+        float dielectric_specular = 0.04 * (1.0 - roughness) * (1.0 - roughness);
+        directional_fraction = max(metallic, dielectric_specular);
+    }
+    vec3 directional_value = radiance_value * directional_fraction;
+    ivec3 fine_cell = ivec3(floor(surface.position_valid.xyz / WORLD_CACHE_FINE_CELL_SIZE));
+    update_cache_cell(fine_cell, normal_class, WORLD_CACHE_FINE_LEVEL, radiance_value,
+        directional_value,
+        normal, outgoing_direction);
+    ivec3 coarse_cell = ivec3(floor(surface.position_valid.xyz / WORLD_CACHE_COARSE_CELL_SIZE));
+    update_cache_cell(coarse_cell, normal_class, WORLD_CACHE_COARSE_LEVEL, radiance_value,
+        directional_value,
+        normal, outgoing_direction);
+}

@@ -3,6 +3,8 @@
 #include "ParticleSprite.h"
 #include "Include/xrRender/WaterContactEffect.h"
 #include "LevelPassGraph.h"
+#include "GpuParticleEmitters.h"
+#include "ObjectVelocityPass.h"
 
 #include "xrParticles/psystem.h"
 #include "xrEngine/device.h"
@@ -28,28 +30,55 @@ void bounds(vis_data& vis, const Fvector& position)
     vis.box.getsphere(vis.sphere.P, vis.sphere.R);
 }
 
+std::array<float, 3> water_plane_normal(const Fmatrix& plane)
+{
+    return particle_water_plane_normal({
+        {plane.i.x, plane.i.y, plane.i.z},
+        {plane.j.x, plane.j.y, plane.j.z},
+        {plane.k.x, plane.k.y, plane.k.z}});
 }
 
-void VulkanParticleEffect::on_birth(void* owner, u32, PAPI::Particle& particle, u32)
+}
+
+void VulkanParticleEffect::on_birth(void* owner, u32, PAPI::Particle& particle, u32 index)
 {
     auto& effect = *static_cast<VulkanParticleEffect*>(owner);
     const auto& def = *effect.def_;
+    if (index >= effect.particle_ids_.size()) effect.particle_ids_.resize(size_t(index) + 1);
+    if (!effect.next_particle_id_) ++effect.next_particle_id_;
+    effect.particle_ids_[index] = effect.next_particle_id_++;
     if (def.flags & (1u << 12))
         particle.frame = static_cast<u16>(Random.randI(def.frame_count) * 255);
     if ((def.flags & (1u << 11)) && (def.flags & (1u << 13)) && Random.randI(2))
         particle.flags.set(PAPI::Particle::ANIMATE_CCW, TRUE);
-    if (effect.events_) effect.events_(true, particle);
+    if (effect.events_) effect.events_(true, particle, index);
 }
 
-void VulkanParticleEffect::on_dead(void* owner, u32, PAPI::Particle& particle, u32)
+void VulkanParticleEffect::on_dead(void* owner, u32, PAPI::Particle& particle, u32 index)
 {
     auto& effect = *static_cast<VulkanParticleEffect*>(owner);
-    if (effect.events_) effect.events_(false, particle);
+    if (effect.effect_ >= 0)
+    {
+        const u32 count = PAPI::ParticleManager()->GetParticlesCount(effect.effect_);
+        if (count && index < count && index < effect.particle_ids_.size())
+        {
+            const size_t last = size_t(count) - 1;
+            if (index != last && last < effect.particle_ids_.size())
+                effect.particle_ids_[index] = effect.particle_ids_[last];
+            if (last < effect.particle_ids_.size()) effect.particle_ids_[last] = 0;
+        }
+    }
+    if (effect.events_) effect.events_(false, particle, index);
 }
 
-void VulkanParticleEffect::set_events(std::function<void(bool, PAPI::Particle&)> events)
+void VulkanParticleEffect::set_events(std::function<void(bool, PAPI::Particle&, u32)> events)
 {
     events_ = std::move(events);
+}
+void VulkanParticleEffect::particles(PAPI::Particle*& data, u32& count) const
+{
+    data = nullptr; count = 0;
+    if (effect_ >= 0) PAPI::ParticleManager()->GetParticles(effect_, data, count);
 }
 
 VulkanParticleEffect::VulkanParticleEffect(std::shared_ptr<const ParticleCatalog> catalog,
@@ -57,6 +86,7 @@ VulkanParticleEffect::VulkanParticleEffect(std::shared_ptr<const ParticleCatalog
 {
     water_plane_.identity();
     transform_.identity();
+    gpu_parent_.identity();
     initial_position_.set(0, 0, 0);
     bounds(visibility_, initial_position_);
     auto* manager = PAPI::ParticleManager();
@@ -73,10 +103,215 @@ VulkanParticleEffect::VulkanParticleEffect(std::shared_ptr<const ParticleCatalog
 
 VulkanParticleEffect::~VulkanParticleEffect()
 {
+    detach_gpu_emitter();
     release_gpu();
     auto* manager = PAPI::ParticleManager();
     if (effect_ >= 0) manager->DestroyEffect(effect_);
     if (actions_ >= 0) manager->DestroyActionList(actions_);
+}
+
+bool VulkanParticleEffect::attach_gpu_emitter(GpuParticleEmitters& emitters, std::string& error)
+{
+    if (gpu_emitters_ || playing_ || ParticlesCount())
+    { error = "GPU emitter must be attached before the particle effect starts"; return false; }
+    uint64_t handle{};
+    if (!emitters.create(*def_, handle, error)) return false;
+    if (gpu_parent_valid_ && !emitters.set_parent(handle, gpu_parent_, gpu_parent_velocity_, gpu_parent_local_, error))
+    {
+        std::string ignored; emitters.destroy(handle, ignored); return false;
+    }
+    if (hud_ && !emitters.set_hud(handle, true, error))
+    {
+        std::string ignored; emitters.destroy(handle, ignored); return false;
+    }
+    gpu_emitters_ = &emitters; gpu_emitter_ = handle; error.clear(); return true;
+}
+void VulkanParticleEffect::detach_gpu_emitter()
+{
+    if (gpu_emitters_ && gpu_emitter_)
+    {
+        std::string error;
+        if (!gpu_emitters_->destroy(gpu_emitter_, error))
+            Msg("! [renderer-vulkan] GPU particle emitter '%s' release: %s", def_->name.c_str(), error.c_str());
+    }
+    gpu_emitters_ = nullptr; gpu_emitter_ = 0;
+}
+bool VulkanParticleEffect::gpu_visible_index(uint32_t& index) const
+{
+    return gpu_emitters_ && gpu_emitters_->visible_index(gpu_emitter_, index);
+}
+const std::vector<uint32_t>* VulkanParticleEffect::gpu_draw_programs() const
+{
+    return gpu_emitters_ ? gpu_emitters_->draw_programs(gpu_emitter_) : nullptr;
+}
+bool VulkanParticleEffect::gpu_draw_compatible() const
+{
+    return gpu_emitters_ != nullptr;
+}
+
+bool VulkanParticleEffect::needs_dynamic_occluder_mask(bool hud, bool gpu_draw_active) const
+{
+    // Screen-set programs are recorded in the forward transparent phase, after
+    // this frame's Hi-Z pyramid has been built. Their depth writes therefore
+    // cannot become occluders in that pyramid.
+    const bool depth_writing_world = !hud && !screen_set_ && material_ && !distortion_ && blend_mode_ == 0;
+    if (!depth_writing_world) return false;
+    if (gpu_draw_active && gpu_draw_compatible()) return true;
+    return effect_ >= 0 && PAPI::ParticleManager()->GetParticlesCount(effect_) != 0;
+}
+
+bool VulkanParticleEffect::supports_dynamic_occluder_mask(bool hud, bool gpu_draw_active) const
+{
+    return !needs_dynamic_occluder_mask(hud, gpu_draw_active) ||
+        (!gpu_draw_active || !gpu_draw_compatible());
+}
+
+void VulkanParticleEffect::invalidate_dynamic_occluder_history(uint32_t frame_index)
+{
+    if (frame_index >= buffers_.size()) return;
+    auto& buffers = buffers_[frame_index];
+    buffers.dynamic_occluder_ready = false;
+    buffers.dynamic_occluder_index_count = 0;
+    buffers.particle_motion_ready = false;
+    buffers.particle_motion_index_count = 0;
+    buffers.particle_frame = 0;
+    buffers.rendered_particle_ids.clear();
+    buffers.particle_vertices.clear();
+}
+
+bool VulkanParticleEffect::record_dynamic_occluder_mask(const FrameRecordingContext& frame,
+    const ObjectVelocityPass& pass, const float (&mvp)[16], const float (&previous_mvp)[16],
+    bool history_valid, bool hud, bool gpu_draw_active)
+{
+    if (!needs_dynamic_occluder_mask(hud, gpu_draw_active) ||
+        (gpu_draw_active && gpu_draw_compatible())) return true;
+    if (frame.frame_index >= buffers_.size()) return false;
+    Buffers& buffers = buffers_[frame.frame_index];
+    if (!buffers.dynamic_occluder_ready || !buffers.dynamic_occluder_index_count ||
+        !buffers.vertices.handle() || !buffers.previous_vertices.handle() || !buffers.indices.handle())
+        return false;
+    const Buffers* previous = history_valid ? &buffers_[frame.frame_index ^ 1u] : nullptr;
+    if (previous && previous->particle_frame + 1 != Device.dwFrame) previous = nullptr;
+    auto& previous_vertices = buffers.previous_scratch;
+    previous_vertices.resize(buffers.scratch.size());
+    for (size_t particle = 0; particle < buffers.rendered_particle_ids.size(); ++particle)
+    {
+        const uint64_t id = buffers.rendered_particle_ids[particle];
+        const std::array<std::array<float, 3>, 4>* previous_particle = nullptr;
+        if (previous && id)
+        {
+            const auto found = previous->particle_vertices.find(id);
+            if (found != previous->particle_vertices.end()) previous_particle = &found->second;
+        }
+        const bool matched = previous_particle != nullptr;
+        for (size_t corner = 0; corner < 4; ++corner)
+        {
+            LevelVertex vertex = buffers.scratch[particle * 4 + corner];
+            if (matched)
+                std::copy((*previous_particle)[corner].begin(), (*previous_particle)[corner].end(), vertex.position);
+            // This otherwise unused component tells the particle shader whether the
+            // previous PAPI slot belonged to the same particle.
+            vertex.normal[0] = matched ? 1.f : -1.f;
+            previous_vertices[particle * 4 + corner] = vertex;
+        }
+    }
+    std::string error;
+    if (!buffers.previous_vertices.write(0, previous_vertices.data(),
+            previous_vertices.size() * sizeof(LevelVertex), error))
+        return false;
+    float base_rows[8]{1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f};
+    if (matrices_.enabled[0])
+    {
+        const auto matrix = matrices_.values[0].evaluate(Device.fTimeGlobal,
+            reinterpret_cast<const float*>(&Device.mView));
+        for (size_t row = 0; row < 2; ++row)
+            std::copy(matrix[row].begin(), matrix[row].end(), base_rows + row * 4);
+    }
+    pass.draw_particle_velocity(frame, buffers.vertices.handle(), buffers.previous_vertices.handle(),
+        buffers.indices.handle(), buffers.dynamic_occluder_index_count, mvp, previous_mvp, material_,
+        float(alpha_ref_) / 255.f, base_rows);
+    return true;
+}
+
+bool VulkanParticleEffect::prepare_motion_geometry(const FrameRecordingContext& frame, const DeferredPass& pass,
+    const float (&mvp)[16], const Fvector& right, const Fvector& up, bool hud,
+    bool gpu_draw_active, std::string& error)
+{
+    if (hud || (!gpu_draw_active && !material_) || (gpu_draw_active && gpu_draw_compatible())) return true;
+    if (!screen_set_ && !distortion_ && blend_mode_ == 0) return true;
+    const GeometryPhase phase = distortion_ ? GeometryPhase::Distortion : GeometryPhase::Transparent;
+    return record(frame, pass, mvp, right, up, hud, error, phase, true);
+}
+
+bool VulkanParticleEffect::record_particle_motion(const FrameRecordingContext& frame, const ObjectVelocityPass& pass,
+    const float (&mvp)[16], const float (&previous_mvp)[16], bool history_valid, bool hud, bool gpu_draw_active)
+{
+    if (hud || !material_ || (!screen_set_ && !distortion_ && blend_mode_ == 0) ||
+        (gpu_draw_active && gpu_draw_compatible()) || effect_ < 0 ||
+        PAPI::ParticleManager()->GetParticlesCount(effect_) == 0) return true;
+    if (frame.frame_index >= buffers_.size()) return false;
+    Buffers& buffers = buffers_[frame.frame_index];
+    if (!buffers.particle_motion_ready || !buffers.particle_motion_index_count ||
+        !buffers.vertices.handle() || !buffers.previous_vertices.handle() || !buffers.indices.handle()) return false;
+    const Buffers* previous = history_valid ? &buffers_[frame.frame_index ^ 1u] : nullptr;
+    if (previous && (!previous->particle_motion_ready || previous->particle_frame + 1 != Device.dwFrame))
+        previous = nullptr;
+    auto& previous_vertices = buffers.previous_scratch;
+    previous_vertices.resize(buffers.scratch.size());
+    for (size_t particle = 0; particle < buffers.rendered_particle_ids.size(); ++particle)
+    {
+        const uint64_t id = buffers.rendered_particle_ids[particle];
+        const std::array<std::array<float, 3>, 4>* previous_particle = nullptr;
+        if (previous && id)
+        {
+            const auto found = previous->particle_vertices.find(id);
+            if (found != previous->particle_vertices.end()) previous_particle = &found->second;
+        }
+        const bool matched = previous_particle != nullptr;
+        for (size_t corner = 0; corner < 4; ++corner)
+        {
+            LevelVertex vertex = buffers.scratch[particle * 4 + corner];
+            if (matched)
+                std::copy((*previous_particle)[corner].begin(), (*previous_particle)[corner].end(), vertex.position);
+            vertex.normal[0] = matched ? 1.f : -1.f;
+            previous_vertices[particle * 4 + corner] = vertex;
+        }
+    }
+    std::string error;
+    if (!buffers.previous_vertices.write(0, previous_vertices.data(),
+            previous_vertices.size() * sizeof(LevelVertex), error)) return false;
+    float base_rows[8]{1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f};
+    if (matrices_.enabled[0])
+    {
+        const auto matrix = matrices_.values[0].evaluate(Device.fTimeGlobal,
+            reinterpret_cast<const float*>(&Device.mView));
+        for (size_t row = 0; row < 2; ++row)
+            std::copy(matrix[row].begin(), matrix[row].end(), base_rows + row * 4);
+    }
+    pass.draw_particle_velocity(frame, buffers.vertices.handle(), buffers.previous_vertices.handle(),
+        buffers.indices.handle(), buffers.particle_motion_index_count, mvp, previous_mvp, material_,
+        0.01f, base_rows, true);
+    return true;
+}
+void VulkanParticleEffect::append_gpu_visible(std::vector<uint32_t>& roots) const
+{
+    uint32_t index{};
+    if (gpu_visible_index(index) &&
+        std::find(roots.begin(), roots.end(), index) == roots.end()) roots.push_back(index);
+}
+void VulkanParticleEffect::gpu_emitter_failed(const std::string& error)
+{
+    Msg("! [renderer-vulkan] GPU particle emitter '%s': %s", def_->name.c_str(), error.c_str());
+    detach_gpu_emitter();
+}
+void VulkanParticleEffect::SetHudMode(BOOL value)
+{
+    hud_ = value;
+    if (gpu_emitters_)
+    {
+        std::string error;
+        if (!gpu_emitters_->set_hud(gpu_emitter_, value != FALSE, error)) gpu_emitter_failed(error);
+    }
 }
 
 bool VulkanParticleEffect::initialize(VkDevice device, const VkPhysicalDeviceMemoryProperties& memory,
@@ -90,11 +325,6 @@ bool VulkanParticleEffect::initialize(VkDevice device, const VkPhysicalDeviceMem
     dispatch_ = dispatch;
     textures_ = &textures;
     pass_ = &pass;
-    if (def_->name.find("fire") != std::string::npos ||
-        def_->name.find("camp") != std::string::npos)
-        Msg("[renderer-vulkan] particle.fire definition='%s' flags=0x%x shader='%s' texture='%s' max=%u",
-            def_->name.c_str(), def_->flags, def_->shader.c_str(),
-            def_->texture.c_str(), def_->max_particles);
     if ((def_->flags & 1u) == 0) return true; // Non-sprite actions still simulate.
     SurfaceMode surface{};
     MaterialDefinition definition;
@@ -160,6 +390,12 @@ void VulkanParticleEffect::release_gpu()
 
 void VulkanParticleEffect::UpdateParent(const Fmatrix& m, const Fvector& velocity, BOOL transform)
 {
+    gpu_parent_ = m; gpu_parent_velocity_ = velocity; gpu_parent_local_ = transform != FALSE; gpu_parent_valid_ = true;
+    if (gpu_emitters_)
+    {
+        std::string error;
+        if (!gpu_emitters_->set_parent(gpu_emitter_, m, velocity, transform != FALSE, error)) gpu_emitter_failed(error);
+    }
     set_water_plane(m);
     initial_position_.set(m.c);
     if (transform) transform_.set(m);
@@ -173,9 +409,9 @@ void VulkanParticleEffect::UpdateParent(const Fmatrix& m, const Fvector& velocit
 void VulkanParticleEffect::project_water_center(Fvector& center) const
 {
     const auto& origin = water_plane_.c;
-    const auto& normal = water_plane_.k;
+    const auto normal = water_plane_normal(water_plane_);
     const auto projected = project_particle_to_water({center.x, center.y, center.z},
-        {origin.x, origin.y, origin.z}, {normal.x, normal.y, normal.z});
+        {origin.x, origin.y, origin.z}, normal);
     center.set(projected[0], projected[1], projected[2]);
 }
 
@@ -187,12 +423,22 @@ void VulkanParticleEffect::Play()
     deferred_ = false;
     playing_ = true;
     PAPI::ParticleManager()->PlayEffect(effect_, actions_);
+    if (gpu_emitters_)
+    {
+        std::string error;
+        if (!gpu_emitters_->play(gpu_emitter_, error)) gpu_emitter_failed(error);
+    }
 }
 
 void VulkanParticleEffect::Stop(BOOL deferred)
 {
     if (effect_ < 0 || actions_ < 0) return;
     PAPI::ParticleManager()->StopEffect(effect_, actions_, deferred != FALSE);
+    if (gpu_emitters_)
+    {
+        std::string error;
+        if (!gpu_emitters_->stop(gpu_emitter_, deferred != FALSE, error)) gpu_emitter_failed(error);
+    }
     deferred_ = deferred != FALSE;
     if (!deferred_) playing_ = false;
 }
@@ -213,6 +459,11 @@ void VulkanParticleEffect::OnFrame(u32 dt)
         if (def_->time_limit >= 0.f && !deferred_ && (elapsed_ += step_seconds) > def_->time_limit)
             Stop(TRUE);
         PAPI::ParticleManager()->Update(effect_, actions_, step_seconds);
+        if (gpu_emitters_)
+        {
+            std::string error;
+            if (!gpu_emitters_->tick(gpu_emitter_, step_ms, error)) gpu_emitter_failed(error);
+        }
         if (def_->flags & (1u << 11))
         {
             PAPI::Particle* particles = nullptr;
@@ -232,10 +483,6 @@ void VulkanParticleEffect::OnFrame(u32 dt)
     PAPI::Particle* particles = nullptr;
     u32 count = 0;
     PAPI::ParticleManager()->GetParticles(effect_, particles, count);
-    if ((def_->name.find("fire") != std::string::npos ||
-            def_->name.find("camp") != std::string::npos) && Device.dwFrame % 300 == 0)
-        Msg("[renderer-vulkan] particle.fire draw='%s' count=%u material=%d blend=%d hud=%d",
-            def_->name.c_str(), count, material_ != VK_NULL_HANDLE, blend_mode_, hud_);
     if (deferred_ && count == 0) { deferred_ = false; playing_ = false; }
     if (!count || !particles) { bounds(visibility_, initial_position_); return; }
     visibility_.box.invalidate();
@@ -255,8 +502,15 @@ void VulkanParticleEffect::OnFrame(u32 dt)
 
 bool VulkanParticleEffect::record(const FrameRecordingContext& frame, const DeferredPass& pass,
     const float (&mvp)[16], const Fvector& right, const Fvector& up, bool hud, std::string& error,
-    GeometryPhase phase)
+    GeometryPhase phase, bool prepare_only)
 {
+    if (frame.frame_index < buffers_.size())
+    {
+        buffers_[frame.frame_index].dynamic_occluder_ready = false;
+        buffers_[frame.frame_index].dynamic_occluder_index_count = 0;
+        buffers_[frame.frame_index].particle_motion_ready = false;
+        buffers_[frame.frame_index].particle_motion_index_count = 0;
+    }
     if (!material_ || !device_) return true;
     // Refraction samples a snapshot of the completed transparent world.
     // Ordinary geometry phases must not consume the earlier opaque snapshot.
@@ -277,8 +531,11 @@ bool VulkanParticleEffect::record(const FrameRecordingContext& frame, const Defe
         // FrameContext waited for this frame slot's fence before invoking the recorder.
         const size_t capacity = std::min<size_t>(def_->max_particles,
             std::max<size_t>(count, buffers.capacity ? buffers.capacity * 2 : 16));
-        BufferResource vertices, indices;
+        BufferResource vertices, previous_vertices, indices;
         if (!vertices.initialize(device_, capacity * 4 * sizeof(LevelVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                memory_, dispatch_, error) ||
+            !previous_vertices.initialize(device_, capacity * 4 * sizeof(LevelVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                 memory_, dispatch_, error) ||
             !indices.initialize(device_, capacity * 6 * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
@@ -292,6 +549,7 @@ bool VulkanParticleEffect::record(const FrameRecordingContext& frame, const Defe
         if (!indices.write(0, quad_indices.data(), quad_indices.size() * sizeof(uint32_t), error))
             return false;
         buffers.vertices = std::move(vertices);
+        buffers.previous_vertices = std::move(previous_vertices);
         buffers.indices = std::move(indices);
         buffers.capacity = capacity;
     }
@@ -311,8 +569,8 @@ bool VulkanParticleEffect::record(const FrameRecordingContext& frame, const Defe
         if (water_contact_ && !hud)
         {
             project_water_center(center);
-            const auto& normal = water_plane_.k;
-            const auto basis = particle_face_basis({normal.x, normal.y, normal.z});
+            const auto normal = water_plane_normal(water_plane_);
+            const auto basis = particle_face_basis(normal);
             sprite_right.set(basis.right[0], basis.right[1], basis.right[2]);
             sprite_up.set(basis.up[0], basis.up[1], basis.up[2]);
         }
@@ -373,6 +631,27 @@ bool VulkanParticleEffect::record(const FrameRecordingContext& frame, const Defe
     }
     if (!buffers.vertices.write(0, vertices.data(), vertices.size() * sizeof(LevelVertex), error))
         return false;
+    buffers.rendered_particle_ids.resize(count);
+    buffers.particle_vertices.clear();
+    for (u32 i = 0; i < count; ++i)
+    {
+        const uint64_t id = i < particle_ids_.size() ? particle_ids_[i] : 0;
+        buffers.rendered_particle_ids[i] = id;
+        if (!id) continue;
+        std::array<std::array<float, 3>, 4> snapshot{};
+        for (size_t corner = 0; corner < 4; ++corner)
+            std::copy_n(vertices[i * 4 + corner].position, 3, snapshot[corner].data());
+        buffers.particle_vertices.emplace(id, std::move(snapshot));
+    }
+    buffers.particle_frame = Device.dwFrame;
+    if (deferred_set)
+    {
+        buffers.dynamic_occluder_ready = true;
+        buffers.dynamic_occluder_index_count = count * 6;
+    }
+    buffers.particle_motion_ready = true;
+    buffers.particle_motion_index_count = count * 6;
+    if (prepare_only) return true;
     if (distortion_)
         return pass.record_distortion(frame, buffers.vertices.handle(), buffers.indices.handle(),
             count * 6, mvp, material_, phase == GeometryPhase::Distortion);
@@ -402,14 +681,55 @@ VulkanParticleGroup::VulkanParticleGroup(std::shared_ptr<const ParticleCatalog> 
     bounds(visibility_, initial_position_);
     for (const auto& item : def.effects)
         effects_.push_back(std::make_unique<VulkanParticleEffect>(catalog_, *catalog_->effect(item.effect)));
+    related_.resize(effects_.size());
     for (size_t i = 0; i < effects_.size(); ++i)
-        effects_[i]->set_events([this, i](bool birth, PAPI::Particle& particle)
-        { on_particle(i, birth, particle); });
+        effects_[i]->set_events([this, i](bool birth, PAPI::Particle& particle, u32 index)
+        { on_particle(i, birth, particle, index); });
 }
 
 VulkanParticleGroup::~VulkanParticleGroup()
 {
+    detach_gpu_emitters();
     for (auto& effect : effects_) effect->set_events({});
+}
+
+bool VulkanParticleGroup::attach_gpu_emitters(GpuParticleEmitters& emitters, std::string& error)
+{
+    if (playing_ || !triggered_.empty()) { error = "GPU emitters must be attached before the group starts"; return false; }
+    for (const auto& effect : effects_)
+        if (effect->gpu_emitter_handle()) { error = "particle group already has GPU emitters"; return false; }
+    struct Children { uint32_t birth{GPU_PAPI_INVALID}, play{GPU_PAPI_INVALID}, death{GPU_PAPI_INVALID}; };
+    std::vector<Children> children(def_->effects.size());
+    for (size_t i = 0; i < def_->effects.size(); ++i)
+    {
+        const auto& item = def_->effects[i];
+        const auto resolve = [&](uint32_t bit, const std::string& name, uint32_t& result) {
+            if (!(item.flags & bit)) return true;
+            const auto* child = catalog_->effect(name);
+            if (!child) { error = "missing GPU particle group child: " + name; return false; }
+            if ((bit == 32u || bit == 64u) && !(child->flags & (1u << 14)))
+            { error = "unlimited GPU particle group child: " + name; return false; }
+            return emitters.register_program(*child, result, error);
+        };
+        if (!resolve(32u, item.on_birth, children[i].birth) || !resolve(2u, item.on_play, children[i].play) ||
+            !resolve(64u, item.on_dead, children[i].death)) return false;
+    }
+    for (size_t i = 0; i < effects_.size(); ++i)
+    {
+        if (!effects_[i]->attach_gpu_emitter(emitters, error) ||
+            !emitters.children(effects_[i]->gpu_emitter_handle(), children[i].birth, children[i].play,
+                children[i].death, def_->effects[i].flags, error))
+        { detach_gpu_emitters(); return false; }
+    }
+    error.clear(); return true;
+}
+void VulkanParticleGroup::detach_gpu_emitters()
+{
+    for (auto& effect : effects_) effect->detach_gpu_emitter();
+}
+void VulkanParticleGroup::append_gpu_visible(std::vector<uint32_t>& roots) const
+{
+    for (const auto& effect : effects_) effect->append_gpu_visible(roots);
 }
 
 bool VulkanParticleGroup::initialize(VkDevice device, const VkPhysicalDeviceMemoryProperties& memory,
@@ -432,12 +752,14 @@ bool VulkanParticleGroup::initialize(VkDevice device, const VkPhysicalDeviceMemo
 
 void VulkanParticleGroup::OnDeviceDestroy()
 {
+    detach_gpu_emitters();
     // Triggered children may have been created after initialize(). Release
     // them before the catalog/pass leases are detached; a later initialize()
     // must start with only the definition's persistent effects.
     for (auto& item : triggered_) item.effect->set_events({});
     triggered_.clear();
     pending_.clear();
+    for (auto& roots : related_) roots.clear();
     for (auto& effect : effects_) effect->OnDeviceDestroy();
     textures_ = nullptr;
     pass_ = nullptr;
@@ -460,6 +782,8 @@ void VulkanParticleGroup::Play()
     for (auto& effect : effects_) effect->Stop(FALSE);
     for (auto& item : triggered_) item.effect->Stop(FALSE);
     pending_.clear();
+    for (auto& child : triggered_) child.related = false;
+    for (auto& roots : related_) roots.clear();
 }
 
 void VulkanParticleGroup::Stop(BOOL deferred)
@@ -468,6 +792,12 @@ void VulkanParticleGroup::Stop(BOOL deferred)
     if (!deferred_) playing_ = false;
     for (auto& effect : effects_) effect->Stop(deferred);
     for (auto& item : triggered_) item.effect->Stop(deferred);
+    if (!deferred)
+    {
+        pending_.clear();
+        for (auto& child : triggered_) child.related = false;
+        for (auto& roots : related_) roots.clear();
+    }
 }
 
 void VulkanParticleGroup::OnFrame(u32 dt)
@@ -492,15 +822,49 @@ void VulkanParticleGroup::OnFrame(u32 dt)
             else if (time_ <= item.begin && next >= item.begin)
             {
                 effect.Play();
-                if ((item.flags & (1u << 1)) && !item.on_play.empty())
-                    pending_.push_back({item.on_play, initial_position_, {0.f, 0.f, 0.f}});
             }
         }
         effect.OnFrame(dt);
     }
-    for (size_t index = 0; index < pending_.size(); ++index)
-        spawn(pending_[index].name, pending_[index].position, pending_[index].velocity);
+    for (const auto& event : pending_)
+    {
+        auto& roots = related_[event.root];
+        if (event.kind == Pending::Kind::RelatedDeath)
+        {
+            if (event.particle_index < roots.size())
+            {
+                const size_t child = roots[event.particle_index];
+                if (child < triggered_.size()) { triggered_[child].effect->Stop(TRUE); triggered_[child].related = false; }
+                roots[event.particle_index] = roots.back(); roots.pop_back();
+            }
+        }
+        else
+        {
+            const bool is_related = event.kind == Pending::Kind::RelatedBirth;
+            const size_t child = spawn(event.name, event.position, event.velocity, is_related, event.root);
+            if (is_related) roots.push_back(child);
+        }
+    }
     pending_.clear();
+    for (size_t root = 0; root < effects_.size(); ++root)
+    {
+        PAPI::Particle* particles = nullptr; u32 count = 0;
+        effects_[root]->particles(particles, count);
+        for (size_t i = 0; particles && i < count && i < related_[root].size(); ++i)
+        {
+            const size_t child_index = related_[root][i];
+            if (child_index >= triggered_.size()) continue;
+            auto& child = *triggered_[child_index].effect;
+            Fvector position, velocity;
+            if (transform_parent_) parent_.transform_tiny(position, particles[i].pos);
+            else position.set(particles[i].pos);
+            velocity.sub(particles[i].pos, particles[i].posB); velocity.div(step_seconds);
+            if (transform_parent_) parent_.transform_dir(velocity);
+            Fmatrix frame = transform_parent_ ? parent_ : Fidentity; frame.c.set(position);
+            child.UpdateParent(frame, velocity, FALSE);
+            if (!child.IsPlaying() && (def_->effects[root].flags & (1u << 4))) child.Play();
+        }
+    }
     for (auto& child : triggered_) if (child.effect->IsPlaying()) child.effect->OnFrame(dt);
     time_ = next;
     if (!deferred_ && def_->time_limit > 0.f && time_ > def_->time_limit) Stop(TRUE);
@@ -537,15 +901,123 @@ void VulkanParticleGroup::SetHudMode(BOOL value)
 
 bool VulkanParticleGroup::record(const FrameRecordingContext& frame, const DeferredPass& pass,
     const float (&mvp)[16], const Fvector& right, const Fvector& up, bool hud, std::string& error,
-    GeometryPhase phase, int priority_filter)
+    GeometryPhase phase, int priority_filter, const std::function<bool(VulkanParticleEffect&)>& gpu_record,
+    const std::function<bool(VulkanParticleEffect&, VulkanParticleEffect&)>& gpu_child_record)
 {
     for (auto& effect : effects_)
         if ((priority_filter < 0 || effect->priority() == priority_filter) &&
+            !(gpu_record && gpu_record(*effect)) &&
             !effect->record(frame, pass, mvp, right, up, hud, error, phase)) return false;
+    struct DrawnChild { size_t root; std::string name; bool handled; };
+    std::vector<DrawnChild> drawn;
     for (auto& child : triggered_)
-        if ((priority_filter < 0 || child.effect->priority() == priority_filter) &&
-            !child.effect->record(frame, pass, mvp, right, up, hud, error, phase)) return false;
+    {
+        if (priority_filter >= 0 && child.effect->priority() != priority_filter) continue;
+        bool handled = false;
+        if (gpu_child_record && child.root < effects_.size())
+        {
+            auto found = std::find_if(drawn.begin(), drawn.end(), [&](const DrawnChild& item) {
+                return item.root == child.root && item.name == child.name;
+            });
+            if (found == drawn.end())
+            {
+                handled = gpu_child_record(*effects_[child.root], *child.effect);
+                drawn.push_back({child.root, child.name, handled});
+            }
+            else handled = found->handled;
+        }
+        if (!handled && !child.effect->record(frame, pass, mvp, right, up, hud, error, phase)) return false;
+    }
     return true;
+}
+
+bool VulkanParticleGroup::prepare_motion_geometry(const FrameRecordingContext& frame, const DeferredPass& pass,
+    const float (&mvp)[16], const Fvector& right, const Fvector& up, bool hud,
+    bool gpu_draw_active, std::string& error)
+{
+    if (hud) return true;
+    for (auto& effect : effects_)
+        if (!effect->prepare_motion_geometry(frame, pass, mvp, right, up, hud, gpu_draw_active, error))
+            return false;
+    for (auto& child : triggered_)
+    {
+        const bool gpu_child = gpu_draw_active && child.root < effects_.size() &&
+            effects_[child.root]->gpu_draw_compatible();
+        if (!gpu_child && !child.effect->prepare_motion_geometry(frame, pass, mvp, right, up,
+                hud, gpu_draw_active, error))
+            return false;
+    }
+    return true;
+}
+
+bool VulkanParticleGroup::record_particle_motion(const FrameRecordingContext& frame,
+    const ObjectVelocityPass& pass, const float (&mvp)[16], const float (&previous_mvp)[16],
+    bool history_valid, bool hud, bool gpu_draw_active, bool transparent_only, int priority_filter,
+    const std::function<bool(VulkanParticleEffect&)>& gpu_record,
+    const std::function<bool(VulkanParticleEffect&, VulkanParticleEffect&)>& gpu_child_record)
+{
+    if (hud) return true;
+    for (const auto& effect : effects_)
+        if (priority_filter < 0 || effect->priority() == priority_filter)
+        {
+            const bool gpu_handled = gpu_record && gpu_record(*effect);
+            if (!gpu_handled && transparent_only &&
+                !effect->record_particle_motion(frame, pass, mvp, previous_mvp, history_valid, hud,
+                    gpu_record ? false : gpu_draw_active)) return false;
+        }
+    struct DrawnChild { size_t root; std::string name; bool handled; };
+    std::vector<DrawnChild> drawn;
+    for (const auto& child : triggered_)
+    {
+        if (priority_filter >= 0 && child.effect->priority() != priority_filter) continue;
+        const bool gpu_child = gpu_draw_active && child.root < effects_.size() &&
+            effects_[child.root]->gpu_draw_compatible();
+        bool gpu_handled = false;
+        if (gpu_child_record && child.root < effects_.size())
+        {
+            auto found = std::find_if(drawn.begin(), drawn.end(), [&](const DrawnChild& item) {
+                return item.root == child.root && item.name == child.name;
+            });
+            if (found == drawn.end())
+            {
+                gpu_handled = gpu_child_record(*effects_[child.root], *child.effect);
+                drawn.push_back({child.root, child.name, gpu_handled});
+            }
+            else gpu_handled = found->handled;
+        }
+        if (!gpu_handled && transparent_only &&
+            !child.effect->record_particle_motion(frame, pass, mvp, previous_mvp, history_valid, hud,
+                gpu_child_record ? false : gpu_child ? true : gpu_draw_active)) return false;
+    }
+    return true;
+}
+
+bool VulkanParticleGroup::supports_dynamic_occluder_mask(bool hud, bool gpu_draw_active) const
+{
+    for (const auto& effect : effects_)
+        if (!effect->supports_dynamic_occluder_mask(hud, gpu_draw_active)) return false;
+    for (const auto& child : triggered_)
+        if (!child.effect->supports_dynamic_occluder_mask(hud, gpu_draw_active)) return false;
+    return true;
+}
+
+bool VulkanParticleGroup::record_dynamic_occluder_mask(const FrameRecordingContext& frame,
+    const ObjectVelocityPass& pass, const float (&mvp)[16], const float (&previous_mvp)[16],
+    bool history_valid, bool hud, bool gpu_draw_active)
+{
+    for (const auto& effect : effects_)
+        if (!effect->record_dynamic_occluder_mask(frame, pass, mvp, previous_mvp, history_valid,
+                hud, gpu_draw_active)) return false;
+    for (const auto& child : triggered_)
+        if (!child.effect->record_dynamic_occluder_mask(frame, pass, mvp, previous_mvp, history_valid,
+                hud, gpu_draw_active)) return false;
+    return true;
+}
+
+void VulkanParticleGroup::invalidate_dynamic_occluder_history(uint32_t frame_index)
+{
+    for (auto& effect : effects_) effect->invalidate_dynamic_occluder_history(frame_index);
+    for (auto& child : triggered_) child.effect->invalidate_dynamic_occluder_history(frame_index);
 }
 
 bool VulkanParticleEffect::has_active_distortion() const
@@ -570,11 +1042,9 @@ bool VulkanParticleGroup::has_priority(uint8_t priority) const
     return false;
 }
 
-void VulkanParticleGroup::on_particle(size_t index, bool birth, PAPI::Particle& particle)
+void VulkanParticleGroup::on_particle(size_t index, bool birth, PAPI::Particle& particle, u32 particle_index)
 {
     const auto& item = def_->effects[index];
-    const auto& name = birth ? item.on_birth : item.on_dead;
-    if (!(item.flags & (birth ? (1u << 5) : (1u << 6))) || name.empty()) return;
     Fvector position;
     if (transform_parent_) parent_.transform_tiny(position, particle.pos);
     else position.set(particle.pos);
@@ -583,18 +1053,26 @@ void VulkanParticleGroup::on_particle(size_t index, bool birth, PAPI::Particle& 
     velocity.div(step_seconds);
     if (transform_parent_)
         parent_.transform_dir(velocity);
-    pending_.push_back({name, position, velocity});
+    if (birth && (item.flags & (1u << 5)) && !item.on_birth.empty())
+        pending_.push_back({item.on_birth, position, velocity, index, particle_index, Pending::Kind::Free});
+    if ((item.flags & (1u << 1)) && !item.on_play.empty())
+        pending_.push_back({item.on_play, position, velocity, index, particle_index,
+            birth ? Pending::Kind::RelatedBirth : Pending::Kind::RelatedDeath});
+    if (!birth && (item.flags & (1u << 6)) && !item.on_dead.empty())
+        pending_.push_back({item.on_dead, position, velocity, index, particle_index, Pending::Kind::Free});
 }
 
-void VulkanParticleGroup::spawn(const std::string& name, const Fvector& position,
-    const Fvector& velocity)
+size_t VulkanParticleGroup::spawn(const std::string& name, const Fvector& position,
+    const Fvector& velocity, bool related, size_t root)
 {
     const auto* def = catalog_->effect(name);
-    if (!def) return;
+    if (!def) return SIZE_MAX;
     VulkanParticleEffect* effect = nullptr;
-    for (auto& child : triggered_)
-        if (child.name == name && !child.effect->IsPlaying() && !child.effect->ParticlesCount())
-        { effect = child.effect.get(); break; }
+    size_t child_index = 0;
+    for (; child_index < triggered_.size(); ++child_index)
+        if (auto& child = triggered_[child_index]; child.name == name && !child.related &&
+            !child.effect->IsPlaying() && !child.effect->ParticlesCount())
+        { effect = child.effect.get(); child.related = related; child.root = root; break; }
     if (!effect)
     {
         auto child = std::make_unique<VulkanParticleEffect>(catalog_, *def);
@@ -604,11 +1082,12 @@ void VulkanParticleGroup::spawn(const std::string& name, const Fvector& position
             if (!child->initialize(device_, memory_, dispatch_, *textures_, *pass_, error))
             {
                 Msg("! [renderer-vulkan] particle child '%s': %s", name.c_str(), error.c_str());
-                return;
+                return SIZE_MAX;
             }
         }
         effect = child.get();
-        triggered_.push_back({name, std::move(child)});
+        child_index = triggered_.size();
+        triggered_.push_back({name, std::move(child), related, root});
     }
     // Child actions inherit the emitter frame, as in ParticleGroup::StartFreeChild.
     // Translation alone loses the surface orientation of water impact emitters.
@@ -618,5 +1097,6 @@ void VulkanParticleGroup::spawn(const std::string& name, const Fvector& position
     effect->UpdateParent(parent, velocity, FALSE);
     effect->set_water_plane(parent_);
     effect->Play();
+    return child_index;
 }
 } // namespace xray::render::vulkan

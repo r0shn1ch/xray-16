@@ -67,7 +67,7 @@ ScreenCopyPass::~ScreenCopyPass()
 
 bool ScreenCopyPass::initialize(VkDevice device, VkRenderPass render_pass, VkImageView source_view,
     VkSampler sampler, VkShaderModule vertex_shader, VkShaderModule fragment_shader,
-    const ScreenCopyDispatch& dispatch, std::string& error)
+    const ScreenCopyDispatch& dispatch, std::string& error, bool additive)
 {
     destroy();
     if (!device || !render_pass || !source_view || !sampler || !vertex_shader || !fragment_shader ||
@@ -86,7 +86,11 @@ bool ScreenCopyPass::initialize(VkDevice device, VkRenderPass render_pass, VkIma
         {0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {1, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}
+        {3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {4, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {7, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}
     };
     VkDescriptorSetLayoutCreateInfo descriptor_layout_info{};
     descriptor_layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -101,8 +105,9 @@ bool ScreenCopyPass::initialize(VkDevice device, VkRenderPass render_pass, VkIma
     }
 
     const VkDescriptorPoolSize pool_sizes[] = {
-        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 3},
-        {VK_DESCRIPTOR_TYPE_SAMPLER, 1}
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 5},
+        {VK_DESCRIPTOR_TYPE_SAMPLER, 1},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2}
     };
     VkDescriptorPoolCreateInfo pool_info{};
     pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -133,7 +138,7 @@ bool ScreenCopyPass::initialize(VkDevice device, VkRenderPass render_pass, VkIma
     image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkDescriptorImageInfo sampler_info{};
     sampler_info.sampler = sampler;
-    VkWriteDescriptorSet writes[4]{};
+    VkWriteDescriptorSet writes[8]{};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = m_descriptor_set;
     writes[0].dstBinding = 0;
@@ -146,7 +151,7 @@ bool ScreenCopyPass::initialize(VkDevice device, VkRenderPass render_pass, VkIma
     writes[1].descriptorCount = 1;
     writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
     writes[1].pImageInfo = &sampler_info;
-    for (uint32_t i = 2; i != 4; ++i)
+    for (uint32_t i = 2; i != 5; ++i)
     {
         writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[i].dstSet = m_descriptor_set;
@@ -155,6 +160,18 @@ bool ScreenCopyPass::initialize(VkDevice device, VkRenderPass render_pass, VkIma
         writes[i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
         writes[i].pImageInfo = &image_info;
     }
+    VkDescriptorImageInfo exposure_info = image_info;
+    exposure_info.sampler = sampler;
+    writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[5].dstSet = m_descriptor_set;
+    writes[5].dstBinding = 5;
+    writes[5].descriptorCount = 1;
+    writes[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[5].pImageInfo = &exposure_info;
+    writes[6] = writes[5];
+    writes[6].dstBinding = 6;
+    writes[7] = writes[0];
+    writes[7].dstBinding = 7;
     m_vk.update_descriptor_sets(m_device, static_cast<uint32_t>(sizeof(writes) / sizeof(writes[0])), writes,
         0, nullptr);
 
@@ -205,6 +222,13 @@ bool ScreenCopyPass::initialize(VkDevice device, VkRenderPass render_pass, VkIma
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
     VkPipelineColorBlendAttachmentState color_attachment{};
+    color_attachment.blendEnable = additive ? VK_TRUE : VK_FALSE;
+    color_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    color_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    color_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+    color_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    color_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    color_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
     color_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     VkPipelineColorBlendStateCreateInfo color_blend{};
@@ -265,6 +289,61 @@ void ScreenCopyPass::set_color_maps(VkImageView first, VkImageView second)
         writes[i].pImageInfo = &images[i];
     }
     m_vk.update_descriptor_sets(m_device, 2, writes, 0, nullptr);
+}
+
+void ScreenCopyPass::set_bloom_view(VkImageView bloom)
+{
+    if (!m_descriptor_set || !m_vk.update_descriptor_sets) return;
+    VkDescriptorImageInfo image{};
+    image.imageView = bloom ? bloom : m_source_view;
+    image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = m_descriptor_set;
+    write.dstBinding = 4;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    write.pImageInfo = &image;
+    m_vk.update_descriptor_sets(m_device, 1, &write, 0, nullptr);
+}
+
+void ScreenCopyPass::set_exposure_view(VkImageView exposure, VkSampler sampler)
+{
+    if (!m_descriptor_set || !m_vk.update_descriptor_sets || !exposure || !sampler) return;
+    const VkDescriptorImageInfo image{sampler, exposure, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = m_descriptor_set;
+    write.dstBinding = 5;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &image;
+    m_vk.update_descriptor_sets(m_device, 1, &write, 0, nullptr);
+}
+
+void ScreenCopyPass::set_depth_view(VkImageView depth, VkSampler sampler)
+{
+    if (!m_descriptor_set || !m_vk.update_descriptor_sets || !depth || !sampler) return;
+    const VkDescriptorImageInfo image{sampler, depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = m_descriptor_set;
+    write.dstBinding = 6;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &image;
+    m_vk.update_descriptor_sets(m_device, 1, &write, 0, nullptr);
+}
+
+void ScreenCopyPass::set_motion_view(VkImageView motion)
+{
+    if (!m_descriptor_set || !m_vk.update_descriptor_sets || !motion) return;
+    const VkDescriptorImageInfo image{VK_NULL_HANDLE, motion, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = m_descriptor_set;
+    write.dstBinding = 7;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    write.pImageInfo = &image;
+    m_vk.update_descriptor_sets(m_device, 1, &write, 0, nullptr);
 }
 
 void ScreenCopyPass::record(const FrameRecordingContext& frame) const

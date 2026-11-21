@@ -7,7 +7,8 @@ import tempfile
 import unittest
 from zipfile import ZipFile
 
-from tools.check_vulkan_shader_assets import check_apk
+from tools.check_vulkan_shader_assets import check_apk, check_assets
+from tools.compile_vulkan_shader import _manifest, _shader_metadata, _shader_source_metadata
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +33,29 @@ def instructions(path):
 
 
 class GameShaderVariantsTest(unittest.TestCase):
+    def test_precompiled_assets_match_current_sources(self):
+        self.assertEqual(check_assets(SHADERS, MANIFEST), [])
+
+    def test_gpu_particle_vertex_bindings_and_outputs(self):
+        code = list(instructions(SHADERS / "vk/gpu_particle_draw.vs.spv"))
+        decorations = {(args[0], args[1]): args[2] for op, args in code if op == 71 and len(args) >= 3}
+        bindings = {(decorations.get((identifier, 34)), value)
+                    for (identifier, kind), value in decorations.items() if kind == 33}
+        self.assertEqual(bindings, {(1, binding) for binding in range(6)})
+        output_ids = {args[1] for op, args in code if op == 59 and args[2] == 3}
+        locations = {decorations[(identifier, 30)] for identifier in output_ids
+                     if (identifier, 30) in decorations}
+        # Current motion-vector output carries current/previous clip positions
+        # and a validity flag in addition to the original material varyings.
+        self.assertEqual(locations, set(range(11)))
+        fragment = list(instructions(SHADERS / "vk/gpu_particle_world_blended.ps.spv"))
+        fragment_decorations = {(args[0], args[1]): args[2]
+                                for op, args in fragment if op == 71 and len(args) >= 3}
+        fragment_bindings = {(fragment_decorations.get((identifier, 34)), value)
+                             for (identifier, kind), value in fragment_decorations.items() if kind == 33}
+        self.assertIn((1, 6), fragment_bindings)
+        self.assertFalse(any(op == 59 and args[2] == 9 for op, args in fragment))
+
     def test_manifest_entries_and_pipeline_interfaces(self):
         variants = json.loads(MANIFEST.read_text())["variants"]
         outputs = {v["output"]: v for v in variants}
@@ -53,7 +77,7 @@ class GameShaderVariantsTest(unittest.TestCase):
         for name, variant in outputs.items():
             with self.subTest(name=name):
                 code = list(instructions(SHADERS / name))
-                model = 0 if variant["stage"] == "vs" else 4
+                model = {"vs": 0, "ps": 4, "cs": 5}[variant["stage"]]
                 self.assertTrue(any(op == 15 and args[0] == model for op, args in code))
                 decorations = {(args[0], args[1]): args[2] for op, args in code
                                if op == 71 and len(args) >= 3}
@@ -64,18 +88,22 @@ class GameShaderVariantsTest(unittest.TestCase):
                 locations = {value for (identifier, kind), value in decorations.items() if kind == 30}
                 if name.endswith(".ps.spv"):
                     self.assertIn(0, output_locations)
-                    self.assertIn(0, bindings.values())
-                    if name == "vk/particle_world_deferred.ps.spv":
+                    if name not in ("vk/smoke_trail.ps.spv", "vk/trail.ps.spv"):
+                        self.assertIn(0, bindings.values())
+                    if name in ("vk/particle_world_deferred.ps.spv", "vk/gpu_particle_world_deferred.ps.spv"):
                         self.assertEqual(output_locations, {0, 1, 2})
-                    elif ("blended" in name or "particle_" in name or "world_set_" in name or
+                    elif (name in ("vk/smoke_trail.ps.spv", "vk/trail.ps.spv") or "blended" in name or "particle_" in name or "world_set_" in name or
                             "model_set_" in name or
                             "alpha_add" in name or
                             "environment.ps" in name and name.startswith(("vk/object_", "vk/skinned_")) or
                             name in ("vk/wallmark_multiply_2x.ps.spv", "vk/level_fog.ps.spv",
                                      "vk/level_priority_opaque.ps.spv",
+                                     "vk/level_priority_detail.ps.spv",
+                                     "vk/level_priority_detail_lightmap.ps.spv",
                                      "vk/level_priority_lightmap.ps.spv",
                                      "vk/object_priority_opaque.ps.spv",
-                                     "vk/skinned_priority_opaque.ps.spv")):
+                                     "vk/skinned_priority_opaque.ps.spv",
+                                     "vk/hud_model_environment.ps.spv")):
                         # The forward pass has one color attachment.
                         self.assertEqual(output_locations, {0})
                     else:
@@ -196,15 +224,49 @@ class GameShaderVariantsTest(unittest.TestCase):
                 self.assertFalse({2, 3} & {locations[i] for i in inputs if i in locations})
 
     def test_apk_contains_every_game_pipeline_asset(self):
-        variants = json.loads(MANIFEST.read_text())["variants"]
+        variants = _manifest(MANIFEST, SHADERS)
+
+        def add_pipeline_assets(archive, include_sources, include_dependencies):
+            written = set()
+            for variant in variants:
+                output = variant["output"]
+                data = output.read_bytes()
+                output_name = "assets/gamedata/shaders/" + output.relative_to(SHADERS).as_posix()
+                archive.writestr(output_name, data)
+                archive.writestr(output_name + ".meta", _shader_metadata(variant, data))
+                if not include_sources:
+                    continue
+                for line in _shader_source_metadata(variant):
+                    if line.startswith("source="):
+                        vfs_path = line.split("=", 1)[1]
+                    elif include_dependencies and line.startswith("dependency="):
+                        vfs_path = line[len("dependency="):].rsplit("=", 1)[0]
+                    else:
+                        continue
+                    path = Path(vfs_path)
+                    if path.is_absolute() or ".." in path.parts or "." in path.parts:
+                        continue  # Engine-internal sources are loaded from the binary.
+                    asset = "assets/gamedata/shaders/" + path.as_posix()
+                    if asset not in written:
+                        archive.write(SHADERS.joinpath(*path.parts), asset)
+                        written.add(asset)
+
         with tempfile.TemporaryDirectory() as directory:
             apk = Path(directory) / "game.apk"
             with ZipFile(apk, "w") as archive:
                 archive.writestr("lib/armeabi-v7a/libmain.so", b"test native library")
-                for variant in variants:
-                    archive.write(SHADERS / variant["output"],
-                                  "assets/gamedata/shaders/" + variant["output"])
+                add_pipeline_assets(archive, include_sources=True, include_dependencies=True)
             self.assertEqual(check_apk(apk, MANIFEST), [])
+
+            with ZipFile(apk, "w") as archive:
+                archive.writestr("lib/armeabi-v7a/libmain.so", b"test native library")
+                add_pipeline_assets(archive, include_sources=False, include_dependencies=False)
+            missing_runtime = check_apk(apk, MANIFEST)
+            self.assertIn("missing runtime shader source: assets/gamedata/shaders/vk/opaque.ps",
+                          missing_runtime)
+            self.assertIn("missing runtime shader dependency: assets/gamedata/shaders/vk/LightingLimits.h",
+                          missing_runtime)
+
             with ZipFile(apk, "w") as archive:
                 archive.writestr("lib/armeabi-v7a/libmain.so", b"test native library")
             self.assertIn("missing assets/gamedata/shaders/vk/level_opaque.vs.spv",

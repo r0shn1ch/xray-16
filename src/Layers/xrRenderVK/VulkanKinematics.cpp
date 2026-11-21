@@ -13,6 +13,14 @@
 
 namespace xray::render::vulkan
 {
+namespace
+{
+u64 low_bone_visibility_mask(size_t bone_count)
+{
+    return bone_count >= 64 ? ~u64(0) : bone_count ? (u64(1) << bone_count) - 1 : 0;
+}
+}
+
 struct VulkanKinematics::Data
 {
     struct MotionContainer : motions_container
@@ -142,16 +150,16 @@ VulkanKinematics::VulkanKinematics(std::shared_ptr<Data> data, IRenderVisual* ow
           parents.reserve(data_->bones.size());
           for (const auto* bone : data_->bones) parents.push_back(bone->GetParentID());
           return parents;
-      }())
+      }()), visible_(low_bone_visibility_mask(data_->bones.size())),
+      extended_visibility_(data_->bones.size() > 64 ? data_->bones.size() - 64 : 0, 1)
 {
     for (auto& instance : instances_) instance.construct();
-    visible_ = instances_.size() == 64 ? ~u64(0) : (u64(1) << instances_.size()) - 1;
 }
 
 VulkanKinematics::VulkanKinematics(const VulkanKinematics& source, IRenderVisual* owner)
     : data_(source.data_), owner_(owner), instances_(source.instances_), offsets_(source.offsets_),
       playback_(source.playback_), partitions_(source.partitions_), root_(source.root_),
-      visible_(source.visible_), dirty_(source.dirty_)
+      visible_(source.visible_), extended_visibility_(source.extended_visibility_), dirty_(source.dirty_)
 {
     // Callbacks commonly carry a pointer into the old model instance. Copies
     // start without it and may install their own callback after creation.
@@ -170,7 +178,8 @@ VulkanKinematics::VulkanKinematics(const VulkanKinematics& source, IRenderVisual
 std::unique_ptr<VulkanKinematics> VulkanKinematics::create(const SkeletonBones& source,
     IRenderVisual* owner, std::string& error)
 {
-    if (!owner || source.bones.empty() || source.bones.size() > 64 || source.root >= source.bones.size())
+    if (!owner || source.bones.empty() || source.bones.size() > MaxVulkanSkeletonBones ||
+        source.root >= source.bones.size())
     {
         error = "Vulkan skeleton needs a visual and a valid bone table";
         return nullptr;
@@ -270,7 +279,8 @@ bool VulkanKinematics::attach_geometry(const ModelGeometry& geometry, std::strin
             continue;
         for (size_t face = 0; face < mesh.indices.size() / 3; ++face)
         {
-            u64 mask = 0;
+            u16 face_bones[12]{};
+            size_t face_bone_count = 0;
             for (size_t corner = 0; corner < 3; ++corner)
             {
                 if (mesh.indices[face * 3 + corner] >= mesh.vertices.size())
@@ -292,16 +302,19 @@ bool VulkanKinematics::attach_geometry(const ModelGeometry& geometry, std::strin
                                 bone->child_faces.clear();
                             return false;
                         }
-                        mask |= u64(1) << vertex.bones[link];
+                        const u16 bone_id = vertex.bones[link];
+                        if (std::find(face_bones, face_bones + face_bone_count, bone_id) ==
+                            face_bones + face_bone_count)
+                            face_bones[face_bone_count++] = bone_id;
                     }
             }
-            for (size_t bone = 0; bone < data_->bones.size(); ++bone)
-                if (mask & (u64(1) << bone))
-                {
-                    data_->child_faces[bone][child].push_back(static_cast<uint32_t>(face));
-                    if (face <= UINT16_MAX)
-                        data_->bones[bone]->child_faces[child].push_back(static_cast<u16>(face));
-                }
+            for (size_t i = 0; i < face_bone_count; ++i)
+            {
+                const size_t bone = face_bones[i];
+                data_->child_faces[bone][child].push_back(static_cast<uint32_t>(face));
+                if (face <= UINT16_MAX)
+                    data_->bones[bone]->child_faces[child].push_back(static_cast<u16>(face));
+            }
         }
     }
     data_->meshes = std::move(meshes);
@@ -319,7 +332,8 @@ void VulkanKinematics::reset_instance_state()
     last_motion_frame_ = UINT32_MAX;
     last_bones_frame_ = UINT32_MAX;
     root_ = data_->root;
-    visible_ = instances_.size() == 64 ? ~u64(0) : (u64(1) << instances_.size()) - 1;
+    visible_ = low_bone_visibility_mask(instances_.size());
+    std::fill(extended_visibility_.begin(), extended_visibility_.end(), uint8_t(1));
     update_ = nullptr;
     update_param_ = nullptr;
     // Pooled NPC/HUD instances must never call listeners owned by the
@@ -418,6 +432,42 @@ void VulkanKinematics::Bone_GetAnimPos(Fmatrix& pos, u16 id, u8, bool ignore_cal
         return instance.mTransform;
     };
     pos = bone_pose(id);
+}
+
+bool VulkanKinematics::export_collision_triangles(std::vector<std::vector<GpuParticleCollisionTriangle>>& result,
+    std::string& error)
+{
+    CalculateBones();
+    std::vector<std::vector<GpuParticleCollisionTriangle>> exported(data_->bones.size());
+    std::vector<float> pose(instances_.size() * 16);
+    for (size_t bone = 0; bone < instances_.size(); ++bone)
+        std::memcpy(pose.data() + bone * 16, &instances_[bone].mRenderTransform, sizeof(Fmatrix));
+    for (size_t child = 0; child < data_->meshes.size(); ++child)
+    {
+        const auto& mesh = data_->meshes[child];
+        if (mesh.type != 4 && mesh.type != 5) continue;
+        std::vector<LevelVertex> vertices;
+        if (!skin_model_mesh(mesh, pose.data(), instances_.size(), vertices, error)) return false;
+        for (size_t bone = 0; bone < data_->bones.size(); ++bone)
+        {
+            if (!LL_GetBoneVisible(static_cast<u16>(bone))) continue;
+            for (uint32_t face : data_->child_faces[bone][child])
+            {
+                if (uint64_t(face) * 3 + 2 >= mesh.indices.size())
+                { error = "invalid GPU particle dynamic collision face"; return false; }
+                GpuParticleCollisionTriangle triangle{};
+                float* points[]{triangle.a, triangle.b, triangle.c};
+                for (size_t corner = 0; corner < 3; ++corner)
+                {
+                    const auto index = mesh.indices[size_t(face) * 3 + corner];
+                    if (index >= vertices.size()) { error = "invalid GPU particle dynamic collision vertex"; return false; }
+                    std::copy_n(vertices[index].position, 3, points[corner]);
+                }
+                exported[bone].push_back(triangle);
+            }
+        }
+    }
+    result = std::move(exported); error.clear(); return true;
 }
 
 bool VulkanKinematics::PickBone(const Fmatrix& parent, pick_result& result, float range, const Fvector& start, const Fvector& direction, u16 id)
@@ -547,6 +597,8 @@ u16 VulkanKinematics::LL_VisibleBoneCount()
 {
     u16 count = 0;
     for (u64 bits = visible_; bits; bits &= bits - 1) ++count;
+    count += static_cast<u16>(std::count_if(extended_visibility_.begin(), extended_visibility_.end(),
+        [](uint8_t visible) { return visible != 0; }));
     return count;
 }
 Fmatrix& VulkanKinematics::LL_GetTransform(u16 id) { return LL_GetBoneInstance(id).mTransform; }
@@ -594,14 +646,30 @@ void VulkanKinematics::LL_SetBoneRoot(u16 id)
 BOOL VulkanKinematics::LL_GetBoneVisible(u16 id)
 {
     R_ASSERT2(id < instances_.size(), "invalid Vulkan bone visibility ID");
-    return (visible_ & (u64(1) << id)) != 0;
+    return id < 64 ? (visible_ & (u64(1) << id)) != 0 : extended_visibility_[id - 64] != 0;
+}
+
+u64 VulkanKinematics::LL_GetBonesVisibleSignature()
+{
+    u64 signature = visible_;
+    for (size_t i = 0; i < extended_visibility_.size(); ++i)
+    {
+        signature ^= (u64(i + 64) << 1) | (extended_visibility_[i] ? 1u : 0u);
+        signature *= 1099511628211ull;
+    }
+    return signature;
 }
 
 void VulkanKinematics::set_visible(u16 id, BOOL visible, BOOL recursive)
 {
-    const u64 flag = u64(1) << id;
-    if (visible) visible_ |= flag;
-    else visible_ &= ~flag;
+    if (id < 64)
+    {
+        const u64 flag = u64(1) << id;
+        if (visible) visible_ |= flag;
+        else visible_ &= ~flag;
+    }
+    else
+        extended_visibility_[id - 64] = visible ? 1 : 0;
     if (recursive)
         for (auto* child : data_->bones[id]->children)
             set_visible(child->GetSelfID(), visible, TRUE);
@@ -616,7 +684,13 @@ void VulkanKinematics::LL_SetBoneVisible(u16 id, BOOL visible, BOOL recursive)
 
 void VulkanKinematics::LL_SetBonesVisible(u64 mask)
 {
-    visible_ = mask & (instances_.size() == 64 ? ~u64(0) : (u64(1) << instances_.size()) - 1);
+    visible_ = mask & low_bone_visibility_mask(std::min<size_t>(instances_.size(), 64));
+    // The legacy bulk API carries only 64 bits. Preserve upper-bone visibility
+    // for partial masks, while all-ones and zero retain their usual reset uses.
+    if (mask == ~u64(0))
+        std::fill(extended_visibility_.begin(), extended_visibility_.end(), uint8_t(1));
+    else if (!mask)
+        std::fill(extended_visibility_.begin(), extended_visibility_.end(), uint8_t(0));
     dirty_ = true;
 }
 

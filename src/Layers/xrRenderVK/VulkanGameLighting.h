@@ -31,23 +31,14 @@ class VulkanLight final : public IRender_Light
     }
     void set_volumetric(bool value) override
     {
-        volumetric_ = value;
+        state_.volumetric = value;
     }
-    void set_volumetric_quality(float value) override
-    {
-        volumetric_quality_ = value;
-    }
-    void set_volumetric_intensity(float value) override
-    {
-        volumetric_intensity_ = value;
-    }
-    void set_volumetric_distance(float value) override
-    {
-        volumetric_distance_ = value;
-    }
+    void set_volumetric_quality(float value) override;
+    void set_volumetric_intensity(float value) override;
+    void set_volumetric_distance(float value) override;
     void set_indirect(bool value) override
     {
-        indirect_ = value;
+        state_.indirect = value;
     }
     void set_position(const Fvector &value) override;
     void set_rotation(const Fvector &direction, const Fvector &right) override;
@@ -81,11 +72,6 @@ class VulkanLight final : public IRender_Light
     VulkanLightSnapshot state_;
     std::array<float, 3> right_{1.f, 0.f, 0.f};
     float virtual_size_{0.05f};
-    float volumetric_quality_{1.f};
-    float volumetric_intensity_{1.f};
-    float volumetric_distance_{1.f};
-    bool volumetric_{};
-    bool indirect_{};
     bool hud_mode_{};
 };
 

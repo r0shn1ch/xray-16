@@ -6,6 +6,7 @@
 #include "xrEngine/device.h"
 #include "FogParameters.h"
 
+#include <array>
 #include <cmath>
 #include <cstring>
 
@@ -189,10 +190,15 @@ void VulkanEnvironmentRender::RenderSky(CEnvironment& env)
         std::string error;
         // Some weather packs omit the separate environment cube. The sky
         // cube has the same Vulkan image type and remains a valid fallback.
+        const VkImageView weather_views[]{sky_a_, sky_b_, clouds_a_, clouds_b_,
+            environment_a_ ? environment_a_ : sky_a_, environment_b_ ? environment_b_ : sky_b_};
+        std::array<ShaderImageShape, 6> weather_shapes{};
+        for (size_t index = 0; index < weather_shapes.size(); ++index)
+            device_.textures().image_shape(weather_views[index], weather_shapes[index]);
         if (!device_.deferred().weather_set(sky_a_, sky_b_, clouds_a_, clouds_b_,
                 environment_a_ ? environment_a_ : sky_a_,
                 environment_b_ ? environment_b_ : sky_b_,
-                device_.textures().sampler(), weather_set_, error))
+                device_.textures().sampler(), weather_set_, weather_shapes, error))
         {
             // Some weather presets omit textures. Retain the ordinary deferred
             // lighting path and report the asset error once per preset.

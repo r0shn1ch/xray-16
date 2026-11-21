@@ -1,0 +1,7 @@
+XRAY_VULKAN_SHADER_METADATA_V1
+source=vk/skinned.vs
+stage=vs
+entry=main
+defines=SKIN_WEIGHTS=3
+source-fingerprint=0f373ea3ff8726aa
+spirv-fingerprint=bb5f8076251b0b99

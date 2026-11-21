@@ -131,7 +131,10 @@ bool probe_vulkan_loader(std::string& error, const VulkanLoaderDispatch& dispatc
             if (get_extensions(devices[i], nullptr, &extension_count, extensions.data()) != VK_SUCCESS)
                 continue;
             const bool graphics = std::any_of(queues.begin(), queues.begin() + queue_count,
-                [](const auto& queue) { return queue.queueCount && (queue.queueFlags & VK_QUEUE_GRAPHICS_BIT); });
+                [](const auto& queue) {
+                    const VkQueueFlags required = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT;
+                    return queue.queueCount && (queue.queueFlags & required) == required;
+                });
             const bool swapchain = std::any_of(extensions.begin(), extensions.begin() + extension_count,
                 [](const auto& extension) { return std::strcmp(extension.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0; });
             if (graphics && swapchain)
@@ -146,7 +149,7 @@ bool probe_vulkan_loader(std::string& error, const VulkanLoaderDispatch& dispatc
     if (!suitable)
     {
         error = fetch_result != VK_SUCCESS ? "could not enumerate Vulkan physical devices" :
-            "no Vulkan device with graphics queue, VK_KHR_swapchain and gameplay formats/limits is available";
+            "no Vulkan device with graphics and compute queue, VK_KHR_swapchain and gameplay formats/limits is available";
         return false;
     }
 

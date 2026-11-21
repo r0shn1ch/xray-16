@@ -66,6 +66,104 @@ std::string lower(std::string value)
     return value;
 }
 
+bool shader_script_is_emissive(const std::string& shader)
+{
+    // Unit tests and tools can load a shader library before xrCore initializes
+    // the virtual file system. Those contexts have no shader scripts to query.
+    if (!xr_FS) return false;
+    std::string filename = shader;
+    if (filename.size() < 2 || lower(filename.substr(filename.size() - 2)) != ".s")
+        filename += ".s";
+    IReader* reader = FS.r_open("$game_shaders$", filename.c_str());
+    if (!reader) return false;
+    std::string source(static_cast<const char*>(reader->pointer()), reader->length());
+    FS.r_close(reader);
+    source = lower(std::move(source));
+
+    // Ignore Lua comments so examples or disabled calls do not mark a shader
+    // as emissive. The shader scripts use both line and long-bracket comments.
+    std::string active;
+    active.reserve(source.size());
+    for (size_t i = 0; i < source.size();)
+    {
+        if (source[i] == '-' && i + 1 < source.size() && source[i + 1] == '-')
+        {
+            i += 2;
+            if (i + 1 < source.size() && source[i] == '[' && source[i + 1] == '[')
+            {
+                i += 2;
+                const size_t end = source.find("]]", i);
+                const size_t comment_end = end == std::string::npos ? source.size() : end + 2;
+                while (i < comment_end)
+                {
+                    if (source[i] == '\n') active.push_back('\n');
+                    ++i;
+                }
+            }
+            else
+                while (i < source.size() && source[i] != '\n') ++i;
+            continue;
+        }
+        active.push_back(source[i++]);
+    }
+
+    // The legacy renderer uses the normal technique's ShaderElement flag for
+    // the base material draw. A special-lighting technique alone must not
+    // turn the whole material into an emitter in the Vulkan path.
+    std::string normal_technique;
+    bool in_normal = false;
+    for (size_t line_start = 0; line_start < active.size();)
+    {
+        const size_t line_end = active.find('\n', line_start);
+        const size_t length = (line_end == std::string::npos ? active.size() : line_end) - line_start;
+        const std::string line = active.substr(line_start, length);
+        const size_t first = line.find_first_not_of(" \t\r");
+        if (first != std::string::npos && line.compare(first, 9, "function ") == 0)
+        {
+            size_t name = first + 9;
+            while (name < line.size() && std::isspace(static_cast<unsigned char>(line[name]))) ++name;
+            const bool normal_function = line.compare(name, 6, "normal") == 0 &&
+                (name + 6 == line.size() || std::isspace(static_cast<unsigned char>(line[name + 6])) ||
+                 line[name + 6] == '(');
+            in_normal = normal_function;
+        }
+        else if (in_normal)
+        {
+            normal_technique.append(line);
+            normal_technique.push_back('\n');
+        }
+        if (line_end == std::string::npos) break;
+        line_start = line_end + 1;
+    }
+    active = std::move(normal_technique);
+
+    size_t offset = 0;
+    while ((offset = active.find("emissive", offset)) != std::string::npos)
+    {
+        const size_t begin = offset;
+        const size_t end = offset + 8;
+        const auto identifier = [](unsigned char c) { return std::isalnum(c) || c == '_'; };
+        if ((begin && identifier(static_cast<unsigned char>(active[begin - 1]))) ||
+            (end < active.size() && identifier(static_cast<unsigned char>(active[end]))))
+        { offset = end; continue; }
+        size_t before = begin;
+        while (before && std::isspace(static_cast<unsigned char>(active[before - 1]))) --before;
+        if (!before || active[before - 1] != ':') { offset = end; continue; }
+        size_t value = end;
+        while (value < active.size() && std::isspace(static_cast<unsigned char>(active[value]))) ++value;
+        if (value == active.size() || active[value++] != '(') { offset = end; continue; }
+        while (value < active.size() && std::isspace(static_cast<unsigned char>(active[value]))) ++value;
+        if (active.compare(value, 4, "true") != 0) { offset = end; continue; }
+        value += 4;
+        if (value < active.size() && identifier(static_cast<unsigned char>(active[value])))
+        { offset = end; continue; }
+        while (value < active.size() && std::isspace(static_cast<unsigned char>(active[value]))) ++value;
+        if (value < active.size() && active[value] == ')') return true;
+        offset = end;
+    }
+    return false;
+}
+
 bool parse_record(const uint8_t* bytes, size_t size, std::string& name,
     SurfaceMode& mode, bool& supported, std::string& cls_name,
     uint16_t& version, int& alpha_ref, int& blending, uint32_t& screen_flags,
@@ -297,6 +395,7 @@ bool ShaderMaterialLibrary::load(IReader& file, std::string& error)
                 entry.version = version; entry.mode = mode; entry.pipeline_supported = supported;
                 entry.alpha_ref = alpha_ref; entry.blending = blending;
                 entry.screen_flags = screen_flags; entry.terrain = terrain;
+                entry.emissive = shader_script_is_emissive(name);
                 entry.properties = std::move(properties);
                 return entries_.emplace(name, std::move(entry)).second;
             }())
@@ -568,10 +667,11 @@ bool ShaderMaterialLibrary::load(IReader& file, std::string& error)
                     }
                 }
             }
-            if (name == "Name" && scope == "Base Texture" && cls != "S_SET   " &&
-                property.type == 3 && property.data[0] &&
-                std::strcmp(reinterpret_cast<const char*>(property.data.data()), "$base0") != 0)
-                reject("base texture selector is not implemented");
+            // The saved Base Texture/Name selector belongs to the legacy
+            // fixed-function texture stage. Programmable blender paths bind
+            // the first material texture directly (C.L_textures[0]); Vulkan
+            // does the same, so preserve and validate this field without
+            // rejecting valid non-default selectors.
         }
         Msg("[renderer-vulkan] material.definition file=shaders.xr id=%u name='%s' class='%s' version=%u mode=%s priority=%u alpha-ref=%d blending=%d flags=0x%x role=%s terrain=%d detail='%s' environment='%s' transform='%s' constant='%s' tessellation=%u passes=%u properties=%zu supported=%d reason='%s'",
             id, name.c_str(), cls.c_str(), version,
@@ -653,7 +753,7 @@ bool ShaderMaterialLibrary::resolve(const std::string& shader, SurfaceMode& mode
     // UI has no depth attachment, but wrap addressing is a valid sampler state.
     const uint32_t supported_flags = screen_pipeline ? 1u :
         1u | (scene_depth_test ? 2u : 0u) |
-        (level_pipeline && !model_pipeline && material.blending == 1 ? 16u : 0u) |
+        (level_pipeline && material.blending == 1 ? 16u : 0u) |
         ((water_pipeline || (level_pipeline && material.role == MaterialDefinition::Role::Water)) ? 12u : 0u) |
         (world_set || (particle_screen_set && material.blending == 0) ? 4u : 0u);
     const uint32_t unsupported_flags = material.screen_flags & ~supported_flags;

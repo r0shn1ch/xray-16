@@ -16,7 +16,9 @@ def generate(glslc):
     with tempfile.TemporaryDirectory() as d:
         for name,stage in [('Cull','comp'),('Shade','frag')]:
             output=Path(d)/'shader.spv'
-            subprocess.run([glslc,'--target-env=vulkan1.0','-o',str(output),str(ROOT/'src/Layers/xrRenderVK/smoke'/('light_grid.'+stage))],check=True)
+            glslang = 'glslang' in Path(glslc).name.lower()
+            options = ['-V', '--target-env', 'vulkan1.0'] if glslang else ['--target-env=vulkan1.0']
+            subprocess.run([glslc,*options,'-o',str(output),str(ROOT/'src/Layers/xrRenderVK/smoke'/('light_grid.'+stage))],check=True)
             data=output.read_bytes()
             if len(data) < 20 or len(data) % 4 or data[:4] != b'\x03\x02\x23\x07':
                 raise ValueError('invalid light grid SPIR-V')

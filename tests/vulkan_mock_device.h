@@ -3,6 +3,8 @@
 #include "src/Layers/xrRenderVK/ScenePass.h"
 #include "src/Layers/xrRenderVK/TextureUpload.h"
 #include <cassert>
+#include <array>
+#include <cstring>
 #include <type_traits>
 #include <unordered_map>
 using namespace xray::render::vulkan;
@@ -18,10 +20,13 @@ template <class T> T handle(uintptr_t n)
 uintptr_t next_handle = 100;
 uint32_t draws{}, total_indices{}, buffers_destroyed{}, images_destroyed{}, submits{}, descriptor_frees{};
 int32_t last_vertex_base{};
+std::array<float, 28> last_texture_rows{};
 std::unordered_map<VkBuffer, VkDeviceSize> buffers;
+std::unordered_map<VkBuffer, VkBufferUsageFlags> buffer_usages;
 std::unordered_map<VkDeviceMemory, std::vector<uint8_t>> allocations;
 std::vector<VkDescriptorSet> bound_textures;
 std::unordered_map<VkImage, VkDeviceSize> images;
+std::vector<VkFormat> created_image_formats;
 std::unordered_map<VkDescriptorSet, unsigned> refs;
 std::unordered_map<VkSampler, VkSamplerAddressMode> sampler_address;
 std::unordered_map<VkDescriptorSet, VkSampler> sampled_by;
@@ -32,11 +37,13 @@ VkResult VKAPI_PTR create_buffer(VkDevice, const VkBufferCreateInfo *info, const
 {
     *out = handle<VkBuffer>(next_handle++);
     buffers[*out] = info->size;
+    buffer_usages[*out] = info->usage;
     return VK_SUCCESS;
 }
 void VKAPI_PTR destroy_buffer(VkDevice, VkBuffer b, const VkAllocationCallbacks *)
 {
     assert(buffers.erase(b) == 1);
+    assert(buffer_usages.erase(b) == 1);
     ++buffers_destroyed;
 }
 void VKAPI_PTR requirements(VkDevice, VkBuffer b, VkMemoryRequirements *out)
@@ -103,9 +110,11 @@ void VKAPI_PTR bind_indices(VkCommandBuffer, VkBuffer b, VkDeviceSize, VkIndexTy
 {
     assert(buffers.count(b) && type == VK_INDEX_TYPE_UINT32);
 }
-void VKAPI_PTR push(VkCommandBuffer, VkPipelineLayout, VkShaderStageFlags, uint32_t, uint32_t size, const void *data)
+void VKAPI_PTR push(VkCommandBuffer, VkPipelineLayout, VkShaderStageFlags, uint32_t offset, uint32_t size, const void *data)
 {
     assert(size && data);
+    if (offset == 128 && size == sizeof(last_texture_rows))
+        std::memcpy(last_texture_rows.data(), data, size);
 }
 void VKAPI_PTR draw(VkCommandBuffer, uint32_t count, uint32_t instances, uint32_t, int32_t vertex_base, uint32_t)
 {
@@ -159,6 +168,7 @@ VkResult VKAPI_PTR create_image(VkDevice, const VkImageCreateInfo *info, const V
 {
     *out = handle<VkImage>(next_handle++);
     images[*out] = info->extent.width * info->extent.height * 4;
+    created_image_formats.push_back(info->format);
     return VK_SUCCESS;
 }
 void VKAPI_PTR destroy_image(VkDevice, VkImage image, const VkAllocationCallbacks *)
@@ -202,6 +212,10 @@ VkResult VKAPI_PTR end(VkCommandBuffer)
 {
     return VK_SUCCESS;
 }
+VkResult VKAPI_PTR reset_command_buffer(VkCommandBuffer, VkCommandBufferResetFlags)
+{
+    return VK_SUCCESS;
+}
 void VKAPI_PTR copy_buffer(VkCommandBuffer, VkBuffer a, VkBuffer b, uint32_t n, const VkBufferCopy *copies)
 {
     assert(buffers.count(a) && buffers.count(b) && n == 1 && copies->size <= buffers.at(b));
@@ -232,6 +246,10 @@ VkResult VKAPI_PTR fence_status(VkDevice, VkFence)
 {
     return VK_SUCCESS;
 }
+VkResult VKAPI_PTR reset_fences(VkDevice, uint32_t, const VkFence *)
+{
+    return VK_SUCCESS;
+}
 VkResult VKAPI_PTR wait(VkDevice, uint32_t, const VkFence *, VkBool32, uint64_t)
 {
     return VK_SUCCESS;
@@ -255,12 +273,32 @@ void VKAPI_PTR destroy_sampler(VkDevice, VkSampler value, const VkAllocationCall
 void VKAPI_PTR draw_plain(VkCommandBuffer, uint32_t, uint32_t, uint32_t, uint32_t)
 {
 }
+void VKAPI_PTR draw_indexed_indirect(VkCommandBuffer, VkBuffer, VkDeviceSize, uint32_t, uint32_t)
+{
+}
 ScenePassDispatch scene_dispatch()
 {
-    ScenePassDispatch result{
-        layout,         destroy_layout, pipeline,          destroy_pipeline,          bind_pipeline, viewport,     scissor,    bind_vertices,   bind_indices,
-        push,           draw,           descriptor_layout, destroy_descriptor_layout, pool,          destroy_pool, descriptor, free_descriptor, update,
-        bind_descriptor};
+    ScenePassDispatch result{};
+    result.create_pipeline_layout = layout;
+    result.destroy_pipeline_layout = destroy_layout;
+    result.create_graphics_pipelines = pipeline;
+    result.destroy_pipeline = destroy_pipeline;
+    result.cmd_bind_pipeline = bind_pipeline;
+    result.cmd_set_viewport = viewport;
+    result.cmd_set_scissor = scissor;
+    result.cmd_bind_vertex_buffers = bind_vertices;
+    result.cmd_bind_index_buffer = bind_indices;
+    result.cmd_push_constants = push;
+    result.cmd_draw_indexed = draw;
+    result.cmd_draw_indexed_indirect = draw_indexed_indirect;
+    result.create_descriptor_set_layout = descriptor_layout;
+    result.destroy_descriptor_set_layout = destroy_descriptor_layout;
+    result.create_descriptor_pool = pool;
+    result.destroy_descriptor_pool = destroy_pool;
+    result.allocate_descriptor_sets = descriptor;
+    result.free_descriptor_sets = free_descriptor;
+    result.update_descriptor_sets = update;
+    result.cmd_bind_descriptor_sets = bind_descriptor;
     result.cmd_draw = draw_plain;
     return result;
 }
@@ -274,8 +312,34 @@ BufferUploadDispatch upload_dispatch()
 }
 TextureUploadDispatch texture_dispatch()
 {
-    return {create_buffer, destroy_buffer, requirements,  create_image, destroy_image, image_requirements, allocate, free_memory, bind_memory, bind_image,
-            map,           unmap,          image_view,    destroy_view, commands,      free_commands,      begin,    end,         barrier,     copy_image,
-            submit,        fence,          destroy_fence, fence_status, wait};
+    TextureUploadDispatch result{};
+    result.create_buffer = create_buffer;
+    result.destroy_buffer = destroy_buffer;
+    result.get_buffer_memory_requirements = requirements;
+    result.create_image = create_image;
+    result.destroy_image = destroy_image;
+    result.get_image_memory_requirements = image_requirements;
+    result.allocate_memory = allocate;
+    result.free_memory = free_memory;
+    result.bind_buffer_memory = bind_memory;
+    result.bind_image_memory = bind_image;
+    result.map_memory = map;
+    result.unmap_memory = unmap;
+    result.create_image_view = image_view;
+    result.destroy_image_view = destroy_view;
+    result.allocate_command_buffers = commands;
+    result.free_command_buffers = free_commands;
+    result.reset_command_buffer = reset_command_buffer;
+    result.begin_command_buffer = begin;
+    result.end_command_buffer = end;
+    result.cmd_pipeline_barrier = barrier;
+    result.cmd_copy_buffer_to_image = copy_image;
+    result.queue_submit = submit;
+    result.create_fence = fence;
+    result.destroy_fence = destroy_fence;
+    result.get_fence_status = fence_status;
+    result.reset_fences = reset_fences;
+    result.wait_for_fences = wait;
+    return result;
 }
 } // namespace vk_mock

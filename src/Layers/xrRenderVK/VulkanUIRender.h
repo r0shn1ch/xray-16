@@ -5,6 +5,7 @@
 #include "ScenePass.h"
 
 #include <array>
+#include <memory>
 #include <vector>
 #include <functional>
 struct ImDrawData;
@@ -12,6 +13,7 @@ struct ImDrawData;
 namespace xray::render::vulkan
 {
 class VulkanUIShader;
+class VulkanVideoTexture;
 struct UiDescriptorLeases
 {
     std::function<bool(VkDescriptorSet)> retain;
@@ -53,6 +55,9 @@ class VulkanUIRender final : public IUIRender
     void SetShader(IUIShader &shader) override;
     void SetTextureDescriptor(VkDescriptorSet descriptor);
     void SetWorldGlow(VkDescriptorSet descriptor);
+    // Temporarily use a HUD projection for queued world-space UI such as
+    // detector screens. The transform is consumed when FlushPrimitive runs.
+    void set_world_view_projection(const Fmatrix* projection);
     void SetAlphaRef(int aref) override;
     void SetScissor(Irect *rect = nullptr) override;
     void PushPoint(float x, float y, float z, u32 color, float u, float v) override;
@@ -67,6 +72,7 @@ class VulkanUIRender final : public IUIRender
     {
         uint32_t first_index{}, count{};
         VkDescriptorSet texture{};
+        std::shared_ptr<VulkanVideoTexture> video;
         VkRect2D scissor{};
         bool has_scissor{};
         float alpha_ref{};
@@ -109,5 +115,7 @@ class VulkanUIRender final : public IUIRender
     int material_alpha_ref_{};
     CullMode cull_{cmNONE};
     Fmatrix world_{};
+    Fmatrix world_view_projection_{};
+    bool has_world_view_projection_{};
 };
 } // namespace xray::render::vulkan

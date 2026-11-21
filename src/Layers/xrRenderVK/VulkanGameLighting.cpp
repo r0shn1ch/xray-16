@@ -26,6 +26,22 @@ VulkanLight::VulkanLight()
 {
     static std::atomic<uint64_t> next{1};
     state_.id = next.fetch_add(1);
+    state_.indirect = true;
+}
+
+void VulkanLight::set_volumetric_quality(float value)
+{
+    state_.volumetric_quality = std::isfinite(value) ? std::max(value, 0.f) : 0.f;
+}
+
+void VulkanLight::set_volumetric_intensity(float value)
+{
+    state_.volumetric_intensity = std::isfinite(value) ? std::max(value, 0.f) : 0.f;
+}
+
+void VulkanLight::set_volumetric_distance(float value)
+{
+    state_.volumetric_distance = std::isfinite(value) ? std::max(value, 0.f) : 0.f;
 }
 
 void VulkanLight::set_type(LT type)

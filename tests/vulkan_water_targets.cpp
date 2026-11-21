@@ -2,11 +2,13 @@
 #include "vulkan_mock_device.h"
 
 #include <cassert>
+#include <unordered_map>
 
 using namespace xray::render::vulkan;
 namespace
 {
 uint32_t copies{}, barriers{};
+std::unordered_map<VkImage, VkImageLayout> image_layouts;
 void VKAPI_PTR buffer_requirements(VkDevice device, VkBuffer buffer,
     VkMemoryRequirements* out)
 {
@@ -35,14 +37,13 @@ void VKAPI_PTR barrier(VkCommandBuffer, VkPipelineStageFlags, VkPipelineStageFla
     VkDependencyFlags, uint32_t, const VkMemoryBarrier*, uint32_t,
     const VkBufferMemoryBarrier*, uint32_t count, const VkImageMemoryBarrier* images)
 {
-    assert((count == 1 || count == 2) && images[0].image);
-    if (count == 2) assert(images[1].image);
-    if (barriers % 2 == 0)
-        assert(images[0].oldLayout == VK_IMAGE_LAYOUT_UNDEFINED &&
-            images[0].newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    else
-        assert(images[0].oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
-            images[0].newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    assert(count == 1 && vk_mock::images.count(images[0].image));
+    const auto previous = image_layouts.find(images[0].image);
+    const VkImageLayout old_layout = previous == image_layouts.end() ? VK_IMAGE_LAYOUT_UNDEFINED : previous->second;
+    const VkImageLayout new_layout = old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ?
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    assert(images[0].oldLayout == old_layout && images[0].newLayout == new_layout);
+    image_layouts[images[0].image] = new_layout;
     ++barriers;
 }
 }

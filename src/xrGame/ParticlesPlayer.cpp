@@ -58,8 +58,6 @@ void CParticlesPlayer::SBoneInfo::StopParticles(u16 sender_id, bool bDestroy)
 
 CParticlesPlayer::CParticlesPlayer()
 {
-    bone_mask = u64(1) << u64(0);
-
     m_bActiveBones = false;
 
     m_Bones.push_back(SBoneInfo(0, Fvector().set(0, 0, 0)));
@@ -80,7 +78,6 @@ void CParticlesPlayer::LoadParticles(IKinematics* K)
     CInifile* ini = K->LL_UserData();
     if (ini && ini->section_exist("particle_bones"))
     {
-        bone_mask = 0;
         CInifile::Sect& data = ini->r_section("particle_bones");
         for (const auto& item : data.Data)
         {
@@ -89,12 +86,10 @@ void CParticlesPlayer::LoadParticles(IKinematics* K)
             Fvector offs;
             sscanf(item.second.c_str(), "%f,%f,%f", &offs.x, &offs.y, &offs.z);
             m_Bones.push_back(SBoneInfo(index, offs));
-            bone_mask |= u64(1) << u64(index);
         }
     }
     if (m_Bones.empty())
     {
-        bone_mask = u64(1) << u64(0);
         m_Bones.push_back(SBoneInfo(K->LL_GetBoneRoot(), Fvector().set(0, 0, 0)));
     }
 }
@@ -118,7 +113,7 @@ void CParticlesPlayer::net_DestroyParticles()
 CParticlesPlayer::SBoneInfo* CParticlesPlayer::get_nearest_bone_info(IKinematics* K, u16 bone_index)
 {
     u16 play_bone = bone_index;
-    while ((BI_NONE != play_bone) && !(bone_mask & (u64(1) << u64(play_bone))))
+    while ((BI_NONE != play_bone) && !get_bone_info(play_bone))
     {
         play_bone = K->LL_GetData(play_bone).GetParentID();
     }
@@ -323,7 +318,7 @@ u16 CParticlesPlayer::GetNearestBone(IKinematics* K, u16 bone_id)
 {
     u16 play_bone = bone_id;
 
-    while ((BI_NONE != play_bone) && !(bone_mask & (u64(1) << u64(play_bone))))
+    while ((BI_NONE != play_bone) && !get_bone_info(play_bone))
     {
         play_bone = K->LL_GetData(play_bone).GetParentID();
     }

@@ -21,5 +21,6 @@ bool decode_slide_windows(const uint8_t* data, size_t size,
     std::vector<SlideWindow>& result, std::string& error);
 SlideWindow select_slide_window(const std::vector<SlideWindow>& windows, float lod,
     size_t full_index_count);
+size_t select_slide_window_index(const std::vector<SlideWindow>& windows, float lod);
 float lod_for_distance(float radius, float distance_squared);
 }

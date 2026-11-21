@@ -385,6 +385,13 @@ void CMainMenu::IR_OnMouseMove(int x, int y)
     CDialogHolder::IR_UIOnMouseMove(x, y);
 };
 
+void CMainMenu::IR_OnMouseMoveTo(float x, float y)
+{
+    if (!IsActive())
+        return;
+    CDialogHolder::IR_UIOnMouseMoveTo(x, y);
+}
+
 bool IWantMyMouseBackScreamed = false;
 void CMainMenu::IR_OnKeyboardPress(int dik)
 {
@@ -571,17 +578,23 @@ void CMainMenu::OnFrame()
     // screenshot stuff
     if (m_Flags.test(flGameSaveScreenshot) && Device.dwFrame > m_screenshotFrame)
     {
-        m_Flags.set(flGameSaveScreenshot, FALSE);
-        GEnv.Render->Screenshot(IRender::SM_FOR_GAMESAVE, m_screenshot_name);
-
-        if (g_pGameLevel && m_Flags.test(flActive))
+        if (!m_gameSaveScreenshotRequested)
         {
-            Device.seqFrame.Remove(g_pGameLevel);
-            Device.seqRender.Remove(g_pGameLevel);
-        };
-
-        if (m_Flags.test(flRestoreConsole))
-            Console->Show();
+            GEnv.Render->Screenshot(IRender::SM_FOR_GAMESAVE, m_screenshot_name);
+            m_gameSaveScreenshotRequested = true;
+        }
+        else if (!GEnv.Render->ScreenshotPending())
+        {
+            m_Flags.set(flGameSaveScreenshot, FALSE);
+            m_gameSaveScreenshotRequested = false;
+            if (g_pGameLevel && m_Flags.test(flActive))
+            {
+                Device.seqFrame.Remove(g_pGameLevel);
+                Device.seqRender.Remove(g_pGameLevel);
+            }
+            if (m_Flags.test(flRestoreConsole))
+                Console->Show();
+        }
     }
 
     if (IsActive() || m_sPDProgress.IsInProgress)
@@ -619,6 +632,7 @@ void CMainMenu::Screenshot(IRender::ScreenshotMode mode, LPCSTR name)
     else
     {
         m_Flags.set(flGameSaveScreenshot, TRUE);
+        m_gameSaveScreenshotRequested = false;
         xr_strcpy(m_screenshot_name, name);
         if (g_pGameLevel && m_Flags.test(flActive))
         {

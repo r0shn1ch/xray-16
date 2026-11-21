@@ -5,7 +5,9 @@
 #include "Cursor/UICursor.h"
 #include "xrEngine/editor_helper.h"
 
-CUIWindow::CUIWindow(pcstr window_name) : m_windowName(window_name)
+CUIWindow::CUIWindow(pcstr window_name) : m_bShowMe(false), m_bAutoDelete(false),
+    m_bIsEnabled(true), m_bCursorOverWindow(false), m_bCustomDraw(false),
+    m_windowName(window_name)
 {
     Show(true);
     Enable(true);

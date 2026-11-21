@@ -143,10 +143,26 @@ int main()
     using namespace xray::render::vulkan;
     assert(scene_shaders::SceneVertex[0] == 0x07230203);
     assert(scene_shaders::UiFragment[0] == 0x07230203);
-    ScenePassDispatch dispatch{create_layout, destroy_layout, create_pipeline, destroy_pipeline,
-        bind_pipeline, viewport, scissor, bind_vertices, bind_indices, push, draw,
-        create_descriptor_layout, destroy_descriptor_layout, create_pool, destroy_pool,
-        allocate_sets, free_sets, update_sets, bind_sets};
+    ScenePassDispatch dispatch{};
+    dispatch.create_pipeline_layout = create_layout;
+    dispatch.destroy_pipeline_layout = destroy_layout;
+    dispatch.create_graphics_pipelines = create_pipeline;
+    dispatch.destroy_pipeline = destroy_pipeline;
+    dispatch.cmd_bind_pipeline = bind_pipeline;
+    dispatch.cmd_set_viewport = viewport;
+    dispatch.cmd_set_scissor = scissor;
+    dispatch.cmd_bind_vertex_buffers = bind_vertices;
+    dispatch.cmd_bind_index_buffer = bind_indices;
+    dispatch.cmd_push_constants = push;
+    dispatch.cmd_draw_indexed = draw;
+    dispatch.create_descriptor_set_layout = create_descriptor_layout;
+    dispatch.destroy_descriptor_set_layout = destroy_descriptor_layout;
+    dispatch.create_descriptor_pool = create_pool;
+    dispatch.destroy_descriptor_pool = destroy_pool;
+    dispatch.allocate_descriptor_sets = allocate_sets;
+    dispatch.free_descriptor_sets = free_sets;
+    dispatch.update_descriptor_sets = update_sets;
+    dispatch.cmd_bind_descriptor_sets = bind_sets;
     ScenePass pass;
     std::string error;
     const auto device = handle<VkDevice>(1);

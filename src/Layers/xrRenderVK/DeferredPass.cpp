@@ -1,11 +1,13 @@
 #include "xrEngine/stdafx.h"
 #include "DeferredPass.h"
+#include "GraphicsShaderStages.h"
 #include "SunShadowTargets.h"
 #include "ShaderMaterialLibrary.h"
 #include "ModelGeometry.h"
 #include "ModelPoseConstants.h"
 #include "GeometryDepth.h"
 #include "DetailInstance.h"
+#include "VulkanSettings.h"
 #include "xrEngine/device.h"
 #if defined(XR_PLATFORM_ANDROID)
 #include "xrEngine/x_ray.h"
@@ -54,7 +56,8 @@ constexpr bool has(PipelineFlag value, PipelineFlag flag)
 
 bool make_pipeline(VkDevice device, VkRenderPass pass, VkPipelineLayout layout, VkShaderModule vertex,
                    VkShaderModule fragment, PipelineFlag options, const ScenePassDispatch &vk, VkPipeline &pipeline,
-                   std::string &error, const char *label)
+                    std::string &error, const char *label,
+                    const DeferredPass::GamePipelineStages &game_stages = {})
 {
     const bool geometry_input = has(options, PipelineFlag::Geometry);
     const bool gbuffer = has(options, PipelineFlag::GBuffer);
@@ -74,14 +77,23 @@ bool make_pipeline(VkDevice device, VkRenderPass pass, VkPipelineLayout layout, 
     const bool hud_set_no_depth_write = has(options, PipelineFlag::HudSetNoDepthWrite);
     const bool cutout = has(options, PipelineFlag::Cutout);
 
-    VkPipelineShaderStageCreateInfo stages[2]{};
-    stages[0].sType = stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    stages[0].module = vertex;
-    stages[0].pName = "main";
-    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = fragment;
-    stages[1].pName = "main";
+    GraphicsShaderStages shader_stages;
+    if (!build_graphics_shader_stages({vertex, game_stages.hull, game_stages.domain,
+            game_stages.geometry, fragment}, shader_stages, error))
+        return false;
+    for (uint32_t index = 0; index < shader_stages.count; ++index)
+    {
+        VkPipelineShaderStageCreateInfo& stage = shader_stages.stages[index];
+        switch (stage.stage)
+        {
+        case VK_SHADER_STAGE_VERTEX_BIT: stage.pSpecializationInfo = game_stages.vertex_specialization; break;
+        case VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT: stage.pSpecializationInfo = game_stages.hull_specialization; break;
+        case VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT: stage.pSpecializationInfo = game_stages.domain_specialization; break;
+        case VK_SHADER_STAGE_GEOMETRY_BIT: stage.pSpecializationInfo = game_stages.geometry_specialization; break;
+        case VK_SHADER_STAGE_FRAGMENT_BIT: stage.pSpecializationInfo = game_stages.fragment_specialization; break;
+        default: break;
+        }
+    }
     const VkVertexInputBindingDescription binding{
         0, static_cast<uint32_t>(skinned ? sizeof(ModelVertex) : sizeof(LevelVertex)), VK_VERTEX_INPUT_RATE_VERTEX};
     const VkVertexInputAttributeDescription attributes[]{
@@ -107,7 +119,8 @@ bool make_pipeline(VkDevice device, VkRenderPass pass, VkPipelineLayout layout, 
         attributes[5],
         attributes[6],
         {7, 0, VK_FORMAT_R8G8B8A8_SNORM, offsetof(LevelVertex, tangent)},
-        {8, 0, VK_FORMAT_R8G8B8A8_SNORM, offsetof(LevelVertex, bitangent)}};
+        {8, 0, VK_FORMAT_R8G8B8A8_SNORM, offsetof(LevelVertex, bitangent)},
+        {11, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(LevelVertex, lightmap_uv)}};
     const bool instanced = has(options, PipelineFlag::Instanced);
     const VkVertexInputBindingDescription instance_bindings[]{
         binding, {1, sizeof(DetailInstance), VK_VERTEX_INPUT_RATE_INSTANCE}};
@@ -119,18 +132,22 @@ bool make_pipeline(VkDevice device, VkRenderPass pass, VkPipelineLayout layout, 
         static_attributes[4],
         static_attributes[5],
         static_attributes[6],
+        static_attributes[7],
         {9, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(DetailInstance, position_scale)},
         {10, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(DetailInstance, rotation)}};
     VkPipelineVertexInputStateCreateInfo inputs{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
     inputs.vertexBindingDescriptionCount = geometry_input ? (instanced ? 2 : 1) : 0;
     inputs.pVertexBindingDescriptions = geometry_input ? (instanced ? instance_bindings : &binding) : nullptr;
-    inputs.vertexAttributeDescriptionCount = geometry_input ? (instanced ? 9 : 7) : 0;
+    inputs.vertexAttributeDescriptionCount = geometry_input ? (instanced ? 10 : skinned ? 7 : 8) : 0;
     inputs.pVertexAttributeDescriptions = geometry_input ? (instanced ? instance_attributes
                                                             : skinned ? skinned_attributes
                                                                       : static_attributes)
                                                          : nullptr;
     VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    assembly.topology = shader_stages.tessellation ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST :
+        VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineTessellationStateCreateInfo tessellation{VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO};
+    tessellation.patchControlPoints = 3;
     VkPipelineViewportStateCreateInfo viewport{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
     viewport.viewportCount = viewport.scissorCount = 1;
     VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
@@ -146,7 +163,7 @@ bool make_pipeline(VkDevice device, VkRenderPass pass, VkPipelineLayout layout, 
     raster.depthBiasConstantFactor = bias.constant;
     raster.depthBiasSlopeFactor = bias.slope;
     VkPipelineMultisampleStateCreateInfo multi{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-    multi.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    multi.rasterizationSamples = shadow ? VK_SAMPLE_COUNT_1_BIT : vk.gbuffer_samples;
     VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     // The present pass has its own cleared depth attachment. HUD geometry
     // draws after world lighting, so depth testing here orders HUD surfaces
@@ -217,10 +234,11 @@ bool make_pipeline(VkDevice device, VkRenderPass pass, VkPipelineLayout layout, 
     dynamic.dynamicStateCount = 2;
     dynamic.pDynamicStates = states;
     VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-    info.stageCount = 2;
-    info.pStages = stages;
+    info.stageCount = shader_stages.count;
+    info.pStages = shader_stages.stages.data();
     info.pVertexInputState = &inputs;
     info.pInputAssemblyState = &assembly;
+    info.pTessellationState = shader_stages.tessellation ? &tessellation : nullptr;
     info.pViewportState = &viewport;
     info.pRasterizationState = &raster;
     info.pMultisampleState = &multi;
@@ -249,8 +267,9 @@ bool make_pipeline(VkDevice device, VkRenderPass pass, VkPipelineLayout layout, 
 
 void viewport_scissor(const FrameRecordingContext &frame, const ScenePassDispatch &vk)
 {
-    const VkViewport viewport{0, 0, float(frame.extent.width), float(frame.extent.height), 0, 1};
-    const VkRect2D scissor{{0, 0}, frame.extent};
+    const VkViewport viewport{float(frame.viewport_offset.x), float(frame.viewport_offset.y),
+        float(frame.extent.width), float(frame.extent.height), 0, 1};
+    const VkRect2D scissor{frame.viewport_offset, frame.extent};
     vk.cmd_set_viewport(frame.command_buffer, 0, 1, &viewport);
     vk.cmd_set_scissor(frame.command_buffer, 0, 1, &scissor);
 }
@@ -286,72 +305,6 @@ DeferredLight make_environment_deferred_light(const DeferredEnvironment &environ
             {1.f, 1.f, 1.f, luminance(environment.hemi_color)}};
 }
 
-bool create_gbuffer_render_pass(VkDevice device, VkFormat albedo_format, VkFormat normal_format,
-                                VkFormat surface_format, VkFormat depth_format, const FrameDispatch &vk,
-                                VkRenderPass &result, std::string &error)
-{
-    result = VK_NULL_HANDLE;
-    if (!device || !vk.create_render_pass || albedo_format == VK_FORMAT_UNDEFINED ||
-        normal_format == VK_FORMAT_UNDEFINED || surface_format == VK_FORMAT_UNDEFINED ||
-        depth_format == VK_FORMAT_UNDEFINED)
-    {
-        error = "G-buffer requires color and depth formats and vkCreateRenderPass";
-        return false;
-    }
-    VkAttachmentDescription attachments[4]{};
-    for (unsigned i = 0; i < 4; ++i)
-    {
-        attachments[i].format = i == 0   ? albedo_format
-                                : i == 1 ? normal_format
-                                : i == 2 ? surface_format
-                                         : depth_format;
-        attachments[i].samples = VK_SAMPLE_COUNT_1_BIT;
-        attachments[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        // Keep depth alongside albedo and normals so later deferred passes can
-        // reconstruct positions and test depth without rerendering geometry.
-        attachments[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        attachments[i].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        attachments[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        attachments[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[i].finalLayout =
-            i < 3 ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-    }
-    const VkAttachmentReference color[]{{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                                        {1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                                        {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
-    const VkAttachmentReference depth{3, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
-    VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 3;
-    subpass.pColorAttachments = color;
-    subpass.pDepthStencilAttachment = &depth;
-    const VkSubpassDependency dependencies[]{
-        {VK_SUBPASS_EXTERNAL, 0, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0,
-         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-         VK_DEPENDENCY_BY_REGION_BIT},
-        {0, VK_SUBPASS_EXTERNAL,
-         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-             VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
-         VK_DEPENDENCY_BY_REGION_BIT}};
-    VkRenderPassCreateInfo info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-    info.attachmentCount = 4;
-    info.pAttachments = attachments;
-    info.subpassCount = 1;
-    info.pSubpasses = &subpass;
-    info.dependencyCount = 2;
-    info.pDependencies = dependencies;
-    if (vk.create_render_pass(device, &info, nullptr, &result) != VK_SUCCESS)
-    {
-        error = "could not create Vulkan G-buffer render pass";
-        return false;
-    }
-    error.clear();
-    return true;
-}
-
 bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRenderPass light_pass,
                               VkShaderModule geometry_vertex, VkShaderModule geometry_fragment,
                               VkShaderModule alpha_test_fragment, VkShaderModule transparent_fragment,
@@ -360,7 +313,9 @@ bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRen
                               VkRenderPass shadow_pass, VkShaderModule shadow_vertex, VkShaderModule shadow_opaque,
                               VkShaderModule shadow_cutout, VkRenderPass local_shadow_pass,
                               VkShaderModule local_light_fragment, VkShaderModule water_fragment,
-                              VkShaderModule shadow_skin)
+                              VkShaderModule shadow_skin, VkShaderModule multisampled_light_fragment,
+                              VkShaderModule multisampled_weather_fragment,
+                              VkShaderModule multisampled_local_light_fragment)
 {
     destroy();
     if (!device || !geometry_pass || !light_pass || !geometry_vertex || !geometry_fragment || !alpha_test_fragment ||
@@ -376,6 +331,17 @@ bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRen
         error = "deferred pass requires Vulkan shaders and procedures";
         return false;
     }
+    constexpr VkShaderStageFlags base_stages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    constexpr VkShaderStageFlags optional_stages = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+        VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT | VK_SHADER_STAGE_GEOMETRY_BIT;
+    if ((dispatch.game_stage_flags & base_stages) != base_stages ||
+        (dispatch.game_stage_flags & ~(base_stages | optional_stages)) ||
+        bool(dispatch.game_stage_flags & VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT) !=
+            bool(dispatch.game_stage_flags & VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT))
+    {
+        error = "invalid Vulkan game shader stage mask";
+        return false;
+    }
     error.clear();
     device_ = device;
     geometry_pass_ = geometry_pass;
@@ -383,6 +349,7 @@ bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRen
     shadow_pass_ = shadow_pass;
     local_shadow_pass_ = local_shadow_pass;
     vk_ = dispatch;
+    game_stage_flags_ = dispatch.game_stage_flags;
 #define VK_STEP(label, expression)                                                                                     \
     do                                                                                                                 \
     {                                                                                                                  \
@@ -404,18 +371,23 @@ bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRen
         bindings[2],
         bindings[3],
         {4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
-    const VkDescriptorSetLayoutBinding weather_bindings[]{
+        {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {8, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {9, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {10, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
+    VkDescriptorSetLayoutBinding weather_bindings[]{
         bindings[0],
         bindings[1],
         bindings[2],
         bindings[3],
         {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
-    const VkDescriptorSetLayoutBinding pose_binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT,
+    const VkDescriptorSetLayoutBinding pose_binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, game_stage_flags_,
                                                     nullptr};
     const VkDescriptorSetLayoutBinding forward_binding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
-                                                       VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+                                                       game_stage_flags_, nullptr};
     const VkDescriptorSetLayoutBinding local_bindings[]{
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
@@ -426,29 +398,14 @@ bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRen
         {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
     VkDescriptorSetLayoutCreateInfo descriptor{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    const VkDescriptorSetLayoutBinding material_bindings[]{
-        bindings[0],
-        bindings[1],
-        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {8, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {9, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {10, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {13, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {14, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {15, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {16, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {17, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {18, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {19, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
-    descriptor.bindingCount = 20;
-    descriptor.pBindings = material_bindings;
+    std::array<VkDescriptorSetLayoutBinding, SurfaceMaterialTextureCount> material_bindings{};
+    for (uint32_t i = 0; i < material_bindings.size(); ++i)
+        material_bindings[i] = {i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
+                                VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+    for (auto &binding : material_bindings) binding.stageFlags = game_stage_flags_;
+    for (auto &binding : weather_bindings) binding.stageFlags = game_stage_flags_;
+    descriptor.bindingCount = static_cast<uint32_t>(material_bindings.size());
+    descriptor.pBindings = material_bindings.data();
     VK_STEP("vkCreateDescriptorSetLayout(material)",
             vk_.create_descriptor_set_layout(device, &descriptor, nullptr, &material_layout_));
     descriptor.bindingCount = 1;
@@ -456,7 +413,7 @@ bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRen
     VK_STEP("vkCreateDescriptorSetLayout(pose)",
             vk_.create_descriptor_set_layout(device, &descriptor, nullptr, &pose_layout_));
     descriptor.pBindings = gbuffer_bindings;
-    descriptor.bindingCount = 6;
+    descriptor.bindingCount = 11;
     VK_STEP("vkCreateDescriptorSetLayout(gbuffer)",
             vk_.create_descriptor_set_layout(device, &descriptor, nullptr, &gbuffer_layout_));
     descriptor.pBindings = weather_bindings;
@@ -476,7 +433,7 @@ bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRen
     VK_STEP("vkCreateDescriptorSetLayout(forward)",
             vk_.create_descriptor_set_layout(device, &descriptor, nullptr, &forward_layout_));
     {
-        const VkDescriptorPoolSize sizes[]{{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 163840},
+        const VkDescriptorPoolSize sizes[]{{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 393216},
                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4096},
                                            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4096}};
         VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -488,7 +445,7 @@ bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRen
     }
     {
         // Material UV transforms occupy bytes 128..239 in the fragment stage.
-        const VkPushConstantRange camera{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+        const VkPushConstantRange camera{game_stage_flags_, 0,
                                          sizeof(float) * 64};
         const VkPushConstantRange light{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(DeferredLight)};
         VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
@@ -544,6 +501,12 @@ bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRen
         !make_pipeline(device, light_pass, weather_layout_, light_vertex, weather_fragment, PipelineFlag::None, vk_,
                        weather_pipeline_, error, "weather"))
         goto failed;
+    if (multisampled_light_fragment && multisampled_weather_fragment &&
+        (!make_pipeline(device, light_pass, light_layout_, light_vertex, multisampled_light_fragment,
+                        PipelineFlag::None, vk_, multisampled_lighting_, error, "multisample lighting") ||
+         !make_pipeline(device, light_pass, weather_layout_, light_vertex, multisampled_weather_fragment,
+                        PipelineFlag::None, vk_, multisampled_weather_pipeline_, error, "multisample weather")))
+        goto failed;
     if (shadow_pass &&
         (!shadow_vertex || !shadow_opaque || !shadow_cutout ||
          !make_pipeline(device, shadow_pass, geometry_layout_, shadow_vertex, shadow_opaque,
@@ -555,6 +518,11 @@ bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRen
         (!shadow_pass || !local_light_fragment ||
          !make_pipeline(device, light_pass, local_light_layout_, light_vertex, local_light_fragment,
                         PipelineFlag::Additive, vk_, local_light_pipeline_, error, "local light")))
+        goto failed;
+    if (local_shadow_pass && multisampled_local_light_fragment &&
+        !make_pipeline(device, light_pass, local_light_layout_, light_vertex, multisampled_local_light_fragment,
+                       PipelineFlag::Additive, vk_, multisampled_local_light_pipeline_, error,
+                       "multisample local light"))
         goto failed;
     if (shadow_pass && shadow_skin &&
         (!make_pipeline(device, shadow_pass, skinned_layout_, shadow_skin, shadow_opaque,
@@ -616,17 +584,259 @@ bool DeferredPass::allocate(VkDescriptorSetLayout layout, VkImageView first, VkI
     vk_.update_descriptor_sets(device_, second ? 2 : 1, writes, 0, nullptr);
     if (layout == material_layout_)
     {
-        std::array<VkImageView, 7> base{};
+        std::array<ShaderImageShape, SurfaceMaterialTextureCount> shapes{};
+        shapes.fill({ShaderImageDimension::TwoD, false, false});
+        material_image_shapes_[set] = shapes;
+        std::array<VkImageView, SurfaceMaterialBaseTextureCount> base{};
         base.fill(first);
         if (second)
             base[1] = second;
         update_terrain_material(set, base, sampler);
-        std::array<VkImageView, 13> fallback{};
+        std::array<VkImageView, SurfaceMaterialExtraTextureCount> fallback{};
         fallback.fill(first);
         update_surface_textures(set, fallback, sampler);
     }
     error.clear();
     return true;
+}
+
+void DeferredPass::set_material_image_shapes(VkDescriptorSet set,
+    const std::array<ShaderImageShape, SurfaceMaterialTextureCount>& shapes)
+{
+    if (set)
+        material_image_shapes_[set] = shapes;
+}
+
+bool DeferredPass::material_image_shapes_match(VkDescriptorSet set,
+    const std::array<ShaderImageShape, SurfaceMaterialTextureCount>& expected,
+    const std::array<uint32_t, SurfaceMaterialTextureCount>& counts) const
+{
+    const auto found = material_image_shapes_.find(set);
+    if (found == material_image_shapes_.end())
+        return false;
+    for (size_t binding = 0; binding < expected.size(); ++binding)
+    {
+        const ShaderImageShape& shader_shape = expected[binding];
+        if (shader_shape.dimension == ShaderImageDimension::Unknown)
+            continue;
+        const size_t count = std::max<size_t>(counts[binding], 1);
+        if (count > expected.size() - binding)
+            return false;
+        for (size_t element = 0; element < count; ++element)
+        {
+            const ShaderImageShape& view_shape = found->second[binding + element];
+            if (shader_shape.dimension != view_shape.dimension ||
+                shader_shape.arrayed != view_shape.arrayed ||
+                shader_shape.multisampled != view_shape.multisampled)
+                return false;
+        }
+    }
+    return true;
+}
+
+bool DeferredPass::write_material_descriptor_set(VkDescriptorSet target,
+    const std::array<uint32_t, SurfaceMaterialTextureCount>& counts,
+    const std::array<VkDescriptorImageInfo, SurfaceMaterialTextureCount>& images) const
+{
+    if (!target || !vk_.update_descriptor_sets)
+        return false;
+    size_t image_count = 0;
+    for (uint32_t binding = 0; binding < counts.size(); ++binding)
+    {
+        const uint32_t count = std::max(counts[binding], 1u);
+        if (count > counts.size() - binding)
+            return false;
+        image_count += count;
+        for (uint32_t element = 0; element < count; ++element)
+            if (!images[binding + element].imageView || !images[binding + element].sampler)
+                return false;
+    }
+    std::vector<VkDescriptorImageInfo> write_images;
+    std::vector<VkWriteDescriptorSet> writes;
+    write_images.reserve(image_count);
+    writes.reserve(counts.size());
+    for (uint32_t binding = 0; binding < counts.size(); ++binding)
+    {
+        const uint32_t count = std::max(counts[binding], 1u);
+        const size_t first_image = write_images.size();
+        for (uint32_t element = 0; element < count; ++element)
+            write_images.push_back(images[binding + element]);
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = target;
+        write.dstBinding = binding;
+        write.descriptorCount = count;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = write_images.data() + first_image;
+        writes.push_back(write);
+    }
+    vk_.update_descriptor_sets(device_, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    return true;
+}
+
+void DeferredPass::refresh_material_descriptor_sets(VkDescriptorSet set)
+{
+    const auto images = material_image_descriptors_.find(set);
+    const auto variants = material_descriptor_variants_.find(set);
+    if (images == material_image_descriptors_.end() || variants == material_descriptor_variants_.end())
+        return;
+    for (const auto& [layout, variant] : variants->second)
+        write_material_descriptor_set(variant.set, variant.counts, images->second);
+}
+
+VkDescriptorSet DeferredPass::material_descriptor_set(VkDescriptorSet set, const GamePipeline* pipeline) const
+{
+    if (!pipeline || !pipeline->material_layout)
+        return set;
+    const auto images = material_image_descriptors_.find(set);
+    if (images == material_image_descriptors_.end() || !pool_ || !vk_.allocate_descriptor_sets)
+        return VK_NULL_HANDLE;
+    auto& variants = material_descriptor_variants_[set];
+    if (const auto found = variants.find(pipeline->material_layout); found != variants.end())
+        return found->second.set;
+    VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    allocate.descriptorPool = pool_;
+    allocate.descriptorSetCount = 1;
+    allocate.pSetLayouts = &pipeline->material_layout;
+    VkDescriptorSet result{};
+    if (vk_.allocate_descriptor_sets(device_, &allocate, &result) != VK_SUCCESS || !result)
+        return VK_NULL_HANDLE;
+    if (!write_material_descriptor_set(result, pipeline->material_descriptor_counts, images->second))
+    {
+        if (vk_.free_descriptor_sets)
+            vk_.free_descriptor_sets(device_, pool_, 1, &result);
+        return VK_NULL_HANDLE;
+    }
+    variants.emplace(pipeline->material_layout,
+        MaterialDescriptorVariant{result, pipeline->material_descriptor_counts});
+    return result;
+}
+
+bool DeferredPass::weather_image_shapes_match(VkDescriptorSet set,
+    const std::array<ShaderImageShape, 6>& expected, const std::array<uint32_t, 6>& counts) const
+{
+    const auto found = weather_image_shapes_.find(set);
+    if (found == weather_image_shapes_.end())
+        return false;
+    for (size_t binding = 0; binding < expected.size(); ++binding)
+    {
+        const ShaderImageShape& shader_shape = expected[binding];
+        if (shader_shape.dimension == ShaderImageDimension::Unknown)
+            continue;
+        const size_t count = std::max<size_t>(counts[binding], 1);
+        if (count > expected.size() - binding)
+            return false;
+        for (size_t element = 0; element < count; ++element)
+        {
+            const ShaderImageShape& view_shape = found->second[binding + element];
+            if (view_shape.dimension == ShaderImageDimension::Unknown ||
+                shader_shape.dimension != view_shape.dimension ||
+                shader_shape.arrayed != view_shape.arrayed ||
+                shader_shape.multisampled != view_shape.multisampled)
+                return false;
+        }
+    }
+    return true;
+}
+
+bool DeferredPass::write_weather_descriptor_set(VkDescriptorSet target, const std::array<uint32_t, 6>& counts,
+    const std::array<VkDescriptorImageInfo, 6>& images) const
+{
+    if (!target || !vk_.update_descriptor_sets)
+        return false;
+    for (uint32_t binding = 0; binding < counts.size(); ++binding)
+    {
+        const uint32_t count = std::max(counts[binding], 1u);
+        if (count > counts.size() - binding)
+            return false;
+        for (uint32_t element = 0; element < count; ++element)
+            if (!images[binding + element].imageView || !images[binding + element].sampler)
+                return false;
+    }
+    std::array<VkWriteDescriptorSet, 6> writes{};
+    for (uint32_t binding = 0; binding < counts.size(); ++binding)
+    {
+        VkWriteDescriptorSet& write = writes[binding];
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = target;
+        write.dstBinding = binding;
+        write.descriptorCount = std::max(counts[binding], 1u);
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = images.data() + binding;
+    }
+    vk_.update_descriptor_sets(device_, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    return true;
+}
+
+VkDescriptorSet DeferredPass::weather_descriptor_set(VkDescriptorSet set, const GamePipeline* pipeline) const
+{
+    if (!pipeline || !pipeline->weather_layout)
+        return set;
+    const auto images = weather_image_descriptors_.find(set);
+    if (images == weather_image_descriptors_.end() || !pool_ || !vk_.allocate_descriptor_sets ||
+        !weather_image_shapes_match(set, pipeline->weather_image_shapes, pipeline->weather_descriptor_counts))
+        return VK_NULL_HANDLE;
+    auto& variants = weather_descriptor_variants_[set];
+    if (const auto found = variants.find(pipeline->weather_layout); found != variants.end())
+        return found->second;
+    VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    allocate.descriptorPool = pool_;
+    allocate.descriptorSetCount = 1;
+    allocate.pSetLayouts = &pipeline->weather_layout;
+    VkDescriptorSet result{};
+    if (vk_.allocate_descriptor_sets(device_, &allocate, &result) != VK_SUCCESS || !result)
+        return VK_NULL_HANDLE;
+    if (!write_weather_descriptor_set(result, pipeline->weather_descriptor_counts, images->second))
+    {
+        if (vk_.free_descriptor_sets)
+            vk_.free_descriptor_sets(device_, pool_, 1, &result);
+        return VK_NULL_HANDLE;
+    }
+    variants.emplace(pipeline->weather_layout, result);
+    return result;
+}
+
+void DeferredPass::release_material_descriptor_sets(VkDescriptorSet set)
+{
+    const auto found = material_descriptor_variants_.find(set);
+    if (found != material_descriptor_variants_.end() && device_ && pool_ && vk_.free_descriptor_sets)
+        for (const auto& [layout, variant] : found->second)
+            if (variant.set)
+                vk_.free_descriptor_sets(device_, pool_, 1, &variant.set);
+    if (found != material_descriptor_variants_.end())
+        material_descriptor_variants_.erase(found);
+    const auto weather = weather_descriptor_variants_.find(set);
+    if (weather != weather_descriptor_variants_.end() && device_ && pool_ && vk_.free_descriptor_sets)
+        for (const auto& [layout, variant] : weather->second)
+            if (variant)
+                vk_.free_descriptor_sets(device_, pool_, 1, &variant);
+    if (weather != weather_descriptor_variants_.end())
+        weather_descriptor_variants_.erase(weather);
+}
+
+void DeferredPass::release_all_material_descriptor_sets()
+{
+    while (!material_descriptor_variants_.empty() || !weather_descriptor_variants_.empty())
+    {
+        if (!material_descriptor_variants_.empty())
+            release_material_descriptor_sets(material_descriptor_variants_.begin()->first);
+        else
+            release_material_descriptor_sets(weather_descriptor_variants_.begin()->first);
+    }
+}
+
+void DeferredPass::destroy_game_pipeline(GamePipeline& pipeline)
+{
+    if (!device_)
+        return;
+    if (pipeline.handle && vk_.destroy_pipeline)
+        vk_.destroy_pipeline(device_, pipeline.handle, nullptr);
+    if (pipeline.layout && vk_.destroy_pipeline_layout)
+        vk_.destroy_pipeline_layout(device_, pipeline.layout, nullptr);
+    if (pipeline.material_layout && vk_.destroy_descriptor_set_layout)
+        vk_.destroy_descriptor_set_layout(device_, pipeline.material_layout, nullptr);
+    if (pipeline.weather_layout && vk_.destroy_descriptor_set_layout)
+        vk_.destroy_descriptor_set_layout(device_, pipeline.weather_layout, nullptr);
+    pipeline = {};
 }
 
 bool DeferredPass::material(VkImageView albedo, VkSampler sampler, VkDescriptorSet &set, std::string &error)
@@ -644,14 +854,15 @@ bool DeferredPass::lightmapped_material(VkImageView albedo, VkImageView lightmap
     }
     if (!allocate(material_layout_, albedo, lightmap, sampler, set, error))
         return false;
-    std::array<VkImageView, 7> views;
+    std::array<VkImageView, SurfaceMaterialBaseTextureCount> views;
     views.fill(albedo);
     views[1] = lightmap;
     update_terrain_material(set, views, sampler, lightmap_sampler);
     return true;
 }
 
-bool DeferredPass::terrain_material(const std::array<VkImageView, 7> &views, VkSampler sampler, VkDescriptorSet &set,
+bool DeferredPass::terrain_material(
+    const std::array<VkImageView, SurfaceMaterialBaseTextureCount> &views, VkSampler sampler, VkDescriptorSet &set,
                                     std::string &error, VkSampler lightmap_sampler)
 {
     if (std::any_of(views.begin(), views.end(), [](VkImageView view) { return !view; }))
@@ -670,18 +881,25 @@ void DeferredPass::push_surface(const FrameRecordingContext &frame, VkPipelineLa
 {
     const auto found = surface_parameters_.find(material);
     const SurfaceParameters empty{};
-    const auto &parameters = found == surface_parameters_.end() ? empty : found->second;
-    command_cache_.push(vk_, frame.command_buffer, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+    SurfaceParameters parameters = found == surface_parameters_.end() ? empty : found->second;
+    uint32_t map_flags = static_cast<uint32_t>(std::max(parameters.external_normal, 0.f) + 0.5f);
+    if (steep_parallax)
+        map_flags |= SurfaceMapSteepParallax;
+    else
+        map_flags &= ~SurfaceMapSteepParallax;
+    parameters.external_normal = static_cast<float>(map_flags);
+    command_cache_.push(vk_, frame.command_buffer, layout, game_stage_flags_,
                         offset, sizeof(parameters), &parameters);
 }
 
-void DeferredPass::update_surface_textures(VkDescriptorSet set, const std::array<VkImageView, 13> &views,
+void DeferredPass::update_surface_textures(VkDescriptorSet set,
+                                           const std::array<VkImageView, SurfaceMaterialExtraTextureCount> &views,
                                            VkSampler sampler)
 {
     if (!device_ || !set)
         return;
-    std::array<VkDescriptorImageInfo, 13> images{};
-    std::array<VkWriteDescriptorSet, 13> writes{};
+    std::array<VkDescriptorImageInfo, SurfaceMaterialExtraTextureCount> images{};
+    std::array<VkWriteDescriptorSet, SurfaceMaterialExtraTextureCount> writes{};
     for (uint32_t i = 0; i < views.size(); ++i)
     {
         images[i] = {sampler, views[i], VK_IMAGE_LAYOUT_GENERAL};
@@ -693,33 +911,41 @@ void DeferredPass::update_surface_textures(VkDescriptorSet set, const std::array
         writes[i].pImageInfo = &images[i];
     }
     vk_.update_descriptor_sets(device_, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    auto& material_images = material_image_descriptors_[set];
+    for (uint32_t i = 0; i < views.size(); ++i)
+        material_images[i + 7] = images[i];
+    refresh_material_descriptor_sets(set);
 }
 
-const DeferredPass::GamePipeline *DeferredPass::game_pipeline(const char *vertex_name, const char *fragment_name) const
+const DeferredPass::GamePipeline *DeferredPass::game_pipeline(const char *vertex_name, const char *fragment_name,
+    uint64_t variant_hash) const
 {
     if (!vertex_name || !fragment_name || !*vertex_name || !*fragment_name)
         return nullptr;
-    if (const auto *cached = pipeline_lookup_cache_.find(vertex_name, fragment_name))
+    if (const auto *cached = pipeline_lookup_cache_.find(vertex_name, fragment_name, variant_hash))
         return cached;
     std::string key(vertex_name);
     key.push_back('\0');
     key += fragment_name;
+    key.push_back('\0');
+    key += std::to_string(variant_hash);
     const auto found = game_pipelines_.find(key);
     if (found == game_pipelines_.end())
         return nullptr;
-    pipeline_lookup_cache_.remember(vertex_name, fragment_name, &found->second);
+    pipeline_lookup_cache_.remember(vertex_name, fragment_name, &found->second, variant_hash);
     return &found->second;
 }
 
-bool DeferredPass::has_game_pipeline(const std::string &vertex_name, const std::string &fragment_name) const
+bool DeferredPass::has_game_pipeline(const std::string &vertex_name, const std::string &fragment_name,
+    uint64_t variant_hash) const
 {
-    return game_pipeline(vertex_name.c_str(), fragment_name.c_str()) != nullptr;
+    return game_pipeline(vertex_name.c_str(), fragment_name.c_str(), variant_hash) != nullptr;
 }
 
 bool DeferredPass::require_game_pipeline(const char *vertex_name, const char *fragment_name, SurfaceMode mode, bool hud,
-                                         bool skinned, std::string &error) const
+                                         bool skinned, std::string &error, uint64_t variant_hash) const
 {
-    const auto *pair = game_pipeline(vertex_name, fragment_name);
+    const auto *pair = game_pipeline(vertex_name, fragment_name, variant_hash);
     if (!pair)
         error = "unknown Vulkan SVS/SPS pair: " + std::string(vertex_name ? vertex_name : "<null>") + " / " +
                 (fragment_name ? fragment_name : "<null>");
@@ -735,10 +961,8 @@ bool DeferredPass::require_game_pipeline(const char *vertex_name, const char *fr
 
 void DeferredPass::abort_game_pipeline_reload()
 {
-    if (device_ && vk_.destroy_pipeline)
-        for (const auto &[name, pipeline] : pending_game_pipelines_)
-            if (pipeline.handle)
-                vk_.destroy_pipeline(device_, pipeline.handle, nullptr);
+    for (auto& [name, pipeline] : pending_game_pipelines_)
+        destroy_game_pipeline(pipeline);
     pending_game_pipelines_.clear();
     reloading_game_pipelines_ = false;
 }
@@ -754,18 +978,25 @@ void DeferredPass::commit_game_pipeline_reload()
     if (!reloading_game_pipelines_)
         return;
     pipeline_lookup_cache_.clear();
-    if (device_ && vk_.destroy_pipeline)
-        for (const auto &[name, pipeline] : game_pipelines_)
-            if (pipeline.handle)
-                vk_.destroy_pipeline(device_, pipeline.handle, nullptr);
+    release_all_material_descriptor_sets();
+    for (auto& [name, pipeline] : game_pipelines_)
+        destroy_game_pipeline(pipeline);
     game_pipelines_ = std::move(pending_game_pipelines_);
     pending_game_pipelines_.clear();
     reloading_game_pipelines_ = false;
 }
 
 bool DeferredPass::create_game_pipeline(const std::string &vertex_name, const std::string &fragment_name,
+                                         VkShaderModule vertex, VkShaderModule fragment, SurfaceMode mode, bool hud,
+                                         std::string &error, bool skinned)
+{
+    return create_game_pipeline(vertex_name, fragment_name, vertex, fragment, mode, hud, error,
+        skinned, GamePipelineStages{});
+}
+
+bool DeferredPass::create_game_pipeline(const std::string &vertex_name, const std::string &fragment_name,
                                         VkShaderModule vertex, VkShaderModule fragment, SurfaceMode mode, bool hud,
-                                        std::string &error, bool skinned)
+                                         std::string &error, bool skinned, const GamePipelineStages &stages)
 {
     const auto has_suffix = [](const std::string &name, const char *suffix) {
         const size_t length = std::strlen(suffix);
@@ -782,14 +1013,43 @@ bool DeferredPass::create_game_pipeline(const std::string &vertex_name, const st
         error = "invalid Vulkan game shader pair or pass state: " + vertex_name + " / " + fragment_name;
         return false;
     }
+    if (bool(stages.hull) != bool(stages.domain) ||
+        bool(stages.hull) != !stages.hull_name.empty() ||
+        bool(stages.domain) != !stages.domain_name.empty() ||
+        bool(stages.geometry) != !stages.geometry_name.empty() ||
+        (!stages.hull_name.empty() && !has_suffix(stages.hull_name, ".hs")) ||
+        (!stages.domain_name.empty() && !has_suffix(stages.domain_name, ".ds")) ||
+        (!stages.geometry_name.empty() && !has_suffix(stages.geometry_name, ".gs")))
+    {
+        error = "invalid Vulkan optional game shader stages: " + vertex_name + " / " + fragment_name;
+        return false;
+    }
+    if ((stages.hull && (game_stage_flags_ &
+            (VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT)) !=
+            (VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT)) ||
+        (stages.geometry && !(game_stage_flags_ & VK_SHADER_STAGE_GEOMETRY_BIT)))
+    {
+        error = "Vulkan game shader stages are missing from the pipeline layout";
+        return false;
+    }
     std::string key = vertex_name;
     key.push_back('\0');
     key += fragment_name;
+    key.push_back('\0');
+    key += std::to_string(stages.shader_variant_hash);
     auto &registry = reloading_game_pipelines_ ? pending_game_pipelines_ : game_pipelines_;
     const auto existing = registry.find(key);
     if (existing != registry.end())
     {
-        if (existing->second.mode != mode || existing->second.hud != hud || existing->second.skinned != skinned)
+        if (existing->second.mode != mode || existing->second.hud != hud || existing->second.skinned != skinned ||
+            existing->second.hull_name != stages.hull_name ||
+            existing->second.domain_name != stages.domain_name ||
+            existing->second.geometry_name != stages.geometry_name ||
+            existing->second.specialization_hash != stages.specialization_hash ||
+            existing->second.shader_fingerprint != stages.shader_fingerprint ||
+            existing->second.shader_variant_hash != stages.shader_variant_hash ||
+            existing->second.material_descriptor_counts != stages.material_descriptor_counts ||
+            existing->second.weather_descriptor_counts != stages.weather_descriptor_counts)
         {
             error = "Vulkan game shader pair requested with incompatible pass state: " + vertex_name + " / " +
                     fragment_name;
@@ -799,6 +1059,98 @@ bool DeferredPass::create_game_pipeline(const std::string &vertex_name, const st
         return true;
     }
     VkPipeline pipeline{};
+    VkDescriptorSetLayout custom_material_layout{}, custom_weather_layout{};
+    VkPipelineLayout custom_pipeline_layout{};
+    VkPipelineLayout game_layout = skinned ? skinned_layout_ : geometry_layout_;
+    bool has_material_arrays = false, has_weather_arrays = false;
+    for (uint32_t binding = 0; binding < stages.material_descriptor_counts.size(); ++binding)
+    {
+        const uint32_t count = stages.material_descriptor_counts[binding];
+        if (!count || count > stages.material_descriptor_counts.size() - binding)
+        {
+            error = "invalid Vulkan game material descriptor count at binding " + std::to_string(binding);
+            return false;
+        }
+        has_material_arrays |= count > 1;
+    }
+    for (uint32_t binding = 0; binding < stages.weather_descriptor_counts.size(); ++binding)
+    {
+        const uint32_t count = stages.weather_descriptor_counts[binding];
+        if (!count || count > stages.weather_descriptor_counts.size() - binding)
+        {
+            error = "invalid Vulkan game weather descriptor count at binding " + std::to_string(binding);
+            return false;
+        }
+        has_weather_arrays |= count > 1;
+    }
+    if (has_material_arrays || has_weather_arrays)
+    {
+        if (!vk_.free_descriptor_sets)
+        {
+            error = "Vulkan game descriptor arrays require vkFreeDescriptorSets";
+            return false;
+        }
+        if (has_material_arrays)
+        {
+            std::array<VkDescriptorSetLayoutBinding, SurfaceMaterialTextureCount> bindings{};
+            for (uint32_t binding = 0; binding < bindings.size(); ++binding)
+                bindings[binding] = {binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                    stages.material_descriptor_counts[binding], game_stage_flags_, nullptr};
+            VkDescriptorSetLayoutCreateInfo descriptor_layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            descriptor_layout.bindingCount = static_cast<uint32_t>(bindings.size());
+            descriptor_layout.pBindings = bindings.data();
+            if (!vk_.create_descriptor_set_layout ||
+                vk_.create_descriptor_set_layout(device_, &descriptor_layout, nullptr,
+                    &custom_material_layout) != VK_SUCCESS)
+            {
+                error = "failed to create Vulkan game material array descriptor layout";
+                return false;
+            }
+        }
+        if (has_weather_arrays)
+        {
+            std::array<VkDescriptorSetLayoutBinding, 6> bindings{};
+            for (uint32_t binding = 0; binding < bindings.size(); ++binding)
+                bindings[binding] = {binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                    stages.weather_descriptor_counts[binding], game_stage_flags_, nullptr};
+            VkDescriptorSetLayoutCreateInfo descriptor_layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            descriptor_layout.bindingCount = static_cast<uint32_t>(bindings.size());
+            descriptor_layout.pBindings = bindings.data();
+            if (!vk_.create_descriptor_set_layout ||
+                vk_.create_descriptor_set_layout(device_, &descriptor_layout, nullptr,
+                    &custom_weather_layout) != VK_SUCCESS)
+            {
+                if (custom_material_layout && vk_.destroy_descriptor_set_layout)
+                    vk_.destroy_descriptor_set_layout(device_, custom_material_layout, nullptr);
+                error = "failed to create Vulkan game weather array descriptor layout";
+                return false;
+            }
+        }
+        const VkDescriptorSetLayout material_set = custom_material_layout ? custom_material_layout : material_layout_;
+        const VkDescriptorSetLayout weather_set = custom_weather_layout ? custom_weather_layout : weather_set_layout_;
+        const VkDescriptorSetLayout forward_sets[]{material_set, forward_layout_, weather_set};
+        const VkDescriptorSetLayout skinned_sets[]{material_set, pose_layout_, forward_layout_, weather_set};
+        const VkPushConstantRange camera{game_stage_flags_, 0, sizeof(float) * 64};
+        VkPipelineLayoutCreateInfo pipeline_layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pipeline_layout.setLayoutCount = skinned ? 4 : 3;
+        pipeline_layout.pSetLayouts = skinned ? skinned_sets : forward_sets;
+        pipeline_layout.pushConstantRangeCount = 1;
+        pipeline_layout.pPushConstantRanges = &camera;
+        if (!vk_.create_pipeline_layout ||
+            vk_.create_pipeline_layout(device_, &pipeline_layout, nullptr, &custom_pipeline_layout) != VK_SUCCESS)
+        {
+            if (vk_.destroy_descriptor_set_layout)
+            {
+                if (custom_weather_layout)
+                    vk_.destroy_descriptor_set_layout(device_, custom_weather_layout, nullptr);
+                if (custom_material_layout)
+                    vk_.destroy_descriptor_set_layout(device_, custom_material_layout, nullptr);
+            }
+            error = "failed to create Vulkan game descriptor array pipeline layout";
+            return false;
+        }
+        game_layout = custom_pipeline_layout;
+    }
     const bool transparent = mode == SurfaceMode::Transparent;
     const bool particle_additive = (fragment_name.find("particle_") != std::string::npos ||
                                     fragment_name.find("world_set_") != std::string::npos ||
@@ -825,11 +1177,15 @@ bool DeferredPass::create_game_pipeline(const std::string &vertex_name, const st
     const bool world_set_depth_write =
         fragment_name == "vk\\world_set_set.ps" || fragment_name == "vk\\level_priority_opaque.ps" ||
         fragment_name == "vk\\level_priority_lightmap.ps" || fragment_name == "vk\\object_priority_opaque.ps" ||
+        fragment_name == "vk\\level_priority_detail.ps" ||
+        fragment_name == "vk\\level_priority_detail_lightmap.ps" ||
         fragment_name == "vk\\skinned_priority_opaque.ps" || fragment_name == "vk\\model_set_set.ps" ||
         fragment_name == "vk\\hud_model_set_set.ps";
     const bool world_set_replace =
         fragment_name == "vk\\world_set_set_2r.ps" || fragment_name == "vk\\level_priority_opaque.ps" ||
         fragment_name == "vk\\level_priority_lightmap.ps" || fragment_name == "vk\\object_priority_opaque.ps" ||
+        fragment_name == "vk\\level_priority_detail.ps" ||
+        fragment_name == "vk\\level_priority_detail_lightmap.ps" ||
         fragment_name == "vk\\skinned_priority_opaque.ps" || fragment_name == "vk\\model_set_set_2r.ps" ||
         fragment_name == "vk\\hud_model_set_set_2r.ps";
     const bool hud_set_no_depth_write =
@@ -838,7 +1194,7 @@ bool DeferredPass::create_game_pipeline(const std::string &vertex_name, const st
          (fragment_name.find("vk\\hud_particle_screen_") == 0 && fragment_name != "vk\\hud_particle_screen_set.ps"));
     const bool legacy_multiply = fragment_name == "vk\\level_laemb_multiply.ps";
     if (!make_pipeline(
-            device_, transparent || hud ? light_pass_ : geometry_pass_, skinned ? skinned_layout_ : geometry_layout_,
+            device_, transparent || hud ? light_pass_ : geometry_pass_, game_layout,
             vertex, fragment,
             (vertex_name == "vk\\level_detail_instanced.vs" ? PipelineFlag::Instanced : PipelineFlag::None) |
                 PipelineFlag::Geometry | (!transparent && !hud ? PipelineFlag::GBuffer : PipelineFlag::None) |
@@ -855,12 +1211,36 @@ bool DeferredPass::create_game_pipeline(const std::string &vertex_name, const st
                 (world_set_replace ? PipelineFlag::ReplaceNoDepth : PipelineFlag::None) |
                 (hud_set_no_depth_write ? PipelineFlag::HudSetNoDepthWrite : PipelineFlag::None) |
                 (mode == SurfaceMode::AlphaTest ? PipelineFlag::Cutout : PipelineFlag::None),
-            vk_, pipeline, error, "game shader pair"))
+            vk_, pipeline, error, "game shader pair", stages))
     {
+        if (custom_pipeline_layout && vk_.destroy_pipeline_layout)
+            vk_.destroy_pipeline_layout(device_, custom_pipeline_layout, nullptr);
+        if (custom_material_layout && vk_.destroy_descriptor_set_layout)
+            vk_.destroy_descriptor_set_layout(device_, custom_material_layout, nullptr);
+        if (custom_weather_layout && vk_.destroy_descriptor_set_layout)
+            vk_.destroy_descriptor_set_layout(device_, custom_weather_layout, nullptr);
         error += ": " + vertex_name + " / " + fragment_name;
         return false;
     }
-    registry.emplace(std::move(key), GamePipeline{pipeline, mode, hud, skinned});
+    GamePipeline game_pipeline;
+    game_pipeline.handle = pipeline;
+    game_pipeline.layout = custom_pipeline_layout;
+    game_pipeline.material_layout = custom_material_layout;
+    game_pipeline.weather_layout = custom_weather_layout;
+    game_pipeline.mode = mode;
+    game_pipeline.hud = hud;
+    game_pipeline.skinned = skinned;
+    game_pipeline.hull_name = stages.hull_name;
+    game_pipeline.domain_name = stages.domain_name;
+    game_pipeline.geometry_name = stages.geometry_name;
+    game_pipeline.specialization_hash = stages.specialization_hash;
+    game_pipeline.shader_fingerprint = stages.shader_fingerprint;
+    game_pipeline.shader_variant_hash = stages.shader_variant_hash;
+    game_pipeline.material_image_shapes = stages.material_image_shapes;
+    game_pipeline.material_descriptor_counts = stages.material_descriptor_counts;
+    game_pipeline.weather_image_shapes = stages.weather_image_shapes;
+    game_pipeline.weather_descriptor_counts = stages.weather_descriptor_counts;
+    registry.emplace(std::move(key), std::move(game_pipeline));
     error.clear();
     return true;
 }
@@ -902,7 +1282,7 @@ void DeferredPass::release_pose_descriptor(VkDescriptorSet &set)
 }
 
 void DeferredPass::push_texture_matrices(const FrameRecordingContext &frame, VkPipelineLayout layout,
-                                         const TextureMatrixSet *matrices, const float *normal_rows) const
+                                         const TextureMatrixSet *matrices, const float *normal_rows, bool tree_wave) const
 {
     // Seven float4 rows: base UV, detail UV, environment UV/direction.
     float rows[28]{};
@@ -926,10 +1306,12 @@ void DeferredPass::push_texture_matrices(const FrameRecordingContext &frame, VkP
     for (unsigned axis = 0; axis < 3; ++axis)
         rows[axis * 4 + 2] =
             pack_model_hemi(normal_rows ? normal_rows[axis * 4 + 3] : -1.f, model_hemi_negative_[axis]);
-    command_cache_.push(vk_, frame.command_buffer, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+    if (tree_wave) { rows[2] = tree_wind_.direction[0]; rows[6] = tree_wind_.direction[1]; }
+    command_cache_.push(vk_, frame.command_buffer, layout, game_stage_flags_,
                         128, sizeof(rows), rows);
-    const auto rotation = model_rotation_quaternion(normal_rows);
-    command_cache_.push(vk_, frame.command_buffer, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+    auto rotation = model_rotation_quaternion(normal_rows);
+    if (tree_wave) std::copy_n(tree_wind_.wave, 4, rotation.begin());
+    command_cache_.push(vk_, frame.command_buffer, layout, game_stage_flags_,
                         240, sizeof(rotation), rotation.data());
 }
 
@@ -938,38 +1320,52 @@ bool DeferredPass::record_skinned(const FrameRecordingContext &frame, VkBuffer v
                                   VkDescriptorSet pose_set, SurfaceMode mode, bool hud, uint32_t first_index,
                                   const char *vertex_name, const char *fragment_name, float alpha_ref,
                                   const float *normal_rows, float detail_scale, const float *environment_camera,
-                                  const TextureMatrixSet *matrices) const
+                                  const TextureMatrixSet *matrices, uint64_t variant_hash) const
 {
     command_cache_.invalidate();
-    const auto *pair = game_pipeline(vertex_name, fragment_name);
+    const auto *pair = game_pipeline(vertex_name, fragment_name, variant_hash);
     if (!pair || !pair->skinned || pair->mode != mode || pair->hud != hud ||
         (hud || mode == SurfaceMode::Transparent ? !lighting_compatible(frame) : frame.render_pass != geometry_pass_) ||
         !frame.command_buffer || !frame.extent.width || !frame.extent.height || !vertices || !indices || !index_count ||
-        !material_set || !pose_set)
+        !material_set || !pose_set || !material_image_shapes_match(
+            material_set, pair->material_image_shapes, pair->material_descriptor_counts) ||
+        (mode == SurfaceMode::Transparent && !hud &&
+            (frame.image_index >= forward_sets_.size() || !forward_sets_[frame.image_index])))
+        return false;
+    const VkPipelineLayout layout = pair->layout ? pair->layout : skinned_layout_;
+    const VkDescriptorSet draw_material_set = material_descriptor_set(material_set, pair);
+    if (!draw_material_set)
+        return false;
+    if (pair->weather_layout && (!forward_weather_ ||
+            !weather_image_shapes_match(forward_weather_, pair->weather_image_shapes,
+                pair->weather_descriptor_counts)))
+        return false;
+    const VkDescriptorSet draw_weather_set = weather_descriptor_set(forward_weather_, pair);
+    if (pair->weather_layout && !draw_weather_set)
         return false;
     vk_.cmd_bind_pipeline(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pair->handle);
     viewport_scissor(frame, vk_);
     const VkDeviceSize offset = 0;
     vk_.cmd_bind_vertex_buffers(frame.command_buffer, 0, 1, &vertices, &offset);
     vk_.cmd_bind_index_buffer(frame.command_buffer, indices, 0, VK_INDEX_TYPE_UINT32);
-    const VkDescriptorSet sets[]{material_set, pose_set};
-    vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, skinned_layout_, 0, 2, sets, 0,
+    const VkDescriptorSet sets[]{draw_material_set, pose_set};
+    vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 2, sets, 0,
                                  nullptr);
-    command_cache_.push(vk_, frame.command_buffer, skinned_layout_,
-                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(mvp), mvp);
+    command_cache_.push(vk_, frame.command_buffer, layout,
+                        game_stage_flags_, 0, sizeof(mvp), mvp);
     const bool opaque_environment =
         mode == SurfaceMode::Opaque && fragment_name && std::strstr(fragment_name, "skinned_environment_opaque.ps");
-    push_surface(frame, skinned_layout_, material_set, opaque_environment ? 96 : 80);
+    push_surface(frame, layout, material_set, opaque_environment ? 96 : 80);
     if (opaque_environment)
     {
         const float origin[4]{};
-        command_cache_.push(vk_, frame.command_buffer, skinned_layout_,
-                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 64, sizeof(origin),
+        command_cache_.push(vk_, frame.command_buffer, layout,
+                            game_stage_flags_, 64, sizeof(origin),
                             environment_camera ? environment_camera : origin);
     }
     else
-        command_cache_.push(vk_, frame.command_buffer, skinned_layout_,
-                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 68, sizeof(detail_scale),
+        command_cache_.push(vk_, frame.command_buffer, layout,
+                            game_stage_flags_, 68, sizeof(detail_scale),
                             &detail_scale);
     if (mode == SurfaceMode::AlphaTest ||
         (fragment_name &&
@@ -977,21 +1373,30 @@ bool DeferredPass::record_skinned(const FrameRecordingContext &frame, VkBuffer v
           std::strstr(fragment_name, "world_set_set_2r.ps") || std::strstr(fragment_name, "model_set_set_2r.ps") ||
           std::strstr(fragment_name, "world_set_blend_2r.ps") || std::strstr(fragment_name, "model_set_blend_2r.ps") ||
           std::strstr(fragment_name, "world_set_blend_4r.ps") || std::strstr(fragment_name, "model_set_blend_4r.ps") ||
-          std::strstr(fragment_name, "model_set_alpha_add.ps") || std::strstr(fragment_name, "glow_alpha_add.ps"))))
-        command_cache_.push(vk_, frame.command_buffer, skinned_layout_,
-                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(mvp), sizeof(alpha_ref),
+          std::strstr(fragment_name, "model_set_alpha_add.ps") ||
+          std::strstr(fragment_name, "model_set_fog_blended.ps") ||
+          std::strstr(fragment_name, "skinned_model_set_fog_blended.ps") ||
+          std::strstr(fragment_name, "object_wallmark_blended.ps") ||
+          std::strstr(fragment_name, "glow_alpha_add.ps"))))
+        command_cache_.push(vk_, frame.command_buffer, layout,
+                            game_stage_flags_, sizeof(mvp), sizeof(alpha_ref),
                             &alpha_ref);
     if (mode == SurfaceMode::Transparent && !hud)
     {
-        if (frame.image_index >= forward_sets_.size() || !forward_sets_[frame.image_index])
-            return false;
-        vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, skinned_layout_, 2, 1,
+        vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 2, 1,
                                      &forward_sets_[frame.image_index], 0, nullptr);
-        if (forward_weather_)
-            vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, skinned_layout_, 3, 1,
-                                         &forward_weather_, 0, nullptr);
+        if (draw_weather_set)
+            vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 3, 1,
+                                         &draw_weather_set, 0, nullptr);
     }
-    push_texture_matrices(frame, skinned_layout_, matrices);
+    push_texture_matrices(frame, layout, matrices);
+    if (mode != SurfaceMode::Transparent && !opaque_environment)
+    {
+        const bool hud_environment = hud && fragment_name && std::strstr(fragment_name, "hud_model_environment.ps");
+        const Fvector& source = hud_environment ? Device.vCameraDirection : Device.vCameraPosition;
+        const float camera[4]{source.x, source.y, source.z, hud_environment ? 0.f : 1.f};
+        command_cache_.push(vk_, frame.command_buffer, layout, game_stage_flags_, 112, sizeof(camera), camera);
+    }
     vk_.cmd_draw_indexed(frame.command_buffer, index_count, 1, first_index, 0, 0);
     ++draw_calls_;
     triangles_ += index_count / 3;
@@ -1007,10 +1412,10 @@ void DeferredPass::update_material(VkDescriptorSet set, VkImageView view, VkSamp
     write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     write.pImageInfo = &image;
     vk_.update_descriptor_sets(device_, 1, &write, 0, nullptr);
-    std::array<VkImageView, 7> base{};
+    std::array<VkImageView, SurfaceMaterialBaseTextureCount> base{};
     base.fill(view);
     update_terrain_material(set, base, sampler);
-    std::array<VkImageView, 13> fallback{};
+    std::array<VkImageView, SurfaceMaterialExtraTextureCount> fallback{};
     fallback.fill(view);
     update_surface_textures(set, fallback, sampler);
 }
@@ -1034,16 +1439,17 @@ void DeferredPass::update_lightmapped_material(VkDescriptorSet set, VkImageView 
         writes[i].pImageInfo = &images[i];
     }
     vk_.update_descriptor_sets(device_, 2, writes, 0, nullptr);
-    std::array<VkImageView, 7> base{};
+    std::array<VkImageView, SurfaceMaterialBaseTextureCount> base{};
     base.fill(albedo);
     base[1] = lightmap;
     update_terrain_material(set, base, sampler, lightmap_sampler);
-    std::array<VkImageView, 13> fallback{};
+    std::array<VkImageView, SurfaceMaterialExtraTextureCount> fallback{};
     fallback.fill(albedo);
     update_surface_textures(set, fallback, sampler);
 }
 
-void DeferredPass::update_terrain_material(VkDescriptorSet set, const std::array<VkImageView, 7> &views,
+void DeferredPass::update_terrain_material(
+    VkDescriptorSet set, const std::array<VkImageView, SurfaceMaterialBaseTextureCount> &views,
                                            VkSampler sampler, VkSampler lightmap_sampler)
 {
     if (!device_ || !set)
@@ -1061,6 +1467,10 @@ void DeferredPass::update_terrain_material(VkDescriptorSet set, const std::array
         writes[i].pImageInfo = &images[i];
     }
     vk_.update_descriptor_sets(device_, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    auto& material_images = material_image_descriptors_[set];
+    for (uint32_t i = 0; i < views.size(); ++i)
+        material_images[i] = images[i];
+    refresh_material_descriptor_sets(set);
 }
 
 bool DeferredPass::gbuffer(VkImageView albedo, VkImageView normal, VkImageView depth, VkImageView surface,
@@ -1069,19 +1479,106 @@ bool DeferredPass::gbuffer(VkImageView albedo, VkImageView normal, VkImageView d
     if (!depth || !surface || !allocate(gbuffer_layout_, albedo, normal, sampler, set, error))
         return false;
     const VkDescriptorImageInfo images[]{{sampler, depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                                         {sampler, surface, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
-    VkWriteDescriptorSet writes[2]{};
-    for (uint32_t i = 0; i < 2; ++i)
+                                         {sampler, surface, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                         {sampler, depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                         {sampler, normal, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+    const uint32_t slots[]{2, 5, 8, 9};
+    VkWriteDescriptorSet writes[4]{};
+    for (uint32_t i = 0; i < 4; ++i)
     {
         writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[i].dstSet = set;
-        writes[i].dstBinding = i == 0 ? 2 : 5;
+        writes[i].dstBinding = slots[i];
         writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[i].descriptorCount = 1;
         writes[i].pImageInfo = &images[i];
     }
-    vk_.update_descriptor_sets(device_, 2, writes, 0, nullptr);
+    vk_.update_descriptor_sets(device_, 4, writes, 0, nullptr);
+    // Keep the additional descriptor valid until an RT visibility image is bound.
+    bind_ray_visibility(set, depth, sampler);
+    bind_indirect_light(set, depth, sampler);
+    bind_rain_shadow(set, depth, sampler);
     return true;
+}
+
+bool DeferredPass::gbuffer_multisampled(VkImageView albedo, VkImageView normal, VkImageView depth,
+                                        VkImageView surface, VkImageView resolved_depth,
+                                        VkImageView resolved_normal, VkSampler sampler,
+                                        VkDescriptorSet &set, std::string &error)
+{
+    if (!albedo || !normal || !depth || !surface || !resolved_depth || !resolved_normal || !sampler ||
+        !allocate(gbuffer_layout_, albedo, normal, sampler, set, error))
+        return false;
+    const VkDescriptorImageInfo images[]{{sampler, depth, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL},
+                                         {sampler, surface, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                         {sampler, resolved_depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                         {sampler, resolved_normal, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+    const uint32_t slots[]{2, 5, 8, 9};
+    VkWriteDescriptorSet writes[4]{};
+    for (uint32_t i = 0; i < 4; ++i)
+    {
+        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet = set;
+        writes[i].dstBinding = slots[i];
+        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[i].descriptorCount = 1;
+        writes[i].pImageInfo = &images[i];
+    }
+    vk_.update_descriptor_sets(device_, 4, writes, 0, nullptr);
+    bind_ray_visibility(set, resolved_depth, sampler);
+    bind_indirect_light(set, resolved_depth, sampler);
+    bind_rain_shadow(set, resolved_depth, sampler);
+    multisampled_gbuffer_sets_.insert(set);
+    error.clear();
+    return true;
+}
+
+void DeferredPass::pair_gbuffer_sets(VkDescriptorSet resolved_set, VkDescriptorSet multisampled_set)
+{
+    if (resolved_set && multisampled_gbuffer_sets_.count(multisampled_set))
+        gbuffer_msaa_pairs_[resolved_set] = multisampled_set;
+}
+
+void DeferredPass::bind_ray_visibility(VkDescriptorSet set, VkImageView view, VkSampler sampler)
+{
+    if (!set || !view || !sampler) return;
+    const VkDescriptorImageInfo image{sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet writes[2]{};
+    uint32_t count = 1;
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = set;
+    writes[0].dstBinding = 6;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[0].pImageInfo = &image;
+    if (const auto pair = gbuffer_msaa_pairs_.find(set); pair != gbuffer_msaa_pairs_.end())
+    {
+        writes[1] = writes[0];
+        writes[1].dstSet = pair->second;
+        count = 2;
+    }
+    vk_.update_descriptor_sets(device_, count, writes, 0, nullptr);
+}
+
+void DeferredPass::bind_indirect_light(VkDescriptorSet set, VkImageView view, VkSampler sampler)
+{
+    if (!set || !view || !sampler) return;
+    const VkDescriptorImageInfo image{sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet writes[2]{};
+    uint32_t count = 1;
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = set;
+    writes[0].dstBinding = 7;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[0].pImageInfo = &image;
+    if (const auto pair = gbuffer_msaa_pairs_.find(set); pair != gbuffer_msaa_pairs_.end())
+    {
+        writes[1] = writes[0];
+        writes[1].dstSet = pair->second;
+        count = 2;
+    }
+    vk_.update_descriptor_sets(device_, count, writes, 0, nullptr);
 }
 
 void DeferredPass::bind_sun_shadow(VkDescriptorSet set, VkImageView view, VkSampler sampler, VkBuffer uniform)
@@ -1090,12 +1587,13 @@ void DeferredPass::bind_sun_shadow(VkDescriptorSet set, VkImageView view, VkSamp
         return;
     const VkDescriptorImageInfo image{sampler, view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
     const VkDescriptorBufferInfo buffer{uniform, 0, sizeof(SunShadowUniform)};
-    VkWriteDescriptorSet writes[2]{};
-    for (auto &write : writes)
+    VkWriteDescriptorSet writes[4]{};
+    uint32_t count = 2;
+    for (uint32_t i = 0; i < count; ++i)
     {
-        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet = set;
-        write.descriptorCount = 1;
+        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet = set;
+        writes[i].descriptorCount = 1;
     }
     writes[0].dstBinding = 3;
     writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -1103,7 +1601,37 @@ void DeferredPass::bind_sun_shadow(VkDescriptorSet set, VkImageView view, VkSamp
     writes[1].dstBinding = 4;
     writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     writes[1].pBufferInfo = &buffer;
-    vk_.update_descriptor_sets(device_, 2, writes, 0, nullptr);
+    if (const auto pair = gbuffer_msaa_pairs_.find(set); pair != gbuffer_msaa_pairs_.end())
+    {
+        writes[2] = writes[0];
+        writes[2].dstSet = pair->second;
+        writes[3] = writes[1];
+        writes[3].dstSet = pair->second;
+        count = 4;
+    }
+    vk_.update_descriptor_sets(device_, count, writes, 0, nullptr);
+}
+
+void DeferredPass::bind_rain_shadow(VkDescriptorSet set, VkImageView view, VkSampler sampler)
+{
+    if (!set || !view || !sampler)
+        return;
+    const VkDescriptorImageInfo image{sampler, view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet writes[2]{};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = set;
+    writes[0].dstBinding = 10;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[0].pImageInfo = &image;
+    uint32_t count = 1;
+    if (const auto pair = gbuffer_msaa_pairs_.find(set); pair != gbuffer_msaa_pairs_.end())
+    {
+        writes[1] = writes[0];
+        writes[1].dstSet = pair->second;
+        count = 2;
+    }
+    vk_.update_descriptor_sets(device_, count, writes, 0, nullptr);
 }
 
 bool DeferredPass::local_light_set(VkImageView shadow_array, VkSampler sampler, VkBuffer uniform, VkDeviceSize offset,
@@ -1254,7 +1782,8 @@ void DeferredPass::release_forward_sets()
 
 bool DeferredPass::weather_set(VkImageView sky_a, VkImageView sky_b, VkImageView clouds_a, VkImageView clouds_b,
                                VkImageView environment_a, VkImageView environment_b, VkSampler sampler,
-                               VkDescriptorSet &set, std::string &error)
+                               VkDescriptorSet &set, const std::array<ShaderImageShape, 6>& image_shapes,
+                               std::string &error)
 {
     set = VK_NULL_HANDLE;
     if (!pool_ || !sampler || !sky_a || !sky_b || !clouds_a || !clouds_b || !environment_a || !environment_b)
@@ -1272,7 +1801,7 @@ bool DeferredPass::weather_set(VkImageView sky_a, VkImageView sky_b, VkImageView
         return false;
     }
     const VkImageView views[]{sky_a, sky_b, clouds_a, clouds_b, environment_a, environment_b};
-    VkDescriptorImageInfo images[6]{};
+    std::array<VkDescriptorImageInfo, 6> images{};
     VkWriteDescriptorSet writes[6]{};
     for (uint32_t i = 0; i < 6; ++i)
     {
@@ -1285,14 +1814,42 @@ bool DeferredPass::weather_set(VkImageView sky_a, VkImageView sky_b, VkImageView
         writes[i].pImageInfo = &images[i];
     }
     vk_.update_descriptor_sets(device_, 6, writes, 0, nullptr);
+    weather_image_descriptors_[set] = images;
+    weather_image_shapes_[set] = image_shapes;
+    error.clear();
     return true;
 }
 
 void DeferredPass::release_gbuffer(VkDescriptorSet &set)
 {
+    release_material_descriptor_sets(set);
     surface_parameters_.erase(set);
+    material_image_shapes_.erase(set);
+    material_image_descriptors_.erase(set);
+    weather_image_descriptors_.erase(set);
+    weather_image_shapes_.erase(set);
+    VkDescriptorSet paired{};
+    if (const auto found = gbuffer_msaa_pairs_.find(set); found != gbuffer_msaa_pairs_.end())
+    {
+        paired = found->second;
+        multisampled_gbuffer_sets_.erase(paired);
+        gbuffer_msaa_pairs_.erase(found);
+    }
+    else if (multisampled_gbuffer_sets_.erase(set))
+    {
+        for (auto it = gbuffer_msaa_pairs_.begin(); it != gbuffer_msaa_pairs_.end(); ++it)
+            if (it->second == set)
+            {
+                paired = it->first;
+                gbuffer_msaa_pairs_.erase(it);
+                break;
+            }
+    }
     if (device_ && pool_ && set && vk_.free_descriptor_sets)
-        vk_.free_descriptor_sets(device_, pool_, 1, &set);
+    {
+        VkDescriptorSet sets[]{set, paired};
+        vk_.free_descriptor_sets(device_, pool_, paired ? 2 : 1, sets);
+    }
     set = VK_NULL_HANDLE;
 }
 
@@ -1302,89 +1859,152 @@ bool DeferredPass::record_geometry(const FrameRecordingContext &frame, VkBuffer 
                                    const char *fragment_name, float alpha_ref, const float *normal_rows,
                                    float terrain_scale, const float *environment_camera,
                                    const float *environment_factor, int32_t vertex_base,
-                                   const TextureMatrixSet *matrices, VkBuffer instances, uint32_t instance_count) const
+                                   const TextureMatrixSet *matrices, VkBuffer instances, uint32_t instance_count,
+                                   VkBuffer indirect_commands, VkDeviceSize indirect_offset,
+                                   uint32_t indirect_draw_count, uint64_t variant_hash) const
 {
     const bool instanced = vertex_name && std::strcmp(vertex_name, "vk\\level_detail_instanced.vs") == 0;
     if (instanced != bool(instances) || !instance_count)
         return false;
+    if ((indirect_commands && (!vk_.cmd_draw_indexed_indirect || !indirect_draw_count)) ||
+        (!indirect_commands && indirect_draw_count))
+        return false;
     if (mode == SurfaceMode::Transparent)
         return false;
     VkPipeline pipeline = mode == SurfaceMode::AlphaTest ? alpha_test_ : geometry_;
+    const GamePipeline *pair = nullptr;
     if (vertex_name || fragment_name)
     {
-        const auto *pair = game_pipeline(vertex_name, fragment_name);
+        pair = game_pipeline(vertex_name, fragment_name, variant_hash);
         if (!pair || pair->mode != mode || pair->hud || pair->skinned)
             return false;
         pipeline = pair->handle;
     }
     if (!pipeline || frame.render_pass != geometry_pass_ || !frame.command_buffer || !frame.extent.width ||
-        !frame.extent.height || !vertices || !indices || !index_count || !material_set)
+        !frame.extent.height || !vertices || !indices || (!index_count && !indirect_commands) || !material_set)
         return false;
-    command_cache_.bind(vk_, frame, pipeline, geometry_layout_, vertices, indices, material_set);
-    command_cache_.push(vk_, frame.command_buffer, geometry_layout_,
-                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(mvp), mvp);
+    if (pair && !material_image_shapes_match(
+            material_set, pair->material_image_shapes, pair->material_descriptor_counts))
+        return false;
+    const VkPipelineLayout layout = pair && pair->layout ? pair->layout : geometry_layout_;
+    const VkDescriptorSet draw_material_set = material_descriptor_set(material_set, pair);
+    if (!draw_material_set)
+        return false;
+    command_cache_.bind(vk_, frame, pipeline, layout, vertices, indices, draw_material_set);
+    command_cache_.push(vk_, frame.command_buffer, layout,
+                        game_stage_flags_, 0, sizeof(mvp), mvp);
     const bool environment_variant = fragment_name && (std::strstr(fragment_name, "level_environment.ps") ||
                                                        std::strstr(fragment_name, "object_environment_opaque.ps") ||
                                                        std::strstr(fragment_name, "level_laemb_base.ps"));
-    push_surface(frame, geometry_layout_, material_set, environment_variant ? 96 : 80);
+    push_surface(frame, layout, material_set, environment_variant ? 96 : 80);
     if (mode == SurfaceMode::AlphaTest)
-        command_cache_.push(vk_, frame.command_buffer, geometry_layout_,
-                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(mvp), sizeof(alpha_ref),
+        command_cache_.push(vk_, frame.command_buffer, layout,
+                            game_stage_flags_, sizeof(mvp), sizeof(alpha_ref),
                             &alpha_ref);
     if (!environment_variant)
-        command_cache_.push(vk_, frame.command_buffer, geometry_layout_,
-                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(mvp) + sizeof(alpha_ref),
+        command_cache_.push(vk_, frame.command_buffer, layout,
+                            game_stage_flags_, sizeof(mvp) + sizeof(alpha_ref),
                             sizeof(terrain_scale), &terrain_scale);
     if (fragment_name && (std::strstr(fragment_name, "level_environment.ps") ||
                           std::strstr(fragment_name, "object_environment_opaque.ps") ||
                           std::strstr(fragment_name, "level_laemb_base.ps")))
     {
         const float zero_camera[4]{};
-        command_cache_.push(vk_, frame.command_buffer, geometry_layout_,
-                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 64, sizeof(zero_camera),
+        command_cache_.push(vk_, frame.command_buffer, layout,
+                            game_stage_flags_, 64, sizeof(zero_camera),
                             environment_camera ? environment_camera : zero_camera);
         if (environment_factor)
-            command_cache_.push(vk_, frame.command_buffer, geometry_layout_,
-                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 80, sizeof(float) * 4,
+            command_cache_.push(vk_, frame.command_buffer, layout,
+                                game_stage_flags_, 80, sizeof(float) * 4,
                                 environment_factor);
     }
-    push_texture_matrices(frame, geometry_layout_, matrices, normal_rows);
+    push_texture_matrices(frame, layout, matrices, normal_rows,
+        vertex_name && std::strstr(vertex_name, "level_tree_w.vs"));
+    if (!environment_variant)
+    {
+        const float camera[4]{Device.vCameraPosition.x, Device.vCameraPosition.y, Device.vCameraPosition.z, 1.f};
+        command_cache_.push(vk_, frame.command_buffer, layout, game_stage_flags_, 112, sizeof(camera), camera);
+    }
     if (instances)
     {
         const VkDeviceSize offset = 0;
         vk_.cmd_bind_vertex_buffers(frame.command_buffer, 1, 1, &instances, &offset);
     }
-    vk_.cmd_draw_indexed(frame.command_buffer, index_count, instance_count, first_index, vertex_base, 0);
+    if (indirect_commands)
+    {
+        const uint32_t max_count = vk_.multi_draw_indirect ? std::max(vk_.max_draw_indirect_count, 1u) : 1u;
+        for (uint32_t first = 0; first < indirect_draw_count;)
+        {
+            const uint32_t count = std::min(indirect_draw_count - first, max_count);
+            vk_.cmd_draw_indexed_indirect(frame.command_buffer, indirect_commands,
+                indirect_offset + VkDeviceSize(first) * sizeof(VkDrawIndexedIndirectCommand), count,
+                sizeof(VkDrawIndexedIndirectCommand));
+            first += count;
+        }
+    }
+    else
+        vk_.cmd_draw_indexed(frame.command_buffer, index_count, instance_count, first_index, vertex_base, 0);
     ++draw_calls_;
-    triangles_ += index_count / 3 * instance_count;
+    if (!indirect_commands)
+        triangles_ += index_count / 3 * instance_count;
     return true;
 }
 
 bool DeferredPass::record_sun_shadow(const FrameRecordingContext &frame, VkBuffer vertices, VkBuffer indices,
                                      uint32_t index_count, const float (&mvp)[16], VkDescriptorSet material,
                                      bool alpha_test, uint32_t first_index, float alpha_ref, int32_t vertex_base,
-                                     VkDescriptorSet pose) const
+                                     VkDescriptorSet pose, bool tree_wave, const TextureMatrixSet* matrices,
+                                     VkBuffer indirect_commands, VkDeviceSize indirect_offset,
+                                     uint32_t indirect_draw_count) const
 {
     const VkPipeline pipeline = pose ? (alpha_test ? shadow_skin_cutout_ : shadow_skin_opaque_)
                                      : (alpha_test ? shadow_cutout_ : shadow_opaque_);
     const auto layout = pose ? skinned_layout_ : geometry_layout_;
     if (!pipeline || !frame.command_buffer ||
-        (frame.render_pass != shadow_pass_ && frame.render_pass != local_shadow_pass_) || !vertices || !indices ||
-        !material || !index_count)
+        (frame.render_pass != shadow_pass_ && frame.render_pass != local_shadow_pass_ &&
+         frame.render_pass != local_shadow_graph_pass_ &&
+         frame.render_pass != local_shadow_graph_load_pass_ &&
+         frame.render_pass != rain_shadow_pass_ &&
+         frame.render_pass != vsm_shadow_pass_ && frame.render_pass != vsm_dynamic_shadow_pass_) || !vertices || !indices ||
+        !material || (!index_count && !indirect_commands) ||
+        (indirect_commands && (!vk_.cmd_draw_indexed_indirect || !indirect_draw_count)) ||
+        (!indirect_commands && indirect_draw_count))
         return false;
     command_cache_.bind(vk_, frame, pipeline, layout, vertices, indices, material);
-    command_cache_.push(vk_, frame.command_buffer, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+    command_cache_.push(vk_, frame.command_buffer, layout, game_stage_flags_, 0,
                         sizeof(mvp), mvp);
+    push_texture_matrices(frame, layout, matrices, nullptr, tree_wave && !pose);
+    if (!pose && !tree_wave)
+    {
+        const float zero[4]{};
+        command_cache_.push(vk_, frame.command_buffer, layout, game_stage_flags_, 136, sizeof(float), zero);
+        command_cache_.push(vk_, frame.command_buffer, layout, game_stage_flags_, 152, sizeof(float), zero);
+        command_cache_.push(vk_, frame.command_buffer, layout, game_stage_flags_, 240, sizeof(zero), zero);
+    }
     if (alpha_test)
         command_cache_.push(vk_, frame.command_buffer, layout,
-                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(mvp), sizeof(alpha_ref),
+                            game_stage_flags_, sizeof(mvp), sizeof(alpha_ref),
                             &alpha_ref);
     if (pose)
         vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 1, 1, &pose, 0,
                                      nullptr);
-    vk_.cmd_draw_indexed(frame.command_buffer, index_count, 1, first_index, vertex_base, 0);
+    if (indirect_commands)
+    {
+        const uint32_t max_count = vk_.multi_draw_indirect ? std::max(vk_.max_draw_indirect_count, 1u) : 1u;
+        for (uint32_t first = 0; first < indirect_draw_count;)
+        {
+            const uint32_t count = std::min(indirect_draw_count - first, max_count);
+            vk_.cmd_draw_indexed_indirect(frame.command_buffer, indirect_commands,
+                indirect_offset + VkDeviceSize(first) * sizeof(VkDrawIndexedIndirectCommand), count,
+                sizeof(VkDrawIndexedIndirectCommand));
+            first += count;
+        }
+    }
+    else
+        vk_.cmd_draw_indexed(frame.command_buffer, index_count, 1, first_index, vertex_base, 0);
     ++draw_calls_;
-    triangles_ += index_count / 3;
+    if (!indirect_commands)
+        triangles_ += index_count / 3;
     return true;
 }
 
@@ -1392,7 +2012,8 @@ bool DeferredPass::record_transparent(const FrameRecordingContext &frame, VkBuff
                                       uint32_t index_count, const float (&mvp)[16], VkDescriptorSet material_set,
                                       uint32_t first_index, const char *vertex_name, const char *fragment_name,
                                       const char **failure, float alpha_ref, const float *normal_rows,
-                                      float detail_scale, int32_t vertex_base, const TextureMatrixSet *matrices) const
+                                      float detail_scale, int32_t vertex_base, const TextureMatrixSet *matrices,
+                                      uint64_t variant_hash) const
 {
     const auto reject = [failure](const char *reason) {
         if (failure)
@@ -1400,11 +2021,15 @@ bool DeferredPass::record_transparent(const FrameRecordingContext &frame, VkBuff
         return false;
     };
     VkPipeline pipeline = transparent_;
+    const GamePipeline *pair = nullptr;
     if (vertex_name || fragment_name)
     {
-        const auto *pair = game_pipeline(vertex_name, fragment_name);
+        pair = game_pipeline(vertex_name, fragment_name, variant_hash);
         if (!pair || pair->mode != SurfaceMode::Transparent || pair->hud || pair->skinned)
             return reject("incompatible shader pair");
+        if (!material_image_shapes_match(material_set, pair->material_image_shapes,
+                pair->material_descriptor_counts))
+            return reject("material image view does not match shader image dimension");
         pipeline = pair->handle;
     }
     if (!pipeline)
@@ -1428,12 +2053,23 @@ bool DeferredPass::record_transparent(const FrameRecordingContext &frame, VkBuff
     if ((vertex_name || fragment_name) &&
         (frame.image_index >= forward_sets_.size() || !forward_sets_[frame.image_index]))
         return reject("missing forward lighting descriptor");
-    command_cache_.bind(vk_, frame, pipeline, geometry_layout_, vertices, indices, material_set);
-    command_cache_.push(vk_, frame.command_buffer, geometry_layout_,
-                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(mvp), mvp);
-    push_surface(frame, geometry_layout_, material_set);
-    command_cache_.push(vk_, frame.command_buffer, geometry_layout_,
-                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 68, sizeof(detail_scale),
+    if (pair && pair->weather_layout && (!forward_weather_ ||
+            !weather_image_shapes_match(forward_weather_, pair->weather_image_shapes,
+                pair->weather_descriptor_counts)))
+        return reject("weather image views do not match shader descriptor array");
+    const VkPipelineLayout layout = pair && pair->layout ? pair->layout : geometry_layout_;
+    const VkDescriptorSet draw_material_set = material_descriptor_set(material_set, pair);
+    if (!draw_material_set)
+        return reject("failed to allocate material descriptor array set");
+    const VkDescriptorSet draw_weather_set = weather_descriptor_set(forward_weather_, pair);
+    if (pair && pair->weather_layout && !draw_weather_set)
+        return reject("failed to allocate weather descriptor array set");
+    command_cache_.bind(vk_, frame, pipeline, layout, vertices, indices, draw_material_set);
+    command_cache_.push(vk_, frame.command_buffer, layout,
+                        game_stage_flags_, 0, sizeof(mvp), mvp);
+    push_surface(frame, layout, material_set);
+    command_cache_.push(vk_, frame.command_buffer, layout,
+                        game_stage_flags_, 68, sizeof(detail_scale),
                         &detail_scale);
     if (fragment_name &&
         ((std::strstr(fragment_name, "particle_") && std::strstr(fragment_name, "_set.ps") &&
@@ -1442,20 +2078,24 @@ bool DeferredPass::record_transparent(const FrameRecordingContext &frame, VkBuff
          std::strstr(fragment_name, "world_set_set_2r.ps") || std::strstr(fragment_name, "model_set_set_2r.ps") ||
          std::strstr(fragment_name, "world_set_blend_2r.ps") || std::strstr(fragment_name, "model_set_blend_2r.ps") ||
          std::strstr(fragment_name, "world_set_blend_4r.ps") || std::strstr(fragment_name, "model_set_blend_4r.ps") ||
-         std::strstr(fragment_name, "model_set_alpha_add.ps") || std::strstr(fragment_name, "level_fog.ps") ||
+         std::strstr(fragment_name, "model_set_alpha_add.ps") ||
+         std::strstr(fragment_name, "model_set_fog_blended.ps") ||
+         std::strstr(fragment_name, "skinned_model_set_fog_blended.ps") ||
+         std::strstr(fragment_name, "object_wallmark_blended.ps") ||
+         std::strstr(fragment_name, "level_fog.ps") ||
          std::strstr(fragment_name, "glow_alpha_add.ps")))
-        command_cache_.push(vk_, frame.command_buffer, geometry_layout_,
-                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(mvp), sizeof(alpha_ref),
+        command_cache_.push(vk_, frame.command_buffer, layout,
+                            game_stage_flags_, sizeof(mvp), sizeof(alpha_ref),
                             &alpha_ref);
     if (vertex_name || fragment_name)
     {
-        vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, geometry_layout_, 1, 1,
+        vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 1, 1,
                                      &forward_sets_[frame.image_index], 0, nullptr);
-        if (forward_weather_)
-            vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, geometry_layout_, 2, 1,
-                                         &forward_weather_, 0, nullptr);
+        if (draw_weather_set)
+            vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 2, 1,
+                                         &draw_weather_set, 0, nullptr);
     }
-    push_texture_matrices(frame, geometry_layout_, matrices, normal_rows);
+    push_texture_matrices(frame, layout, matrices, normal_rows);
     vk_.cmd_draw_indexed(frame.command_buffer, index_count, 1, first_index, vertex_base, 0);
     ++draw_calls_;
     triangles_ += index_count / 3;
@@ -1465,29 +2105,38 @@ bool DeferredPass::record_transparent(const FrameRecordingContext &frame, VkBuff
 bool DeferredPass::record_hud(const FrameRecordingContext &frame, VkBuffer vertices, VkBuffer indices,
                               uint32_t index_count, const float (&mvp)[16], VkDescriptorSet material_set,
                               uint32_t first_index, const char *vertex_name, const char *fragment_name, float alpha_ref,
-                              const float *normal_rows, int32_t vertex_base, const TextureMatrixSet *matrices) const
+                              const float *normal_rows, int32_t vertex_base, const TextureMatrixSet *matrices,
+                              uint64_t variant_hash) const
 {
     command_cache_.invalidate();
     VkPipeline pipeline = hud_;
+    const GamePipeline *pair = nullptr;
     if (vertex_name || fragment_name)
     {
-        const auto *pair = game_pipeline(vertex_name, fragment_name);
+        pair = game_pipeline(vertex_name, fragment_name, variant_hash);
         if (!pair || !pair->hud || pair->skinned)
+            return false;
+        if (!material_image_shapes_match(material_set, pair->material_image_shapes,
+                pair->material_descriptor_counts))
             return false;
         pipeline = pair->handle;
     }
     if (!pipeline || !lighting_compatible(frame) || !frame.command_buffer || !frame.extent.width ||
         !frame.extent.height || !vertices || !indices || !index_count || !material_set)
         return false;
+    const VkPipelineLayout layout = pair && pair->layout ? pair->layout : geometry_layout_;
+    const VkDescriptorSet draw_material_set = material_descriptor_set(material_set, pair);
+    if (!draw_material_set)
+        return false;
     vk_.cmd_bind_pipeline(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     viewport_scissor(frame, vk_);
     const VkDeviceSize offset = 0;
     vk_.cmd_bind_vertex_buffers(frame.command_buffer, 0, 1, &vertices, &offset);
     vk_.cmd_bind_index_buffer(frame.command_buffer, indices, 0, VK_INDEX_TYPE_UINT32);
-    vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, geometry_layout_, 0, 1,
-                                 &material_set, 0, nullptr);
-    command_cache_.push(vk_, frame.command_buffer, geometry_layout_,
-                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(mvp), mvp);
+    vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1,
+                                 &draw_material_set, 0, nullptr);
+    command_cache_.push(vk_, frame.command_buffer, layout,
+                        game_stage_flags_, 0, sizeof(mvp), mvp);
     if (fragment_name &&
         ((std::strstr(fragment_name, "particle_") && std::strstr(fragment_name, "_set.ps") &&
           !std::strstr(fragment_name, "particle_screen_set.ps")) ||
@@ -1497,10 +2146,15 @@ bool DeferredPass::record_hud(const FrameRecordingContext &frame, VkBuffer verti
          std::strstr(fragment_name, "glow_alpha_add.ps") ||
          std::strstr(fragment_name, "hud_particle_screen_blended.ps") ||
          std::strstr(fragment_name, "hud_particle_screen_alpha_add.ps")))
-        command_cache_.push(vk_, frame.command_buffer, geometry_layout_,
-                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(mvp), sizeof(alpha_ref),
+        command_cache_.push(vk_, frame.command_buffer, layout,
+                            game_stage_flags_, sizeof(mvp), sizeof(alpha_ref),
                             &alpha_ref);
-    push_texture_matrices(frame, geometry_layout_, matrices, normal_rows);
+    if (fragment_name && std::strstr(fragment_name, "hud_model_environment.ps"))
+    {
+        const float camera[4]{Device.vCameraDirection.x, Device.vCameraDirection.y, Device.vCameraDirection.z, 0.f};
+        command_cache_.push(vk_, frame.command_buffer, layout, game_stage_flags_, 112, sizeof(camera), camera);
+    }
+    push_texture_matrices(frame, layout, matrices, normal_rows);
     vk_.cmd_draw_indexed(frame.command_buffer, index_count, 1, first_index, vertex_base, 0);
     ++draw_calls_;
     triangles_ += index_count / 3;
@@ -1515,10 +2169,18 @@ bool DeferredPass::record_lighting(const FrameRecordingContext &frame, VkDescrip
     if (!lighting_ || frame.render_pass != light_pass_ || !frame.command_buffer || !frame.extent.width ||
         !frame.extent.height || !gbuffer_set || !vk_.cmd_draw)
         return false;
-    const bool has_weather = weather_set && weather && weather_pipeline_;
+    const bool is_multisampled = multisampled_gbuffer_sets_.count(gbuffer_set) != 0;
+    if (is_multisampled && (!multisampled_lighting_ ||
+        (weather_set && weather && !multisampled_weather_pipeline_)))
+        return false;
+    const bool has_weather = weather_set && weather &&
+        (is_multisampled ? multisampled_weather_pipeline_ : weather_pipeline_);
     const VkPipelineLayout layout = has_weather ? weather_layout_ : light_layout_;
+    const VkPipeline pipeline = has_weather ?
+        (is_multisampled ? multisampled_weather_pipeline_ : weather_pipeline_) :
+        (is_multisampled && multisampled_lighting_ ? multisampled_lighting_ : lighting_);
     vk_.cmd_bind_pipeline(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          has_weather ? weather_pipeline_ : lighting_);
+                          pipeline);
     viewport_scissor(frame, vk_);
     const VkDescriptorSet sets[]{gbuffer_set, weather_set};
     vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, has_weather ? 2 : 1,
@@ -1536,10 +2198,11 @@ bool DeferredPass::record_local_light(const FrameRecordingContext &frame, VkDesc
                                       VkDescriptorSet local_set, const VkRect2D &scissor) const
 {
     command_cache_.invalidate();
-    if (!local_light_pipeline_ || frame.render_pass != light_pass_ || !frame.command_buffer || !gbuffer_set ||
-        !local_set)
+    const bool is_multisampled = multisampled_gbuffer_sets_.count(gbuffer_set) != 0;
+    const VkPipeline pipeline = is_multisampled ? multisampled_local_light_pipeline_ : local_light_pipeline_;
+    if (!pipeline || frame.render_pass != light_pass_ || !frame.command_buffer || !gbuffer_set || !local_set)
         return false;
-    vk_.cmd_bind_pipeline(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, local_light_pipeline_);
+    vk_.cmd_bind_pipeline(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     viewport_scissor(frame, vk_);
     vk_.cmd_set_scissor(frame.command_buffer, 0, 1, &scissor);
     const VkDescriptorSet sets[]{gbuffer_set, local_set};
@@ -1642,11 +2305,11 @@ void DeferredPass::destroy()
     release_forward_sets();
     release_water_sets();
     abort_game_pipeline_reload();
+    release_all_material_descriptor_sets();
     if (device_ && vk_.destroy_pipeline)
     {
-        for (const auto &[name, pipeline] : game_pipelines_)
-            if (pipeline.handle)
-                vk_.destroy_pipeline(device_, pipeline.handle, nullptr);
+        for (auto& [name, pipeline] : game_pipelines_)
+            destroy_game_pipeline(pipeline);
         if (geometry_)
             vk_.destroy_pipeline(device_, geometry_, nullptr);
         if (alpha_test_)
@@ -1659,6 +2322,12 @@ void DeferredPass::destroy()
             vk_.destroy_pipeline(device_, lighting_, nullptr);
         if (weather_pipeline_)
             vk_.destroy_pipeline(device_, weather_pipeline_, nullptr);
+        if (multisampled_lighting_)
+            vk_.destroy_pipeline(device_, multisampled_lighting_, nullptr);
+        if (multisampled_weather_pipeline_)
+            vk_.destroy_pipeline(device_, multisampled_weather_pipeline_, nullptr);
+        if (multisampled_local_light_pipeline_)
+            vk_.destroy_pipeline(device_, multisampled_local_light_pipeline_, nullptr);
         if (shadow_skin_opaque_)
             vk_.destroy_pipeline(device_, shadow_skin_opaque_, nullptr);
         if (shadow_skin_cutout_)
@@ -1678,6 +2347,12 @@ void DeferredPass::destroy()
     }
     game_pipelines_.clear();
     surface_parameters_.clear();
+    material_image_shapes_.clear();
+    material_image_descriptors_.clear();
+    material_descriptor_variants_.clear();
+    weather_image_descriptors_.clear();
+    weather_image_shapes_.clear();
+    weather_descriptor_variants_.clear();
     if (device_ && vk_.destroy_pipeline_layout)
     {
         if (geometry_layout_)
@@ -1713,8 +2388,12 @@ void DeferredPass::destroy()
             vk_.destroy_descriptor_set_layout(device_, forward_layout_, nullptr);
     }
     device_ = VK_NULL_HANDLE;
-    geometry_pass_ = light_pass_ = shadow_pass_ = local_shadow_pass_ = overlay_pass_ = VK_NULL_HANDLE;
+    geometry_pass_ = light_pass_ = shadow_pass_ = local_shadow_pass_ = local_shadow_graph_pass_ =
+        local_shadow_graph_load_pass_ = vsm_shadow_pass_ = overlay_pass_ = VK_NULL_HANDLE;
+    vsm_dynamic_shadow_pass_ = VK_NULL_HANDLE;
+    rain_shadow_pass_ = VK_NULL_HANDLE;
     geometry_ = alpha_test_ = transparent_ = hud_ = lighting_ = weather_pipeline_ = VK_NULL_HANDLE;
+    multisampled_lighting_ = multisampled_weather_pipeline_ = multisampled_local_light_pipeline_ = VK_NULL_HANDLE;
     shadow_skin_opaque_ = shadow_skin_cutout_ = VK_NULL_HANDLE;
     shadow_opaque_ = shadow_cutout_ = VK_NULL_HANDLE;
     local_light_pipeline_ = VK_NULL_HANDLE;
@@ -1728,6 +2407,8 @@ void DeferredPass::destroy()
     water_set_layout_ = VK_NULL_HANDLE;
     forward_layout_ = VK_NULL_HANDLE;
     pool_ = VK_NULL_HANDLE;
+    multisampled_gbuffer_sets_.clear();
+    gbuffer_msaa_pairs_.clear();
     vk_ = {};
 }
 } // namespace xray::render::vulkan

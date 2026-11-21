@@ -33,17 +33,26 @@ std::vector<uint8_t> particle_library_bytes(IReader& source)
         IReader* container = source.open_chunk(kind);
         if (!container) continue;
         std::vector<uint8_t> definitions;
+        // Particle effect records store optional fields above the small
+        // sequential range too: collision, velocity scale and path alignment
+        // use their PED_CHUNK_* ids (0x21, 0x22 and 0x25). Preserve those
+        // fields while rebuilding the portable chunk table.
         for (uint32_t index = 0; index < 100000; ++index)
         {
             IReader* definition = container->open_chunk(index);
             if (!definition) break;
             std::vector<uint8_t> fields;
-            for (uint32_t field = 1; field <= (kind == 3 ? 11u : 5u); ++field)
+            const auto append_field = [&](uint32_t field) {
                 if (IReader* value = definition->open_chunk(field))
                 {
                     particle_chunk(fields, field, value->pointer(), value->length());
                     value->close();
                 }
+            };
+            if (kind == 3)
+                for (uint32_t field : particle_effect_chunk_ids) append_field(field);
+            else
+                for (uint32_t field : particle_group_chunk_ids) append_field(field);
             particle_chunk(definitions, index, fields.data(), fields.size());
             definition->close();
         }

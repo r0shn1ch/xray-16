@@ -18,11 +18,13 @@ struct PackedLevelGeometry
     static constexpr size_t TargetBytes = 16u * 1024u * 1024u;
     std::vector<LevelVertex> vertices;
     std::vector<uint32_t> indices;
+    std::vector<uint32_t> cluster_indices;
 
-    bool would_flush(const LevelModel& model) const
+    bool would_flush(const LevelModel& model, size_t cluster_index_count = 0) const
     {
         return !vertices.empty() &&
             (vertices.size() * sizeof(LevelVertex) + indices.size() * sizeof(uint32_t) +
+             cluster_indices.size() * sizeof(uint32_t) + cluster_index_count * sizeof(uint32_t) +
              model.vertices.size() * sizeof(LevelVertex) +
              model.indices.size() * sizeof(uint32_t) > TargetBytes);
     }
@@ -45,10 +47,22 @@ struct PackedLevelGeometry
         indices.insert(indices.end(), model.indices.begin(), model.indices.end());
         return true;
     }
+    bool append_cluster_indices(const std::vector<uint32_t>& source, uint32_t& first_index, std::string& error)
+    {
+        if (source.size() > size_t(UINT32_MAX) || cluster_indices.size() > size_t(UINT32_MAX) - source.size())
+        {
+            error = "level cluster index batch exceeds Vulkan draw range";
+            return false;
+        }
+        first_index = static_cast<uint32_t>(cluster_indices.size());
+        cluster_indices.insert(cluster_indices.end(), source.begin(), source.end());
+        return true;
+    }
     void reset()
     {
         std::vector<LevelVertex>().swap(vertices);
         std::vector<uint32_t>().swap(indices);
+        std::vector<uint32_t>().swap(cluster_indices);
     }
 };
 }

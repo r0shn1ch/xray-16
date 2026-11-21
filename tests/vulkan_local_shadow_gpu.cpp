@@ -7,20 +7,27 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 using namespace xray::render::vulkan;
 static void check(VkResult result)
 {
     if (result != VK_SUCCESS)
         throw std::runtime_error("Vulkan result " + std::to_string(result));
 }
-int main()
+int main(int argc, char** argv)
 {
     VkInstance instance{};
     VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     check(vkCreateInstance(&instance_info, nullptr, &instance));
-    uint32_t count = 1;
-    VkPhysicalDevice gpu{};
-    check(vkEnumeratePhysicalDevices(instance, &count, &gpu));
+    uint32_t count = 0;
+    check(vkEnumeratePhysicalDevices(instance, &count, nullptr));
+    if (!count)
+        throw std::runtime_error("no Vulkan physical device");
+    std::vector<VkPhysicalDevice> devices(count);
+    check(vkEnumeratePhysicalDevices(instance, &count, devices.data()));
+    const int selected = argc > 1 ? std::stoi(argv[1]) : 0;
+    if (selected < 0 || size_t(selected) >= devices.size()) return 77;
+    VkPhysicalDevice gpu = devices[size_t(selected)];
     uint32_t families = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(gpu, &families, nullptr);
     std::vector<VkQueueFamilyProperties> properties(families);

@@ -315,6 +315,7 @@ public:
     void IR_OnMouseRelease(int btn) override;
     void IR_OnMouseHold(int btn) override;
     void IR_OnMouseMove(int, int) override;
+    void IR_OnMouseMoveTo(float x, float y) override;
     void IR_OnMouseWheel(float x, float y) override;
 
     void IR_OnControllerPress(int key, const ControllerAxisState& state) override;

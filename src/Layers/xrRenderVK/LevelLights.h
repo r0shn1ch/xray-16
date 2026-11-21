@@ -1,9 +1,12 @@
 #pragma once
+#include "Common/Common.hpp"
+#include "xrCore/xrCore.h"
 #include "LevelModels.h"
 #include "VulkanGameLightingMath.h"
+#include "xrCommon/xr_unordered_map.h"
+#include "xrCommon/xr_vector.h"
 #include <cmath>
 #include <cstring>
-#include <unordered_map>
 
 namespace xray::render::vulkan
 {
@@ -96,8 +99,8 @@ class VulkanHemiLightGrid
 {
     static constexpr float cell_size = 32.f;
     std::vector<VulkanLightSnapshot> sources_;
-    std::unordered_map<uint64_t, std::vector<size_t>> cells_;
-    std::vector<size_t> broad_;
+    xr_unordered_map<uint64_t, xr_vector<size_t>> cells_;
+    xr_vector<size_t> broad_;
     static int cell(float value)
     {
         return int(std::floor(value / cell_size));

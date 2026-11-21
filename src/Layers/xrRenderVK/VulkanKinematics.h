@@ -6,6 +6,7 @@
 #include "SkeletonBones.h"
 #include "SkeletonMotions.h"
 #include "MotionPlayback.h"
+#include "GpuParticleCollisionData.h"
 #include "xrCore/Animation/Bone.hpp"
 
 #include <memory>
@@ -20,6 +21,7 @@ public:
         IRenderVisual* owner, std::string& error);
     VulkanKinematics(const VulkanKinematics& source, IRenderVisual* owner);
     bool attach_geometry(const ModelGeometry& geometry, std::string& error);
+    bool export_collision_triangles(std::vector<std::vector<GpuParticleCollisionTriangle>>& result, std::string& error);
     void set_motions(std::vector<MotionSlot> motions);
     const std::vector<MotionSlot>& motions() const;
     bool play_motion(const std::string& name, bool fx = false, bool mixing = true,
@@ -54,6 +56,7 @@ public:
     BOOL LL_GetBoneVisible(u16 id) override;
     void LL_SetBoneVisible(u16 id, BOOL visible, BOOL recursive) override;
     u64 LL_GetBonesVisible() override { return visible_; }
+    u64 LL_GetBonesVisibleSignature() override;
     void LL_SetBonesVisible(u64 mask) override;
     void LL_AddTransformToBone(KinematicsABT::additional_bone_transform& transform) override;
     void LL_ClearAdditionalTransform(u16 id) override;
@@ -138,6 +141,7 @@ private:
     float channel_factors_[4]{1.f, 1.f, 1.f, 1.f};
     u16 root_ = BI_NONE;
     u64 visible_{};
+    std::vector<uint8_t> extended_visibility_;
     bool dirty_{true};
     UpdateCallback update_{};
     void* update_param_{};

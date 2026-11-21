@@ -1,0 +1,18 @@
+
+
+struct PS_INPUT
+{
+    float4 hpos     : SV_Position;
+    [[vk::location(0)]] float2 texcoord : TEXCOORD0;
+    [[vk::location(1)]] float4 color    : TEXCOORD1;
+};
+
+float4 main(PS_INPUT input) : SV_Target0
+{
+    float age = input.color.a;
+    float fadeIn  = smoothstep(0.0, 0.15, age);
+    float fadeOut = 1.0 - smoothstep(0.0, 1.0, age);
+    float alpha   = fadeIn * fadeOut;
+
+    return float4(1.0, 1.0, 1.0, alpha * 0.06);
+}

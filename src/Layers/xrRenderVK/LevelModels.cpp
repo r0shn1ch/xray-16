@@ -143,6 +143,7 @@ struct VertexBuffer
     // geometry and FTreeVisual. Keep the authored tree coordinates until the
     // visual type is known; base UVs also contain fractions from T/B alpha.
     std::vector<std::array<float, 2>> tree_uv;
+    std::vector<float> tree_wind_weights;
     std::vector<uint8_t> packed_hemi;
     bool lightmap_uv{};
     bool depth_only{};
@@ -193,7 +194,7 @@ bool read_vertices(LevelBytes bytes, std::vector<VertexBuffer> &buffers, std::st
             const uint8_t type = element.data[4], usage = element.data[6], index = element.data[7];
             // Decode the common static declarations; reject unknown sizes to
             // avoid calculating a wrong stride for subsequent vertices.
-            const size_t type_sizes[]{4, 8, 12, 16, 4, 4, 4, 8, 4, 4, 4, 8, 8, 4, 4, 4, 8};
+            const size_t type_sizes[]{4, 8, 12, 16, 4, 4, 4, 8, 4, 4, 8, 4, 8, 4, 4, 4, 8};
             if (type >= sizeof(type_sizes) / sizeof(*type_sizes))
             {
                 error = "unsupported vertex declaration type=" + std::to_string(type) + " buffer=" + std::to_string(i);
@@ -285,7 +286,10 @@ bool read_vertices(LevelBytes bytes, std::vector<VertexBuffer> &buffers, std::st
         buffer.lightmap_uv = uv1 >= 0;
         buffer.vertices.reserve(vertex_count);
         if (uv >= 0 && (uv_type == 6 || uv_type == 7))
+        {
             buffer.tree_uv.reserve(vertex_count);
+            buffer.tree_wind_weights.reserve(vertex_count);
+        }
         for (uint32_t v = 0; v < vertex_count; ++v)
         {
             LevelVertex vertex;
@@ -326,6 +330,9 @@ bool read_vertices(LevelBytes bytes, std::vector<VertexBuffer> &buffers, std::st
                     tree_uv[axis] = float(primary) * (16.f / 32768.f);
                 }
                 buffer.tree_uv.push_back(tree_uv);
+                const int16_t rigidity = uv_type == 7 ?
+                    int16_t(uint16_t(source[uv + 4]) | (uint16_t(source[uv + 5]) << 8)) : 0;
+                buffer.tree_wind_weights.push_back(float(rigidity) / 2048.f);
             }
             if (uv1 >= 0)
             {
@@ -587,6 +594,10 @@ bool decode_visual(LevelBytes visual, const std::vector<VertexBuffer> &vertices,
         if (!tree_uv.empty())
             for (size_t i = 0; i < model.vertices.size(); ++i)
                 std::copy(tree_uv[vbase + i].begin(), tree_uv[vbase + i].end(), model.vertices[i].uv);
+        const auto &wind_weights = vertices[vb].tree_wind_weights;
+        if (!wind_weights.empty())
+            model.tree_wind_weights.assign(wind_weights.begin() + vbase,
+                wind_weights.begin() + vbase + model.vertices.size());
         LevelBytes definition;
         std::string error;
         if (!chunk(visual, ogf_tree, definition) || !transform_tree_vertices(definition, model, error))

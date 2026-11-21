@@ -1,6 +1,7 @@
 #include "xrEngine/stdafx.h"
 #include "src/Layers/xrRenderVK/EngineLevelModels.h"
 #include "src/Layers/xrRenderVK/GpuModel.h"
+#include "src/Layers/xrRenderVK/VsmPageRender.h"
 #include "src/Layers/xrRenderVK/VulkanModelVisual.h"
 #include "src/Layers/xrRenderVK/ShaderAssetFingerprint.h"
 #include "src/Layers/xrRenderVK/VulkanVisual.h"
@@ -8,6 +9,10 @@
 #include "src/Layers/xrRenderVK/VulkanUIRender.h"
 #include "xrEngine/device.h"
 #include "src/xrEngine/defines.h"
+#ifdef NDEBUG
+#undef NDEBUG // Production headers use Release ABI; mock assertions retain side effects.
+#endif
+#include <cassert>
 #include "vulkan_mock_device.h"
 #include <cstdio>
 #include <filesystem>
@@ -18,6 +23,33 @@
 using namespace xray::render::vulkan;
 namespace
 {
+unsigned model_ray_builds{}, model_ray_updates{}, model_ray_destroyed{};
+VkResult VKAPI_PTR create_model_as(VkDevice, const VkAccelerationStructureCreateInfoKHR*,
+    const VkAllocationCallbacks*, VkAccelerationStructureKHR* out)
+{ *out = vk_mock::handle<VkAccelerationStructureKHR>(vk_mock::next_handle++); return VK_SUCCESS; }
+void VKAPI_PTR destroy_model_as(VkDevice, VkAccelerationStructureKHR, const VkAllocationCallbacks*)
+{ ++model_ray_destroyed; }
+void VKAPI_PTR model_as_sizes(VkDevice, VkAccelerationStructureBuildTypeKHR,
+    const VkAccelerationStructureBuildGeometryInfoKHR*, const uint32_t*, VkAccelerationStructureBuildSizesInfoKHR* sizes)
+{ sizes->accelerationStructureSize = 1024; sizes->buildScratchSize = 512; sizes->updateScratchSize = 512; }
+void VKAPI_PTR model_as_build(VkCommandBuffer, uint32_t count,
+    const VkAccelerationStructureBuildGeometryInfoKHR* info, const VkAccelerationStructureBuildRangeInfoKHR* const*)
+{
+    assert(count == 1);
+    if (info->mode == VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR) ++model_ray_updates;
+    else ++model_ray_builds;
+}
+VkDeviceAddress VKAPI_PTR model_as_address(VkDevice, const VkAccelerationStructureDeviceAddressInfoKHR* info)
+{ return static_cast<VkDeviceAddress>((uintptr_t)info->accelerationStructure) * 4096u; }
+VkDeviceAddress VKAPI_PTR model_buffer_address(VkDevice, const VkBufferDeviceAddressInfo* info)
+{ return static_cast<VkDeviceAddress>((uintptr_t)info->buffer) * 4096u; }
+VkDeviceAddress VKAPI_PTR model_ray_address(VkDevice, const VkBufferDeviceAddressInfo* info)
+{
+    const auto required = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    assert((vk_mock::buffer_usages.at(info->buffer) & required) == required);
+    return static_cast<VkDeviceAddress>((uintptr_t)info->buffer) * 4096u;
+}
 void put32(std::vector<uint8_t> &bytes, uint32_t n)
 {
     for (unsigned i = 0; i < 4; ++i)
@@ -252,6 +284,18 @@ int main()
         FS.rescan_path(FS.get_path("$level$")->m_Path, false);
         assert(textures.texture_detail_metadata("unnamed_detail", detail, metadata_error) &&
             !detail.diffuse && !detail.normal && detail.texture.empty() && metadata_error.empty());
+        std::filesystem::remove(directory / "alloy_d.thm");
+        save(directory / "alloy_pbr.dds", Bytes{0});
+        FS.rescan_path(FS.get_path("$level$")->m_Path, false);
+        assert(textures.texture_detail_metadata("alloy_d", detail, metadata_error) &&
+            detail.pbr_texture == "alloy_pbr");
+        Bytes pbr_thm, pbr_parameters(8, 0), pbr_name{'m','o','d','\\','p','a','c','k','e','d',0};
+        chunk(pbr_thm, 0x0812, pbr_parameters);
+        chunk(pbr_thm, 0x081e, pbr_name);
+        save(directory / "alloy_d.thm", pbr_thm);
+        FS.rescan_path(FS.get_path("$level$")->m_Path, false);
+        assert(textures.texture_detail_metadata("alloy_d", detail, metadata_error) &&
+            detail.pbr_texture == "mod\\packed");
     }
     {
         Bytes params(8, 0), extension{'m','o','d','\\','d','e','t','a','i','l',0};
@@ -291,11 +335,23 @@ int main()
         Bytes normal{'m', 'o', 'd', '\\', 'e', 'x', 't', 0};
         GameTextureFactory::MetadataExtras extras{bump.data(), bump.size(),
             material.data(), material.size(), normal.data(), normal.size()};
+        Bytes packed{'p','b','r',0}, metallic{'m',0}, roughness{'r',0}, ao{'a',0}, parallax{'h',0};
+        extras.pbr = packed.data(); extras.pbr_size = packed.size();
+        extras.metallic = metallic.data(); extras.metallic_size = metallic.size();
+        extras.roughness = roughness.data(); extras.roughness_size = roughness.size();
+        extras.ao = ao.data(); extras.ao_size = ao.size();
+        extras.parallax = parallax.data(); extras.parallax_size = parallax.size();
         assert(GameTextureFactory::decode_detail_metadata(params.data(), params.size(),
             extension.data(), extension.size(), metadata, error, extras));
         assert(metadata.bump_mode == 2 && metadata.bump_texture == "mod\\normal" &&
             metadata.external_normal_texture == "mod\\ext" && metadata.material == 2 &&
             metadata.material_weight > .39f && metadata.material_weight < .41f);
+        assert(metadata.pbr_texture == "pbr" && metadata.metallic_texture == "m" &&
+            metadata.roughness_texture == "r" && metadata.ao_texture == "a" && metadata.parallax_texture == "h");
+        extras.pbr_size = packed.size() - 1;
+        assert(!GameTextureFactory::decode_detail_metadata(params.data(), params.size(),
+            extension.data(), extension.size(), metadata, error, extras) && error.find("PBR_PACKED") != std::string::npos);
+        extras.pbr_size = packed.size();
         extras.bump_size = 8;
         assert(!GameTextureFactory::decode_detail_metadata(params.data(), params.size(),
             extension.data(), extension.size(), metadata, error, extras) &&
@@ -332,7 +388,7 @@ int main()
     textures.release_ui(ui_clamp, ui_pass);
     textures.release_ui(ui_wrap, ui_pass);
     textures.release_ui(ui_wrap, ui_pass);
-    std::array<std::string, 20> surface_names;
+    std::array<std::string, SurfaceMaterialTextureCount> surface_names;
     surface_names.fill("fixture");
     SurfaceParameters surface_parameters{};
     VkDescriptorSet surface_wrap{}, surface_clamp{};
@@ -348,15 +404,36 @@ int main()
     assert(sampler_address.at(sampled_by.at(surface_clamp)) == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
     textures.release_terrain_material(surface_wrap, pass);
     textures.release_terrain_material(surface_clamp, pass);
-    // All twenty surface roles retain their own DDS across a reload. The key
-    // must also distinguish a changed slot and per-material surface factors.
-    std::array<std::string, 20> distinct_names{};
+    // All surface slots retain their own DDS across a reload. The key must
+    // also distinguish a changed slot and per-material surface factors.
+    std::array<std::string, SurfaceMaterialTextureCount> distinct_names{};
     for (size_t role = 0; role < distinct_names.size(); ++role)
     {
         distinct_names[role] = "surface_role_" + std::to_string(role);
         save(directory / (distinct_names[role] + ".dds"), Bytes(dds.begin(), dds.end()));
     }
     FS.rescan_path(FS.get_path("$level$")->m_Path, false);
+    {
+        gli::texture packed(gli::TARGET_2D, gli::FORMAT_RGBA8_SRGB_PACK8, {4, 4, 1}, 1, 1, 1);
+        std::memset(packed.data(), 127, packed.size());
+        std::vector<char> packed_dds;
+        assert(gli::save_dds(packed, packed_dds));
+        save(directory / "pbr_color_space.dds", Bytes(packed_dds.begin(), packed_dds.end()));
+        FS.rescan_path(FS.get_path("$level$")->m_Path, false);
+        std::array<std::string, SurfaceMaterialTextureCount> names;
+        names.fill("fixture");
+        names[19] = "pbr_color_space";
+        SurfaceParameters parameters;
+        parameters.external_normal = 2.f;
+        const size_t start = created_image_formats.size();
+        VkDescriptorSet packed_set{}, color_set{};
+        assert(textures.surface_material(names, parameters, pass, packed_set, error));
+        assert(created_image_formats.size() > start && created_image_formats.back() == VK_FORMAT_R8G8B8A8_UNORM);
+        assert(textures.material("pbr_color_space", pass, color_set, error));
+        assert(created_image_formats.back() == VK_FORMAT_R8G8B8A8_SRGB);
+        textures.release_terrain_material(packed_set, pass);
+        textures.release_material(color_set, pass);
+    }
     {
         VkDescriptorSet atlas{};
         assert(textures.material("fixture", pass, atlas, error, false, true));
@@ -511,6 +588,7 @@ int main()
             std::fprintf(stderr, "vulkan_asset_flow: GpuLevel::load failed: %s\n", error.c_str());
         assert(level_loaded);
         assert(gpu.visual_count() == 1 && gpu.model_count() == 1 && textures.finish_uploads());
+        assert(gpu.retire_completed_uploads());
         if (profile == LevelGameProfile::SoC)
         {
             const auto resident = textures.resident_count();
@@ -540,6 +618,40 @@ int main()
             assert(last_vertex_base==0);
             assert(gpu.record_sun_shadow(frame,pass,mvp));
             assert(last_vertex_base==3);
+            auto vsm_frame = frame;
+            vsm_frame.render_pass = handle<VkRenderPass>(777);
+            vsm_frame.viewport_offset = {8, 0};
+            VsmLevelPageContext vsm_context{&gpu, &pass};
+            const auto shadow_draws = draws;
+            assert(!record_vsm_level_page(vsm_frame, mvp, {}, &vsm_context, error));
+            pass.set_vsm_shadow_pass(vsm_frame.render_pass);
+            assert(record_vsm_level_page(vsm_frame, mvp, {}, &vsm_context, error));
+            assert(draws > shadow_draws);
+            const auto before_tree_filter = draws;
+            vsm_context.include_static = false;
+            assert(record_vsm_level_page(vsm_frame, mvp, {}, &vsm_context, error));
+            assert(draws == before_tree_filter);
+            vsm_context.include_static = true;
+            vsm_context.include_trees = false;
+            assert(record_vsm_level_page(vsm_frame, mvp, {}, &vsm_context, error));
+            assert(draws > before_tree_filter);
+            TextureMatrixSet shadow_matrix{};
+            shadow_matrix.enabled[0] = true;
+            shadow_matrix.values[0].mode = 2;
+            const Fmatrix previous_view = Device.mView;
+            Device.mView.identity();
+            const VkBuffer fixture_buffer = buffers.begin()->first;
+            assert(pass.record_sun_shadow(vsm_frame, fixture_buffer, fixture_buffer, 3, mvp,
+                bound_textures.back(), true, 0, .5f, 0, VK_NULL_HANDLE, false, &shadow_matrix));
+            assert(last_texture_rows[0] == .5f && last_texture_rows[3] == .5f &&
+                last_texture_rows[5] == -.5f && last_texture_rows[7] == .5f);
+            Device.mView = previous_view;
+            const auto static_pass = vsm_frame.render_pass;
+            vsm_frame.render_pass = handle<VkRenderPass>(778);
+            pass.set_vsm_shadow_pass(static_pass, vsm_frame.render_pass);
+            assert(record_vsm_level_page(vsm_frame, mvp, {}, &vsm_context, error));
+            pass.set_vsm_shadow_pass(VK_NULL_HANDLE);
+            assert(!record_vsm_level_page(vsm_frame, mvp, {}, &vsm_context, error));
             assert(gpu.record_hud_visual(0,frame,pass,mvp,0.f));
             assert(last_vertex_base==0); // HUD must not sample a depth proxy either.
         }
@@ -609,8 +721,41 @@ int main()
             }
             assert(parsed.type == type);
             auto gpu = std::make_shared<GpuModel>();
-            assert(gpu->load_record(parsed, "fixture", device, queue, pool_handle, memory, upload_dispatch(), textures, pass, error));
+            assert(gpu->load_record(parsed, "fixture", device, queue, pool_handle, memory, upload_dispatch(), textures, pass, error,
+                &model_ray_address));
+            std::unique_ptr<GpuModel> raster_gpu;
+            if (type == 4)
+            {
+                raster_gpu = std::make_unique<GpuModel>();
+                assert(raster_gpu->load_record(parsed, "fixture", device, queue, pool_handle, memory,
+                    upload_dispatch(), textures, pass, error));
+            }
+            std::vector<RayModelGeometry> ray_geometry;
+            assert(gpu->collect_static_ray_geometry(ray_geometry, error));
+            if (type <= 2)
+            {
+                assert(ray_geometry.size() == 1 && ray_geometry[0].primitive_count == 1);
+                assert(ray_geometry[0].diffuse_texture == "fixture" && ray_geometry[0].alpha_cutoff == 0.f);
+                assert(ray_geometry[0].geometry.geometry.triangles.vertexStride == sizeof(LevelVertex));
+                RayModelTextureSlots slots{};
+                slots.material_id = 17;
+                slots.alpha = 1; slots.diffuse = 2; slots.pbr = 3; slots.normal = 4; slots.normal_aux = 5;
+                RayGeometryBatch batch;
+                const VkTransformMatrixKHR transform{{{1.f, 0.f, 0.f, 2.f}, {0.f, 1.f, 0.f, 0.f}, {0.f, 0.f, 1.f, 0.f}}};
+                assert(make_model_ray_batch(4096, transform, ray_geometry, {slots}, batch, error));
+                assert(batch.external_blas == 4096 && batch.transform.matrix[0][3] == 2.f &&
+                    batch.material_ids[0] == 17 && batch.diffuse_texture_slots[0] == 2 &&
+                    batch.pbr_texture_slots[0] == 3 && batch.normal_texture_slots[0] == 4 &&
+                    batch.normal_aux_texture_slots[0] == 5);
+                slots.diffuse = UINT32_MAX;
+                assert(!make_model_ray_batch(4096, transform, ray_geometry, {slots}, batch, error));
+                assert(batch.external_blas == 4096 && batch.diffuse_texture_slots[0] == 2);
+            }
+            else assert(ray_geometry.empty());
             assert(textures.finish_uploads());
+            assert(gpu->retire_completed_uploads());
+            if (raster_gpu)
+                assert(raster_gpu->retire_completed_uploads());
             auto instance_record = parsed;
             if (type >= 3)
                 instance_record.type = 3; // skinned leaves are owned by a skeleton
@@ -646,6 +791,42 @@ int main()
                 }
                 assert(skeleton->attach_geometry(geometry, error));
                 visual->set_skeleton(std::move(skeleton));
+                if (raster_gpu)
+                {
+                    const auto before_raster = draws;
+                    assert(raster_gpu->record_animated(frame, pass, mvp, *visual->skeleton(), error));
+                    assert(draws == before_raster + 1);
+                }
+            }
+            if (type >= 3)
+            {
+                AccelerationStructureDispatch dispatch{};
+                dispatch.buffers = buffer_dispatch();
+                dispatch.get_buffer_address = model_buffer_address;
+                dispatch.create = create_model_as;
+                dispatch.destroy = destroy_model_as;
+                dispatch.get_build_sizes = model_as_sizes;
+                dispatch.cmd_build = model_as_build;
+                dispatch.get_address = model_as_address;
+                VkPhysicalDeviceAccelerationStructurePropertiesKHR properties{
+                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
+                properties.maxGeometryCount = properties.maxPrimitiveCount = 1024;
+                properties.minAccelerationStructureScratchOffsetAlignment = 16;
+                const auto builds_before = model_ray_builds, updates_before = model_ray_updates;
+                VkDeviceAddress addresses[2]{};
+                const std::vector<RayModelGeometry>* skin_geometry = nullptr;
+                bool updated = false;
+                for (uint32_t slot = 0; slot < 2; ++slot)
+                {
+                    assert(gpu->prepare_skinned_ray_blas(slot, frame.command_buffer, *visual->skeleton(),
+                        dispatch, properties, addresses[slot], skin_geometry, updated, error));
+                    assert(addresses[slot] && skin_geometry && skin_geometry->size() == 1 && !updated);
+                }
+                assert(addresses[0] != addresses[1] && model_ray_builds == builds_before + 2);
+                VkDeviceAddress updated_address{};
+                assert(gpu->prepare_skinned_ray_blas(0, frame.command_buffer, *visual->skeleton(),
+                    dispatch, properties, updated_address, skin_geometry, updated, error));
+                assert(updated && updated_address == addresses[0] && model_ray_updates == updates_before + 1);
             }
             const auto before = draws;
             for (unsigned slot = 0; slot < FrameContext::FramesInFlight; ++slot)
@@ -675,7 +856,9 @@ int main()
                     assert(gpu->record_animated(frame,pass,mvp,*visual->skeleton(),error));
                 }
                 assert(buffers.size()==pool_buffers && descriptor_frees==pool_frees && buffers_destroyed==pool_destroys);
+                const auto ray_destroyed_before = model_ray_destroyed;
                 visual->release_pose_buffers();
+                assert(model_ray_destroyed == ray_destroyed_before + 2);
                 assert(gpu->record_animated(frame, pass, mvp, *copy->skeleton(), error));
                 visual->reset_instance_state();
                 assert(!visual->skeleton()->GetUpdateTracksCalback());
@@ -689,6 +872,11 @@ int main()
                     replacement->release_pose_buffers();
                     replacement.reset();
                 }
+            }
+            if (raster_gpu)
+            {
+                raster_gpu->release_instance(visual->skeleton());
+                raster_gpu.reset();
             }
             gpu.reset();
             visual.reset();
@@ -724,4 +912,5 @@ int main()
     pass.destroy();
     assert(buffers.empty() && allocations.empty() && images.empty() && submits > 0 && descriptor_frees > 0);
     std::filesystem::remove_all(directory);
+    Core._destroy();
 }

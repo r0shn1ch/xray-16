@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace xray::render::vulkan
 {
@@ -22,6 +23,8 @@ enum LevelTextureRole : uint16_t
 struct LevelPassNode
 {
     std::string vertex, fragment;
+    uint64_t shader_variant_hash{};
+    std::vector<std::string> shader_defines;
     LevelPassTarget target{LevelPassTarget::GBuffer};
     LevelPassBlend blend{LevelPassBlend::Replace};
     uint16_t textures{BaseRole};
@@ -49,16 +52,20 @@ struct LevelPassGraph
 // Secondary opaque V surfaces are drawn after combine (R2 priority 2/3),
 // with color replacement and depth writes. Ordinary opaque shaders write
 // G-buffer attachments and cannot be bound in this pass.
-inline LevelPassGraph secondary_opaque_level_graph(uint16_t surface_roles, bool lightmapped = false)
+inline LevelPassGraph secondary_opaque_level_graph(uint16_t surface_roles, bool lightmapped = false,
+    bool detail = false)
 {
     LevelPassGraph graph;
     auto& node = graph.passes[0];
     node.vertex = "vk\\level_opaque.vs";
-    node.fragment = lightmapped ? "vk\\level_priority_lightmap.ps" : "vk\\level_priority_opaque.ps";
+    node.fragment = detail
+        ? (lightmapped ? "vk\\level_priority_detail_lightmap.ps" : "vk\\level_priority_detail.ps")
+        : (lightmapped ? "vk\\level_priority_lightmap.ps" : "vk\\level_priority_opaque.ps");
     node.target = LevelPassTarget::Forward;
     node.blend = LevelPassBlend::Replace;
     node.depth_test = node.depth_write = true;
-    node.textures = BaseRole | surface_roles | (lightmapped ? LightmapRole : 0);
+    node.textures = BaseRole | surface_roles | (lightmapped ? LightmapRole : 0) |
+        (detail ? DetailRole : 0);
     graph.count = 1;
     return graph;
 }
@@ -89,6 +96,23 @@ inline bool validate_level_pass_graph(const LevelPassGraph& graph, std::string& 
     return true;
 }
 
+// Cluster draws can replay a material graph only when every pass uses the
+// same cluster geometry and the follow-up pass is the ordered LaEmB multiply.
+inline bool supports_cluster_lod_pass_graph(const LevelPassGraph& graph)
+{
+    if (graph.count == 1)
+        return true;
+    if (graph.count != 2)
+        return false;
+    const auto& base = graph.passes[0];
+    const auto& multiply = graph.passes[1];
+    return base.target == LevelPassTarget::GBuffer && base.blend == LevelPassBlend::Replace &&
+        base.depth_test && base.depth_write && base.fragment == "vk\\level_laemb_base.ps" &&
+        multiply.target == LevelPassTarget::GBuffer && multiply.blend == LevelPassBlend::Multiply2x &&
+        multiply.depth_test && !multiply.depth_write && multiply.previous_color_pass == 0 &&
+        multiply.fragment == "vk\\level_laemb_multiply.ps";
+}
+
 // A single executable description is shared by level, model, particle, HUD,
 // and screen consumers. The recorder selects the target; pipeline names and
 // texture roles are resolved here, before command recording begins.
@@ -107,6 +131,7 @@ struct RenderPassSelection
     int screen_blend{-1}; // Serialized S_SET mode when used by an OGF model.
     bool particle_screen_set{};
     bool object_lod{};
+    bool fog{}; // World S_SET fog for forward model blending.
 };
 
 inline bool build_render_pass_graph(const RenderPassSelection& input,
@@ -136,13 +161,13 @@ inline bool build_render_pass_graph(const RenderPassSelection& input,
     if (input.consumer == RenderConsumer::Model && input.environment &&
         input.mode != SurfaceMode::Transparent)
         return reject("opaque MODELEbB does not sample environment in original deferred pass");
-    if (input.consumer == RenderConsumer::Model && input.hud && input.environment)
-        return reject("HUD model environment cube (HUD reflection shader missing)");
     if (input.consumer == RenderConsumer::Model && input.screen_blend >= 0)
     {
         if (input.screen_blend > 9) return reject("OGF S_SET Blending (expected 0..9)");
         if (input.mode != SurfaceMode::Transparent)
             return reject("OGF S_SET requires world forward pass");
+        if (input.fog && input.screen_blend != 1)
+            return reject("OGF S_SET Fog requires alpha blending");
         if (input.detail || input.environment)
             return reject("OGF S_SET with detail or environment texture roles");
         auto& world = graph.passes[0];
@@ -161,8 +186,11 @@ inline bool build_render_pass_graph(const RenderPassSelection& input,
         const char* fragments[]{"set", "blended", "additive", "multiply",
             "multiply_2x", "alpha_add", "wallmark_multiply_2x", "set_2r",
             "blend_2r", "blend_4r"};
-        world.fragment = std::string(input.hud ? "vk\\hud_model_set_" : "vk\\model_set_") +
-            fragments[input.screen_blend] + ".ps";
+        world.fragment = input.fog && !input.hud
+            ? std::string(input.animated ? "vk\\skinned_model_set_fog_blended.ps" :
+                "vk\\model_set_fog_blended.ps")
+            : std::string(input.hud ? "vk\\hud_model_set_" : "vk\\model_set_") +
+                fragments[input.screen_blend] + ".ps";
         graph.count = 1;
         error.clear();
         return true;
@@ -219,11 +247,15 @@ inline bool build_render_pass_graph(const RenderPassSelection& input,
             input.mode == SurfaceMode::Transparent ? "object_blended" :
             input.mode == SurfaceMode::AlphaTest ? "object_cutout" :
             input.double_sided && !input.animated ? "object_double_sided" : "object_opaque";
-        node.vertex = input.hud ? input.animated ?
+        node.vertex = input.environment && input.hud && !input.animated ?
+            "vk\\object_environment.vs" :
+            input.hud ? input.animated ?
             "vk\\hud_skinned_" + std::to_string(input.skin_weights) + ".vs" : std::string{} :
             input.animated ? "vk\\skinned_" + std::to_string(input.skin_weights) + ".vs" :
                 std::string("vk\\") + family + ".vs";
-        node.fragment = input.hud ? input.animated ? "vk\\hud_blended.ps" : std::string{} :
+        node.fragment = input.environment && input.hud ?
+            std::string(input.animated ? "vk\\skinned_hud_model_environment.ps" : "vk\\hud_model_environment.ps") :
+            input.hud ? input.animated ? "vk\\hud_blended.ps" : std::string{} :
             input.animated && input.environment ? "vk\\skinned_environment.ps" :
             input.animated && input.mode == SurfaceMode::Transparent ? "vk\\skinned_blended.ps" :
             input.animated && input.mode == SurfaceMode::AlphaTest ? "vk\\skinned_cutout.ps" :

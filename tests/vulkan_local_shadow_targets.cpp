@@ -8,6 +8,7 @@ namespace
 {
 uint32_t copies{}, barriers{};
 uint32_t array_views{}, layer_views{}, framebuffers{}, passes{}, begins{}, ends{};
+bool legacy_clear_pass{}, legacy_load_pass{}, graph_clear_pass{}, graph_load_pass{};
 VkResult VKAPI_PTR image(VkDevice d, const VkImageCreateInfo *info, const VkAllocationCallbacks *a, VkImage *out)
 {
     assert(info->arrayLayers == LocalShadowSlots * LocalShadowFaces);
@@ -58,6 +59,23 @@ VkResult VKAPI_PTR render_pass(VkDevice, const VkRenderPassCreateInfo *info, con
         assert(info->pDependencies[0].dstAccessMask & VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
         assert(info->pDependencies[0].dstStageMask & VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT);
         assert(info->pDependencies[0].dstStageMask & VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT);
+    }
+    const bool load = info->pAttachments[0].loadOp == VK_ATTACHMENT_LOAD_OP_LOAD;
+    switch (info->pAttachments[0].initialLayout)
+    {
+    case VK_IMAGE_LAYOUT_UNDEFINED:
+        assert(!load);
+        legacy_clear_pass = true;
+        break;
+    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL:
+        assert(load);
+        legacy_load_pass = true;
+        break;
+    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+        (load ? graph_load_pass : graph_clear_pass) = true;
+        break;
+    default:
+        assert(false);
     }
     *out = vk_mock::handle<VkRenderPass>(vk_mock::next_handle++);
     ++passes;
@@ -128,7 +146,8 @@ int main()
     assert(targets.initialize(device, VK_FORMAT_D24_UNORM_S8_UINT, 2, memory, dispatch, buffers, vk_mock::sampler,
                               vk_mock::destroy_sampler, error, 1024));
     assert(targets.uniform_stride() == 1024);
-    assert(array_views == 2 && layer_views == 48 && framebuffers == 48 && passes == 2);
+    assert(array_views == 2 && layer_views == 48 && framebuffers == 48 && passes == 4);
+    assert(legacy_clear_pass && legacy_load_pass && graph_clear_pass && graph_load_pass);
     FrameRecordingContext frame{vk_mock::handle<VkCommandBuffer>(2), VK_NULL_HANDLE, VK_NULL_HANDLE, {640, 480}, 1, 0};
     assert(targets.initialize_layers(frame));
     assert(begins == 24 && ends == 24);
@@ -145,6 +164,9 @@ int main()
     assert(targets.begin_face(frame, 3, 5, shadow));
     assert(shadow.render_pass == targets.render_pass() && shadow.extent.width == LocalShadowSize);
     targets.end(frame.command_buffer);
+    assert(targets.begin_face(frame, 3, 5, shadow, false, false, true));
+    assert(shadow.render_pass == targets.graph_render_pass());
+    targets.end(frame.command_buffer);
     assert(!targets.begin_face(frame, 4, 0, shadow));
     targets.destroy();
     dispatch.cmd_copy_image = copy_image;
@@ -152,6 +174,7 @@ int main()
     assert(targets.initialize(device, VK_FORMAT_D32_SFLOAT, 2, memory, dispatch, buffers, vk_mock::sampler,
                               vk_mock::destroy_sampler, error));
     assert(targets.caching());
+    assert(targets.initialize_layers(frame, true));
     float matrix[16]{};
     matrix[0] = matrix[5] = matrix[10] = matrix[15] = 1;
     assert(!targets.cached_face(1, 1, matrix));
@@ -161,6 +184,9 @@ int main()
     assert(targets.cached_face(1, 1, matrix));
     assert(targets.copy_cached_face(frame, 1, 1) && copies == 1 && barriers == 2);
     assert(targets.begin_face(frame, 1, 1, shadow, false, true));
+    targets.end(frame.command_buffer);
+    assert(targets.begin_face(frame, 1, 1, shadow, false, true, true));
+    assert(shadow.render_pass == targets.graph_load_render_pass());
     targets.end(frame.command_buffer);
     matrix[12] = .01f;
     assert(!targets.cached_face(1, 1, matrix));

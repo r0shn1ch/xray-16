@@ -13,6 +13,7 @@ struct ParticleEffectDef
     std::string name, shader, texture;
     uint32_t flags{}, max_particles{};
     float time_limit{-1.f};
+    float collision_friction{1.f}, collision_resilience{}, collision_cutoff{};
     std::array<float, 2> frame_size{1.f, 1.f};
     uint32_t frame_columns{1}, frame_count{1};
     float frame_rate{24.f};

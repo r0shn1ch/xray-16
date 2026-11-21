@@ -173,6 +173,7 @@ bool transform_tree_vertices(LevelBytes definition, LevelModel &model, std::stri
             return false;
         }
     }
+    model.tree_wind_base_y = matrix[13];
     // Desktop halves the serialized scale/bias, then multiplies by
     // Tree_SBC (default 1.5) and the deferred factor 1.3333.
     const float hemi_scale = real(definition.data + 76) * .999975f;
@@ -182,8 +183,9 @@ bool transform_tree_vertices(LevelBytes definition, LevelModel &model, std::stri
         error = "nonfinite OGF tree lighting";
         return false;
     }
-    for (auto &vertex : model.vertices)
+    for (size_t index = 0; index < model.vertices.size(); ++index)
     {
+        auto &vertex = model.vertices[index];
         const float authored = vertex.baked[3];
         vertex.baked[3] = std::clamp(authored * hemi_scale + hemi_bias, 0.f, 1.f);
         const std::array<float, 3> source{vertex.position[0], vertex.position[1], vertex.position[2]};

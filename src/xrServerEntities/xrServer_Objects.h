@@ -165,7 +165,7 @@
 // 127	 CSE_ALifeObjectClimable		added material;
 // 128	 CSE_ALifeObjectClimable		added can_fire in smart covers;
 //------------------------------------------------------------------------------
-#define SPAWN_VERSION u16(128)
+#define SPAWN_VERSION u16(129) // CSE_PHSkeleton appends visibility for bone IDs 64..255
 
 class CSE_Shape : public IServerEntityShape, public CShapeData
 {
@@ -243,6 +243,7 @@ public:
     virtual CSE_Abstract* cast_abstract() { return nullptr; }
 protected:
     virtual void data_load(NET_Packet& tNetPacket);
+    void data_load(NET_Packet& tNetPacket, bool load_extended_visibility);
     virtual void data_save(NET_Packet& tNetPacket);
 
 public:

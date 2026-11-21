@@ -52,6 +52,15 @@ int main()
     bounds = level_hierarchy_bounds(nodes);
     assert(bounds[0][3] < 0 && bounds[1][3] < 0); // cycle fails open
     nodes[3].children.clear();
+    nodes[3].mesh = 0;
+    auto wind_extents = level_hierarchy_wind_extents(nodes, {4.f});
+    assert(wind_extents[0] == 4.f && wind_extents[1] == 4.f && wind_extents[2] == 0.f);
+    assert(wind_expanded_radius(2.f, wind_extents[0], .25f) >= 3.f);
+    assert(wind_expanded_radius(-1.f, wind_extents[0], 1.f) == -1.f);
+    nodes[3].children = {0};
+    wind_extents = level_hierarchy_wind_extents(nodes, {4.f});
+    assert(!std::isfinite(wind_extents[0]));
+    nodes[3].children.clear();
     nodes[3].bounds[9] = 0;
     bounds = level_hierarchy_bounds(nodes);
     assert(bounds[0][3] < 0 && bounds[1][3] < 0); // unknown bounds fail open

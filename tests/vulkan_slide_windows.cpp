@@ -40,6 +40,11 @@ int main()
     std::string error;
     assert(decode_slide_windows(source.data(), source.size(), indices, 4, windows, error));
     assert(windows.size() == 2 && windows[0].index_count == 6 && windows[1].offset == 6);
+    assert(select_slide_window_index(windows, 1.f) == 0);
+    assert(select_slide_window_index(windows, 0.5f) == 1);
+    assert(select_slide_window_index(windows, 0.f) == 1);
+    assert(select_slide_window_index(windows, -1.f) == 1);
+    assert(select_slide_window_index(windows, std::numeric_limits<float>::quiet_NaN()) == 0);
     assert(select_slide_window(windows, lod_for_distance(1.f, 1.f), indices.size()).index_count == 6);
     assert(select_slide_window(windows, lod_for_distance(1.f, 10000.f), indices.size()).offset == 6);
     assert(select_slide_window(windows, -1.f, indices.size()).offset == 6);

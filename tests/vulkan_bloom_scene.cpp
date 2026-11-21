@@ -26,4 +26,8 @@ int main()
     const vec3 colored = bloom_highlights(vec3(0.95f, 0.85f, 0.7f), threshold, knee);
     assert(colored.x > colored.y && colored.y > colored.z);
     assert(std::isfinite(colored.x) && std::isfinite(colored.y) && std::isfinite(colored.z));
+
+    assert(std::abs(bloom_upsample_radius(1.f) - 0.25f) < 1e-6f);
+    assert(std::abs(bloom_upsample_radius(4.f) - 1.f) < 1e-6f);
+    assert(std::abs(bloom_upsample_radius(12.f) - 3.f) < 1e-6f);
 }

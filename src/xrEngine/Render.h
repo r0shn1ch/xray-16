@@ -344,6 +344,7 @@ public:
     virtual void AfterWorldRender() = 0; //--#SM+#-- После рендеринга мира (до UI)
 
     virtual void Screenshot(ScreenshotMode mode = SM_NORMAL, pcstr name = nullptr) = 0;
+    virtual bool ScreenshotPending() const { return false; }
     virtual void SetPostProcessParams(const SPPInfo& ppi) = 0;
 
     // Constructor/destructor
@@ -402,4 +403,7 @@ public:
 
     virtual RenderContext GetCurrentContext() const = 0;
     virtual void MakeContextCurrent(RenderContext context) = 0;
+    // Optional renderer effect sourced by the active weapon.
+    virtual void UpdateSmokeTrail(const Fvector&, const Fvector&, float, bool) {}
+    virtual bool UpdateProjectileTrail(u64, const Fvector&, const Fvector&, float, u32, float, u32) { return false; }
 };

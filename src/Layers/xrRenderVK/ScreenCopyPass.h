@@ -31,13 +31,13 @@ struct ScreenCopyDispatch
 struct PostProcessConstants
 {
     float grade[4]{1.f, 1.f, 1.f, 0.f};
-    float tint[4]{1.f, 1.f, 1.f, 0.f};
-    float add[4]{};
-    float gray_weights[4]{.333f, .333f, .333f, 0.f};
-    float effect[4]{}; // blur, horizontal duality, vertical duality, grayscale
+    float tint[4]{1.f, 1.f, 1.f, 0.f}; // w is projected DOF focus depth
+    float add[4]{}; // w is DOF strength
+    float gray_weights[4]{.333f, .333f, .333f, 0.f}; // w enables GPU temporal exposure
+    float effect[4]{}; // Blur, duality and grayscale; auxiliary passes reuse the slots as needed.
     float noise[4]{}; // intensity, grain, fps, elapsed time
-    float color_map[4]{}; // influence, interpolation, middle gray, FXAA enable
-    float bloom[4]{0.14f, 0.72f, 4.f, 0.12f}; // intensity, threshold, source mip, soft knee
+    float color_map[4]{}; // influence, interpolation, middle gray, FXAA + 2 * cubic upscale
+    float bloom[4]{0.14f, 0.72f, 4.f, 0.12f}; // intensity, threshold, upsample radius, soft knee
 };
 static_assert(sizeof(PostProcessConstants) <= 128);
 
@@ -56,10 +56,14 @@ public:
 
     bool initialize(VkDevice device, VkRenderPass render_pass, VkImageView source_view,
         VkSampler sampler, VkShaderModule vertex_shader, VkShaderModule fragment_shader,
-        const ScreenCopyDispatch& dispatch, std::string& error);
+        const ScreenCopyDispatch& dispatch, std::string& error, bool additive = false);
     void record(const FrameRecordingContext& frame) const;
     void set_constants(const PostProcessConstants& constants) { m_constants = constants; }
     void set_color_maps(VkImageView first, VkImageView second);
+    void set_bloom_view(VkImageView bloom);
+    void set_exposure_view(VkImageView exposure, VkSampler sampler);
+    void set_depth_view(VkImageView depth, VkSampler sampler);
+    void set_motion_view(VkImageView motion);
     static void record_callback(const FrameRecordingContext& frame, void* user_data);
     void destroy();
 

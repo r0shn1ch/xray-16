@@ -7,6 +7,12 @@
 };
 [[vk::binding(0, 1)]] StructuredBuffer<float4x4> pose : register(t0, space1);
 
+float3 finite_normal(float3 value, float3 fallback)
+{
+    float length_squared = dot(value, value);
+    return length_squared > 1e-12 && length_squared < 1e20 ? value * rsqrt(length_squared) : fallback;
+}
+
 struct Vertex
 {
     [[vk::location(0)]] float3 position : POSITION;
@@ -56,7 +62,7 @@ Fragment main(Vertex vertex)
     Fragment fragment;
     fragment.position = mul(mvp, position);
     fragment.position.y = -fragment.position.y;
-    fragment.normal = mul((float3x3)object, normal);
+    fragment.normal = finite_normal(mul((float3x3)object, normal), float3(0.0, 1.0, 0.0));
     fragment.tangent = mul((float3x3)object, tangent);
     fragment.bitangent = mul((float3x3)object, bitangent);
     fragment.hemi = saturate(0.5 + 0.5 * fragment.normal.y);

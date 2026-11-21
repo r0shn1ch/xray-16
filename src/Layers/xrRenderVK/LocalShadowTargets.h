@@ -25,7 +25,7 @@ struct alignas(16) LocalLightUniform
     float color_type[4]{};
     float shadow_params[4]{}; // base array layer, world-space bias, enabled, projection enabled
     float spot_right[4]{};    // right.xyz, tan(cone/2)
-    float debug_mode[4]{};    // 1: remap the four-pane base view into the upper-left quadrant
+    float debug_mode[4]{};    // debug pane, volumetric intensity, quality, range multiplier
 };
 static_assert(sizeof(LocalLightUniform) % 16 == 0);
 
@@ -41,15 +41,18 @@ class LocalShadowTargets
     bool initialize(VkDevice device, VkFormat format, uint32_t image_count,
                     const VkPhysicalDeviceMemoryProperties &memory, const FrameDispatch &dispatch,
                     const BufferResourceDispatch &buffers, PFN_vkCreateSampler create_sampler,
-                    PFN_vkDestroySampler destroy_sampler, std::string &error, VkDeviceSize uniform_alignment = 256);
+                    PFN_vkDestroySampler destroy_sampler, std::string &error, VkDeviceSize uniform_alignment = 256,
+                    FrameImagePool* image_pool = nullptr);
     bool reserve_lights(uint32_t image, size_t count, std::string &error);
     bool write_light(uint32_t image, uint32_t index, const LocalLightUniform &value, std::string &error);
-    bool initialize_layers(const FrameRecordingContext &frame);
+    bool initialize_layers(const FrameRecordingContext &frame, bool graph_managed_layouts = false);
     bool begin_face(const FrameRecordingContext &frame, uint32_t slot, uint32_t face,
-                    FrameRecordingContext &shadow_frame, bool cached = false, bool preserve = false) const;
+                    FrameRecordingContext &shadow_frame, bool cached = false, bool preserve = false,
+                    bool graph_managed_layouts = false) const;
     bool cached_face(uint32_t slot, uint32_t face, const float *matrix) const;
     void remember_face(uint32_t slot, uint32_t face, const float *matrix);
     bool copy_cached_face(const FrameRecordingContext &frame, uint32_t slot, uint32_t face) const;
+    bool record_cached_face_copy(VkCommandBuffer command, uint32_t image, uint32_t slot, uint32_t face) const;
     bool caching() const
     {
         return cache_index_ != UINT32_MAX;
@@ -64,6 +67,19 @@ class LocalShadowTargets
     {
         return index < image_count_ ? targets_[index].image : VK_NULL_HANDLE;
     }
+    VkImage cache_image() const
+    {
+        return caching() && cache_index_ < targets_.size() ? targets_[cache_index_].image : VK_NULL_HANDLE;
+    }
+    VkImageAspectFlags image_aspects() const { return barrier_aspects_; }
+    bool layers_initialized(uint32_t image) const
+    {
+        return image < image_count_ && targets_[image].initialized;
+    }
+    bool cache_layers_initialized() const
+    {
+        return caching() && cache_index_ < targets_.size() && targets_[cache_index_].initialized;
+    }
     VkBuffer uniform(uint32_t image) const;
     VkSampler sampler() const
     {
@@ -73,6 +89,8 @@ class LocalShadowTargets
     {
         return pass_;
     }
+    VkRenderPass graph_render_pass() const { return graph_pass_; }
+    VkRenderPass graph_load_render_pass() const { return graph_load_pass_; }
     VkDeviceSize uniform_stride() const
     {
         return uniform_stride_;
@@ -92,7 +110,7 @@ class LocalShadowTargets
     };
     VkImageAspectFlags barrier_aspects_{VK_IMAGE_ASPECT_DEPTH_BIT};
     VkDevice device_{};
-    VkRenderPass pass_{}, load_pass_{};
+    VkRenderPass pass_{}, load_pass_{}, graph_pass_{}, graph_load_pass_{};
     uint32_t image_count_{}, cache_index_{UINT32_MAX};
     std::array<uint64_t, LocalShadowSlots * LocalShadowFaces> cache_signatures_{};
     VkSampler sampler_{};
@@ -100,6 +118,7 @@ class LocalShadowTargets
     FrameDispatch vk_{};
     VkPhysicalDeviceMemoryProperties memory_{};
     BufferResourceDispatch buffers_{};
+    FrameImagePool* image_pool_{};
     VkDeviceSize uniform_stride_{sizeof(LocalLightUniform)};
     std::vector<Target> targets_;
 };

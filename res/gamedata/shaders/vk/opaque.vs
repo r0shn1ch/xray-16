@@ -24,6 +24,9 @@ struct Vertex
     [[vk::location(2)]] float2 uv : TEXCOORD0;
     [[vk::location(7)]] float3 tangent : TANGENT;
     [[vk::location(8)]] float3 bitangent : BINORMAL;
+#if defined(VK_TREE_WAVE) && defined(LEVEL_GEOMETRY)
+    [[vk::location(11)]] float2 tree_wind : TEXCOORD11;
+#endif
 #if defined(LEVEL_GEOMETRY)
     [[vk::location(5)]] float2 lightmap_uv : TEXCOORD1;
     [[vk::location(6)]] float4 baked : COLOR0;
@@ -51,6 +54,12 @@ float3 rotate_object(float3 value)
         cross(object_rotation.xyz, value) + object_rotation.w * value);
 }
 
+float3 finite_normal(float3 value, float3 fallback)
+{
+    float length_squared = dot(value, value);
+    return length_squared > 1e-12 && length_squared < 1e20 ? value * rsqrt(length_squared) : fallback;
+}
+
 Fragment main(Vertex vertex)
 {
     Fragment fragment;
@@ -69,17 +78,23 @@ Fragment main(Vertex vertex)
 #if defined(VK_TREE_STATIC) && !defined(LEVEL_GEOMETRY) && !defined(OBJECT_GEOMETRY)
 #error VK_TREE_STATIC requires decoded level or object geometry
 #endif
+#if defined(VK_TREE_WAVE) && defined(LEVEL_GEOMETRY)
+    float phase = frac(object_rotation.w + dot(vertex.position, object_rotation.xyz));
+    float cyclic = 2.8284271 * phase - 1.4142136;
+    float bend = (vertex.position.y - vertex.tree_wind.y) * (cyclic * cyclic - 1.0) * vertex.tree_wind.x;
+    vertex.position.xz += float2(base_matrix_u.z, base_matrix_v.z) * bend;
+#endif
     fragment.position = mul(mvp, float4(vertex.position, 1.0));
     // X-Ray's projection is Y-up; a positive-height Vulkan viewport is Y-down.
     fragment.position.y = -fragment.position.y;
 #if defined(LEVEL_GEOMETRY)
-    fragment.normal = vertex.normal;
+    fragment.normal = finite_normal(vertex.normal, float3(0.0, 1.0, 0.0));
     fragment.tangent = vertex.tangent;fragment.bitangent=vertex.bitangent;
 #else
-    fragment.normal = normalize(rotate_object(vertex.normal));
+    fragment.normal = finite_normal(rotate_object(vertex.normal), float3(0.0, 1.0, 0.0));
     fragment.tangent=rotate_object(vertex.tangent);fragment.bitangent=rotate_object(vertex.bitangent);
 #endif
-    fragment.hemi = saturate(0.5 + 0.5 * normalize(fragment.normal).y);
+    fragment.hemi = saturate(0.5 + 0.5 * fragment.normal.y);
 #if defined(VK_TREE_STATIC) && defined(LEVEL_GEOMETRY)
     fragment.hemi = vertex.baked.a;
 #endif

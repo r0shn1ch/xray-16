@@ -1,9 +1,11 @@
 #include "xrEngine/stdafx.h"
 #include "src/Layers/xrRenderVK/VulkanModelVisual.h"
+#include "src/Layers/xrRenderVK/GpuParticleDynamicCollision.h"
 #include "xrEngine/EnnumerateVertices.h"
 #include "xrServerEntities/smart_cast.h"
 #include "xrCore/FMesh.hpp"
 
+#undef NDEBUG
 #include <cassert>
 
 using namespace xray::render::vulkan;
@@ -85,6 +87,14 @@ static std::vector<uint8_t> legacy_motion_file()
 int main()
 {
     Core.Initialize("vulkan_kinematics_test", nullptr, false);
+    {
+    GpuParticleCollisionInput collision_input;
+    collision_input.nodes.resize(1); collision_input.dynamic_triangles.resize(1);
+    bool collision_changed = false;
+    std::string collision_error;
+    assert(update_gpu_particle_dynamic_collision(collision_input, false, collision_changed, collision_error) &&
+        collision_changed && collision_input.nodes.size() == 1 && collision_input.dynamic_triangles.empty());
+    assert(update_gpu_particle_dynamic_collision(collision_input, false, collision_changed, collision_error) && !collision_changed);
     SkeletonBones bones;
     bones.root = 0;
     bones.bones.resize(2);
@@ -161,6 +171,10 @@ int main()
     for (auto& vertex : child.vertices)
         vertex.bones[0] = 1;
     assert(static_cast<VulkanKinematics*>(pose)->attach_geometry(geometry, error));
+    std::vector<std::vector<GpuParticleCollisionTriangle>> collision_triangles;
+    assert(static_cast<VulkanKinematics*>(pose)->export_collision_triangles(collision_triangles, error));
+    assert(collision_triangles.size() == 2 && collision_triangles[1].size() == 1 &&
+        collision_triangles[1][0].b[0] == 1.f);
     xr_vector<xr_vector<u16>> groups;
     assert(pose->LL_GetBoneGroups(groups) == 1 && groups[0].size() == 1 && groups[0][0] == 1);
     VertexCounter counter;
@@ -181,6 +195,8 @@ int main()
     VertexCounter moved;
     pose->EnumBoneVertices(moved, 1);
     assert(moved.count == 3 && moved.first_x == 2.f);
+    assert(static_cast<VulkanKinematics*>(pose)->export_collision_triangles(collision_triangles, error) &&
+        collision_triangles[1][0].a[0] == 2.f && collision_triangles[1][0].b[0] == 3.f);
     start.x += 2.f;
     assert(pose->PickBone(identity, hit, 5.f, start, direction, 1) && hit.dist == 1.f);
     start.x -= 2.f;
@@ -246,5 +262,7 @@ int main()
     assert(completed == 1);
     animated->LL_UpdateTracks(0.1f, true, false);
     assert(completed == 1);
+    }
+    Core._destroy();
     return 0;
 }

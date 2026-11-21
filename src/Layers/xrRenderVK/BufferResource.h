@@ -3,8 +3,16 @@
 #include <vulkan/vulkan.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
+
+namespace nvrhi
+{
+class IBuffer;
+class IDevice;
+}
 
 namespace xray::render::vulkan
 {
@@ -19,6 +27,10 @@ struct BufferResourceDispatch
     PFN_vkBindBufferMemory bind_buffer_memory{};
     PFN_vkMapMemory map_memory{};
     PFN_vkUnmapMemory unmap_memory{};
+    nvrhi::IDevice* nvrhi_device{};
+    uint32_t graphics_queue_family = VK_QUEUE_FAMILY_IGNORED;
+    uint32_t compute_queue_family = VK_QUEUE_FAMILY_IGNORED;
+    uint32_t transfer_queue_family = VK_QUEUE_FAMILY_IGNORED;
 };
 
 // A small mapped-buffer owner for host-visible coherent memory and an
@@ -37,7 +49,8 @@ public:
     bool initialize(VkDevice device, VkDeviceSize size, VkBufferUsageFlags usage,
         VkMemoryPropertyFlags required_memory_properties,
         const VkPhysicalDeviceMemoryProperties& memory_properties,
-        const BufferResourceDispatch& dispatch, std::string& error, bool pooled = false);
+        const BufferResourceDispatch& dispatch, std::string& error, bool pooled = false,
+        VkQueueFlags shared_queue_flags = 0);
     bool write(VkDeviceSize offset, const void* data, size_t size, std::string& error);
     // Caller waits for the GPU write before reading coherent host memory.
     bool read(VkDeviceSize offset, void* data, size_t size, std::string& error) const;
@@ -45,12 +58,17 @@ public:
 
     VkBuffer handle() const { return m_buffer; }
     VkDeviceSize size() const { return m_size; }
+    VkSharingMode sharing_mode() const { return m_sharing_mode; }
+    const std::vector<uint32_t>& sharing_queue_families() const { return m_sharing_queue_families; }
     bool host_visible() const { return m_mapped != nullptr; }
 
 private:
     VkDevice m_device = VK_NULL_HANDLE;
     VkBuffer m_buffer = VK_NULL_HANDLE;
     VkDeviceMemory m_memory = VK_NULL_HANDLE;
+    VkSharingMode m_sharing_mode = VK_SHARING_MODE_EXCLUSIVE;
+    std::vector<uint32_t> m_sharing_queue_families;
+    nvrhi::IBuffer* m_nvrhi_buffer{};
     VkDeviceSize m_size = 0;
     void* m_mapped = nullptr;
     std::shared_ptr<BufferMemoryBlock> m_pool_block;

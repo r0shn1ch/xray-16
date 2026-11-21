@@ -180,6 +180,7 @@ public:
     void LoadEnd();
     void LoadTitle(pcstr ls_title = nullptr, bool change_tip = false, shared_str map_name = nullptr);
     void LoadStage(bool draw = true);
+    void UpdateLoadScreen() const;
     void LoadDraw() const;
 
     void load_draw_internal() const;
