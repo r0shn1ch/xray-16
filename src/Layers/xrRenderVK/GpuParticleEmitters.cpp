@@ -98,6 +98,11 @@ bool GpuParticleEmitters::apply(const std::vector<fg::GpuPapiStatus>& statuses, 
     for (size_t i = 0; i < roots_.size(); ++i)
     {
         auto& root = roots_[i]; const auto& status = statuses[i];
+        if (status.generation == root.generation && status.error && status.retired)
+        {
+            root.live = root.retiring = root.has_snapshot = false;
+            continue;
+        }
         if (status.generation != root.generation || status.serial < root.lifecycle_serial ||
             (root.has_snapshot && status.serial < root.snapshot.serial)) continue;
         if (root.retiring && status.retired) { root.retiring = false; root.has_snapshot = false; }

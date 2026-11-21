@@ -3,5 +3,5 @@ source=vk/../../../../src/Layers/xrRenderVK/gpu_particles/gpu_particle_hud_disto
 stage=ps
 entry=main
 defines=
-source-fingerprint=e5aca6a0199d805f
-spirv-fingerprint=9b6ec00fb63e1346
+source-fingerprint=616861c30cf2adf5
+spirv-fingerprint=062d5a43245beb09

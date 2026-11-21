@@ -16,7 +16,7 @@ public:
     explicit GpuParticleCommands(uint32_t roots) : roots_(roots) {}
     bool begin_generation(uint32_t root, std::string& error);
     bool enqueue(uint32_t root, fg::GpuPapiCommand command, std::string& error);
-    bool snapshot(Batch& batch, std::string& error);
+    bool snapshot(Batch& batch, std::string& error, uint32_t capacity = UINT32_MAX);
     bool acknowledge(uint32_t root, uint32_t generation, uint32_t serial, std::string& error);
     bool acknowledge(const std::vector<fg::GpuPapiStatus>& statuses, std::string& error);
     bool state(uint32_t root, uint32_t& generation, uint32_t& serial) const;

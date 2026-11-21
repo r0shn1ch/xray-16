@@ -128,7 +128,8 @@ bool VulkanParticleEffect::attach_gpu_emitter(GpuParticleEmitters& emitters, std
 }
 void VulkanParticleEffect::detach_gpu_emitter()
 {
-    if (gpu_emitters_ && gpu_emitter_)
+    uint32_t root_index{};
+    if (gpu_visible_index(root_index))
     {
         std::string error;
         if (!gpu_emitters_->destroy(gpu_emitter_, error))
@@ -146,7 +147,8 @@ const std::vector<uint32_t>* VulkanParticleEffect::gpu_draw_programs() const
 }
 bool VulkanParticleEffect::gpu_draw_compatible() const
 {
-    return gpu_emitters_ != nullptr;
+    uint32_t root_index{};
+    return gpu_visible_index(root_index);
 }
 
 bool VulkanParticleEffect::needs_dynamic_occluder_mask(bool hud, bool gpu_draw_active) const

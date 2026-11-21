@@ -67,14 +67,28 @@ void main(uint3 groupID : SV_GroupID,uint lane : SV_GroupIndex) {
     uint lastGeneration = g_Commands[lastCommand].generation;
     if (lastGeneration < emitter.generation ||
         (lastGeneration == emitter.generation && g_Commands[lastCommand].serial <= emitter.completedSerial)) return;
-    bool changed = false,boundsDirty = false;
+    bool changed = false,boundsDirty = false,failed = false;
     for (uint offset = 0; offset < range.y; ++offset) {
         GpuPapiCommand command = g_Commands[range.x + offset];
         if (lane == 0) g_GroupControl = GpuPrepareCommand(emitter,command,index);
         GpuSyncEmitter(emitter,lane);
         uint control = g_GroupControl;
         GroupMemoryBarrierWithGroupSync();
-        if (control == 2) break;
+        if (control == 2) {
+            if (lane == 0) {
+                if (emitter.active == 1) {
+                    GpuStopRoot(emitter,false);
+                    GpuReleaseEmitter(emitter);
+                }
+                emitter.generation = command.generation;
+                emitter.completedSerial = g_Commands[lastCommand].serial;
+                emitter.retired = 1;
+            }
+            GpuSyncEmitter(emitter,lane);
+            failed = true;
+            changed = true;
+            break;
+        }
         if (control == 0) continue;
         if (control == 3) {
             GpuAdvanceRoot(emitter,command.p0,lane);
@@ -90,6 +104,7 @@ void main(uint3 groupID : SV_GroupID,uint lane : SV_GroupIndex) {
     status.generation = emitter.generation;
     status.serial = emitter.completedSerial;
     status.retired = emitter.retired;
+    status.error = failed ? 1u : 0u;
     status.boundsMin = boundsDirty ? float3(3.402823466e+38,3.402823466e+38,3.402823466e+38) : emitter.boundsMin;
     status.boundsMax = boundsDirty ? -status.boundsMin : emitter.boundsMax;
     if (emitter.active == 1) {

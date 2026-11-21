@@ -139,6 +139,29 @@ int main()
     assert(command_queue.snapshot(batch, queue_error) && batch.commands.size() == 2);
     statuses[1].serial = 1;
     assert(command_queue.acknowledge(statuses, queue_error) && command_queue.snapshot(batch, queue_error) && batch.commands.empty());
+
+    {
+        GpuParticleCommands bounded_queue(2);
+        assert(bounded_queue.begin_generation(0, queue_error));
+        assert(bounded_queue.begin_generation(1, queue_error));
+        for (uint32_t i = 0; i < 5; ++i)
+            assert(bounded_queue.enqueue(0, queued, queue_error));
+        assert(bounded_queue.enqueue(1, queued, queue_error));
+        assert(bounded_queue.snapshot(batch, queue_error, 4));
+        assert(batch.commands.size() == 3 && batch.ranges.size() == 2);
+        assert(batch.ranges[0][1] == 2 && batch.commands[2].emitter == 2);
+        assert(!bounded_queue.acknowledge(0, 1, 3, queue_error));
+        assert(bounded_queue.acknowledge(1, 1, 1, queue_error));
+        assert(bounded_queue.snapshot(batch, queue_error, 4) && batch.commands.size() == 4);
+        assert(batch.commands.back().serial == 4);
+        std::vector<xray::render::fg::GpuPapiStatus> rejected(2);
+        rejected[0].generation = 1;
+        rejected[0].serial = 4;
+        rejected[0].error = rejected[0].retired = 1;
+        assert(bounded_queue.acknowledge(rejected, queue_error));
+        assert(bounded_queue.snapshot(batch, queue_error) && batch.commands.empty());
+        assert(bounded_queue.begin_generation(0, queue_error));
+    }
     ParticleEffectDef translated_def;
     translated_def.name = "gravity";
     translated_def.max_particles = 128;

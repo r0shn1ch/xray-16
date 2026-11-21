@@ -6,7 +6,7 @@
 [[vk::binding(2, 2)]] SamplerState depth_sampler : register(s2);
 [[vk::binding(5, 1)]] cbuffer GpuParticleDrawParams {
     float4 camera_top, camera_right, camera_direction, eye_position;
-    uint draw_bucket; float3 padding;
+    uint draw_bucket; float padding0, padding1, padding2;
     float4 water_origin, water_normal, screen_params;
 };
 float4 main(float4 pixel : SV_Position, [[vk::location(1)]] float2 uv : TEXCOORD1,

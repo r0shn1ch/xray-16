@@ -14,7 +14,7 @@
     float4 g_CameraDirection;
     float4 g_EyePosition;
     uint g_DrawBucket;
-    float3 g_DrawPadding;
+    float g_DrawPadding0, g_DrawPadding1, g_DrawPadding2;
     float4 g_WaterOrigin;
     float4 g_WaterNormal;
 };

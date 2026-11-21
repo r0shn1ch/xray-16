@@ -24,18 +24,25 @@ bool GpuParticleCommands::enqueue(uint32_t root, fg::GpuPapiCommand command, std
     r.pending.push_back(command); ++r.serial;
     error.clear(); return true;
 }
-bool GpuParticleCommands::snapshot(Batch& batch, std::string& error)
+bool GpuParticleCommands::snapshot(Batch& batch, std::string& error, uint32_t capacity)
 {
+    size_t remaining_roots = std::count_if(roots_.begin(), roots_.end(),
+        [](const Root& root) { return !root.pending.empty(); });
+    if (remaining_roots > capacity)
+    { error = "GPU particle command capacity is smaller than the number of pending roots"; return false; }
+
     Batch result;
-    for (const auto& r : roots_)
+    for (auto& r : roots_)
     {
         if (r.pending.empty()) continue;
-        if (r.pending.size() > UINT32_MAX - result.commands.size())
-        { error = "GPU particle command batch overflow"; return false; }
-        result.ranges.push_back({static_cast<uint32_t>(result.commands.size()), static_cast<uint32_t>(r.pending.size())});
-        result.commands.insert(result.commands.end(), r.pending.begin(), r.pending.end());
+        // Keep space for the other roots even if one root cannot advance.
+        const size_t budget = (capacity - result.commands.size()) / remaining_roots;
+        const size_t count = std::min(r.pending.size(), budget);
+        result.ranges.push_back({static_cast<uint32_t>(result.commands.size()), static_cast<uint32_t>(count)});
+        result.commands.insert(result.commands.end(), r.pending.begin(), r.pending.begin() + count);
+        r.submitted = std::max(r.submitted, r.pending[count - 1].serial);
+        --remaining_roots;
     }
-    for (auto& r : roots_) if (!r.pending.empty()) r.submitted = r.pending.back().serial;
     batch = std::move(result); error.clear(); return true;
 }
 bool GpuParticleCommands::acknowledge(uint32_t root, uint32_t generation, uint32_t serial, std::string& error)
@@ -60,7 +67,17 @@ bool GpuParticleCommands::acknowledge(const std::vector<fg::GpuPapiStatus>& stat
         if (statuses[i].generation == roots_[i].generation && statuses[i].serial > roots_[i].submitted)
         { error = "GPU particle status acknowledges an unsubmitted command"; return false; }
     for (size_t i = 0; i < statuses.size(); ++i)
-        if (!acknowledge(static_cast<uint32_t>(i), statuses[i].generation, statuses[i].serial, error)) return false;
+    {
+        const auto& status = statuses[i];
+        auto& root = roots_[i];
+        if (status.generation == root.generation && status.error && status.retired)
+        {
+            root.pending.clear();
+            root.acknowledged = root.serial;
+        }
+        else if (!acknowledge(static_cast<uint32_t>(i), status.generation, status.serial, error))
+            return false;
+    }
     error.clear(); return true;
 }
 bool GpuParticleCommands::state(uint32_t root, uint32_t& generation, uint32_t& serial) const

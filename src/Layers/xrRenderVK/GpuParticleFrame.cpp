@@ -175,7 +175,7 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
         params.phase = 0;
         const uint32_t particle_groups = (capacities.particleCapacity + 63u) / 64u;
         const auto capture_motion = graph.add_checked_command_pass("capture GPU particle motion history",
-            [&, dispatch_params = params](VkCommandBuffer recording_command, std::string& pass_error) {
+            [&, dispatch_params = params, particle_groups](VkCommandBuffer recording_command, std::string& pass_error) {
                 return dispatch(recording_command, P::CaptureMotion, base, dispatch_params, {},
                     particle_groups, pass_error);
             });

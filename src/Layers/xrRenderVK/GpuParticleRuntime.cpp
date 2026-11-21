@@ -48,7 +48,7 @@ bool GpuParticleRuntime::record(uint32_t index, VkCommandBuffer command, const s
     auto& slot = *slots_[index];
     slot.uniforms.reset();
     GpuParticleCommands::Batch batch;
-    if (!commands_->snapshot(batch, error)) return false;
+    if (!commands_->snapshot(batch, error, capacity_.commands)) return false;
     GpuParticleFrameInputResult inputs{};
     const uint64_t revision = programs_.revision();
     if (!upload_gpu_particle_frame(command, buffers_, slot.upload, programs_, batch, visible, collision,
