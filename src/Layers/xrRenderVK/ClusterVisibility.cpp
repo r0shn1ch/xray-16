@@ -37,7 +37,7 @@ ClusterVisibility& ClusterVisibility::operator=(ClusterVisibility&& other) noexc
     if (this == &other)
         return *this;
     destroy();
-    device_ = std::exchange(other.device_, VK_NULL_HANDLE);
+    device_ = std::exchange(other.device_, nullptr);
     groups_ = std::move(other.groups_);
     clusters_ = std::move(other.clusters_);
     commands_ = std::move(other.commands_);

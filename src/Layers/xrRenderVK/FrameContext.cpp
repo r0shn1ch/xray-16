@@ -22,11 +22,7 @@ VkCommandBuffer nvrhi_command_buffer(nvrhi::ICommandList* command_list)
 {
     if (!command_list) return VK_NULL_HANDLE;
     const nvrhi::Object native = command_list->getNativeObject(nvrhi::ObjectTypes::VK_CommandBuffer);
-#if defined(VK_USE_64_BIT_PTR_DEFINES) && VK_USE_64_BIT_PTR_DEFINES
     return static_cast<VkCommandBuffer>(native.pointer);
-#else
-    return static_cast<VkCommandBuffer>(native.integer);
-#endif
 }
 
 struct FrameSubmissionGuard
