@@ -39,7 +39,8 @@ choice remains in effect, and OpenGL ES is still selectable in the launcher.
 
 An ARMv7-only APK requires device support for 32-bit applications. The OpenGL
 ES driver must expose at least four draw buffers and four color attachments.
-The ARMv7 engine remains subject to the 32-bit address-space limit.
+The ARMv7 engine remains subject to the 32-bit address-space limit. Its Vulkan
+renderer uses the direct backend.
 
 Call of Pripyat is the intended game profile. The SoC and CS entries in the
 launcher only pass `-soc` or `-cs`; they do not make those games supported by

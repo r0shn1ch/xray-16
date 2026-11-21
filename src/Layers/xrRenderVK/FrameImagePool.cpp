@@ -4,6 +4,7 @@
 #include <type_traits>
 #include <utility>
 
+#if defined(XRAY_HAS_NVRHI_VULKAN)
 namespace
 {
 nvrhi::Format to_nvrhi_format(VkFormat format)
@@ -26,6 +27,7 @@ Handle from_nvrhi_object(nvrhi::Object object)
         return static_cast<Handle>(object.integer);
 }
 }
+#endif
 
 namespace xray::render::vulkan
 {
@@ -106,6 +108,7 @@ bool FrameImagePool::acquire(const VkImageCreateInfo& info, VkImage& image, std:
             return true;
         }
 
+#if defined(XRAY_HAS_NVRHI_VULKAN)
     // NVRHI owns compatible frame images when it can describe the requested
     // Vulkan image. The existing Vulkan state tracker still owns transitions.
     const VkImageUsageFlags supported_usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
@@ -151,6 +154,8 @@ bool FrameImagePool::acquire(const VkImageCreateInfo& info, VkImage& image, std:
             }
         }
     }
+
+#endif
 
     VkImage created{};
     if (vk_.create_image(device_, &info, nullptr, &created) != VK_SUCCESS)

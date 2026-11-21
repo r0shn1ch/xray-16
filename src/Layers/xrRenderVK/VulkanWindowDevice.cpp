@@ -13,8 +13,10 @@
 
 namespace xray::render::vulkan
 {
+#if defined(XRAY_HAS_NVRHI_VULKAN)
 void initialize_nvrhi_vulkan_dispatch(VkInstance instance, PFN_vkGetInstanceProcAddr get_instance_proc,
     VkDevice device);
+#endif
 
 namespace
 {
@@ -290,6 +292,7 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
         !create_logical_device(m_physical, devices, m_device, m_queue, error, false, app.apiVersion,
             false, &enabled_device_info, &m_compute_queue, frame_generation_queues,
             &m_transfer_queue)) return fail();
+#if defined(XRAY_HAS_NVRHI_VULKAN)
     initialize_nvrhi_vulkan_dispatch(m_instance, m_instance_proc, m_device);
     nvrhi::vulkan::DeviceDesc nvrhi_desc{};
     nvrhi_desc.instance = m_instance;
@@ -336,6 +339,7 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
     }
     else
         SDL_Log("[renderer-vulkan] NVRHI requires timeline semaphores; direct Vulkan remains active");
+#endif
     SDL_Log("[renderer-vulkan] gpu.selected name='%s' vendor=0x%04x device=0x%04x driver=0x%x api=%u.%u queue=%u",
         m_physical.properties.deviceName, m_physical.properties.vendorID, m_physical.properties.deviceID,
         m_physical.properties.driverVersion, VK_VERSION_MAJOR(m_physical.properties.apiVersion),

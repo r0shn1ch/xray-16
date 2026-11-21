@@ -82,7 +82,7 @@ if (XRAY_BUILD_VULKAN_TESTS)
     target_include_directories(vulkan_texture_upload_test PRIVATE
         "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include"
         "${XRAY_NVRHI_INCLUDE_DIRS}")
-    target_link_libraries(vulkan_texture_upload_test PRIVATE nvrhi_vk nvrhi)
+    target_link_libraries(vulkan_texture_upload_test PRIVATE ${XRAY_NVRHI_LIBRARIES})
     target_compile_definitions(vulkan_texture_upload_test PRIVATE NOMINMAX)
     xray_add_vulkan_state_test(vulkan_dds_test tests/vulkan_dds.cpp)
     target_sources(vulkan_dds_test PRIVATE
@@ -148,7 +148,7 @@ if (XRAY_BUILD_VULKAN_TESTS)
         "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include"
         "${XRAY_NVRHI_INCLUDE_DIRS}")
     target_compile_definitions(vulkan_frame_lifecycle_test PRIVATE NOMINMAX)
-    target_link_libraries(vulkan_frame_lifecycle_test PRIVATE nvrhi_vk nvrhi)
+    target_link_libraries(vulkan_frame_lifecycle_test PRIVATE ${XRAY_NVRHI_LIBRARIES})
     xray_add_vulkan_state_test(vulkan_frame_image_graph_test tests/vulkan_frame_image_graph.cpp)
     target_sources(vulkan_frame_image_graph_test PRIVATE
         "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/FrameImageGraph.cpp"
@@ -164,7 +164,7 @@ if (XRAY_BUILD_VULKAN_TESTS)
     target_include_directories(vulkan_frame_image_pool_test PRIVATE
         "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include"
         "${XRAY_NVRHI_INCLUDE_DIRS}")
-    target_link_libraries(vulkan_frame_image_pool_test PRIVATE nvrhi_vk nvrhi)
+    target_link_libraries(vulkan_frame_image_pool_test PRIVATE ${XRAY_NVRHI_LIBRARIES})
     xray_add_vulkan_state_test(vulkan_buffer_upload_test tests/vulkan_buffer_upload.cpp)
     target_sources(vulkan_buffer_upload_test PRIVATE
         "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/BufferUpload.cpp"
@@ -263,7 +263,7 @@ if (XRAY_BUILD_VULKAN_TESTS)
         target_include_directories(vulkan_gbuffer_depth_gpu_test PRIVATE
             "${XRAY_SOURCE_DIR}" "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include"
             "${XRAY_NVRHI_INCLUDE_DIRS}")
-        target_link_libraries(vulkan_gbuffer_depth_gpu_test PRIVATE Vulkan::Vulkan nvrhi_vk nvrhi)
+        target_link_libraries(vulkan_gbuffer_depth_gpu_test PRIVATE Vulkan::Vulkan ${XRAY_NVRHI_LIBRARIES})
         target_compile_definitions(vulkan_gbuffer_depth_gpu_test PRIVATE NOMINMAX)
         add_test(NAME vulkan_gbuffer_depth_gpu COMMAND vulkan_gbuffer_depth_gpu_test ${_xray_vk_gpu_device_args})
         set_tests_properties(vulkan_gbuffer_depth_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
@@ -278,7 +278,7 @@ if (XRAY_BUILD_VULKAN_TESTS)
         target_include_directories(vulkan_hiz_gpu_test PRIVATE
             "${XRAY_SOURCE_DIR}" "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include"
             "${XRAY_NVRHI_INCLUDE_DIRS}")
-        target_link_libraries(vulkan_hiz_gpu_test PRIVATE Vulkan::Vulkan nvrhi_vk nvrhi)
+        target_link_libraries(vulkan_hiz_gpu_test PRIVATE Vulkan::Vulkan ${XRAY_NVRHI_LIBRARIES})
         target_compile_definitions(vulkan_hiz_gpu_test PRIVATE NOMINMAX)
         target_compile_options(vulkan_hiz_gpu_test PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/EHsc>)
         add_test(NAME vulkan_hiz_gpu COMMAND vulkan_hiz_gpu_test ${_xray_vk_gpu_device_args})
@@ -295,7 +295,7 @@ if (XRAY_BUILD_VULKAN_TESTS)
         target_include_directories(vulkan_motion_gpu_test PRIVATE
             "${XRAY_SOURCE_DIR}" "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include"
             "${XRAY_NVRHI_INCLUDE_DIRS}")
-        target_link_libraries(vulkan_motion_gpu_test PRIVATE Vulkan::Vulkan nvrhi_vk nvrhi)
+        target_link_libraries(vulkan_motion_gpu_test PRIVATE Vulkan::Vulkan ${XRAY_NVRHI_LIBRARIES})
         target_compile_definitions(vulkan_motion_gpu_test PRIVATE NOMINMAX)
         target_compile_options(vulkan_motion_gpu_test PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/EHsc>)
         add_executable(vulkan_ray_capabilities_gpu_test
@@ -335,7 +335,7 @@ if (XRAY_BUILD_VULKAN_TESTS)
         target_include_directories(vulkan_ray_capabilities_gpu_test PRIVATE
             "${XRAY_SOURCE_DIR}" "${XRAY_SOURCE_DIR}/src"
             "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include")
-        target_link_libraries(vulkan_ray_capabilities_gpu_test PRIVATE Vulkan::Vulkan nvrhi_vk nvrhi xrCore)
+        target_link_libraries(vulkan_ray_capabilities_gpu_test PRIVATE Vulkan::Vulkan ${XRAY_NVRHI_LIBRARIES} xrCore)
         target_compile_definitions(vulkan_ray_capabilities_gpu_test PRIVATE NOMINMAX)
         add_test(NAME vulkan_ray_capabilities_gpu COMMAND vulkan_ray_capabilities_gpu_test
             ${_xray_vk_gpu_device_option_args})
@@ -375,7 +375,7 @@ if (XRAY_BUILD_VULKAN_TESTS)
             "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/ComputePipeline.cpp")
         target_include_directories(vulkan_temporal_resolve_gpu_test PRIVATE
             "${XRAY_SOURCE_DIR}" "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include")
-        target_link_libraries(vulkan_temporal_resolve_gpu_test PRIVATE Vulkan::Vulkan nvrhi_vk)
+        target_link_libraries(vulkan_temporal_resolve_gpu_test PRIVATE Vulkan::Vulkan ${XRAY_NVRHI_LIBRARIES})
         add_test(NAME vulkan_temporal_resolve_gpu COMMAND vulkan_temporal_resolve_gpu_test ${_xray_vk_gpu_device_args})
         set_tests_properties(vulkan_temporal_resolve_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
         add_executable(vulkan_temporal_exposure_gpu_test
@@ -387,7 +387,7 @@ if (XRAY_BUILD_VULKAN_TESTS)
         target_include_directories(vulkan_temporal_exposure_gpu_test PRIVATE
             "${XRAY_SOURCE_DIR}" "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include"
             "${XRAY_NVRHI_INCLUDE_DIRS}")
-        target_link_libraries(vulkan_temporal_exposure_gpu_test PRIVATE Vulkan::Vulkan nvrhi_vk nvrhi)
+        target_link_libraries(vulkan_temporal_exposure_gpu_test PRIVATE Vulkan::Vulkan ${XRAY_NVRHI_LIBRARIES})
         target_compile_definitions(vulkan_temporal_exposure_gpu_test PRIVATE NOMINMAX)
         target_compile_options(vulkan_temporal_exposure_gpu_test PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/EHsc>)
         add_test(NAME vulkan_temporal_exposure_gpu COMMAND vulkan_temporal_exposure_gpu_test ${_xray_vk_gpu_device_args})
@@ -440,7 +440,7 @@ if (XRAY_BUILD_VULKAN_TESTS)
             "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include"
             "${XRAY_NVRHI_INCLUDE_DIRS}"
             $<TARGET_PROPERTY:xrRenderVK,INCLUDE_DIRECTORIES>)
-        target_link_libraries(vulkan_local_shadow_gpu_test PRIVATE Vulkan::Vulkan nvrhi_vk nvrhi)
+        target_link_libraries(vulkan_local_shadow_gpu_test PRIVATE Vulkan::Vulkan ${XRAY_NVRHI_LIBRARIES})
         target_compile_definitions(vulkan_local_shadow_gpu_test PRIVATE NOMINMAX)
         target_compile_options(vulkan_local_shadow_gpu_test PRIVATE
             $<$<CXX_COMPILER_ID:MSVC>:/UNDEBUG>
@@ -597,7 +597,7 @@ if (XRAY_BUILD_VULKAN_TESTS)
         "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include"
         "${XRAY_NVRHI_INCLUDE_DIRS}"
         $<TARGET_PROPERTY:xrRenderVK,INCLUDE_DIRECTORIES>)
-    target_link_libraries(vulkan_local_shadow_targets_test PRIVATE Vulkan::Vulkan nvrhi_vk nvrhi)
+    target_link_libraries(vulkan_local_shadow_targets_test PRIVATE Vulkan::Vulkan ${XRAY_NVRHI_LIBRARIES})
     target_compile_definitions(vulkan_local_shadow_targets_test PRIVATE NOMINMAX)
     target_compile_options(vulkan_local_shadow_targets_test PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/UNDEBUG>
@@ -616,7 +616,7 @@ if (XRAY_BUILD_VULKAN_TESTS)
         "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include"
         "${XRAY_NVRHI_INCLUDE_DIRS}"
         $<TARGET_PROPERTY:xrRenderVK,INCLUDE_DIRECTORIES>)
-    target_link_libraries(vulkan_water_targets_test PRIVATE Vulkan::Vulkan nvrhi_vk nvrhi)
+    target_link_libraries(vulkan_water_targets_test PRIVATE Vulkan::Vulkan ${XRAY_NVRHI_LIBRARIES})
     target_compile_definitions(vulkan_water_targets_test PRIVATE NOMINMAX)
     target_compile_options(vulkan_water_targets_test PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/UNDEBUG>

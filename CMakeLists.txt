@@ -65,6 +65,18 @@ include(XRay.Build)
 include(XRay.Packaging)
 
 add_subdirectory(Externals)
+if (MSVC AND TARGET xrLuaJIT)
+    # The bundled LuaJIT build files also supply MinGW options on Windows.
+    get_target_property(lua_compile_options xrLuaJIT COMPILE_OPTIONS)
+    list(REMOVE_ITEM lua_compile_options -Wno-comment -O3 -fomit-frame-pointer -fno-stack-protector)
+    set_property(TARGET xrLuaJIT PROPERTY COMPILE_OPTIONS "${lua_compile_options}")
+    get_target_property(lua_link_options xrLuaJIT LINK_OPTIONS)
+    list(FILTER lua_link_options EXCLUDE REGEX "^ *-shared -Wl,")
+    set_property(TARGET xrLuaJIT PROPERTY LINK_OPTIONS "${lua_link_options}")
+    if (BUILD_SHARED_LIBS)
+        target_compile_definitions(xrLuaJIT PUBLIC LUA_BUILD_AS_DLL)
+    endif()
+endif()
 target_include_directories(xrLuaFix PRIVATE
     "${XRAY_SOURCE_DIR}/Externals"
     "${XRAY_SOURCE_DIR}/Externals/luabind")

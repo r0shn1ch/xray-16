@@ -24,6 +24,7 @@ uint32_t memory_index(const VkPhysicalDeviceMemoryProperties& types, uint32_t al
     return VK_MAX_MEMORY_TYPES;
 }
 
+#if defined(XRAY_HAS_NVRHI_VULKAN)
 nvrhi::Format nvrhi_format(VkFormat format)
 {
     for (uint32_t i = 1; i < static_cast<uint32_t>(nvrhi::Format::COUNT); ++i)
@@ -45,6 +46,7 @@ VkImage native_image(nvrhi::ITexture* texture)
     return static_cast<VkImage>(object.integer);
 #endif
 }
+#endif
 
 VkBuffer native_buffer(nvrhi::IBuffer* buffer)
 {
@@ -266,6 +268,7 @@ bool upload_texture(VkDevice device, VkQueue queue, VkCommandPool pool,
     image_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+#if defined(XRAY_HAS_NVRHI_VULKAN)
     const nvrhi::Format format = nvrhi_format(source.format);
     if (vk.nvrhi_device && format != nvrhi::Format::UNKNOWN)
     {
@@ -300,6 +303,7 @@ bool upload_texture(VkDevice device, VkQueue queue, VkCommandPool pool,
             result.nvrhi_texture = nullptr;
         }
     }
+#endif
     if (!result.image && vk.create_image(device, &image_info, nullptr, &result.image) != VK_SUCCESS)
         return fail("Vulkan texture image creation failed");
     VkMemoryRequirements requirements{};

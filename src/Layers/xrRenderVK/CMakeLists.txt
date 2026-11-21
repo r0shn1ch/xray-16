@@ -22,7 +22,6 @@ endif()
 target_sources(xrRenderVK PRIVATE
     PipelineCache.h
     VulkanRendererModule.cpp
-    NvrhiVulkanDispatch.cpp
     VulkanProbe.cpp
     VulkanProbe.h
     SlidingWindows.cpp
@@ -384,9 +383,13 @@ target_include_directories(xrRenderVK
 # Android Vulkan smoke path, so propagate NVRHI's include directories as well
 # as its static link dependencies.
 target_link_libraries(xrRenderVK
-    PUBLIC nvrhi_vk nvrhi
+    PUBLIC ${XRAY_NVRHI_LIBRARIES}
     PRIVATE SDL2::SDL2 xrCDB xrImGui meshoptimizer
 )
+
+if (TARGET nvrhi_vk)
+    target_sources(xrRenderVK PRIVATE NvrhiVulkanDispatch.cpp)
+endif()
 
 if (MSVC)
     # ReleaseMasterGold disables exceptions project-wide, but the Vulkan
