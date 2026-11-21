@@ -143,12 +143,13 @@ bool Fsr3Upscaler::initialize(VkInstance instance, PFN_vkGetInstanceProcAddr get
     }
 
     VkFormatProperties output_properties{};
-    get_format_properties(physical_, VK_FORMAT_R8G8B8A8_UNORM, &output_properties);
+    const VkFormat output_format = upscale_output_format();
+    get_format_properties(physical_, output_format, &output_properties);
     const VkFormatFeatureFlags required = VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT |
         VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
     if ((output_properties.optimalTilingFeatures & required) != required)
     {
-        error = "FSR3 requires an RGBA8 storage and sampled output image";
+        error = "FSR3 output format does not support both storage and sampling";
         release_output_resources();
         return false;
     }
@@ -159,7 +160,7 @@ bool Fsr3Upscaler::initialize(VkInstance instance, PFN_vkGetInstanceProcAddr get
     {
         VkImageCreateInfo output_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         output_info.imageType = VK_IMAGE_TYPE_2D;
-        output_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+        output_info.format = output_format;
         output_info.extent = {display_extent_.width, display_extent_.height, 1};
         output_info.mipLevels = output_info.arrayLayers = 1;
         output_info.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -454,7 +455,7 @@ bool Fsr3Upscaler::record(const FrameRecordingContext& frame, std::string& error
         VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     const VkImageCreateInfo motion_info = image_info(render_extent_, motion_format_,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
-    const VkImageCreateInfo output_info = image_info(display_extent_, VK_FORMAT_R8G8B8A8_UNORM,
+    const VkImageCreateInfo output_info = image_info(display_extent_, upscale_output_format(),
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
     const uint32_t index = frame.image_index;
     const FfxResource color = ffxGetResourceVK(color_images_[index],
@@ -713,7 +714,7 @@ bool Fsr3Upscaler::create_frame_generation_swapchain(VkSwapchainCreateInfoKHR& c
     dispatch.queue_present = replacement_functions.queuePresentKHR;
     frame_interpolation_swapchain_ = swapchain;
     if (!create_context(frame_context.scene_extent, create_info.imageExtent,
-            VK_FORMAT_R8G8B8A8_UNORM, true, false, error))
+            create_info.imageFormat, true, false, error))
     {
         replacement_functions.destroySwapchainKHR(device_, swapchain, nullptr);
         swapchain = VK_NULL_HANDLE;

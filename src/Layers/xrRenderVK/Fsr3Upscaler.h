@@ -67,6 +67,10 @@ private:
     bool initialize_backend_interfaces(std::string& error);
     bool create_context(VkExtent2D render_extent, VkExtent2D display_extent,
         VkFormat back_buffer_format, bool frame_generation, bool hdr_input, std::string& error);
+    VkFormat upscale_output_format() const
+    {
+        return scene_format_ == VK_FORMAT_R16G16B16A16_SFLOAT ? scene_format_ : VK_FORMAT_R8G8B8A8_UNORM;
+    }
     bool create_frame_generation_swapchain(VkSwapchainCreateInfoKHR& create_info,
         const FrameSwapchainCreateContext& context, FrameDispatch& dispatch,
         VkSwapchainKHR& swapchain, std::string& error);
