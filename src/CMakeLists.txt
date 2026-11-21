@@ -251,6 +251,7 @@ if (XRAY_BUILD_VULKAN_TESTS)
             "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include"
             "${XRAY_NVRHI_INCLUDE_DIRS}")
         target_link_libraries(vulkan_bloom_gpu_test PRIVATE Vulkan::Vulkan)
+        target_compile_options(vulkan_bloom_gpu_test PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/EHsc>)
         add_test(NAME vulkan_bloom_gpu COMMAND vulkan_bloom_gpu_test ${_xray_vk_gpu_device_args})
         set_tests_properties(vulkan_bloom_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
         add_executable(vulkan_gbuffer_depth_gpu_test

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -166,7 +167,7 @@ struct Fixture
 };
 }
 
-int main(int argc, char** argv)
+int main(int argc, char** argv) try
 {
     Fixture vk;
     VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
@@ -325,6 +326,7 @@ int main(int argc, char** argv)
     shaft_constants.tint[1] = .05f;
     shaft_constants.tint[2] = 1.f;
     shaft_constants.add[0] = shaft_constants.add[1] = shaft_constants.add[2] = 1.f;
+    shaft_constants.effect[0] = 16.f;
     shafts.set_constants(shaft_constants);
     PostProcessConstants constants;
     constants.bloom[1] = 0.5f;
@@ -687,4 +689,9 @@ int main(int argc, char** argv)
     vkUnmapMemory(vk.device, focused_memory);
     if (focused_pixels[(1 * 8 + 1) * 4] != 20 || focused_pixels[(3 * 8 + 3) * 4] != 255)
         throw std::runtime_error("depth of field blurred a focused surface");
+}
+catch (const std::exception& error)
+{
+    std::fprintf(stderr, "%s\n", error.what());
+    return 1;
 }
