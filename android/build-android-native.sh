@@ -24,8 +24,8 @@ fi
 ndk_dir=${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}
 android_abi=${XRAY_ANDROID_ABI:-armeabi-v7a}
 case "$android_abi" in
-    armeabi-v7a|arm64-v8a) ;;
-    *) echo "XRAY_ANDROID_ABI must be armeabi-v7a or arm64-v8a" >&2; exit 2 ;;
+    armeabi-v7a|arm64-v8a|x86_64) ;;
+    *) echo "XRAY_ANDROID_ABI must be armeabi-v7a, arm64-v8a or x86_64" >&2; exit 2 ;;
 esac
 build_dir=${XRAY_ANDROID_BUILD_DIR:-"$repo_dir/build/android-${android_abi}"}
 deps_prefix=${ANDROID_DEPS_PREFIX:-}
@@ -42,6 +42,17 @@ fi
 if [ -z "$ndk_dir" ] || [ ! -f "$ndk_dir/build/cmake/android.toolchain.cmake" ]; then
     echo "ANDROID_NDK_HOME must point to an installed Android NDK" >&2
     exit 2
+fi
+
+if [ "$android_abi" = arm64-v8a ] || [ "$android_abi" = x86_64 ]; then
+    if [ -z "${XRAY_SLANG_ROOT:-}" ]; then
+        XRAY_SLANG_ROOT=$("$script_dir/build-slang.sh" "$android_abi")
+        export XRAY_SLANG_ROOT
+    fi
+    if [ ! -f "$XRAY_SLANG_ROOT/lib/cmake/slang/slangConfig.cmake" ]; then
+        echo "XRAY_SLANG_ROOT must point to an installed Slang package" >&2
+        exit 2
+    fi
 fi
 
 set -- "$@"
@@ -73,6 +84,9 @@ fi
 if [ -n "${SDL2_DIR:-}" ]; then
     set -- "$@" "-DSDL2_DIR=$SDL2_DIR"
 fi
+if [ -n "${XRAY_SLANG_ROOT:-}" ]; then
+    set -- "$@" "-DXRAY_SLANG_ROOT=$XRAY_SLANG_ROOT"
+fi
 if [ "${XRAY_ANDROID_SHARED:-ON}" = "ON" ]; then
     set -- "$@" "-DXRAY_ANDROID_SHARED=ON"
     set -- "$@" "-DCMAKE_POSITION_INDEPENDENT_CODE=ON"
@@ -82,9 +96,12 @@ fi
 # Make the known cross-host compiler and the bundled static emulator automatic,
 # so a clean build never depends on manually repeated CMake cache flags.
 luajit_host_compiler=${LUAJIT_HOST_C_COMPILER:-}
-if [ -z "$luajit_host_compiler" ] && [ "$android_abi" = arm64-v8a ]; then
-    # LuaJIT's GC64 buildvm requires 64-bit host pointer layout.
-    luajit_host_compiler=$(command -v cc)
+if [ -z "$luajit_host_compiler" ] && { [ "$android_abi" = arm64-v8a ] || [ "$android_abi" = x86_64 ]; }; then
+    # 64-bit LuaJIT buildvm requires a host compiler with 64-bit pointers.
+    luajit_host_compiler=$(command -v cc || command -v gcc || command -v clang || true)
+    if [ -n "$luajit_host_compiler" ] && [ -f "${luajit_host_compiler}.exe" ]; then
+        luajit_host_compiler="${luajit_host_compiler}.exe"
+    fi
 elif [ -z "$luajit_host_compiler" ] && [ -x "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android26-clang" ]; then
     luajit_host_compiler="$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android26-clang"
 fi
@@ -137,6 +154,15 @@ if [ "${CMAKE_GENERATOR:-Ninja}" = Ninja ]; then
     # Use the Ninja executable selected by CMake. The SDK may prepend an
     # older Ninja to PATH, which rewrites the build log and makes every
     # object look dirty after an otherwise successful link.
+    ninja_program=$(sed -n 's/^CMAKE_MAKE_PROGRAM:FILEPATH=//p' "$build_dir/CMakeCache.txt")
+    if [ -z "$ninja_program" ] || [ ! -x "$ninja_program" ]; then
+        echo "Could not find the Ninja executable selected by CMake" >&2
+        exit 1
+    fi
+    # Refresh Ninja's recorded output mtimes before checking the graph. On
+    # Windows/MinGW builds the log may retain an older timestamp even though
+    # the linked files on disk are newer, causing every retry to relink.
+    "$ninja_program" -C "$build_dir" -t restat
     dry_run=$(cmake --build "$build_dir" --target xr_3da -- -n)
     if ! printf '%s\n' "$dry_run" | grep -q 'ninja: no work to do.'; then
         echo "Native dependency graph was still dirty after linking; rebuilding" >&2

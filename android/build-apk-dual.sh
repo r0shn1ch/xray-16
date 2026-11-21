@@ -44,7 +44,19 @@ if [ -z "$ndk_dir" ] || [ ! -f "$ndk_dir/build/cmake/android.toolchain.cmake" ];
     echo "ANDROID_NDK_HOME must point to an installed Android NDK" >&2
     exit 2
 fi
-if [ -z "$sdk_dir" ] || [ ! -x "$sdk_dir/platform-tools/adb" ]; then
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) ndk_host_tag=windows-x86_64; ndk_exe_suffix=.exe; sdk_script_suffix=.bat ;;
+    Darwin*) ndk_host_tag=darwin-x86_64; ndk_exe_suffix=; sdk_script_suffix= ;;
+    *) ndk_host_tag=linux-x86_64; ndk_exe_suffix=; sdk_script_suffix= ;;
+esac
+ndk_host="$ndk_dir/toolchains/llvm/prebuilt/$ndk_host_tag"
+if [ ! -d "$ndk_host" ]; then
+    echo "Android NDK host tools are unavailable: $ndk_host" >&2
+    exit 2
+fi
+ndk_readelf="$ndk_host/bin/llvm-readelf$ndk_exe_suffix"
+ndk_strip="$ndk_host/bin/llvm-strip$ndk_exe_suffix"
+if [ -z "$sdk_dir" ] || [ ! -x "$sdk_dir/platform-tools/adb$ndk_exe_suffix" ]; then
     echo "ANDROID_SDK_ROOT must point to an installed Android SDK" >&2
     exit 2
 fi
@@ -62,6 +74,16 @@ if [ -z "$sdl_dir" ] || [ ! -f "$sdl_dir/android-project/gradlew" ]; then
     exit 2
 fi
 
+slang_root64=${XRAY_SLANG_ROOT_ARM64:-${XRAY_SLANG_ROOT:-}}
+if [ -z "$slang_root64" ]; then
+    slang_root64=$(ANDROID_NDK_HOME="$ndk_dir" XRAY_ANDROID_ABI=arm64-v8a \
+        "$script_dir/build-slang.sh" arm64-v8a)
+fi
+if [ ! -f "$slang_root64/lib/libslang-compiler.so" ]; then
+    echo "Android ARM64 Slang compiler library is missing under $slang_root64" >&2
+    exit 2
+fi
+
 native_build_dir="$build_dir/native"
 if [ "${XRAY_ANDROID_SKIP_NATIVE_BUILD:-OFF}" != ON ]; then
 glslc_bin=${GLSLC_BIN:-glslc}
@@ -76,6 +98,8 @@ python3 "$repo_dir/tools/compile_vulkan_shader.py" --compiler glslc --dxc "$glsl
     --output-dir "$repo_dir/res/gamedata/shaders"
 python3 "$repo_dir/tools/embed_vulkan_game_shader.py"
 for generator in \
+    embed_vulkan_ray_generate_shader.py \
+    embed_vulkan_restir_gi_shader.py \
     embed_vulkan_deferred_shaders.py \
     embed_vulkan_scene_shaders.py \
     embed_vulkan_weather_shader.py \
@@ -97,6 +121,7 @@ ANDROID_NDK_HOME="$ndk_dir" \
 ANDROID_DEPS_PREFIX="$deps_prefix64" \
 XRAY_ANDROID_BUILD_DIR="$build_dir/native-arm64" \
 XRAY_ANDROID_SHARED=ON \
+XRAY_SLANG_ROOT="$slang_root64" \
 LUAJIT_HOST_EXECUTABLE_PREFIX= \
 "$script_dir/build-arm64.sh" "-DXRAY_ENABLE_LTO=$android_lto" "$@" "-DCMAKE_BUILD_TYPE=$native_config"
 fi
@@ -189,14 +214,15 @@ if [ "$arm64_only" != ON ]; then
 mkdir -p "$native_lib_dir"
 cp "$native_lib" "$native_lib_dir/libmain.so"
 cp "$deps_prefix/lib/libopenal.so" "$native_lib_dir/libopenal.so"
-cp "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so" \
+cp "$ndk_host/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so" \
     "$native_lib_dir/libc++_shared.so"
 fi
 native_lib_dir64="$project_dir/app/src/main/jniLibs/arm64-v8a"
 mkdir -p "$native_lib_dir64"
 cp "$native_lib64" "$native_lib_dir64/libmain.so"
 cp "$deps_prefix64/lib/libopenal.so" "$native_lib_dir64/libopenal.so"
-cp "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" \
+cp "$slang_root64/lib/libslang-compiler.so" "$native_lib_dir64/libslang-compiler.so"
+cp "$ndk_host/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" \
     "$native_lib_dir64/libc++_shared.so"
 # Optional official validation binary, supplied by the Android Vulkan SDK.
 # Keep it out of release builds and ensure the ELF matches the packaged ABI.
@@ -206,8 +232,7 @@ if [ "$arm64_only" != ON ] && [ -n "${XRAY_ANDROID_VALIDATION_LAYER_ARMV7:-}" ];
         echo "Android validation layer does not exist: $validation_layer" >&2
         exit 2
     fi
-    readelf_bin="$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
-    if ! "$readelf_bin" -h "$validation_layer" | grep -Eq 'Machine:.*ARM($|[[:space:]])'; then
+    if ! "$ndk_readelf" -h "$validation_layer" | grep -Eq 'Machine:.*ARM($|[[:space:]])'; then
         echo "Android validation layer must be an ARMv7 ELF" >&2
         exit 2
     fi
@@ -215,33 +240,33 @@ if [ "$arm64_only" != ON ] && [ -n "${XRAY_ANDROID_VALIDATION_LAYER_ARMV7:-}" ];
 fi
 if [ -n "${XRAY_ANDROID_VALIDATION_LAYER_ARM64:-}" ]; then
     layer64=$XRAY_ANDROID_VALIDATION_LAYER_ARM64
-    if [ ! -f "$layer64" ] || ! "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -h "$layer64" | grep -Eq 'Machine:.*AArch64'; then
+    if [ ! -f "$layer64" ] || ! "$ndk_readelf" -h "$layer64" | grep -Eq 'Machine:.*AArch64'; then
         echo "Android ARM64 validation layer must be an AArch64 ELF" >&2
         exit 2
     fi
     cp "$layer64" "$native_lib_dir64/libVkLayer_khronos_validation.so"
 fi
 
-strip_bin="$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
-if [ ! -x "$strip_bin" ]; then
+if [ ! -x "$ndk_strip" ]; then
     echo "Android NDK llvm-strip is required for APK packaging" >&2
     exit 2
 fi
 if [ "$arm64_only" != ON ]; then
-"$strip_bin" --strip-unneeded "$native_lib_dir/libmain.so" \
+"$ndk_strip" --strip-unneeded "$native_lib_dir/libmain.so" \
     "$native_lib_dir/libopenal.so" "$native_lib_dir/libc++_shared.so"
 fi
-"$strip_bin" --strip-unneeded \
+"$ndk_strip" --strip-unneeded \
     "$native_lib_dir64/libmain.so" \
     "$native_lib_dir64/libopenal.so" \
+    "$native_lib_dir64/libslang-compiler.so" \
     "$native_lib_dir64/libc++_shared.so"
 for packaged_main in "$native_lib_dir64/libmain.so"; do
-    if "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -S "$packaged_main" | grep -q '[.]debug_'; then
+    if "$ndk_readelf" -S "$packaged_main" | grep -q '[.]debug_'; then
         echo "Native debug sections must not be packaged in the APK: $packaged_main" >&2
         exit 1
     fi
 done
-if [ "$arm64_only" != ON ] && "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -S \
+if [ "$arm64_only" != ON ] && "$ndk_readelf" -S \
     "$native_lib_dir/libmain.so" | grep -q '[.]debug_'; then
     echo "Native ARMv7 debug sections must not be packaged" >&2
     exit 1
@@ -274,14 +299,14 @@ fi
 if [ "$arm64_only" != ON ]; then
     python3 "$repo_dir/tools/check_android_vulkan_route.py" \
         --repo "$repo_dir" --sdl-root "$sdl_dir" --native-lib "$native_lib" \
-        --readelf "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" --apk "$apk"
+        --readelf "$ndk_readelf" --apk "$apk"
 fi
 python3 "$repo_dir/tools/check_android_vulkan_route.py" \
     --repo "$repo_dir" --sdl-root "$sdl_dir" --native-lib "$native_lib64" --abi arm64-v8a \
-    --readelf "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" --apk "$apk"
+    --readelf "$ndk_readelf" --apk "$apk"
 mkdir -p "$repo_dir/build"
-port_version=$(sed -n '1p' "$project_dir/android-version.txt")
-port_version_code=$(sed -n '2p' "$project_dir/android-version.txt")
+port_version=$(sed -n '1p' "$project_dir/android-version.txt" | tr -d '\r')
+port_version_code=$(sed -n '2p' "$project_dir/android-version.txt" | tr -d '\r')
 if ! cmp -s "$script_dir/PORT_VERSION" "$project_dir/android-version.txt"; then
     echo "Android version changed during the build; rebuild from a stable commit" >&2
     exit 1
@@ -298,10 +323,20 @@ fi
 # dependencies. The Gradle debug build above creates the standard debug
 # keystore when it is not present yet.
 build_tools_dir=$(find "$sdk_dir/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -1)
-zipalign_bin="$build_tools_dir/zipalign"
-apksigner_bin="$build_tools_dir/apksigner"
-aapt_bin="$build_tools_dir/aapt"
-if [ ! -x "$zipalign_bin" ] || [ ! -x "$apksigner_bin" ] || [ ! -x "$aapt_bin" ]; then
+zipalign_bin="$build_tools_dir/zipalign$ndk_exe_suffix"
+aapt_bin="$build_tools_dir/aapt$ndk_exe_suffix"
+if [ -n "$sdk_script_suffix" ]; then
+    apksigner_bin="$build_tools_dir/lib/apksigner.jar"
+    run_apksigner() { java -jar "$apksigner_bin" "$@"; }
+    apksigner_available=0
+    if [ -f "$apksigner_bin" ]; then apksigner_available=1; fi
+else
+    apksigner_bin="$build_tools_dir/apksigner"
+    run_apksigner() { "$apksigner_bin" "$@"; }
+    apksigner_available=0
+    if [ -x "$apksigner_bin" ]; then apksigner_available=1; fi
+fi
+if [ ! -x "$zipalign_bin" ] || [ ! -x "$aapt_bin" ] || [ "$apksigner_available" -eq 0 ]; then
     echo "Android SDK build-tools with aapt, zipalign and apksigner are required" >&2
     exit 2
 fi
@@ -331,6 +366,11 @@ for abi in arm64-v8a $(if [ "$arm64_only" != ON ]; then printf 'armeabi-v7a'; fi
         fi
     done
 done
+if ! unzip -p "$apk" lib/arm64-v8a/libslang-compiler.so |
+    cmp - "$native_lib_dir64/libslang-compiler.so"; then
+    echo "Gradle packaged a stale arm64-v8a/libslang-compiler.so" >&2
+    exit 1
+fi
 if [ -n "${XRAY_ANDROID_VALIDATION_LAYER_ARM64:-}" ] &&
     ! unzip -p "$apk" lib/arm64-v8a/libVkLayer_khronos_validation.so |
         cmp - "$native_lib_dir64/libVkLayer_khronos_validation.so"; then
@@ -372,7 +412,7 @@ fi
 
 aligned_apk="$build_dir/app-debug-16k-aligned.apk"
 "$zipalign_bin" -f -P 16 4 "$apk" "$aligned_apk"
-"$apksigner_bin" sign \
+run_apksigner sign \
     --ks "$debug_keystore" \
     --ks-pass "pass:${ANDROID_DEBUG_KEYSTORE_PASS:-android}" \
     --key-pass "pass:${ANDROID_DEBUG_KEY_PASS:-android}" \
@@ -382,7 +422,7 @@ aligned_apk="$build_dir/app-debug-16k-aligned.apk"
     "$aligned_apk"
 unlink "$aligned_apk"
 "$zipalign_bin" -c -P 16 4 "$output_apk"
-"$apksigner_bin" verify "$output_apk"
+run_apksigner verify "$output_apk"
 python3 "$script_dir/create-update-manifest.py" \
     --apk "$output_apk" \
     --output "$build_dir/android-update.json"

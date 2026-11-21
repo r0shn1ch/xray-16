@@ -27,7 +27,15 @@ required only when packaging both ABIs.
 | NDK used by the current scripts | r30 (`30.0.16248370`) |
 | CMake | 3.23 or newer |
 | Java | JDK 17 |
-| Gameplay renderer | OpenGL ES 3.1 |
+| Gameplay renderer | OpenGL ES 3.1 or Vulkan; RT features are optional on Vulkan 1.1+ devices with the required extensions |
+
+The 64-bit Android Vulkan renderer uses Slang for runtime HLSL-to-SPIR-V
+fallbacks. `build-android-native.sh` builds the pinned Slang `v2026.22` release
+for `arm64-v8a` or `x86_64` when `XRAY_SLANG_ROOT` is not set. Set `XRAY_SLANG_SOURCE_DIR`
+to reuse a local checkout or `XRAY_SLANG_ROOT` to use an existing install.
+
+New launcher profiles select Vulkan by default. An existing saved renderer
+choice remains in effect, and OpenGL ES is still selectable in the launcher.
 
 An ARMv7-only APK requires device support for 32-bit applications. The OpenGL
 ES driver must expose at least four draw buffers and four color attachments.
@@ -40,9 +48,10 @@ this port.
 ## What the repository does and does not provide
 
 The checked-in scripts configure OpenXRay, assemble the SDL Android project,
-package native libraries and sign a debug APK. They do **not** download or
-build third-party libraries. No Android APK or ready-made Android build kit is
-published by the repository workflow.
+package native libraries and sign a debug APK. CMake fetches the pinned
+Vulkan renderer dependencies. On Linux, the ARM64 FidelityFX backend also
+requires a host FidelityFX Shader Compiler supplied through
+`-DFFX_SC_EXECUTABLE=/path/to/FidelityFX_SC`.
 
 You must provide:
 

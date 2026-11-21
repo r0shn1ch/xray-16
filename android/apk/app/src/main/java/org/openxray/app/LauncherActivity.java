@@ -665,7 +665,7 @@ public final class LauncherActivity extends Activity {
         splashEnabled.setChecked(preferences.getBoolean(PREF_SPLASH, false));
         keepScreenOn.setChecked(preferences.getBoolean(PREF_KEEP_SCREEN_ON, true));
         immersiveMode.setChecked(preferences.getBoolean(PREF_IMMERSIVE, true));
-        rendererMode.setSelection(clampRendererMode(preferences.getInt(PREF_RENDERER_MODE, RENDERER_AUTO)));
+        rendererMode.setSelection(clampRendererMode(preferences.getInt(PREF_RENDERER_MODE, RENDERER_VULKAN)));
         selectStoredResolution(preferences.getString(PREF_RENDER_RESOLUTION, "auto"));
         showFps.setChecked(preferences.getBoolean(PREF_SHOW_FPS, true));
         androidCrashReports.setChecked(preferences.getBoolean(PREF_ANDROID_CRASH_REPORTS, true));

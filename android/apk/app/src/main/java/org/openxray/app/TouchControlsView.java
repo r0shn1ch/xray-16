@@ -71,9 +71,9 @@ final class TouchControlsView extends View {
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
-        final float joyRadius = dp(78);
-        final float joyCx = dp(102);
-        final float joyCy = getHeight() - dp(100);
+        final float joyRadius = joystickRadius();
+        final float joyCx = joystickCenterX();
+        final float joyCy = joystickCenterY();
         drawCircle(canvas, joyCx, joyCy, joyRadius, "");
 
         float knobX = joyCx;
@@ -89,7 +89,7 @@ final class TouchControlsView extends View {
             knobX += dx;
             knobY += dy;
         }
-        drawCircle(canvas, knobX, knobY, dp(31), "");
+        drawCircle(canvas, knobX, knobY, dp(27), "");
 
         RectF fire = fireBounds();
         drawCircle(canvas, fire.centerX(), fire.centerY(), fire.width() / 2, "ОГОНЬ");
@@ -147,7 +147,7 @@ final class TouchControlsView extends View {
         } else if (inventoryPointer == NO_POINTER && inventoryBounds().contains(x, y)) {
             inventoryPointer = pointerId;
             setControl(CONTROL_INVENTORY, true);
-        } else if (joystickPointer == NO_POINTER && x < getWidth() * 0.42f && y > getHeight() * 0.42f) {
+        } else if (joystickPointer == NO_POINTER && isInsideJoystick(x, y)) {
             joystickPointer = pointerId;
             updateJoystick(x, y);
         } else if (mousePointer == NO_POINTER) {
@@ -200,8 +200,7 @@ final class TouchControlsView extends View {
             float travel = (float)Math.hypot(x - mouseDownX, y - mouseDownY);
             long duration = SystemClock.uptimeMillis() - mouseDownTime;
             if (!cancelled && travel <= dp(14) && duration <= 350) {
-                XRayActivity.clickTouchMouse(true);
-                XRayActivity.clickTouchMouse(false);
+                XRayActivity.clickTouchMouseAt(x, y, getWidth(), getHeight());
             }
         }
     }
@@ -209,13 +208,32 @@ final class TouchControlsView extends View {
     private void updateJoystick(float x, float y) {
         joystickX = x;
         joystickY = y;
-        float dx = x - dp(102);
-        float dy = y - (getHeight() - dp(100));
-        float deadZone = dp(18);
+        float dx = x - joystickCenterX();
+        float dy = y - joystickCenterY();
+        float deadZone = dp(16);
         setControl(CONTROL_LEFT, dx < -deadZone);
         setControl(CONTROL_RIGHT, dx > deadZone);
         setControl(CONTROL_FORWARD, dy < -deadZone);
         setControl(CONTROL_BACK, dy > deadZone);
+    }
+
+    private float joystickCenterX() {
+        return dp(78);
+    }
+
+    private float joystickCenterY() {
+        return getHeight() - dp(88);
+    }
+
+    private float joystickRadius() {
+        return dp(64);
+    }
+
+    private boolean isInsideJoystick(float x, float y) {
+        float dx = x - joystickCenterX();
+        float dy = y - joystickCenterY();
+        float radius = joystickRadius();
+        return dx * dx + dy * dy <= radius * radius;
     }
 
     private void setControl(int control, boolean pressed) {

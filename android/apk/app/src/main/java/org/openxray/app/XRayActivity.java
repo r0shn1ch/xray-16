@@ -18,6 +18,8 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Date;
 import java.util.Locale;
 import java.nio.charset.StandardCharsets;
@@ -37,6 +39,8 @@ public final class XRayActivity extends SDLActivity {
     private File diagnosticsFile;
     private boolean immersiveMode = true;
     private TouchControlsView touchControls;
+    private final Map<Integer, AndroidVideoPlayer> videoPlayers = new HashMap<>();
+    private int nextVideoPlayerId = 1;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -59,6 +63,10 @@ public final class XRayActivity extends SDLActivity {
                 + "; abi=" + (Build.SUPPORTED_ABIS.length == 0 ? "unknown" : Build.SUPPORTED_ABIS[0]));
         try {
             super.onCreate(savedInstanceState);
+            if (mSurface == null) {
+                writeDiagnostic("SDL did not create a surface");
+                return;
+            }
             // Native UI provides focus feedback. Android's default decoration
             // would tint the entire SDL surface after the keyboard closes.
             mSurface.setDefaultFocusHighlightEnabled(false);
@@ -78,7 +86,8 @@ public final class XRayActivity extends SDLActivity {
     protected void onResume() {
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         super.onResume();
-        applyImmersiveMode();
+        if (mSurface != null)
+            applyImmersiveMode();
         writeDiagnostic("activity onResume");
     }
 
@@ -151,6 +160,11 @@ public final class XRayActivity extends SDLActivity {
     @Override
     protected void onDestroy() {
         writeDiagnostic("activity onDestroy");
+        synchronized (videoPlayers) {
+            for (AndroidVideoPlayer player : videoPlayers.values())
+                player.close();
+            videoPlayers.clear();
+        }
         super.onDestroy();
     }
 
@@ -177,7 +191,7 @@ public final class XRayActivity extends SDLActivity {
         int gameVariant = getIntent().getIntExtra(LauncherActivity.EXTRA_GAME_VARIANT, 3);
         String[] additionalArgs = getIntent().getStringArrayExtra(LauncherActivity.EXTRA_ADDITIONAL_ARGS);
         int rendererMode = getIntent().getIntExtra(
-                LauncherActivity.EXTRA_RENDERER_MODE, LauncherActivity.RENDERER_AUTO);
+                LauncherActivity.EXTRA_RENDERER_MODE, LauncherActivity.RENDERER_VULKAN);
         DisplayMetrics screen = new DisplayMetrics();
         getWindowManager().getDefaultDisplay().getRealMetrics(screen);
         if (screen.widthPixels <= 0 || screen.heightPixels <= 0)
@@ -260,9 +274,72 @@ public final class XRayActivity extends SDLActivity {
         nativeClickTouchMouse(pressed);
     }
 
+    static void clickTouchMouseAt(float x, float y, int viewWidth, int viewHeight) {
+        nativeClickTouchMouseAt(x, y, viewWidth, viewHeight);
+    }
+
+    public int[] createAndroidVideoDecoder(String path) {
+        AndroidVideoPlayer player = AndroidVideoPlayer.open(path);
+        if (player == null)
+            return null;
+        synchronized (videoPlayers) {
+            int id = nextVideoPlayerId++;
+            if (id <= 0) {
+                nextVideoPlayerId = 2;
+                id = 1;
+            }
+            while (videoPlayers.containsKey(id)) {
+                id = nextVideoPlayerId++;
+                if (nextVideoPlayerId <= 0)
+                    nextVideoPlayerId = 1;
+            }
+            videoPlayers.put(id, player);
+            return new int[] {id, player.width(), player.height()};
+        }
+    }
+
+    public void playAndroidVideoDecoder(int id, boolean looped, int timeMs) {
+        synchronized (videoPlayers) {
+            AndroidVideoPlayer player = videoPlayers.get(id);
+            if (player != null)
+                player.play(looped, timeMs);
+        }
+    }
+
+    public void stopAndroidVideoDecoder(int id) {
+        synchronized (videoPlayers) {
+            AndroidVideoPlayer player = videoPlayers.get(id);
+            if (player != null)
+                player.stop();
+        }
+    }
+
+    public boolean isAndroidVideoDecoderPlaying(int id) {
+        synchronized (videoPlayers) {
+            AndroidVideoPlayer player = videoPlayers.get(id);
+            return player != null && player.isPlaying();
+        }
+    }
+
+    public byte[] updateAndroidVideoDecoder(int id, int timeMs) {
+        synchronized (videoPlayers) {
+            AndroidVideoPlayer player = videoPlayers.get(id);
+            return player == null ? null : player.update(timeMs);
+        }
+    }
+
+    public void releaseAndroidVideoDecoder(int id) {
+        synchronized (videoPlayers) {
+            AndroidVideoPlayer player = videoPlayers.remove(id);
+            if (player != null)
+                player.close();
+        }
+    }
+
     private static native void nativeSetTouchControl(int control, boolean pressed);
     private static native void nativeMoveTouchMouse(float deltaX, float deltaY);
     private static native void nativeClickTouchMouse(boolean pressed);
+    private static native void nativeClickTouchMouseAt(float x, float y, int viewWidth, int viewHeight);
 
     private void applyImmersiveMode() {
         if (!immersiveMode)
