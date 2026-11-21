@@ -9,10 +9,8 @@
 
 namespace xray::render::vulkan
 {
-// GPU-generated 4D Perlin volume, sampled as a 3D image by smoke trails. The
-// image uses concurrent sharing when its graphics and compute families differ.
-// With semaphore_handoff, the caller must order this producer before the later
-// graphics sample and wait for a frame slot before reusing it.
+// GPU-generated Perlin volume. With semaphore_handoff, the caller orders
+// compute before graphics sampling and waits before reusing the frame slot.
 class SmokeTrailNoise
 {
 public:
@@ -34,8 +32,6 @@ public:
         RequestSubmissionCommandBuffer request_submission_command_buffer = {});
     VkImageView view() const { return view_; }
     VkSampler sampler() const { return sampler_; }
-    VkSharingMode image_sharing_mode() const { return image_sharing_mode_; }
-    const std::vector<uint32_t>& image_sharing_queue_families() const { return image_sharing_queue_families_; }
     const BufferResource& buffer() const { return buffer_; }
     void destroy(); // Caller waits for GPU idle.
     ~SmokeTrailNoise() { destroy(); }

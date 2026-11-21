@@ -85,21 +85,4 @@ float fbm4D(float4 p)
     return sum;
 }
 
-float3 turbulenceDisplace(float3 worldPos, float evolution,
-                          float amount, float frequency,
-                          float3 sphereCenter, float sphereRadius)
-{
-    float4 p = float4(worldPos * frequency, evolution);
-
-    float3 disp;
-    disp.x = fbm4D(p);
-    disp.y = fbm4D(p + float4(31.416f, -47.853f, 12.679f, 0.0f));
-    disp.z = fbm4D(p + float4(-17.236f, 53.147f, -28.912f, 0.0f));
-
-    float dist = length(worldPos - sphereCenter);
-    float falloff = 1.0f - smoothstep(0.0f, sphereRadius, dist);
-
-    return disp * amount * falloff;
-}
-
 #endif

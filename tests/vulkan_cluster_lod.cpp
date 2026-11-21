@@ -192,11 +192,8 @@ int main()
     const VkExtent2D extent{1920, 1080};
     const std::array<float, 3> near_camera{0.f, 0.f, -2.f};
     const std::array<float, 3> far_camera{0.f, 0.f, -100000.f};
-    const auto near_selection = select_visible_cluster_lod(lod, extent, identity, nullptr,
-        near_camera, 60.f);
-    const auto far_selection = select_visible_cluster_lod(lod, extent, identity, nullptr,
-        far_camera, 60.f);
     const auto near_result = select_cluster_lod(lod, extent, identity, nullptr, near_camera, 60.f);
+    const auto far_result = select_cluster_lod(lod, extent, identity, nullptr, far_camera, 60.f);
     assert(near_result.disposition == ClusterLodDisposition::UseClusters && !near_result.clusters.empty());
     ClusterLodData low_error_lod = lod;
     for (ClusterLodGroup& group : low_error_lod.groups)
@@ -205,8 +202,8 @@ int main()
         near_camera, 60.f);
     assert(original_mesh_result.disposition == ClusterLodDisposition::UseOriginalMesh &&
         original_mesh_result.clusters.empty());
-    verify_selection(near_selection, lod);
-    verify_selection(far_selection, lod);
+    verify_selection(near_result.clusters, lod);
+    verify_selection(far_result.clusters, lod);
 
     LevelPassGraph opaque_pass_graph{};
     opaque_pass_graph.count = 1;
@@ -214,25 +211,18 @@ int main()
     LevelClusterLodEligibility eligibility{};
     eligibility.pass_graph = &opaque_pass_graph;
     assert(supports_level_cluster_lod(eligibility));
-    eligibility.terrain = true;
-    assert(supports_level_cluster_lod(eligibility));
-    eligibility.terrain = false;
     eligibility.tree = true;
     assert(!supports_level_cluster_lod(eligibility));
+    eligibility.static_tree = true;
+    assert(supports_level_cluster_lod(eligibility));
     eligibility.tree = false;
-    eligibility.sliding_windows = true;
-    assert(supports_level_cluster_cpu_lod(eligibility));
-    assert(!supports_level_cluster_lod(eligibility));
-    eligibility.sliding_windows = false;
     eligibility.mode = SurfaceMode::Transparent;
     assert(!supports_level_cluster_lod(eligibility));
-    assert(near_selection.size() >= far_selection.size());
+    assert(near_result.clusters.size() >= far_result.clusters.size());
 
     float outside_frustum[16];
     std::copy(std::begin(identity), std::end(identity), std::begin(outside_frustum));
     outside_frustum[12] = 4.f;
-    assert(select_visible_cluster_lod(lod, extent, outside_frustum, nullptr,
-        near_camera, 60.f).empty());
     const auto culled_result = select_cluster_lod(lod, extent, outside_frustum, nullptr,
         near_camera, 60.f);
     assert(culled_result.disposition == ClusterLodDisposition::FullyCulled && culled_result.clusters.empty());
@@ -240,10 +230,6 @@ int main()
         near_camera, 60.f).disposition == ClusterLodDisposition::Invalid);
     assert(select_cluster_lod(lod, extent, nullptr, nullptr,
         near_camera, 60.f).disposition == ClusterLodDisposition::Invalid);
-    assert(select_visible_cluster_lod(lod, {1920, 0}, identity, nullptr,
-        near_camera, 60.f).empty());
-    assert(select_visible_cluster_lod(lod, extent, nullptr, nullptr,
-        near_camera, 60.f).empty());
 
     ClusterLodData malformed = lod;
     malformed.groups[0].first_cluster = std::numeric_limits<uint32_t>::max();
@@ -252,8 +238,5 @@ int main()
     const auto malformed_result = select_cluster_lod(malformed, extent, identity,
         nullptr, near_camera, 60.f);
     assert(malformed_result.disposition == ClusterLodDisposition::Invalid);
-    const auto malformed_selection = select_visible_cluster_lod(malformed, extent, identity,
-        nullptr, near_camera, 60.f);
-    for (uint32_t index : malformed_selection)
-        assert(index < malformed.clusters.size());
+    assert(malformed_result.clusters.empty());
 }

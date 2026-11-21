@@ -99,8 +99,6 @@ target_sources(xrRenderVK PRIVATE
     SmokeTrailController.h
     TrailState.h
     GpuParticleDrawBuckets.h
-    GpuParticleEngine.cpp
-    GpuParticleEngine.h
     GpuParticleNoise.cpp
     GpuParticleNoise.h
     GpuParticleCommands.cpp

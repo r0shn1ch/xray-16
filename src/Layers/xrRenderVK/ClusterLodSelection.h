@@ -15,14 +15,10 @@ namespace xray::render::vulkan
 struct LevelClusterLodEligibility
 {
     bool lod_pairs{};
-    bool sliding_windows{};
     bool tree{};
-    // Static tree/object-LOD meshes keep the regular indexed vertex layout.
-    // Wind-deformed tree geometry needs a separate conservative-motion path.
     bool static_tree{};
     bool water{};
     bool glass{};
-    bool terrain{}; // Tessellation is baked before cluster construction, so terrain can use the same indexed path.
     bool lod_atlas{};
     bool depth_proxy{};
     bool wallmark_multiply{};
@@ -31,17 +27,12 @@ struct LevelClusterLodEligibility
     const LevelPassGraph* pass_graph{};
 };
 
-inline bool supports_level_cluster_cpu_lod(const LevelClusterLodEligibility& input)
+inline bool supports_level_cluster_lod(const LevelClusterLodEligibility& input)
 {
     return !input.lod_pairs && (!input.tree || input.static_tree) && !input.water && !input.glass &&
         !input.lod_atlas && !input.depth_proxy && !input.wallmark_multiply && !input.wallmark_blend &&
         input.mode != SurfaceMode::Transparent && input.pass_graph &&
         supports_cluster_lod_pass_graph(*input.pass_graph);
-}
-
-inline bool supports_level_cluster_lod(const LevelClusterLodEligibility& input)
-{
-    return !input.sliding_windows && supports_level_cluster_cpu_lod(input);
 }
 
 inline bool cluster_lod_sphere_visible(const float* mvp, const float* center, float radius)
@@ -161,11 +152,4 @@ inline ClusterLodSelection select_cluster_lod(const ClusterLodData& lod_data, Vk
     return {ClusterLodDisposition::UseClusters, std::move(selected)};
 }
 
-inline std::vector<uint32_t> select_visible_cluster_lod(const ClusterLodData& lod_data, VkExtent2D extent,
-    const float* mvp, const float* world_transform, const std::array<float, 3>& camera, float fov)
-{
-    ClusterLodSelection selection = select_cluster_lod(lod_data, extent, mvp, world_transform, camera, fov);
-    return selection.disposition == ClusterLodDisposition::UseClusters ? std::move(selection.clusters) :
-        std::vector<uint32_t>{};
-}
 } // namespace xray::render::vulkan

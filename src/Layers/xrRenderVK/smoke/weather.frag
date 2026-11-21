@@ -199,15 +199,9 @@ void shade_weather_sample(int sample_index, out vec4 output_color)
     int comparison_mode = comparison ? (four_panes ? panel :
         int(shadow.options.y) == 7 ? 4 : int(shadow.options.y) - 7) : 0;
     vec2 screen_uv = four_panes ? fract(texcoord * 2.0) : texcoord;
-    if (diagnostic && shadow.options.y > 9.5 &&
-        gbuffer_depth(screen_uv, sample_index) >= 0.99999)
+    float depth = gbuffer_depth(screen_uv, sample_index);
+    if (depth < 0.99999)
     {
-        output_color = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
-    }
-    if (gbuffer_depth(screen_uv, sample_index) < 0.99999)
-    {
-        float depth = gbuffer_depth(screen_uv, sample_index);
         vec4 albedo = gbuffer_albedo(screen_uv, sample_index);
         vec4 encoded_normal = gbuffer_normal(screen_uv, sample_index);
         vec4 surface = gbuffer_surface(screen_uv, sample_index);
@@ -222,11 +216,6 @@ void shade_weather_sample(int sample_index, out vec4 output_color)
         vec3 camera_position = eye_clip.xyz / eye_clip.w;
         vec3 normal = normalize(encoded_normal.rgb * 2.0 - 1.0);
         float wetness = rain_wetness(world_position, normal, camera_position);
-        if (diagnostic && shadow.options.y > 9.5)
-        {
-            output_color = vec4(vec3(wetness), 1.0);
-            return;
-        }
         normal = rain_perturb_normal(world_position, normal, wetness);
         vec3 wet_albedo = albedo.rgb * (1.0 - 0.16 * wetness);
         float diffuse = max(dot(normal, normalize(-weather.direction_ambient.xyz)), 0.0);

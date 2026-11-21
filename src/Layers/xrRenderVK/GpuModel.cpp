@@ -202,8 +202,6 @@ bool GpuModel::add_meshes(ModelGeometry &&geometry, const std::string &inherited
             const size_t window_count = mesh.geometry.windows.empty() ? 1 : mesh.geometry.windows.size();
             mesh.cluster_lod_windows.reserve(window_count);
             bool cluster_windows_ready = true;
-            size_t group_count = 0;
-            size_t cluster_count = 0;
             for (size_t window_index = 0; window_index < window_count; ++window_index)
             {
                 const SlideWindow window = mesh.geometry.windows.empty()
@@ -224,22 +222,13 @@ bool GpuModel::add_meshes(ModelGeometry &&geometry, const std::string &inherited
                     cluster_windows_ready = false;
                     break;
                 }
-                group_count += data.groups.size();
-                cluster_count += data.clusters.size();
                 cluster_window.data = std::move(data);
                 mesh.cluster_lod_windows.push_back(std::move(cluster_window));
             }
             if (cluster_windows_ready && !packed_cluster_indices.empty())
-            {
-                if (upload_buffer(device, queue, pool, memory, upload, packed_cluster_indices.data(),
-                        packed_cluster_indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                        mesh.cluster_indices, pending_, cluster_error))
-                {
-                    Msg("[renderer-vulkan] cluster DAG model baked shader='%s' windows=%zu groups=%zu clusters=%zu indices=%zu",
-                        mesh.geometry.shader.c_str(), window_count, group_count, cluster_count,
-                        packed_cluster_indices.size());
-                }
-            }
+                cluster_windows_ready = upload_buffer(device, queue, pool, memory, upload,
+                    packed_cluster_indices.data(), packed_cluster_indices.size() * sizeof(uint32_t),
+                    VK_BUFFER_USAGE_INDEX_BUFFER_BIT, mesh.cluster_indices, pending_, cluster_error);
             else if (cluster_error.empty())
                 cluster_error = "cluster DAG generated no usable window indices";
             if (!cluster_windows_ready || !mesh.cluster_indices.handle())

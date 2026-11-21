@@ -213,12 +213,7 @@ vec3 volumetric_light(vec2 uv, float depth)
 
 void shade_local_light_sample(int sample_index, out vec4 output_color)
 {
-    // The rain-wetness debug view is produced by the deferred/weather pass.
-    // Suppress additive local-light overlays so they cannot tint that mask.
-    if (shadow.options.y > 9.5)
-    { output_color = vec4(0.0); return; }
-    // Match the base panel's G-buffer lookup. Local lights previously vanished
-    // from all four-panel screenshots, making lamps and interiors look broken.
+    // Use the base panel's G-buffer coordinates in the four-panel view.
     vec2 screen_uv = light.debug_mode.x > 0.5 && light.debug_mode.x < 1.5 ?
         texcoord * 2.0 : texcoord;
     if (any(greaterThanEqual(screen_uv, vec2(1.0))))

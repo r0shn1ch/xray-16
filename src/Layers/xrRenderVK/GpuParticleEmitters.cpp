@@ -86,9 +86,7 @@ bool GpuParticleEmitters::children(Handle handle, uint32_t birth, uint32_t play,
     if (!(flags & 64u)) death = GPU_PAPI_INVALID;
     fg::GpuPapiCommand command{}; command.type = 7; command.p0 = birth; command.p1 = play; command.p2 = death; command.p3 = flags;
     if (!enqueue(handle, command, false, error)) return false;
-    auto* root = find(handle);
-    root->has_children |= birth != GPU_PAPI_INVALID || play != GPU_PAPI_INVALID || death != GPU_PAPI_INVALID;
-    auto& programs = root->draw_programs;
+    auto& programs = find(handle)->draw_programs;
     for (uint32_t id : {birth, play, death})
         if (id != GPU_PAPI_INVALID && std::find(programs.begin(), programs.end(), id) == programs.end())
             programs.push_back(id);
@@ -122,10 +120,5 @@ const std::vector<uint32_t>* GpuParticleEmitters::draw_programs(Handle handle) c
 {
     const auto* root = find(handle);
     return root ? &root->draw_programs : nullptr;
-}
-bool GpuParticleEmitters::has_child_effects(Handle handle) const
-{
-    const auto* root = find(handle);
-    return root && root->has_children;
 }
 }

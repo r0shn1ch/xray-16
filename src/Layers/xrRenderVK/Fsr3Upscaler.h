@@ -36,7 +36,6 @@ public:
     void destroy();
     bool ready() const { return context_initialized_; }
     bool active() const { return active_; }
-    bool history_valid() const { return history_valid_; }
     void set_active(bool active) { active_ = ready() && active; }
     void reset_history() { history_valid_ = false; }
     void commit_frame() { if (active_) history_valid_ = true; }

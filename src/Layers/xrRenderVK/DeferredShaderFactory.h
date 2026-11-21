@@ -6,6 +6,7 @@
 
 namespace xray::render::vulkan
 {
+bool read_engine_shader(const std::string& name, std::vector<uint8_t>& bytes, std::string& error);
 void configure_engine_shader_resources(VkDevice device, const ShaderModuleDispatch &dispatch,
     GameShaderResources &resources, bool geometry_supported, bool tessellation_supported);
 // Owns modules after pipeline creation, including the failure path.

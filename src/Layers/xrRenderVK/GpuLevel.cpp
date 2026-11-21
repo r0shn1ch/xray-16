@@ -494,11 +494,11 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
         const auto prepare_cluster_lod = [&]() {
             if (!Core.Params || !std::strstr(Core.Params, "-vk-cluster-dag"))
                 return;
-            const LevelClusterLodEligibility eligibility{model.lod_pairs, !model.windows.empty(), mesh.tree,
-                mesh.tree && !mesh.tree_wave, mesh.water, mesh.glass, mesh.terrain,
+            const LevelClusterLodEligibility eligibility{model.lod_pairs, mesh.tree,
+                mesh.tree && !mesh.tree_wave, mesh.water, mesh.glass,
                 mesh.lod_atlas, mesh.depth_proxy,
                 mesh.wallmark_multiply, mesh.wallmark_blend, mesh.mode, &mesh.pass_graph};
-            if (!supports_level_cluster_cpu_lod(eligibility))
+            if (!supports_level_cluster_lod(eligibility))
                 return;
             std::string cluster_error;
             if (model.windows.empty())
@@ -536,16 +536,6 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                 }
             }
             mesh.cluster_index_bytes = mesh.cluster_index_count() * sizeof(uint32_t);
-            size_t groups = mesh.cluster_lod.groups.size();
-            size_t clusters = mesh.cluster_lod.clusters.size();
-            for (const Mesh::ClusterWindow& window : mesh.cluster_lod_windows)
-            {
-                groups += window.data.groups.size();
-                clusters += window.data.clusters.size();
-            }
-            Msg("[renderer-vulkan] cluster DAG baked material=%u windows=%zu groups=%zu clusters=%zu indices=%zu",
-                mesh.material_id, model.windows.empty() ? 1 : model.windows.size(), groups, clusters,
-                mesh.cluster_index_count());
         };
         const auto append_cluster_indices = [&]() -> bool {
             if (!mesh.cluster_lod_windows.empty())

@@ -189,14 +189,12 @@ int main()
     GpuParticleEmitters emitter_manager(programs, emitter_commands, 1);
     GpuParticleEmitters::Handle emitter_handle{};
     assert(emitter_manager.create(translated_def, emitter_handle, program_error));
-    assert(!emitter_manager.has_child_effects(emitter_handle));
     assert(emitter_manager.play(emitter_handle, program_error));
     assert(!emitter_manager.children(emitter_handle, GPU_PAPI_INVALID, GPU_PAPI_INVALID,
         GPU_PAPI_INVALID, 32, program_error));
     assert(emitter_manager.children(emitter_handle, GPU_PAPI_INVALID, 0, GPU_PAPI_INVALID, 2, program_error));
-    // A child using the root's own program still represents separate GPU
-    // particles and must not be drawn together with CPU-triggered children.
-    assert(emitter_manager.has_child_effects(emitter_handle) && emitter_manager.draw_programs(emitter_handle)->size() == 1);
+    // Reusing the root's program does not add another draw program.
+    assert(emitter_manager.draw_programs(emitter_handle)->size() == 1);
     assert(emitter_manager.set_hud(emitter_handle, true, program_error) && emitter_manager.tick(emitter_handle, 33, program_error));
     GpuParticleCommands::Batch emitter_batch;
     assert(emitter_commands.snapshot(emitter_batch, program_error) && emitter_batch.commands.size() == 5);
@@ -214,10 +212,8 @@ int main()
         GpuParticleEmitters draw_emitters(programs, draw_commands, 1);
         GpuParticleEmitters::Handle root{};
         assert(draw_emitters.create(translated_def, root, program_error));
-        assert(!draw_emitters.has_child_effects(root));
         assert(draw_emitters.draw_programs(root) && *draw_emitters.draw_programs(root) == std::vector<uint32_t>{0});
         assert(draw_emitters.children(root, GPU_PAPI_INVALID, 1, GPU_PAPI_INVALID, 2, program_error));
-        assert(draw_emitters.has_child_effects(root));
         assert(draw_emitters.children(root, GPU_PAPI_INVALID, 0, GPU_PAPI_INVALID, 2, program_error));
         assert(draw_emitters.draw_programs(root) && *draw_emitters.draw_programs(root) == (std::vector<uint32_t>{0, 1}));
         assert(!draw_emitters.children(root, GPU_PAPI_INVALID, 99, GPU_PAPI_INVALID, 2, program_error));

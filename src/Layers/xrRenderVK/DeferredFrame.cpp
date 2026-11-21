@@ -4,7 +4,6 @@
 
 #include <array>
 #include <cstring>
-#include <chrono>
 #include "xrEngine/device.h"
 
 namespace xray::render::vulkan
@@ -85,7 +84,6 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
         return true;
     };
     const auto record_shadow_maps = [&context](const FrameRecordingContext& shadow_commands) {
-        const auto shadow_begin = std::chrono::steady_clock::now();
         if (context.shadows_)
         {
             FrameRecordingContext shadow_frame;
@@ -128,9 +126,6 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
             }
             context.rain_shadows_->end(shadow_commands.command_buffer);
         }
-        if (Device.dwFrame % 300 == 0)
-            Msg("[renderer-vulkan] pass.cpu frame=%u pass=shadow-total ms=%.3f", Device.dwFrame,
-                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - shadow_begin).count());
         return context.recorded_;
     };
     const auto record_local_shadow_maps = [&context, &has_local_shadow_inputs](const FrameRecordingContext& commands) {

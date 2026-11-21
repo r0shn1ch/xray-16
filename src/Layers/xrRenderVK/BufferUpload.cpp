@@ -2,7 +2,6 @@
 #include "Common/Platform.hpp"
 #if defined(XR_PLATFORM_ANDROID)
 extern void android_set_load_context(const char* context);
-extern void android_set_vulkan_stage(const char* stage);
 #endif
 
 #include <limits>
@@ -56,35 +55,21 @@ bool upload_buffer(VkDevice device, VkQueue queue, VkCommandPool pool,
     VkDeviceSize pending_bytes = 0;
     for (const auto& entry : pending_uploads)
         pending_bytes += entry.staging.size();
-#if defined(XR_PLATFORM_ANDROID)
-    bool waited_for_staging = false;
-#endif
     while (!pending_uploads.empty() &&
         (pending_uploads.size() >= MaxPendingBufferUploads || buffer_size > MaxPendingBufferStagingBytes ||
             pending_bytes > MaxPendingBufferStagingBytes - buffer_size))
     {
-#if defined(XR_PLATFORM_ANDROID)
-        waited_for_staging = true;
-        android_set_load_context("vulkan buffer: waiting for staging memory");
-#endif
         PendingBufferUpload& oldest = pending_uploads.front();
         const VkResult waited = vk.wait_for_fences(device, 1, &oldest.fence, VK_TRUE, UINT64_MAX);
         if (waited != VK_SUCCESS)
         {
             error = "Vulkan buffer upload fence wait failed: " + std::to_string(waited);
-#if defined(XR_PLATFORM_ANDROID)
-            android_set_load_context(nullptr);
-#endif
             return false;
         }
         pending_bytes -= oldest.staging.size();
         release_upload(device, pool, vk, oldest);
         pending_uploads.erase(pending_uploads.begin());
     }
-#if defined(XR_PLATFORM_ANDROID)
-    if (waited_for_staging)
-        android_set_load_context(nullptr);
-#endif
     PendingBufferUpload upload;
     BufferResource destination;
     auto cleanup = [&]
@@ -183,15 +168,14 @@ bool upload_buffer(VkDevice device, VkQueue queue, VkCommandPool pool,
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &upload.command_buffer;
 #if defined(XR_PLATFORM_ANDROID)
-    android_set_vulkan_stage("buffer upload queue submit");
     android_set_load_context("vulkan buffer: queue submit");
 #endif
-    if (vk.queue_submit(queue, 1, &submit, upload.fence) != VK_SUCCESS)
-        return fail("vkQueueSubmit failed for buffer upload");
+    const VkResult submitted = vk.queue_submit(queue, 1, &submit, upload.fence);
 #if defined(XR_PLATFORM_ANDROID)
-    android_set_vulkan_stage(nullptr);
     android_set_load_context(nullptr);
 #endif
+    if (submitted != VK_SUCCESS)
+        return fail("vkQueueSubmit failed for buffer upload");
 
     pending_uploads.push_back(std::move(upload));
     result = std::move(destination);

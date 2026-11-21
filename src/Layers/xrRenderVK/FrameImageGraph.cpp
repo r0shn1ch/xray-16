@@ -1610,21 +1610,6 @@ bool FrameImageGraph::connect_submission_dependencies(FrameSubmissionGraph& subm
 }
 
 bool FrameImageGraph::connect_submission_dependencies(FrameSubmissionGraph& submissions,
-    const SubmissionForQueue& submission_for_queue, std::string& error) const
-{
-    if (!submission_for_queue)
-    {
-        error = "Frame image graph: queue submission mapping is unavailable";
-        return false;
-    }
-    const SubmissionForPass submission_for_pass = [&](Pass pass) {
-        return pass < m_passes.size() ? submission_for_queue(m_passes[pass].queue) :
-            FrameSubmissionGraph::InvalidPass;
-    };
-    return connect_submission_dependencies(submissions, submission_for_pass, error);
-}
-
-bool FrameImageGraph::connect_submission_dependencies(FrameSubmissionGraph& submissions,
     const SubmissionForQueue& submission_for_queue,
     const QueueFamilyForQueue& queue_family_for_queue, std::string& error) const
 {

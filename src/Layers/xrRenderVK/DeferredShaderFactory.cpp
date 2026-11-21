@@ -14,41 +14,43 @@ namespace xray::render::vulkan
 {
 namespace
 {
-bool resolve_engine_shader_path(const std::string &name, string_path &path, std::string &reason)
+bool read_shader_file(pcstr path, std::vector<uint8_t>& bytes)
 {
-    std::string virtual_name = name;
-    std::replace(virtual_name.begin(), virtual_name.end(), '/', '\\');
-    if (!FS.exist(path, "$game_shaders$", virtual_name.c_str()))
-    {
-        reason = "missing game shader resource: " + name;
+    IReader* reader = FS.r_open(path);
+    if (!reader)
         return false;
-    }
-    reason.clear();
+    const auto* begin = static_cast<const uint8_t*>(reader->pointer());
+    bytes.clear();
+    if (reader->length())
+        bytes.assign(begin, begin + reader->length());
+    FS.r_close(reader);
     return true;
 }
 
 } // namespace
 
+bool read_engine_shader(const std::string& name, std::vector<uint8_t>& bytes, std::string& error)
+{
+    std::string relative = name;
+    std::replace(relative.begin(), relative.end(), '/', '\\');
+    string_path path;
+    if (!FS.exist(path, "$game_shaders$", relative.c_str()))
+    {
+        error = "missing game shader resource: " + name;
+        return false;
+    }
+    if (!read_shader_file(path, bytes))
+    {
+        error = "could not open game shader resource: " + name;
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 void configure_engine_shader_resources(VkDevice device, const ShaderModuleDispatch &dispatch,
     GameShaderResources &resources, bool geometry_supported, bool tessellation_supported)
 {
-    GameShaderResources::Source active_source = [](const std::string &name,
-        std::vector<uint8_t> &bytes, std::string &reason) {
-        string_path path;
-        if (!resolve_engine_shader_path(name, path, reason)) return false;
-        IReader *reader = FS.r_open(path);
-        if (!reader)
-        {
-            reason = "could not open game shader resource: " + name;
-            return false;
-        }
-        const auto *begin = static_cast<const uint8_t *>(reader->pointer());
-        bytes.clear();
-        if (reader->length())
-            bytes.assign(begin, begin + reader->length());
-        FS.r_close(reader);
-        return true;
-    };
     GameShaderResources::Source bundled_source;
 #if defined(XR_PLATFORM_ANDROID)
     const FS_Path *shader_path = FS.get_path("$game_shaders$");
@@ -67,23 +69,17 @@ void configure_engine_shader_resources(VkDevice device, const ShaderModuleDispat
             }
             string_path path;
             strconcat(sizeof(path), path, overlay_root.c_str(), relative.c_str());
-            IReader *reader = FS.r_open(path);
-            if (!reader)
+            if (!read_shader_file(path, bytes))
             {
                 reason = "could not open bundled game shader resource: " + name;
                 return false;
             }
-            const auto *begin = static_cast<const uint8_t *>(reader->pointer());
-            bytes.clear();
-            if (reader->length())
-                bytes.assign(begin, begin + reader->length());
-            FS.r_close(reader);
             reason.clear();
             return true;
         };
     }
 #endif
-    resources.configure(device, dispatch, std::move(active_source), geometry_supported,
+    resources.configure(device, dispatch, read_engine_shader, geometry_supported,
         tessellation_supported, std::move(bundled_source));
 }
 

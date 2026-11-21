@@ -2,7 +2,6 @@
 #include "VulkanGameDevice.h"
 #include "ShadowStability.h"
 #include "ParticleVisual.h"
-#include "GpuParticleEngine.h"
 #include "VulkanRainRender.h"
 #include "VulkanThunderboltRender.h"
 #include "SceneShaders.h"
@@ -298,7 +297,7 @@ bool VulkanGameDevice::record_gpu_particles(const FrameRecordingContext& frame, 
             frame.command_queue, frame.graphics_queue_flags,
             frame.request_submission_command_buffer))
     {
-        Msg("! [renderer-vulkan] GPU particle mirror disabled: %s", error.c_str());
+        Msg("! [renderer-vulkan] GPU particle simulation disabled: %s", error.c_str());
         owner.gpu_particle_failed_ = true; error.clear(); return true;
     }
     if (owner.gpu_particle_graphics_ && !owner.gpu_particle_graphics_failed_ &&
@@ -690,38 +689,32 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
         {[this](VkDescriptorSet set) { return textures_.retain_ui(set, ui_pass_); },
          [this](VkDescriptorSet set) { retired_.defer([this, set] { textures_.release_ui(set, ui_pass_); }); }});
     deferred_.set_frame_ready([this](uint32_t slot) { collect_retired(slot); });
-    if (Core.Params && (strstr(Core.Params, "-vk-gpu-particles-mirror") ||
-        strstr(Core.Params, "-vk-gpu-particles-draw")) &&
+    if (Core.Params && strstr(Core.Params, "-vk-gpu-particles-draw") &&
         (physical.graphics_queue_flags & VK_QUEUE_COMPUTE_BIT))
     {
         auto runtime = std::make_unique<GpuParticleRuntime>();
         const GpuParticleBuffers::Capacity capacity{32768, 512, 8192, 512, 8192, 8192, 256, 514, 48};
         if (runtime->initialize(device, get, physical.properties.limits, physical.memory, buffer_upload_.buffer,
                 capacity, FrameContext::FramesInFlight, 8 * 1024 * 1024, pipeline_cache_.handle(),
-                engine_gpu_particle_shader_source(), error,
+                read_engine_shader, error,
                 frame_buffer_pool_.initialized() ? &frame_buffer_pool_ : nullptr))
         {
             gpu_particle_emitters_ = std::make_unique<GpuParticleEmitters>(runtime->programs(), runtime->commands(), capacity.roots);
             gpu_particles_ = std::move(runtime);
-            if (strstr(Core.Params, "-vk-gpu-particles-draw"))
+            auto graphics = std::make_unique<GpuParticleGraphics>();
+            if (graphics->initialize(device, get, physical.properties.limits, physical.memory, buffer_upload_.buffer,
+                    deferred_.material_layout(), pipeline_cache_.handle(), FrameContext::FramesInFlight, 512,
+                    read_engine_shader, error, targets_.samples(), object_velocity_.render_pass()))
+                gpu_particle_graphics_ = std::move(graphics);
+            else
             {
-                auto graphics = std::make_unique<GpuParticleGraphics>();
-                if (graphics->initialize(device, get, physical.properties.limits, physical.memory, buffer_upload_.buffer,
-                        deferred_.material_layout(), pipeline_cache_.handle(), FrameContext::FramesInFlight, 512,
-                        engine_gpu_particle_shader_source(), error, targets_.samples(), object_velocity_.render_pass()))
-                    gpu_particle_graphics_ = std::move(graphics);
-                else
-                {
-                    Msg("! [renderer-vulkan] GPU particle graphics unavailable: %s", error.c_str());
-                    error.clear();
-                }
+                Msg("! [renderer-vulkan] GPU particle graphics unavailable: %s", error.c_str());
+                error.clear();
             }
-            Msg("[renderer-vulkan] GPU particle mirror enabled; GPU drawing=%s",
-                gpu_particle_graphics_ ? "experimental" : "off");
         }
         else
         {
-            Msg("! [renderer-vulkan] GPU particle mirror unavailable: %s", error.c_str());
+            Msg("! [renderer-vulkan] GPU particle simulation unavailable: %s", error.c_str());
             error.clear();
         }
     }
@@ -731,10 +724,10 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
         auto compute = std::make_unique<SmokeTrailCompute>();
         auto noise = std::make_unique<SmokeTrailNoise>();
         if (compute->initialize(device, get, physical.properties.limits, physical.memory, buffer_upload_.buffer,
-                FrameContext::FramesInFlight, pipeline_cache_.handle(), engine_gpu_particle_shader_source(), error,
+                FrameContext::FramesInFlight, pipeline_cache_.handle(), read_engine_shader, error,
                 frame_buffer_pool_.initialized() ? &frame_buffer_pool_ : nullptr) &&
             noise->initialize(device, get, physical.properties.limits, physical.memory, buffer_upload_.buffer,
-                32, FrameContext::FramesInFlight, pipeline_cache_.handle(), engine_gpu_particle_shader_source(), error,
+                32, FrameContext::FramesInFlight, pipeline_cache_.handle(), read_engine_shader, error,
                 physical.graphics_present_family, physical.compute_queue_family))
         {
             smoke_compute_ = std::move(compute); smoke_noise_ = std::move(noise);
@@ -1708,7 +1701,7 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
             const char *value = mode + sizeof("-vk-light-debug=") - 1;
             char *end = nullptr;
             const long parsed = std::strtol(value, &end, 10);
-            if (end != value && parsed >= 1 && parsed <= 10 &&
+            if (end != value && parsed >= 1 && parsed <= 9 &&
                 (*end == '\0' || std::isspace(static_cast<unsigned char>(*end))))
                 sun_uniform.options[1] = static_cast<float>(parsed);
         }
@@ -1720,16 +1713,14 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         const auto valid = [](float value) { return std::isfinite(value) ? std::max(value, 0.f) : 0.f; };
         const float ambient =
             environment ? valid(environment->ambient_color[channel]) : valid(light.direction_ambient[3]);
-        // Match the R2 combine constants, including the floor before the
-        // default ambient scale. The raw weather ambient is half of
-        // the value passed to hmodel on the desktop renderer.
+        // R2 passes twice the weather ambient to hmodel.
         sun_uniform.ambient_color[channel] = std::max(ambient * 2.f * ambient_scale, .001f);
         sun_uniform.hemi_color[channel] = environment ? valid(environment->hemi_color[channel]) : valid(light.grade[3]);
         sun_uniform.hemi_color[channel] *= hemisphere_scale;
     }
     if (sun_uniform.options[1] > .5f && (Device.dwFrame < 3 || Device.dwFrame % 300 == 0))
         Msg("[renderer-vulkan] lighting.diagnostic frame=%u mode=%u "
-            "panels=1:base,sun,baked,albedo;6:env,hemi-one,sun-one,both;7:old-flat;10:rain-wetness "
+            "panels=1:base,sun,baked,albedo;6:env,hemi-one,sun-one,both;7:old-flat "
             "shadow-size=%u bias=%.4f "
             "forward=single-base-only quad=opaque-only",
             Device.dwFrame, unsigned(sun_uniform.options[1]), SunShadowTargets::Size, sun_uniform.options[0]);

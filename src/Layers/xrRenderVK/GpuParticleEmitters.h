@@ -28,12 +28,10 @@ public:
     bool apply(const std::vector<fg::GpuPapiStatus>& statuses, std::string& error);
     bool snapshot(Handle handle, fg::GpuPapiStatus& status) const;
     bool visible_index(Handle handle, uint32_t& index) const;
-    // Includes programs of children that may still be alive after a change
-    // to the root's child configuration. Invalidated on destroy/reuse.
+    // Includes children still alive after reconfiguration. Valid until destroy/reuse.
     const std::vector<uint32_t>* draw_programs(Handle handle) const;
-    bool has_child_effects(Handle handle) const;
 private:
-    struct Root { uint32_t generation{}, lifecycle_serial{}; bool live{}, retiring{}, has_snapshot{}, hud{}, has_children{};
+    struct Root { uint32_t generation{}, lifecycle_serial{}; bool live{}, retiring{}, has_snapshot{}, hud{};
         fg::GpuPapiStatus snapshot{}; std::vector<uint32_t> draw_programs; };
     Root* find(Handle handle);
     const Root* find(Handle handle) const;

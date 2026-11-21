@@ -2,7 +2,6 @@
 #include "VulkanGameDevice.h"
 #include "ShadowStability.h"
 #include "ParticleVisual.h"
-#include "GpuParticleEngine.h"
 #include "VulkanRainRender.h"
 #include "VulkanThunderboltRender.h"
 #include "SceneShaders.h"
@@ -476,7 +475,7 @@ void VulkanGameDevice::record_transparent(const FrameRecordingContext &frame, vo
             const auto& physical = owner.window_.physical();
             if (pass->initialize(owner.window_.device(), owner.window_.device_proc(), physical.properties.limits,
                     physical.memory, owner.buffer_upload_.buffer, frame.render_pass, owner.pipeline_cache_.handle(),
-                    FrameContext::FramesInFlight, engine_gpu_particle_shader_source(), error, false,
+                    FrameContext::FramesInFlight, read_engine_shader, error, false,
                     owner.targets_.samples()))
                 owner.smoke_draw_ = std::move(pass);
         }
@@ -501,7 +500,7 @@ void VulkanGameDevice::record_transparent(const FrameRecordingContext &frame, vo
                 const auto& physical = owner.window_.physical();
                 if (pass->initialize(owner.window_.device(), owner.window_.device_proc(), physical.properties.limits,
                         physical.memory, owner.buffer_upload_.buffer, frame.render_pass, owner.pipeline_cache_.handle(),
-                        FrameContext::FramesInFlight, engine_gpu_particle_shader_source(), error, true,
+                        FrameContext::FramesInFlight, read_engine_shader, error, true,
                         owner.targets_.samples()))
                     owner.trail_draw_ = std::move(pass);
             }

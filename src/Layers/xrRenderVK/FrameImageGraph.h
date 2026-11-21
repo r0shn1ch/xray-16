@@ -121,15 +121,11 @@ public:
     Pass add_command_pass(const char* name, FrameSubmissionGraph::Queue queue, CommandRecord record);
     Pass add_checked_command_pass(const char* name, FrameSubmissionGraph::Queue queue,
         CheckedCommandRecord record);
-    // Adds an ordering edge when two passes have a real execution dependency
-    // but no image or buffer resource expresses it (for example a raster
-    // overlay that augments a compute-produced image).
+    // Orders passes whose dependency is outside the declared resources.
     bool depends_on(Pass after, Pass before, std::string& error);
     bool read(Pass pass, Resource resource, ImageUse use, std::string& error);
     bool write(Pass pass, Resource resource, ImageUse use, Resource& next, std::string& error);
-    // initial_use is the image state expected at render-pass begin. Undefined
-    // defaults to attachment_use for render passes whose initialLayout is
-    // UNDEFINED or already matches the attachment layout.
+    // Undefined initial_use defaults to attachment_use before render-pass begin.
     bool write_render_pass(Pass pass, Resource resource, ImageUse attachment_use,
         ImageUse final_use, Resource& next, std::string& error,
         ImageUse initial_use = ImageUse::Undefined);
@@ -140,46 +136,28 @@ public:
         BufferResource& next, std::string& error);
     bool read_write_buffer(Pass pass, BufferResource resource, BufferUse use,
         BufferResource& next, std::string& error);
-    // Compiles the pass hazard DAG into one ordered command group per queue
-    // class. Each group's pass list is recorded on that queue's command buffer.
+    // Orders command groups by resource hazards.
     bool build_queue_groups(std::vector<QueueGroup>& groups, std::string& error) const;
-    // Creates FrameSubmissionGraph nodes for the compiled queue groups, maps
-    // every image-graph pass to its generated node, connects resource waits, and
-    // derives paired ownership transfers for in-frame and known external
-    // imported exclusive family changes.
+    // Adds submissions, cross-queue waits and ownership transfers for exclusive resources.
     bool generate_submission_groups(FrameSubmissionGraph& submissions,
         const QueueFamilyForQueue& queue_family_for_queue,
         std::vector<QueueGroup>& groups,
         std::vector<FrameSubmissionGraph::Pass>& submission_for_pass,
         std::string& error) const;
     bool begin_execution(ExecutionState& state, std::string& error) const;
-    // Converts resource hazards between mapped passes into submission edges.
-    // Unmapped passes remain local to their command list.
-    // Generated ownership transfers may defer exclusive imported-producer edges.
+    // Unmapped passes stay local. Generated transfers can defer imported-producer waits.
     bool connect_submission_dependencies(FrameSubmissionGraph& submissions,
         const SubmissionForPass& submission_for_pass, std::string& error,
         ProducerHandoffMode handoff_mode = ProducerHandoffMode::RequireCallerRelease) const;
-    // Maps each resource-declared pass by its queue class. Passes assigned to
-    // the same submission share that queue's ordering; resource hazards create
-    // the cross-queue submission edges automatically.
-    bool connect_submission_dependencies(FrameSubmissionGraph& submissions,
-        const SubmissionForQueue& submission_for_queue, std::string& error) const;
-    // Legacy wait-only mapping: resources crossing distinct queue families must
-    // use concurrent sharing. Generated groups provide the ownership-transfer path.
+    // Wait-only mappings require concurrent sharing across queue families.
     bool connect_submission_dependencies(FrameSubmissionGraph& submissions,
         const SubmissionForQueue& submission_for_queue,
         const QueueFamilyForQueue& queue_family_for_queue, std::string& error) const;
-    // Allows each image-graph pass to map to its own submission group. The
-    // group's recorded family is authoritative when available; the callback
-    // supplies the family for external submissions and legacy groups. This
-    // overload validates sharing only; generated groups record in-frame releases
-    // and acquires for exclusive resources.
+    // Uses each mapped submission's family when available, with a per-queue fallback.
     bool connect_submission_dependencies(FrameSubmissionGraph& submissions,
         const SubmissionForPass& submission_for_pass,
         const QueueFamilyForQueue& queue_family_for_queue, std::string& error) const;
-    // Records only the resource transitions and callbacks belonging to
-    // recording_queue. Cross-queue pass dependencies are connected separately
-    // through FrameSubmissionGraph and must be synchronized with its waits.
+    // Records one queue. FrameSubmissionGraph handles cross-queue waits.
     bool execute(VkCommandBuffer command, ImageStateTracker& states,
         const ImageStateDispatch& vk, std::string& error,
         VkQueueFlags queue_flags = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT,

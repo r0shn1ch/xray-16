@@ -645,20 +645,12 @@ bool update_texture_pixels(VkDevice device, VkQueue queue, VkCommandPool pool,
     VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &upload.command;
-#if defined(XR_PLATFORM_ANDROID)
-    android_set_vulkan_stage("persistent texture update queue submit");
-    android_set_load_context("vulkan texture: persistent update queue submit");
-#endif
     const VkResult submitted = vk.queue_submit(queue, 1, &submit, upload.fence);
     if (submitted != VK_SUCCESS)
     {
         error = "persistent Vulkan texture update submission failed: " + std::to_string(submitted);
         return false;
     }
-#if defined(XR_PLATFORM_ANDROID)
-    android_set_vulkan_stage(nullptr);
-    android_set_load_context(nullptr);
-#endif
     upload.submitted = true;
     if (vk.fence_after_copy)
     {
@@ -668,10 +660,6 @@ bool update_texture_pixels(VkDevice device, VkQueue queue, VkCommandPool pool,
             error = "persistent Vulkan texture copy fence wait failed: " + std::to_string(waited);
             return false;
         }
-#if defined(XR_PLATFORM_ANDROID)
-        android_set_vulkan_stage(nullptr);
-        android_set_load_context(nullptr);
-#endif
         upload.submitted = false;
     }
     error.clear();

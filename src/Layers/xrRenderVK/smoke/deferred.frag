@@ -136,11 +136,6 @@ void shade_deferred_sample(int sample_index, out vec4 output_color)
         diagnostic ? clamp(int(shadow.options.y) - 2, 0, 3) : 0;
     vec2 screen_uv = four_panes ? fract(texcoord * 2.0) : texcoord;
     float depth = gbuffer_depth(screen_uv, sample_index);
-    if (diagnostic && shadow.options.y > 9.5 && depth >= 0.99999)
-    {
-        output_color = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
-    }
     if (diagnostic && depth >= 0.99999 && panel != 0)
     {
         output_color = vec4(0.04, 0.08, 0.18, 1.0);
@@ -163,11 +158,6 @@ void shade_deferred_sample(int sample_index, out vec4 output_color)
         vec3 camera_position = eye_clip.xyz / max(abs(eye_clip.w), 1e-6) * sign(eye_clip.w);
         wetness = rain_wetness(rain_world, normal, camera_position);
         normal = rain_perturb_normal(rain_world, normal, wetness);
-    }
-    if (diagnostic && shadow.options.y > 9.5)
-    {
-        output_color = vec4(vec3(wetness), 1.0);
-        return;
     }
     vec3 wet_albedo = albedo.rgb * (1.0 - 0.16 * wetness);
     float diffuse = max(dot(normal, normalize(-light.direction_ambient.xyz)), 0.0);
