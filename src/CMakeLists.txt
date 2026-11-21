@@ -327,6 +327,14 @@ if (XRAY_BUILD_VULKAN_TESTS)
     target_link_libraries(vulkan_visual_catalog_test PRIVATE xrRenderVK xrCDB xrCore)
     add_test(NAME vulkan_visual_catalog COMMAND vulkan_visual_catalog_test)
 
+    xray_add_vulkan_state_test(game_news_serialization_test tests/game_news_serialization.cpp)
+    target_sources(game_news_serialization_test PRIVATE
+        "${XRAY_SOURCE_DIR}/src/xrGame/game_news_serialization.cpp")
+    target_link_libraries(game_news_serialization_test PRIVATE xrCore)
+    add_test(NAME game_news_serialization COMMAND game_news_serialization_test)
+
+    xray_add_vulkan_state_test(map_location_serialization tests/map_location_serialization.cpp)
+
     add_executable(vulkan_model_geometry_test
         "${XRAY_SOURCE_DIR}/tests/vulkan_model_geometry.cpp"
     )

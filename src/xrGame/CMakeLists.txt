@@ -548,6 +548,8 @@ target_sources(xrGame PRIVATE
     game_location_selector_inline.h
     game_news.cpp
     game_news.h
+    game_news_serialization.cpp
+    game_news_serialization.h
     GameObject.cpp
     GameObject.h
     game_object_space.h

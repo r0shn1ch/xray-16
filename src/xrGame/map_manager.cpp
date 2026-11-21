@@ -11,6 +11,7 @@
 #include "xrServer.h"
 #include "game_object_space.h"
 #include "xrScriptEngine/script_callback_ex.h"
+#include "map_location_serialization.h"
 
 struct FindLocationBySpotID
 {
@@ -44,14 +45,32 @@ void SLocationKey::save(IWriter& stream)
 
 void SLocationKey::load(IReader& stream)
 {
-    stream.r(&object_id, sizeof(object_id));
+    if (!load_checked(stream))
+        Msg("! Invalid map-location record in save; marker was skipped");
+}
 
-    stream.r_stringZ(spot_type);
-    stream.r_u8();
+bool SLocationKey::load_checked(IReader& stream)
+{
+    const intptr_t remaining = stream.elapsed();
+    if (remaining <= 0)
+        return false;
 
+    map_location_serialization::KeyRecord record{};
+    if (!map_location_serialization::parse_key(static_cast<const char*>(stream.pointer()),
+            static_cast<size_t>(remaining), record))
+        return false;
+
+    object_id = record.object_id;
+    const xr_string spot_type_string(record.spot_type.data, record.spot_type.size);
+    spot_type = spot_type_string.c_str();
+    stream.advance(record.header_size);
     location = xr_new<CMapLocation>(spot_type.c_str(), object_id);
-
-    location->load(stream);
+    if (!location->load_checked(stream))
+    {
+        delete_data(location);
+        return false;
+    }
+    return true;
 }
 
 void SLocationKey::destroy() { delete_data(location); }
@@ -78,6 +97,77 @@ void CMapLocationRegistry::save(IWriter& stream)
             if ((*i).location->Serializable())
                 (*i).save(stream);
     }
+}
+
+void CMapLocationRegistry::load(IReader& stream)
+{
+    OBJECT_REGISTRY loaded;
+    load_succeeded_ = true;
+    auto invalid = [this, &loaded](pcstr reason) {
+        load_succeeded_ = false;
+        Msg("! Invalid map-location registry in save; skipping markers: %s", reason);
+        delete_data(loaded);
+    };
+
+    if (stream.elapsed() < static_cast<intptr_t>(sizeof(u32)))
+    {
+        invalid("missing registry count");
+        return;
+    }
+
+    const u32 registry_count = stream.r_u32();
+    const size_t registry_remaining = static_cast<size_t>(stream.elapsed());
+    if (static_cast<size_t>(registry_count) > registry_remaining / (sizeof(u16) + sizeof(u32)))
+    {
+        invalid("registry count exceeds remaining data");
+        return;
+    }
+
+    for (u32 registry_index = 0; registry_index < registry_count; ++registry_index)
+    {
+        if (stream.elapsed() < static_cast<intptr_t>(sizeof(u16) + sizeof(u32)))
+        {
+            invalid("truncated registry entry");
+            return;
+        }
+
+        u16 object_id = 0;
+        stream.r(&object_id, sizeof(object_id));
+        const u32 location_count = stream.r_u32();
+        constexpr size_t min_location_record = sizeof(u16) + 1 + sizeof(u8) + 1 + sizeof(u32) + 1;
+        if (static_cast<size_t>(location_count) > static_cast<size_t>(stream.elapsed()) / min_location_record)
+        {
+            invalid("location count exceeds remaining data");
+            return;
+        }
+
+        vLocations locations;
+        locations.reserve(location_count);
+        for (u32 location_index = 0; location_index < location_count; ++location_index)
+        {
+            SLocationKey key;
+            if (!key.load_checked(stream))
+            {
+                delete_data(locations);
+                invalid("truncated location record");
+                return;
+            }
+            locations.push_back(key);
+        }
+
+        if (loaded.find(object_id) != loaded.end())
+        {
+            delete_data(locations);
+            invalid("duplicate object id");
+            return;
+        }
+
+        loaded.insert(std::make_pair(object_id, std::move(locations)));
+    }
+
+    delete_data(m_objects);
+    m_objects.swap(loaded);
+    load_succeeded_ = true;
 }
 
 CMapManager::CMapManager()

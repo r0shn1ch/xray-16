@@ -21,6 +21,7 @@ struct SLocationKey : public ISerializable, public IPureDestroyableObject
 
     virtual void save(IWriter& stream);
     virtual void load(IReader& stream);
+    bool load_checked(IReader& stream);
     virtual void destroy();
 };
 
@@ -29,4 +30,9 @@ using vLocations = xr_vector<SLocationKey>;
 struct CMapLocationRegistry : public CALifeAbstractRegistry<u16, vLocations>
 {
     void save(IWriter& stream) override;
+    void load(IReader& stream) override;
+    bool load_succeeded() const { return load_succeeded_; }
+
+private:
+    bool load_succeeded_ = true;
 };
