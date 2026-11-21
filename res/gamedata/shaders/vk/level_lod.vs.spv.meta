@@ -3,5 +3,5 @@ source=vk/lod.vs
 stage=vs
 entry=main
 defines=
-source-fingerprint=e80d1f895186a54f
+source-fingerprint=a278bd3b4977c2b1
 spirv-fingerprint=fed33f23c4506c03

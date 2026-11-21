@@ -3,5 +3,5 @@ source=vk/skinned.vs
 stage=vs
 entry=main
 defines=SKIN_WEIGHTS=2|VK_HUD=1
-source-fingerprint=0f373ea3ff8726aa
+source-fingerprint=993819c16522c45e
 spirv-fingerprint=3054e287a1be7b22

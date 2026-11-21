@@ -3,6 +3,6 @@ source=vk/opaque.ps
 stage=ps
 entry=main
 defines=LEVEL_GEOMETRY=1|VK_LIGHTMAP=1|VK_ENV_CUBE=1
-source-fingerprint=e544c312ff3e177c
+source-fingerprint=4eceb4efc96ed8c2
 dependency=vk/LightingLimits.h=0e1ec7bd3e15c3d0
 spirv-fingerprint=ad9fd0f040c3a7e0

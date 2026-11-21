@@ -3,5 +3,5 @@ source=vk/opaque.vs
 stage=vs
 entry=main
 defines=VK_TREE_STATIC=1|LEVEL_GEOMETRY=1
-source-fingerprint=54719e9a4ec4d295
+source-fingerprint=b7d7fc0243dcb694
 spirv-fingerprint=64f62c434a1f4f4a
