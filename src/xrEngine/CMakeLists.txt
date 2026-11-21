@@ -335,8 +335,6 @@ target_sources_grouped(
     TARGET xrEngine
     NAME "Render\\Execution & 3D\\Shaders\\Textures"
     FILES
-    #tntQAVI.cpp
-    #tntQAVI.h
     xrImage_Resampler.cpp
     xrImage_Resampler.h
     xrTheora_Stream.cpp
@@ -345,14 +343,14 @@ target_sources_grouped(
     xrTheora_Surface.h
 )
 
-#target_sources_grouped(
-#    TARGET xrEngine
-#    NAME "Render\\Execution & 3D\\TextConsole"
-#    FILES
-#    Text_Console.cpp
-#    Text_Console.h
-#    Text_Console_WndProc.cpp
-#)
+if (WIN32)
+    target_sources(xrEngine PRIVATE tntQAVI.cpp tntQAVI.h)
+    target_link_libraries(xrEngine PRIVATE vfw32)
+    target_sources(xrEngine PRIVATE
+        Text_Console.cpp
+        Text_Console.h
+        Text_Console_WndProc.cpp)
+endif()
 
 target_sources_grouped(
     TARGET xrEngine
@@ -442,6 +440,27 @@ target_link_libraries(xrEngine
     Theora::Theora
     SDL2::SDL2
 )
+
+if (WIN32)
+    target_sources(xrEngine PRIVATE
+        "${XRAY_SOURCE_DIR}/Externals/DiscordGameSDK/activity_manager.cpp"
+        "${XRAY_SOURCE_DIR}/Externals/DiscordGameSDK/core.cpp"
+        "${XRAY_SOURCE_DIR}/Externals/DiscordGameSDK/overlay_manager.cpp"
+        "${XRAY_SOURCE_DIR}/Externals/DiscordGameSDK/relationship_manager.cpp"
+        "${XRAY_SOURCE_DIR}/Externals/DiscordGameSDK/types.cpp"
+        "${XRAY_SOURCE_DIR}/Externals/DiscordGameSDK/user_manager.cpp")
+    if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(XRAY_DISCORD_ARCH x64)
+    else()
+        set(XRAY_DISCORD_ARCH x86)
+    endif()
+    target_link_libraries(xrEngine PRIVATE
+        "${XRAY_SOURCE_DIR}/sdk/libraries/${XRAY_DISCORD_ARCH}/discord_game_sdk.dll.lib")
+    add_custom_command(TARGET xrEngine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${XRAY_SOURCE_DIR}/sdk/binaries/${XRAY_DISCORD_ARCH}/discord_game_sdk.dll"
+            "$<TARGET_FILE_DIR:xrEngine>/discord_game_sdk.dll")
+endif()
 
 target_compile_definitions(xrEngine
     PRIVATE

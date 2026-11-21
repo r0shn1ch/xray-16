@@ -118,10 +118,16 @@ target_sources_grouped(
 #    xr_cda.h
 #)
 
+if (NOT WIN32)
+    # The legacy EAX header uses the Windows pointer annotation on all platforms.
+    target_compile_definitions(xrSound PRIVATE FAR=)
+endif()
+
 target_include_directories(xrSound
     PRIVATE
     "${XRAY_SOURCE_DIR}/src"
     "${XRAY_SOURCE_DIR}/src/xrEngine"
+    "${XRAY_SOURCE_DIR}/sdk/include"
 )
 
 target_link_libraries(xrSound

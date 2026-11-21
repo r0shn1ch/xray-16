@@ -54,6 +54,10 @@ target_link_libraries(xrGameSpy
     GameSpy-oxr
 )
 
+if (WIN32)
+    target_link_libraries(xrGameSpy PRIVATE ws2_32)
+endif()
+
 target_compile_definitions(xrGameSpy
     PRIVATE
     XRGAMESPY_EXPORTS

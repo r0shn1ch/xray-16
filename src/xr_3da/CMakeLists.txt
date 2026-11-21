@@ -39,6 +39,11 @@ target_link_libraries(xr_3da
     xrGame
 )
 
+if (WIN32)
+    set_target_properties(xr_3da PROPERTIES WIN32_EXECUTABLE ON)
+    target_link_libraries(xr_3da PRIVATE xrRenderPC_R4)
+endif()
+
 if (ANDROID AND XRAY_ANDROID_SHARED)
     # SDLActivity loads libmain.so and resolves the C-linkage SDL_main symbol.
     target_compile_definitions(xr_3da PRIVATE XRAY_ANDROID_SHARED)

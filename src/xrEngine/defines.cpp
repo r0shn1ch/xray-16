@@ -6,15 +6,7 @@ ECORE_API bool bDebug = false;
 #endif
 
 // Video
-DeviceMode psDeviceMode =
-{
-    .Monitor      = 0,
-    .WindowStyle  = rsWindowedBorderless,
-    .Width        = 0,
-    .Height       = 0,
-    .RefreshRate  = 0,
-    .BitsPerPixel = 32
-};
+DeviceMode psDeviceMode = {0, rsWindowedBorderless, 0, 0, 0, 32};
 
 // release version always has "mt_*" enabled
 Flags32 psDeviceFlags =

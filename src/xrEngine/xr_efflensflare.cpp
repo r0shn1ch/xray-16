@@ -53,14 +53,7 @@ void CLensFlareDescriptor::SetGradient(float fMaxRadius, float fOpacity, pcstr t
 
 void CLensFlareDescriptor::AddFlare(float fRadius, float fOpacity, float fPosition, pcstr tex_name, pcstr sh_name)
 {
-    m_Flares.emplace_back(SFlare
-    {
-        .fOpacity = fOpacity,
-        .fRadius = fRadius,
-        .fPosition = fPosition,
-        .texture = tex_name,
-        .shader = sh_name,
-    });
+    m_Flares.emplace_back(SFlare{fOpacity, fRadius, fPosition, tex_name, sh_name});
 }
 
 bool CLensFlareDescriptor::SFlare::ed_show_params()
@@ -85,6 +78,8 @@ bool CLensFlareDescriptor::SFlare::ed_show_params()
         result = true;
     }
     return result;
+#else
+    return false;
 #endif
 }
 
@@ -96,6 +91,8 @@ bool CLensFlareDescriptor::SSource::ed_show_params()
     ScopeID scope{ this };
     result |= ImGui::Checkbox("Ignore color", &ignore_color);
     return result;
+#else
+    return false;
 #endif
 }
 

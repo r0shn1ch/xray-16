@@ -2,6 +2,7 @@
 //
 
 #include "stdafx.h"
+#include "lzhuf.h"
 #pragma hdrstop
 #if defined(XR_PLATFORM_WINDOWS)
 #include <io.h>
