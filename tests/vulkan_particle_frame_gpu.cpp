@@ -8,6 +8,7 @@
 #include "src/Layers/xrRenderVK/VulkanGameShaders.h"
 #include "src/Layers/xrRenderVK/WeatherShaders.h"
 #include "src/Layers/xrRenderVK/VisibilityPasses.h"
+#include "src/Layers/xrRenderVK/VisibilityMaterialAnimation.h"
 #include "src/Layers/xrRenderVK/LevelModels.h"
 #include "src/Layers/xrRenderVK/SkyProbeReducePass.h"
 #include "src/Layers/xrRenderVK/SkyProbeBakePass.h"
@@ -75,7 +76,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         limits.maxStorageBufferRange, limits.maxUniformBufferRange, VK_NULL_HANDLE,
         code.data(), shader.size(), error), error);
 
-    visibility::DrawEntry entries[]{{0, 3, 0, 1, 0, UINT32_MAX, 1.f / 3.f, 0, UINT32_MAX, 0,
+    std::vector<visibility::DrawEntry> entries{{0, 3, 0, 1, 0, UINT32_MAX, 1.f / 3.f, 0, UINT32_MAX, 0,
             UINT32_MAX, UINT32_MAX, UINT32_MAX, 0, 0.3f, 0},
         {3, 3, 0, 0, 1, 0, 0.625f, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX, 0, 0, UINT32_MAX, 0.05f},
         {6, 3, 0, 0, 1},
@@ -97,7 +98,16 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         entries[1].bump_height = 0.3f;
         entries[1].parallax_slot = shift_cutout ? 0 : UINT32_MAX;
     }
-    if (transformed_cutout) entries[1].base_u_offset = -.25f;
+    if (transformed_cutout)
+    {
+        TextureMatrixSet animated{};
+        animated.enabled[0] = true;
+        animated.values[0].mode = 1;
+        animated.values[0].tcm = 4;
+        animated.values[0].waves[3].arg[0] = -.25f;
+        require(update_visibility_material_matrices(entries, {{1, 1, animated}}, 1.f, nullptr),
+            "animated material transform preparation");
+    }
     const VkDrawIndexedIndirectCommand commands[]{{3, 1, 0, 0, 0}, {3, 1, 3, 0, 0}, {3, 1, 6, 0, 0},
         {3, 1, 9, 0, 0}};
     const uint32_t indices[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
@@ -132,7 +142,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     const auto upload = [&](BufferResource& buffer, const void* data, size_t bytes, VkBufferUsageFlags usage) {
         require(buffer.initialize(device, bytes, usage, host, memory, vk, error) && buffer.write(0, data, bytes, error), error);
     };
-    upload(geometry[0], entries, sizeof(entries), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    upload(geometry[0], entries.data(), entries.size() * sizeof(entries[0]), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     upload(geometry[1], indices, sizeof(indices), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     upload(geometry[2], vertices, sizeof(vertices), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     upload(geometry[3], commands, sizeof(commands), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
