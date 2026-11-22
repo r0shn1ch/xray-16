@@ -11,8 +11,10 @@ struct VsmDemandParameters
     float light_view[16]{};
     float level[6][4]{}; // light-space origin xy, width, reserved
     uint32_t axis{}, levels{}, step{}, lod_bias{};
+    uint32_t page_size{}; // Zero requests only receiver pages.
+    uint32_t reserved[3]{};
 };
-static_assert(sizeof(VsmDemandParameters) == 240);
+static_assert(sizeof(VsmDemandParameters) == 256);
 
 // Each image has its own writable parameter and demand buffers. The caller
 // waits for the matching frame/image fence before reusing them; needed buffers

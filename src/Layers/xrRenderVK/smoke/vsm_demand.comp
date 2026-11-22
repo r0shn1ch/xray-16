@@ -6,8 +6,14 @@ layout(set = 0, binding = 1, std430) readonly buffer Parameters {
     mat4 light_view;
     vec4 level[6];
     uvec4 settings; // axis, level count, sampling step, lod bias
+    uvec4 kernel; // physical page size, reserved
 } params;
 layout(set = 0, binding = 2, std430) buffer Needed { uint pages[]; };
+
+void request_page(uint level, uvec2 page, uint axis)
+{
+    atomicOr(pages[(level * axis + page.y) * axis + page.x], 1u);
+}
 void main()
 {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy * params.settings.z);
@@ -31,7 +37,21 @@ void main()
     {
         vec2 coord = (light_xy - params.level[i].xy) / params.level[i].z;
         if (any(lessThan(coord, vec2(0.0))) || any(greaterThanEqual(coord, vec2(1.0)))) continue;
-        uvec2 page = uvec2(coord * float(axis));
-        atomicOr(pages[i * axis * axis + page.y * axis + page.x], 1u);
+        vec2 page_coord = coord * float(axis);
+        uvec2 page = min(uvec2(page_coord), uvec2(axis - 1u));
+        request_page(i, page, axis);
+        if (params.kernel.x == 0u) continue;
+        float size = float(params.kernel.x);
+        vec2 local = (page_coord - vec2(page)) * size;
+        ivec2 first_shift = -ivec2(lessThan(local, vec2(1.0)));
+        ivec2 last_shift = ivec2(greaterThanEqual(local, vec2(size - 1.0)));
+        for (int y = first_shift.y; y <= last_shift.y; ++y)
+            for (int x = first_shift.x; x <= last_shift.x; ++x)
+            {
+                if (x == 0 && y == 0) continue;
+                ivec2 neighbor = ivec2(page) + ivec2(x, y);
+                if (all(greaterThanEqual(neighbor, ivec2(0))) && all(lessThan(neighbor, ivec2(axis))))
+                    request_page(i, uvec2(neighbor), axis);
+            }
     }
 }

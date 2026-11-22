@@ -1387,6 +1387,19 @@ static bool build_triangle_scene(VkPhysicalDevice physical, VkDevice device,
             decoded_jobs[1].y != 1 || decoded_jobs[0].level == decoded_jobs[1].level)
         { if (error.empty()) error = "VSM dynamic job readback mismatch"; break; }
         demand.lod_bias = 1;
+        demand.page_size = 8;
+        if (vkResetFences(device, 1, &fence) != VK_SUCCESS || vkResetCommandBuffer(command, 0) != VK_SUCCESS ||
+            vkBeginCommandBuffer(command, &query_begin) != VK_SUCCESS ||
+            !vsm_demand.record(generate_frame, demand, error) ||
+            vkEndCommandBuffer(command) != VK_SUCCESS || vkQueueSubmit(queue, 1, &query_submit, fence) != VK_SUCCESS ||
+            vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS ||
+            !vsm_needed.read(0, page_table, sizeof(page_table), error))
+        { if (error.empty()) error = "VSM filter demand failed"; break; }
+        for (uint32_t i = 0; i < 8; ++i)
+            if (page_table[i] != (i >= 4 ? 1u : 0u))
+            { error = "VSM filter demand omitted a neighbor or escaped its clipmap level"; break; }
+        if (!error.empty()) break;
+        demand.page_size = 0;
         if (vkResetFences(device, 1, &fence) != VK_SUCCESS || vkResetCommandBuffer(command, 0) != VK_SUCCESS ||
             vkBeginCommandBuffer(command, &query_begin) != VK_SUCCESS ||
             !vsm_demand.record(generate_frame, demand, error) ||

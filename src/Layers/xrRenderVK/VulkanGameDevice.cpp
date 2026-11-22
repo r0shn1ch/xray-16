@@ -2569,6 +2569,8 @@ bool VulkanGameDevice::record_vsm_requests(const FrameRecordingContext& frame, v
     params.frame = Device.dwFrame; params.refresh_interval = 120; params.budget = 24;
     const auto& previous = owner.vsm_previous_clipmap_.projection;
     const auto& current = owner.vsm_clipmap_.projection;
+    auto demand = owner.vsm_clipmap_.demand;
+    demand.page_size = resources.static_atlas.page_size();
     params.force_dirty = !owner.vsm_previous_valid_ || owner.current_level_ != owner.vsm_previous_level_ ||
         std::memcmp(previous.light_view, current.light_view, sizeof(current.light_view)) != 0 ||
         previous.near_depth != current.near_depth || previous.far_depth != current.far_depth;
@@ -2576,7 +2578,7 @@ bool VulkanGameDevice::record_vsm_requests(const FrameRecordingContext& frame, v
             (!resources.static_atlas.initialize_layout(frame.command_buffer, error) ||
              !resources.dynamic_atlas.initialize_layout(frame.command_buffer, error) ||
              !resources.cache.reset(frame.command_buffer, resources.static_slots, error))) ||
-        !resources.demand.record(frame, owner.vsm_clipmap_.demand, error) ||
+        !resources.demand.record(frame, demand, error) ||
         !resources.cache.prepare(frame.command_buffer, frame.frame_index, params, image.needed, image.static_table,
             resources.static_slots, image.static_work, error) ||
         !resources.allocator.record(frame.command_buffer, frame.frame_index, params.axis, params.levels,
