@@ -81,6 +81,8 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         {6, 3, 0, 0, 1},
         {9, 3, 0, 0, 1}};
     entries[1].alpha_cutoff = alpha_cutoff;
+    entries[0].emission = 1.f; // PBR stores emission in surface alpha.
+    entries[1].emission = 1.f; // Legacy materials store it in surface blue.
     if (detail_mode != UINT32_MAX)
     {
         entries[1].detail_slot = detail_scale_test ? 1 : 0;
@@ -364,7 +366,8 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         require(output[2][36][0] == gloss && output[2][36][1] == 0x3900 &&
             output[1][20][0] >= 0xb727 && output[1][20][0] <= 0xb729 &&
             output[2][20][0] == 0x3400 &&
-            output[2][20][1] == 0x3400 && output[2][20][2] == 0x3c00,
+            output[2][20][1] == 0x3400 && output[2][20][2] == 0x3c00 &&
+            output[2][20][3] == 0x3c00 && output[2][36][2] == 0x3c00,
             "visibility resolve material class and PBR channel override");
         require(output[0][0][0] == 0 && output[1][0][3] == 0, "visibility resolve background");
     }

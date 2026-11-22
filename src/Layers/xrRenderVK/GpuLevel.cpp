@@ -625,6 +625,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
             mesh.wallmark_multiply = source.wallmark_multiply;
             mesh.wallmark_blend = source.wallmark_blend;
             mesh.glow_alpha_add = source.glow_alpha_add;
+            mesh.emissive = source.emissive;
             mesh.fog = source.fog;
             mesh.lightmapped = source.lightmapped;
             mesh.lightmap_texture_name = source.lightmap_texture_name;
@@ -1345,7 +1346,8 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                         mesh.visibility_material_class, pbr_slots[0], pbr_slots[1], pbr_slots[2], pbr_slots[3],
                         normal_slots[0], normal_slots[1], normal_slots[2], mesh.bump_height, parallax_slot,
                         mesh.mode == SurfaceMode::AlphaTest ? float(mesh.alpha_ref) / 255.f : -1.f,
-                        detail_slots[0], detail_slots[1], detail_slots[2], mesh.terrain_scale, mesh.visibility_detail_mode};
+                        detail_slots[0], detail_slots[1], detail_slots[2], mesh.terrain_scale, mesh.visibility_detail_mode,
+                        mesh.emissive ? 1.f : 0.f};
                 }
                 auto& range = prepared.visibility_draw_ranges_[mesh.geometry_batch];
                 if (!range.draw_count)
@@ -1380,7 +1382,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                         node.fragment == (cutout ? "vk\\level_cutout.ps" : "vk\\level_opaque.ps");
                 if ((mesh.mode != SurfaceMode::Opaque && !cutout) || !mesh.packed_cluster_indices || mesh.secondary_opaque ||
                     !mesh.visibility_material_supported || mesh.terrain || mesh.environment ||
-                    mesh.environment_constant || mesh.laemb || mesh.lod_atlas || mesh.tree || mesh.emissive ||
+                    mesh.environment_constant || mesh.laemb || mesh.lod_atlas || mesh.tree ||
                     mesh.tessellation || mesh.fog || mesh.depth_proxy || mesh.matrices.enabled[0] ||
                     (mesh.single_detail && mesh.matrices.enabled[1]) ||
                     mesh.pass_graph.count != 1 ||
