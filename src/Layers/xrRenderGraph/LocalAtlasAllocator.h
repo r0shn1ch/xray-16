@@ -20,7 +20,7 @@ struct LocalAtlasAllocator {
     uint32_t usedTexels = 0;
     bool built = false;
 
-    void Reset();
+    void Reset(uint32_t width = kLocalShadowAtlas, uint32_t height = kLocalShadowAtlas);
     uint32_t Alloc(uint32_t level);
     bool AllocateFaces(uint32_t level, uint32_t count, std::array<uint32_t, 6>& faces);
     void Free(uint32_t node);
@@ -32,6 +32,7 @@ struct LocalAtlasAllocator {
 
 private:
     void Build();
+    void AddFreeRegion(uint32_t node, uint32_t width, uint32_t height);
     void ListPush(uint32_t node);
     void ListRemove(uint32_t node);
     uint32_t Take(uint32_t level);
@@ -90,7 +91,24 @@ inline void LocalAtlasAllocator::ListRemove(uint32_t node)
     list.pop_back();
 }
 
-inline void LocalAtlasAllocator::Reset()
+inline void LocalAtlasAllocator::AddFreeRegion(uint32_t node, uint32_t width, uint32_t height)
+{
+    const uint32_t x = nodeX[node], y = nodeY[node];
+    if (x >= width || y >= height) return;
+    const uint32_t level = nodeLevel[node], size = SizeOf(level);
+    if (size <= width - x && size <= height - y)
+    {
+        nodeState[node] = 0;
+        ListPush(node);
+        return;
+    }
+    if (level + 1 == kLocalAtlasLevels) return;
+    nodeState[node] = 1;
+    for (uint32_t child = node * 4 + 4; child > node * 4; --child)
+        AddFreeRegion(child, width, height);
+}
+
+inline void LocalAtlasAllocator::Reset(uint32_t width, uint32_t height)
 {
     if (!built)
         Build();
@@ -101,8 +119,7 @@ inline void LocalAtlasAllocator::Reset()
     for (uint32_t l = 0; l < kLocalAtlasLevels; ++l)
         freeList[l].clear();
     usedTexels = 0;
-    nodeState[0] = 0;
-    ListPush(0);
+    AddFreeRegion(0, width, height);
 }
 
 inline uint32_t LocalAtlasAllocator::Take(uint32_t level)

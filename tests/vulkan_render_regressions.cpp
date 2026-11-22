@@ -34,6 +34,19 @@ int main()
         assert(!atlas.AllocateFaces(atlas.LevelOf(2048), 6, faces));
         assert(atlas.UsedTexels() == 0);
         assert(atlas.AllocateFaces(atlas.LevelOf(512), 6, faces));
+        xray::render::framegraph::LocalAtlasAllocator bounded;
+        bounded.Reset(3072, 2048);
+        std::array<uint32_t, 6> bounded_faces{};
+        assert(bounded.AllocateFaces(bounded.LevelOf(1024), 6, bounded_faces));
+        assert(bounded.Alloc(bounded.LevelOf(1024)) == UINT32_MAX);
+        for (auto face : bounded_faces)
+        {
+            uint32_t x{}, y{}, size{};
+            bounded.Rect(face, x, y, size);
+            assert(size == 1024 && x + size <= 3072 && y + size <= 2048);
+            bounded.Free(face);
+        }
+        assert(bounded.UsedTexels() == 0 && bounded.Alloc(bounded.LevelOf(4096)) == UINT32_MAX);
         assert(atlas.UsedTexels() == 6 * 512 * 512);
         std::array<uint32_t, 6> origins{};
         for (size_t face = 0; face < faces.size(); ++face)

@@ -242,6 +242,7 @@ bool LocalShadowTargets::reserve_lights(uint32_t image, size_t count, std::strin
 void LocalShadowTargets::layout_tiles(const std::array<TileRequest, LocalShadowSlots>& requests)
 {
     framegraph::LocalAtlasAllocator atlas;
+    atlas.Reset(atlas_extent_.width, atlas_extent_.height);
     std::array<uint32_t, LocalShadowSlots> slots{};
     for (uint32_t i = 0; i < slots.size(); ++i)
         slots[i] = i;
@@ -259,30 +260,21 @@ void LocalShadowTargets::layout_tiles(const std::array<TileRequest, LocalShadowS
         if (!request.faces || !request.resolution)
             continue;
         std::array<uint32_t, LocalShadowFaces> nodes{};
-        std::array<VkRect2D, LocalShadowFaces> light_tiles{};
-        bool light_fits = false;
+        uint32_t level = atlas.LevelOf(request.resolution);
         // Downgrade a light as a unit so point-light faces keep matching resolutions.
-        for (uint32_t level = atlas.LevelOf(request.resolution); level < framegraph::kLocalAtlasLevels; ++level)
-        {
-            if (!atlas.AllocateFaces(level, request.faces, nodes)) continue;
-            light_fits = true;
-            for (uint32_t face = 0; face < request.faces; ++face)
-            {
-                uint32_t x{}, y{}, size{};
-                atlas.Rect(nodes[face], x, y, size);
-                light_fits &= x + size <= atlas_extent_.width && y + size <= atlas_extent_.height;
-                light_tiles[face] = {{int32_t(x), int32_t(y)}, {size, size}};
-            }
-            if (light_fits) break;
-            for (uint32_t face = 0; face < request.faces; ++face)
-                atlas.Free(nodes[face]);
-        }
-        if (!light_fits)
+        while (level < framegraph::kLocalAtlasLevels && !atlas.AllocateFaces(level, request.faces, nodes))
+            ++level;
+        if (level == framegraph::kLocalAtlasLevels)
         {
             fits = false;
             break;
         }
-        std::copy_n(light_tiles.begin(), request.faces, packed.begin() + slot * LocalShadowFaces);
+        for (uint32_t face = 0; face < request.faces; ++face)
+        {
+            uint32_t x{}, y{}, size{};
+            atlas.Rect(nodes[face], x, y, size);
+            packed[slot * LocalShadowFaces + face] = {{int32_t(x), int32_t(y)}, {size, size}};
+        }
     }
     if (!fits)
     {
