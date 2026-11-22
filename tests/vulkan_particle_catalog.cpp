@@ -61,6 +61,14 @@ int main()
     assert(catalog.effect("campfire")->collision_friction == 1.f);
     assert(catalog.group("campfire_group") && catalog.group("campfire_group")->effects.size() == 1);
     Bytes edited = library;
+    IReader editor_input(library.data(), library.size());
+    assert(editable_particle_library_bytes(editor_input, edited, error) && edited == library);
+    CMemoryWriter compressed;
+    compressed.w_chunk(1, version.data(), version.size());
+    compressed.w_chunk(3 | CFS_CompressMark, effects.data(), effects.size());
+    compressed.w_chunk(4 | CFS_CompressMark, groups.data(), groups.size());
+    IReader compressed_input(compressed.pointer(), compressed.size());
+    assert(editable_particle_library_bytes(compressed_input, edited, error) && edited == library);
     assert(edit_particle_effect_limit(edited, "campfire", 512, error));
     assert(parse_particle_catalog({edited.data(), edited.size()}, catalog, error));
     assert(catalog.effect("campfire")->max_particles == 512);

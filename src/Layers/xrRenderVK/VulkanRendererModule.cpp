@@ -7,6 +7,8 @@
 #include "VulkanDrawUtils.h"
 #include "VulkanDebugRender.h"
 #include "VulkanSettings.h"
+#include "EngineParticleSource.h"
+#include "ParticleCatalog.h"
 #include "xrEngine/XR_IOConsole.h"
 #include "xrEngine/xr_ioc_cmd.h"
 #include <SDL.h>
@@ -14,6 +16,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cmath>
+#include <charconv>
 
 namespace xray::render::vulkan
 {
@@ -175,10 +178,76 @@ private:
     VulkanLevelRender& renderer_;
 };
 
+class VulkanParticleLimitCommand final : public IConsole_Command
+{
+public:
+    VulkanParticleLimitCommand() : IConsole_Command("r_vk_particle_export_limit") {}
+
+    void Execute(pcstr args) override
+    {
+        const std::string input(args);
+        const auto end = input.find_last_not_of(" \t");
+        const auto separator = end == std::string::npos ? end : input.find_last_of(" \t", end);
+        if (separator == std::string::npos)
+        {
+            InvalidSyntax();
+            return;
+        }
+        const auto name_end = separator ? input.find_last_not_of(" \t", separator - 1) : std::string::npos;
+        uint32_t limit{};
+        const auto parsed = std::from_chars(input.data() + separator + 1, input.data() + end + 1, limit);
+        if (name_end == std::string::npos || parsed.ec != std::errc{} || parsed.ptr != input.data() + end + 1)
+        {
+            InvalidSyntax();
+            return;
+        }
+
+        string_path path;
+        FS.update_path(path, _game_data_, "particles.xr");
+        IReader* source = FS.r_open(path);
+        if (!source)
+        {
+            Msg("! [renderer-vulkan] could not open particles.xr");
+            return;
+        }
+        std::vector<uint8_t> library;
+        std::string error;
+        const bool loaded = editable_particle_library_bytes(*source, library, error);
+        FS.r_close(source);
+        if (!loaded || !edit_particle_effect_limit(library, input.substr(0, name_end + 1), limit, error))
+        {
+            Msg("! [renderer-vulkan] particle export failed: %s", error.c_str());
+            return;
+        }
+
+        FS.update_path(path, "$app_data_root$", "particles_edited.xr");
+        convert_path_separators(path);
+        FILE* file = std::fopen(path, "wbx");
+        if (!file)
+        {
+            Msg("! [renderer-vulkan] could not create %s (existing exports are preserved)", path);
+            return;
+        }
+        const bool wrote = std::fwrite(library.data(), 1, library.size(), file) == library.size();
+        const bool closed = std::fclose(file) == 0;
+        if (!wrote || !closed)
+        {
+            std::remove(path);
+            Msg("! [renderer-vulkan] incomplete particle export: %s", path);
+            return;
+        }
+        Msg("[renderer-vulkan] exported particle library to %s", path);
+    }
+
+    void Info(TInfo& info) override { xr_strcpy(info, "<effect name> <1..65535> (exports particles_edited.xr)"); }
+};
+
 void register_vulkan_options(VulkanLevelRender& renderer)
 {
     static VulkanBenchmarkCommand benchmark(renderer);
+    static VulkanParticleLimitCommand particle_limit;
     Console->AddCommand(&benchmark);
+    Console->AddCommand(&particle_limit);
     static VulkanPreset preset(renderer);
     static CCC_Token aa("r_vk_aa", &antialiasing, aa_tokens);
     static CCC_Token msaa("r_vk_msaa", &gbuffer_msaa_samples, msaa_tokens);
