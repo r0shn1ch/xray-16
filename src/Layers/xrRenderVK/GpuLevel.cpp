@@ -1875,8 +1875,6 @@ uint32_t detail_random(uint32_t value)
 void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
 {
     visible_details_.clear();
-    detail_generation_cells_.clear();
-    detail_generation_triangles_.clear();
     detail_generation_params_ = {};
     if (details_.cells.empty() || !g_pGameLevel || !std::isfinite(camera.x) || !std::isfinite(camera.y) ||
         !std::isfinite(camera.z))
@@ -1893,6 +1891,8 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
     {
         detail_cache_.clear();
         detail_ground_cache_.clear();
+        detail_generation_cells_.clear();
+        detail_generation_triangles_.clear();
         ++detail_ground_generation_;
         detail_spacing_ = spacing;
         detail_cache_gpu_only_ = gpu_generation;
@@ -2051,33 +2051,47 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
     // does not invalidate the cached detail vertex buffers by reordering cells.
     for (size_t index : cells)
     {
-        const auto &cell = details_.cells[index];
         const auto found = detail_cache_.find(index);
         if (found != detail_cache_.end())
             visible_details_.insert(visible_details_.end(), found->second.begin(), found->second.end());
-        const auto ground = detail_ground_cache_.find(index);
-        if (ground != detail_ground_cache_.end() && !ground->second.empty())
-        {
-            DetailGenerateSlot slot{};
-            slot.bounds[0] = float(int(index % details_.width) - details_.offset_x) * 2.f;
-            slot.bounds[1] = float(int(index / details_.width) - details_.offset_z) * 2.f;
-            slot.bounds[2] = cell.ground;
-            slot.bounds[3] = cell.height;
-            slot.data[0] = uint32_t(index);
-            slot.data[2] = uint32_t(detail_generation_triangles_.size());
-            slot.data[3] = uint32_t(ground->second.size());
-            for (unsigned model = 0; model < 4; ++model)
-            {
-                slot.data[1] |= uint32_t(cell.ids[model]) << (8 * model);
-                for (unsigned corner = 0; corner < 4; ++corner)
-                    slot.palettes[model] |= uint32_t(cell.palette[model][corner]) << (8 * corner);
-            }
-            detail_generation_cells_.push_back(slot);
-            detail_generation_triangles_.insert(detail_generation_triangles_.end(),
-                ground->second.begin(), ground->second.end());
-        }
     }
-    detail_generation_params_ = {uint32_t(detail_generation_cells_.size()), grid_size, sample_spacing, density};
+    if (gpu_generation)
+    {
+        cells.erase(std::remove_if(cells.begin(), cells.end(), [&](size_t index) {
+            const auto ground = detail_ground_cache_.find(index);
+            return ground == detail_ground_cache_.end() || ground->second.empty();
+        }), cells.end());
+        const bool unchanged = std::equal(cells.begin(), cells.end(),
+            detail_generation_cells_.begin(), detail_generation_cells_.end(),
+            [](size_t index, const DetailGenerateSlot& slot) { return index == slot.data[0]; });
+        if (!unchanged)
+        {
+            detail_generation_cells_.clear();
+            detail_generation_triangles_.clear();
+            for (size_t index : cells)
+            {
+                const auto& cell = details_.cells[index];
+                const auto& ground = detail_ground_cache_.at(index);
+                DetailGenerateSlot slot{};
+                slot.bounds[0] = float(int(index % details_.width) - details_.offset_x) * 2.f;
+                slot.bounds[1] = float(int(index / details_.width) - details_.offset_z) * 2.f;
+                slot.bounds[2] = cell.ground;
+                slot.bounds[3] = cell.height;
+                slot.data[0] = uint32_t(index);
+                slot.data[2] = uint32_t(detail_generation_triangles_.size());
+                slot.data[3] = uint32_t(ground.size());
+                for (unsigned model = 0; model < 4; ++model)
+                {
+                    slot.data[1] |= uint32_t(cell.ids[model]) << (8 * model);
+                    for (unsigned corner = 0; corner < 4; ++corner)
+                        slot.palettes[model] |= uint32_t(cell.palette[model][corner]) << (8 * corner);
+                }
+                detail_generation_cells_.push_back(slot);
+                detail_generation_triangles_.insert(detail_generation_triangles_.end(), ground.begin(), ground.end());
+            }
+        }
+        detail_generation_params_ = {uint32_t(detail_generation_cells_.size()), grid_size, sample_spacing, density};
+    }
     if (detail_cache_.size() > 4096)
     {
         for (auto it = detail_cache_.begin(); it != detail_cache_.end();)
