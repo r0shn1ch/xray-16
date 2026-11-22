@@ -20,7 +20,7 @@ vec3 ao_world_position(vec2 uv, float depth)
 
 float ambient_occlusion(float depth, vec2 uv, vec3 normal)
 {
-    if (!(shadow.options.w > 0.0 && depth >= 0.0 && depth < 0.99999) ||
+    if (!(shadow.options.w > 0.0 && depth >= 0.0 && depth < 1.0) ||
         any(isnan(normal)) || any(isinf(normal)))
         return 1.0;
     ivec2 size = textureSize(resolved_depth_buffer, 0);
@@ -41,11 +41,13 @@ float ambient_occlusion(float depth, vec2 uv, vec3 normal)
                 break;
             vec2 direction = normalize(vec2(ao_directions[i]));
             ivec2 offset = ivec2(round(direction * float(ao_ring_radii[ring]) * scene_scale));
+            if (all(equal(offset, ivec2(0))))
+                continue;
             ivec2 pixel = center + offset;
             if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, size)))
                 continue;
             float sample_depth = texelFetch(resolved_depth_buffer, pixel, 0).r;
-            if (!(sample_depth >= 0.0 && sample_depth < 0.99999))
+            if (!(sample_depth >= 0.0 && sample_depth < 1.0))
                 continue;
             vec2 sample_uv = (vec2(pixel) + 0.5) / vec2(size);
             vec3 displacement = ao_world_position(sample_uv, sample_depth) - position;
