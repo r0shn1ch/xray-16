@@ -35,7 +35,7 @@ public:
     bool recreate_surface(VkExtent2D extent, VkExtent2D scene_extent, std::string& error);
     void destroy();
     VkDevice device() const { return m_device; }
-    const nvrhi::vulkan::DeviceHandle& nvrhi_device() const { return m_nvrhi_device; }
+    nvrhi::IDevice* nvrhi_device() const { return m_nvrhi_device.Get(); }
     VkInstance instance() const { return m_instance; }
     VkQueue queue() const { return m_queue; }
     VkQueue compute_queue() const { return m_compute_queue; }

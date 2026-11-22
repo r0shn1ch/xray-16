@@ -470,7 +470,7 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
     LOAD_TEXTURE(reset_fences, "vkResetFences");
     LOAD_TEXTURE(wait_for_fences, "vkWaitForFences");
 #undef LOAD_TEXTURE
-    texture_dispatch_.nvrhi_device = window_.nvrhi_device().Get();
+    texture_dispatch_.nvrhi_device = window_.nvrhi_device();
     texture_dispatch_.fence_after_copy = physical.properties.vendorID == 0x5143; // Qualcomm
 
     buffer_upload_.buffer = {texture_dispatch_.create_buffer,
@@ -481,7 +481,7 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
                              texture_dispatch_.bind_buffer_memory,
                              texture_dispatch_.map_memory,
                              texture_dispatch_.unmap_memory};
-    buffer_upload_.buffer.nvrhi_device = window_.nvrhi_device().Get();
+    buffer_upload_.buffer.nvrhi_device = window_.nvrhi_device();
     buffer_upload_.buffer.graphics_queue_family = physical.graphics_present_family;
     buffer_upload_.buffer.compute_queue_family = physical.compute_queue_family;
     buffer_upload_.buffer.transfer_queue_family = physical.transfer_queue_family;
