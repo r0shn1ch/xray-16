@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -53,6 +54,29 @@ int main()
         assert(virtual_graph.write_buffer(write, buffer, BufferUse::ComputeWrite, written_buffer, error));
         assert(virtual_graph.read(read, written_image, ImageUse::ComputeSampled, error));
         assert(virtual_graph.read_buffer(read, written_buffer, BufferUse::ComputeRead, error));
+        FrameImageGraph::BufferResource second_buffer;
+        assert(virtual_graph.declare_buffer(64, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, second_buffer, error));
+        assert(virtual_graph.write_buffer(write, second_buffer, BufferUse::ComputeWrite, second_buffer, error));
+        std::weak_ptr<int> staged_buffer;
+        unsigned attempts = 0;
+        const auto allocate = [&](VkDeviceSize, VkBufferUsageFlags, FrameImageGraph::TransientBuffer& out,
+            std::string&) {
+            auto owner = std::make_shared<int>(0);
+            staged_buffer = owner;
+            out.handle = (VkBuffer)(uintptr_t)(++attempts);
+            out.owner = owner;
+            return true;
+        };
+        assert(!virtual_graph.materialize_buffers([&](auto size, auto usage, auto& out, auto& reason) {
+            if (attempts)
+                throw std::runtime_error("allocation interrupted");
+            return allocate(size, usage, out, reason);
+        }, error));
+        assert(staged_buffer.expired() && !virtual_graph.buffer_handle(written_buffer) &&
+            !virtual_graph.buffer_handle(second_buffer));
+        assert(error.find("allocation interrupted") != std::string::npos);
+        assert(virtual_graph.materialize_buffers(allocate, error));
+        assert(virtual_graph.buffer_handle(written_buffer) && virtual_graph.buffer_handle(second_buffer));
     }
     ImageStateTracker states;
     assert(states.register_image(image, range, ImageUse::Undefined, error));

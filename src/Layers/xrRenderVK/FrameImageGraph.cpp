@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <exception>
 #include <set>
 #include <utility>
 #include <limits>
@@ -10,6 +11,21 @@ namespace xray::render::vulkan
 {
 namespace
 {
+template <typename Allocate>
+bool try_allocate_transient(Allocate&& allocate, std::string& error)
+{
+    error.clear();
+    try
+    {
+        return allocate();
+    }
+    catch (const std::exception& exception)
+    {
+        error = std::string("Frame image graph: transient allocation threw: ") + exception.what();
+        return false;
+    }
+}
+
 bool valid_sharing_metadata(VkSharingMode mode, const std::vector<uint32_t>& queue_families)
 {
     if (mode == VK_SHARING_MODE_EXCLUSIVE)
@@ -179,7 +195,9 @@ bool FrameImageGraph::materialize_buffers(const AllocateBuffer& allocate, std::s
         if (buffer.buffer || lifetimes.buffers[index].first_use == framegraph::INVALID_INDEX)
             continue;
         TransientBuffer physical;
-        if (!allocate || !allocate(buffer.size, buffer.transient_usage, physical, error) ||
+        if (!allocate || !try_allocate_transient([&] {
+                return allocate(buffer.size, buffer.transient_usage, physical, error);
+            }, error) ||
             !physical.handle || !physical.owner ||
             !valid_sharing_metadata(physical.sharing_mode, physical.queue_families))
         {
@@ -536,7 +554,8 @@ bool FrameImageGraph::materialize_images(const AllocateImage& allocate, std::str
         info.pQueueFamilyIndices = image.sharing_queue_families.empty()
             ? nullptr : image.sharing_queue_families.data();
         TransientImage physical;
-        if (!allocate || !allocate(info, physical, error) || !physical.handle || !physical.owner)
+        if (!allocate || !try_allocate_transient([&] { return allocate(info, physical, error); }, error) ||
+            !physical.handle || !physical.owner)
         {
             if (error.empty())
                 error = "Frame image graph: transient image allocation failed";
