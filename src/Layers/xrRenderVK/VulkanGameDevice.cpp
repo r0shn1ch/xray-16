@@ -2431,7 +2431,8 @@ bool VulkanGameDevice::record_ray_visibility(const FrameRecordingContext& frame,
                 shadow.inverse_view_projection, 100.f, Device.dwFrame, direction, shadow.hemi_color,
                 light.color, indirect_lights, error, projection_views, device.textures_.sampler(),
                 motion_view, motion_history_valid, reservoir_history_valid,
-                device.motion_.ready() ? device.motion_.image(frame.image_index) : VK_NULL_HANDLE))
+                device.motion_.ready() ? device.motion_.image(frame.image_index) : VK_NULL_HANDLE,
+                device.motion_.format() == VK_FORMAT_R16G16B16A16_SFLOAT))
         {
             Msg("! [renderer-vulkan] indirect ray recording failed: %s", error.c_str());
             return false;

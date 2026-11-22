@@ -267,8 +267,11 @@ void main()
     {
         ivec2 motion_size = textureSize(motion_vectors, 0);
         ivec2 motion_pixel = gbuffer_pixel(ivec2(pixel), ivec2(width, height), motion_size);
-        vec2 motion = texelFetch(motion_vectors, motion_pixel, 0).xy;
-        if (!any(isnan(motion)) && !any(isinf(motion)))
+        vec4 velocity = texelFetch(motion_vectors, motion_pixel, 0);
+        vec2 motion = velocity.xy;
+        float expected_depth = (parameters.dimensions_seed_history.w & 2u) != 0u ? velocity.z : center.depth;
+        if (expected_depth >= 0.0 && expected_depth < 1.0 &&
+            !any(isnan(motion)) && !any(isinf(motion)))
         {
             vec2 uv = (vec2(pixel) + 0.5) / vec2(width, height);
             vec2 previous_uv = uv + motion;
@@ -281,8 +284,8 @@ void main()
                 Reservoir previous = previous_reservoirs.values[previous_index];
                 vec4 previous_surface = decode_surface(previous.packed_surface);
                 float normal_similarity = dot(center.normal, previous_surface.xyz);
-                float depth_difference = abs(center.depth - previous_surface.w);
-                float depth_tolerance = max(0.001, max(abs(center.depth), abs(previous_surface.w)) * 0.02);
+                float depth_difference = abs(expected_depth - previous_surface.w);
+                float depth_tolerance = max(0.001, max(expected_depth, previous_surface.w) * 0.02);
                 vec3 previous_direction = octahedral_decode_direction(previous.packed_direction);
                 vec3 previous_contribution = diffuse_contribution(center,
                     previous.radiance.rgb, previous_direction);

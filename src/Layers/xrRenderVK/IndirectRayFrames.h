@@ -67,7 +67,7 @@ public:
         const std::vector<VkImageView>& projections = {}, VkSampler projection_sampler = VK_NULL_HANDLE,
         VkImageView motion_view = VK_NULL_HANDLE, bool motion_history_valid = false,
         bool temporal_history_valid = false,
-        VkImage motion_image = VK_NULL_HANDLE);
+        VkImage motion_image = VK_NULL_HANDLE, bool motion_has_previous_depth = false);
     void reset_reservoir_history()
     {
         reservoir_history_valid_ = false;

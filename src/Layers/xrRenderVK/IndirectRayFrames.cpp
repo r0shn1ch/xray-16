@@ -364,7 +364,7 @@ bool IndirectRayFrames::record(const FrameRecordingContext& frame, const LevelRa
     const std::vector<IndirectLocalLight>& local_lights, std::string& error,
     const std::vector<VkImageView>& projections, VkSampler projection_sampler,
     VkImageView motion_view, bool motion_history_valid, bool temporal_history_valid,
-    VkImage motion_image)
+    VkImage motion_image, bool motion_has_previous_depth)
 {
     path_trace_history_reused_ = false;
     if (!frame.command_buffer || frame.image_index >= rays_.size() || !inverse_view_projection ||
@@ -752,7 +752,7 @@ bool IndirectRayFrames::record(const FrameRecordingContext& frame, const LevelRa
         return false;
 
     const uint32_t spatial_constants[]{extent_.width, extent_.height, seed,
-        temporal_history_valid && reservoir_history_valid_ ? 1u : 0u,
+        temporal_history_valid && reservoir_history_valid_ ? (motion_has_previous_depth ? 3u : 1u) : 0u,
         material_inputs_valid ? 1u : 0u};
     const std::vector<VkDescriptorBufferInfo> spatial_buffers{info(radiance_[frame.image_index]),
         info(primary_surfaces_[frame.image_index]), info(rays), info(reservoir_history_[reservoir_input_index]),
