@@ -24,6 +24,7 @@
 #include <cmath>
 #include <charconv>
 #include <filesystem>
+#include <fstream>
 #include <string_view>
 #include <unordered_set>
 
@@ -226,6 +227,28 @@ bool load_particle_document(std::vector<uint8_t>& library, std::string& error, p
         return false;
     string_path path;
     FS.update_path(path, copy_stem ? "$app_data_root$" : _game_data_, filename.c_str());
+    if (copy_stem)
+    {
+        // Copies are created outside the game VFS. Read the current file and
+        // length directly even when the VFS index still describes an old copy.
+        convert_path_separators(path);
+        std::ifstream file(path, std::ios::binary | std::ios::ate);
+        const auto length = file.tellg();
+        if (length <= 0 || length > static_cast<std::streamoff>(editor_library_limit))
+        {
+            error = std::string("Could not open particle copy or its size is invalid: ") + path;
+            return false;
+        }
+        std::vector<uint8_t> bytes(static_cast<size_t>(length));
+        file.seekg(0);
+        if (!file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())))
+        {
+            error = std::string("Could not read particle copy: ") + path;
+            return false;
+        }
+        IReader source(bytes.data(), bytes.size());
+        return editable_particle_library_bytes(source, library, error);
+    }
     IReader* source = FS.r_open(path);
     if (!source)
     {

@@ -16,7 +16,6 @@ void particle_chunk(std::vector<uint8_t>& out, uint32_t id, const void* data, si
     }
 }
 
-constexpr size_t editor_library_limit = 64 * 1024 * 1024;
 
 bool copy_editor_chunks(IReader& source, unsigned depth, std::vector<uint8_t>& result)
 {
