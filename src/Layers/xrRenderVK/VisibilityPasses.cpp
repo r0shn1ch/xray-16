@@ -55,7 +55,8 @@ bool VisibilityPasses::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, 
     if (!load(raster_, "vk/visibility_software_raster_alpha.cs.spv", batch_slots * 2,
             sizeof(visibility::SoftwareRasterParameters), {{0, image}, {1, buffer}, {2, buffer},
                 {3, buffer}, {4, image}, {5, buffer}, {6, VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER}}, materials.layout()) ||
-        !load(resolve_, "vk/visibility_material_resolve.cs.spv", batch_slots, sizeof(visibility::MaterialResolveParameters),
+        !load(resolve_, materials.cube_capacity() ? "vk/visibility_material_resolve_cube.cs.spv" :
+                "vk/visibility_material_resolve.cs.spv", batch_slots, sizeof(visibility::MaterialResolveParameters),
             {{0, sampled}, {1, buffer}, {2, buffer}, {3, buffer}, {5, image}, {6, image}, {7, image}}, materials.layout()))
     {
         raster_.destroy();

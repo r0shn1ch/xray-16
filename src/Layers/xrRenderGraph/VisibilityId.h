@@ -50,6 +50,10 @@ struct DrawEntry
     float base_v_x{}, base_v_y{1.f}, base_v_offset{};
     float detail_u_x{1.f}, detail_u_y{}, detail_u_offset{};
     float detail_v_x{}, detail_v_y{1.f}, detail_v_offset{};
+    uint32_t environment_cube{UINT32_MAX};
+    float environment_xx{1.f}, environment_xy{}, environment_xz{};
+    float environment_yx{}, environment_yy{1.f}, environment_yz{};
+    float environment_zx{}, environment_zy{}, environment_zz{1.f};
 };
 
 struct Viewport
@@ -86,7 +90,7 @@ struct MaterialResolveParameters
     float eye_and_steep[4]{};
 };
 
-static_assert(sizeof(DrawEntry) == 140);
+static_assert(sizeof(DrawEntry) == 180);
 static_assert(sizeof(Viewport) == 16);
 static_assert(offsetof(Camera, viewport) == 64);
 static_assert(sizeof(Camera) == 80);

@@ -30,7 +30,19 @@ struct DrawEntry
     float baseVX, baseVY, baseVOffset;
     float detailUX, detailUY, detailUOffset;
     float detailVX, detailVY, detailVOffset;
+    uint environmentCube;
+    float environmentXX, environmentXY, environmentXZ;
+    float environmentYX, environmentYY, environmentYZ;
+    float environmentZX, environmentZY, environmentZZ;
 };
+
+vec3 visibilityEnvironmentDirection(DrawEntry entry, vec3 position, vec3 normal, vec3 eye)
+{
+    vec3 reflection = reflect(normalize(position - eye), normalize(normal));
+    return vec3(dot(vec3(entry.environmentXX, entry.environmentXY, entry.environmentXZ), reflection),
+        dot(vec3(entry.environmentYX, entry.environmentYY, entry.environmentYZ), reflection),
+        dot(vec3(entry.environmentZX, entry.environmentZY, entry.environmentZZ), reflection));
+}
 
 vec2 visibilityBaseUv(DrawEntry entry, vec2 uv, float translation)
 {

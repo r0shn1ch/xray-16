@@ -13,6 +13,7 @@ VARIANTS = (
     ("visibility_software_raster.comp", "visibility_software_raster.cs.spv", ()),
     ("visibility_software_raster.comp", "visibility_software_raster_alpha.cs.spv", ("VISIBILITY_ALPHA_TEST=1",)),
     ("visibility_material_resolve.comp", "visibility_material_resolve.cs.spv", ()),
+    ("visibility_material_resolve.comp", "visibility_material_resolve_cube.cs.spv", ("VISIBILITY_ENVIRONMENT_CUBE=1",)),
     ("visibility_gbuffer.vert", "visibility_gbuffer.vs.spv", ()),
     ("visibility_gbuffer.frag", "visibility_gbuffer.ps.spv", ()),
 )

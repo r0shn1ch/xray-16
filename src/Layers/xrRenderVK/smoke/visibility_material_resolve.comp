@@ -8,6 +8,9 @@ layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(binding = 0) uniform usampler2D visibilityImage;
 layout(set = 1, binding = 0) uniform sampler2D baseColorTextures[];
+#ifdef VISIBILITY_ENVIRONMENT_CUBE
+layout(set = 1, binding = 1) uniform samplerCube environmentTextures[];
+#endif
 layout(rgba16f, binding = 5) writeonly uniform image2D baseColorImage;
 layout(rgba16f, binding = 6) writeonly uniform image2D normalImage;
 layout(rgba16f, binding = 7) writeonly uniform image2D surfaceImage;
@@ -98,6 +101,22 @@ void main()
     if (!visibilityMaterialUv(a, b, c, entry, barycentrics, pixel, ndc, ndcPerPixel,
         parameters.viewProjection, parameters.eyeAndSteep, parameters.materialCount, uv, uvDx, uvDy)) return;
     vec4 color = textureGrad(baseColorTextures[nonuniformEXT(entry.materialSlot)], uv, uvDx, uvDy);
+#ifdef VISIBILITY_ENVIRONMENT_CUBE
+    if (entry.environmentCube != 0xffffffffu)
+    {
+        mat3 positions = mat3(a.positionNormalX.xyz, b.positionNormalX.xyz, c.positionNormalX.xyz);
+        mat3 geometricNormals = mat3(normalA, normalB, normalC);
+        vec3 direction = visibilityEnvironmentDirection(entry, positions * barycentrics.weights,
+            geometricNormals * barycentrics.weights, parameters.eyeAndSteep.xyz);
+        vec3 directionDx = visibilityEnvironmentDirection(entry, positions * (barycentrics.weights + barycentrics.dx),
+            geometricNormals * (barycentrics.weights + barycentrics.dx), parameters.eyeAndSteep.xyz) - direction;
+        vec3 directionDy = visibilityEnvironmentDirection(entry, positions * (barycentrics.weights + barycentrics.dy),
+            geometricNormals * (barycentrics.weights + barycentrics.dy), parameters.eyeAndSteep.xyz) - direction;
+        vec3 reflectedColor = textureGrad(environmentTextures[nonuniformEXT(entry.environmentCube)],
+            direction, directionDx, directionDy).rgb;
+        color.rgb = mix(reflectedColor, color.rgb, color.a);
+    }
+#endif
     float hemi = dot(clamp(0.5 + 0.5 * vec3(normalA.y, normalB.y, normalC.y), 0.0, 1.0), barycentrics.weights);
     float normalAlpha = 0.875 + 0.125 * clamp(hemi, 0.0, 1.0);
     float bakedHemi = 0.0;

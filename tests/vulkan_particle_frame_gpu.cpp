@@ -60,7 +60,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     const BufferResourceDispatch& vk, const VisibilityPasses::Source& source, bool bindless, bool steep = false,
     float alpha_cutoff = -1.f, bool parallax_cutout = false, bool shift_cutout = true,
     uint32_t detail_mode = UINT32_MAX, bool detail_scale_test = false, bool transformed_cutout = false,
-    bool clamp_cutout = false)
+    bool clamp_cutout = false, bool cube_test = false)
 {
     std::string error;
     std::vector<uint8_t> shader;
@@ -85,6 +85,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     entries[1].alpha_cutoff = alpha_cutoff;
     entries[0].emission = 1.f; // PBR stores emission in surface alpha.
     entries[1].emission = 1.f; // Legacy materials store it in surface blue.
+    if (cube_test) entries[1].environment_cube = 0;
     if (detail_mode != UINT32_MAX)
     {
         entries[1].detail_slot = detail_scale_test ? 1 : 0;
@@ -217,6 +218,9 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     }
     BindlessTextureTable materials;
     VisibilityPasses visibility_passes;
+    VkImage cube{};
+    FrameImageGraph::Resource cube_resource;
+    const VkImageSubresourceRange cube_range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6};
     if (bindless)
     {
         VkImageCreateInfo cube_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -226,9 +230,10 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         cube_info.extent = {1, 1, 1};
         cube_info.mipLevels = 1; cube_info.arrayLayers = 6;
         cube_info.samples = VK_SAMPLE_COUNT_1_BIT;
-        cube_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
-        VkImage cube{};
+        cube_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         require(images.acquire(cube_info, cube, error), error);
+        require(graph.import_image(cube, cube_range, cube_resource, error) &&
+            states.register_image(cube, cube_range, ImageUse::Undefined, error), error);
         VkImageViewCreateInfo cube_view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         cube_view.image = cube; cube_view.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
         cube_view.format = cube_info.format;
@@ -261,7 +266,9 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         if (bindless)
         {
             VkClearColorValue zero{};
-            VkClearColorValue material{{0.25f, 0.5f, 1.f, alpha_cutoff >= 0.f ? 0.5f : 1.f}};
+            VkClearColorValue material{{0.25f, 0.5f, 1.f, alpha_cutoff >= 0.f || cube_test ? 0.5f : 1.f}};
+            VkClearColorValue environment{{1.f, 0.f, 0.f, 1.f}};
+            vkCmdClearColorImage(command, cube, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &environment, 1, &cube_range);
             vkCmdClearColorImage(command, targets[2], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &color);
             vkCmdClearColorImage(command, targets[3], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &color);
             vkCmdClearColorImage(command, targets[4], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &color);
@@ -273,6 +280,8 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     });
     for (size_t i = 0; i < target_count; ++i)
         require(graph.write(clear, resources[i], ImageUse::TransferDestination, resources[i], error), error);
+    if (bindless)
+        require(graph.write(clear, cube_resource, ImageUse::TransferDestination, cube_resource, error), error);
 
     std::vector<VkDescriptorBufferInfo> buffers;
     for (const auto& buffer : geometry)
@@ -336,6 +345,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
             return true;
         });
         require(graph.read(resolve, resources[0], ImageUse::ComputeSampled, error) &&
+            graph.read(resolve, cube_resource, ImageUse::StorageRead, error) &&
             graph.read(resolve, resources[5], ImageUse::StorageRead, error) &&
             graph.read(resolve, resources[6], ImageUse::StorageRead, error), error);
         for (size_t i = 2; i < 5; ++i)
@@ -392,15 +402,15 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         uint16_t output[3][64][4]{};
         require(readback.read(raster_bytes, output, sizeof(output), error), error);
         const bool detail_color = detail_mode == 0 || detail_mode == 2;
-        require(output[0][36][0] == (detail_scale_test ? 0x3500 : detail_color ? 0x3000 : 0x3400) &&
-            output[0][36][1] == (detail_scale_test ? 0 : 0x3800) &&
-            output[0][36][2] == (detail_scale_test ? 0 : detail_color ? 0x4000 : 0x3c00),
+        require(output[0][36][0] == (cube_test ? 0x3900 : detail_scale_test ? 0x3500 : detail_color ? 0x3000 : 0x3400) &&
+            output[0][36][1] == (cube_test ? 0x3400 : detail_scale_test ? 0 : 0x3800) &&
+            output[0][36][2] == (cube_test ? 0x3800 : detail_scale_test ? 0 : detail_color ? 0x4000 : 0x3c00),
             "visibility resolve material color");
         const uint16_t normal_x = detail_mode == 1 || detail_mode == 2 ? 0x36fc : 0x3555;
         const uint16_t normal_y = detail_mode == 1 || detail_mode == 2 ? 0x32fc : 0x3955;
-        require(output[0][36][3] == 0x3800 && output[1][36][0] >= normal_x - 1 && output[1][36][0] <= normal_x + 1 &&
-            output[1][36][1] >= normal_y - 1 && output[1][36][1] <= normal_y + 1 &&
-            output[1][36][3] == 0x3a00, "visibility resolve baked sunlight and hemisphere");
+        require(output[0][36][3] == 0x3800 && (cube_test || (output[1][36][0] >= normal_x - 1 && output[1][36][0] <= normal_x + 1 &&
+            output[1][36][1] >= normal_y - 1 && output[1][36][1] <= normal_y + 1)) &&
+            output[1][36][3] == (cube_test ? 0x3600 : 0x3a00), "visibility resolve baked sunlight and hemisphere");
         require(output[0][20][3] == 0x3c00 && (output[1][20][3] == 0x3af6 || output[1][20][3] == 0x3af5),
             "visibility resolve unlightmapped PBR hemisphere");
         require(output[0][20][0] < 0x3800, "visibility parallax must shift sampled color: " +
@@ -1405,6 +1415,8 @@ int main(int argc, char** argv)
                 true, false, 0.5f, true, false, UINT32_MAX, false, true);
             exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source,
                 true, false, 0.5f, true, false, UINT32_MAX, false, false, true);
+            exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source,
+                true, false, -1.f, false, true, UINT32_MAX, false, false, false, true);
         }
         std::cout << "Visibility material resolve " << (bindless ? "passed" : "skipped (no descriptor indexing)") << '\n';
         require(compute.initialize_from_source(f.device, vkGetDeviceProcAddr, props.limits, 3, VK_NULL_HANDLE, source, error), error);
