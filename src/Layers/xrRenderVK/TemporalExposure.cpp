@@ -263,7 +263,7 @@ void TemporalExposure::set_parameters(float middle_gray, float low_luminance, fl
     blend_ = 1.f - std::exp(-delta * speed);
 }
 
-bool TemporalExposure::record(const FrameRecordingContext& frame) const
+bool TemporalExposure::record(const FrameRecordingContext& frame)
 {
     if (!ready() || !histogram_pipeline_ || !frame.command_buffer || frame.image_index >= sets_.size())
         return false;
@@ -313,6 +313,7 @@ bool TemporalExposure::record(const FrameRecordingContext& frame) const
         &sets_[frame.image_index], 0, nullptr);
     push_constants_(frame.command_buffer, layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(params), &params);
     dispatch_(frame.command_buffer, 1, 1, 1);
+    recorded_ = true;
     return true;
 }
 

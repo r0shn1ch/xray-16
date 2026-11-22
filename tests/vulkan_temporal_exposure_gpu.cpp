@@ -268,10 +268,15 @@ int run_test(int argc, char** argv)
             throw std::runtime_error("temporal exposure mismatch: " + std::to_string(result) +
                 " expected " + std::to_string(expected));
         exposure.commit_frame();
+        if (!TemporalExposure::history_valid_callback(&exposure))
+            throw std::runtime_error("Recorded exposure did not commit its history");
     }
     check(vkDeviceWaitIdle(vk.device));
     const VkImage reused_image = exposure.image();
     exposure.destroy();
+    exposure.commit_frame();
+    if (TemporalExposure::history_valid_callback(&exposure))
+        throw std::runtime_error("Unrecorded exposure pass retained valid history");
     if (!exposure.initialize(vk.physical, vk.device, vkGetDeviceProcAddr,
             {vk.scene_view}, vk.memory, dispatch, VK_NULL_HANDLE, error, &image_pool) ||
         exposure.image() != reused_image)

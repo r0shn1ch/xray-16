@@ -21,9 +21,9 @@ public:
         const FrameDispatch& images, VkPipelineCache cache, std::string& error,
         FrameImagePool* image_pool = nullptr, FrameImageSharing sharing = {});
     void set_parameters(float middle_gray, float low_luminance, float delta_seconds, float adaptation_speed);
-    void commit_frame() { history_valid_ = true; }
-    void reset_history() { history_valid_ = false; }
-    bool record(const FrameRecordingContext& frame) const;
+    void commit_frame() { history_valid_ = recorded_; recorded_ = false; }
+    void reset_history() { history_valid_ = recorded_ = false; }
+    bool record(const FrameRecordingContext& frame);
     static bool record_callback(const FrameRecordingContext& frame, void* user, std::string& error);
     static bool history_valid_callback(void* user);
     bool ready() const { return pipeline_ != VK_NULL_HANDLE && histogram_pipeline_ != VK_NULL_HANDLE; }
@@ -52,6 +52,7 @@ private:
     float low_luminance_{0.1f};
     float blend_{1.f};
     bool history_valid_{};
+    bool recorded_{};
     PFN_vkDestroySampler destroy_sampler_{};
     PFN_vkDestroyBuffer destroy_buffer_{};
     PFN_vkDestroyDescriptorSetLayout destroy_set_layout_{};
