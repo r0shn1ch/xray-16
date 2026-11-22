@@ -60,6 +60,10 @@ void main(uint3 groupID : SV_GroupID,uint lane : SV_GroupIndex) {
     if (workID >= g_Papi.rootCapacity) return;
     uint2 range = g_RootCommands[workID];
     if (range.y == 0) return;
+    if (range.x >= g_Papi.commandCount || range.y > g_Papi.commandCount - range.x) {
+        if (lane == 0) GpuAllocationError(8u);
+        return;
+    }
     uint index = g_Commands[range.x].emitter;
     uint rootID = index / 2;
     if ((index & 1u) != 0u || rootID >= g_Papi.phase || index >= g_Papi.emitterCapacity) {

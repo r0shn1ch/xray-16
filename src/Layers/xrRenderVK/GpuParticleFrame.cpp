@@ -48,6 +48,7 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
         !fits(B::StateAllocation, uint64_t(capacities.actionStateCapacity) * 4) ||
         !fits(B::Programs, uint64_t(capacities.programCount) * sizeof(fg::GpuPapiProgram)) ||
         !fits(B::Commands, uint64_t(capacities.commandCount) * sizeof(fg::GpuPapiCommand)) ||
+        !fits(B::Status, uint64_t(capacities.rootCapacity) * sizeof(fg::GpuPapiStatus)) ||
         !fits(B::RootCommands, uint64_t(pending_roots) * 8) || !fits(B::VisibleRoots, uint64_t(visible_roots) * 4) ||
         !fits(B::DrawArguments, bucket_count * 16) ||
         !fits(B::BucketOffsets, bucket_count * 4) ||
