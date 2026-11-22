@@ -879,6 +879,9 @@ void VulkanParticleGroup::OnFrame(u32 dt)
             if (transform_parent_) parent_.transform_dir(velocity);
             Fmatrix frame = transform_parent_ ? parent_ : Fidentity; frame.c.set(position);
             child.UpdateParent(frame, velocity, FALSE);
+            // The related particle can move above the liquid. Its simulation
+            // frame must not replace the original impact plane for refraction.
+            child.set_water_plane(parent_);
             if (!deferred_ && !child.IsPlaying() && (def_->effects[root].flags & (1u << 4))) child.Play();
         }
     }

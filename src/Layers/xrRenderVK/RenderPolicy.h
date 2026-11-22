@@ -25,6 +25,22 @@ inline unsigned detail_grid_size(float spacing)
     return static_cast<unsigned>(std::ceil(2.f / std::clamp(spacing, .25f, 1.f)));
 }
 
+inline uint32_t local_shadow_resolution(float distance_squared, float range, float projection_y,
+    uint32_t viewport_height, uint32_t maximum)
+{
+    // Use the angular diameter of the entire influence sphere. A scissor is
+    // clipped to the viewport and shrinks near the edge as the camera rotates;
+    // it is suitable for shading bounds, not for selecting shadow resolution.
+    const double radius_squared = double(range) * range;
+    if (!std::isfinite(distance_squared) || !std::isfinite(range) || range <= 0.f ||
+        !std::isfinite(projection_y) || projection_y <= 0.f || !viewport_height ||
+        distance_squared <= radius_squared)
+        return maximum;
+    const double diameter = double(viewport_height) * projection_y * range /
+        std::sqrt(double(distance_squared) - radius_squared);
+    return std::min(maximum, diameter <= 160. ? 128u : diameter <= 320. ? 256u : maximum);
+}
+
 // Assign slots before viewport clipping. An offscreen lamp keeps its place
 // in the budget without recording a shadow pass for that frame.
 struct LocalShadowBudget

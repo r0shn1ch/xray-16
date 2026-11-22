@@ -2461,7 +2461,8 @@ int main(int argc, char **argv)
                 const float age = progress * 3.f - step;
                 const Point contact{(float(step) - 1.f) * .58f, 0.f, 8.8f - step * .75f};
                 const Point simulated{contact[0], .25f + age * .35f, contact[2]};
-                const Point normal{0.f, 1.f, 0.f};
+                const ParticleEmitterBasis impact_frame{{1.f, 0.f, 0.f}, {0.f, 0.f, -1.f}, {0.f, 1.f, 0.f}};
+                const Point normal = particle_water_plane_normal(impact_frame);
                 const bool water_effect = is_water_contact_effect(step == 1 ?
                     "hit_fx\\effects\\hit_water_hit_distort" : "hit_fx\\effects\\hit_water_hit_distort_big");
                 const float radius = .82f + .55f * age;

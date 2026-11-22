@@ -97,9 +97,11 @@ void VulkanGameDevice::render_lights(const float (&mvp)[16], bool render_world, 
                 scissor_light.range = std::min(1000.f,
                     scissor_light.range * std::max(1.f, light_snapshot.volumetric_distance));
             const VkRect2D scissor = light_scissor(camera, scissor_light, extent);
+            // Reserve in distance/ID order even for an offscreen lamp. Otherwise
+            // camera rotation transfers its shadow budget to another lamp.
+            const int slot = shadows.reserve(light_snapshot.shadow, spot, candidate.distance, light_snapshot.range);
             if (!scissor.extent.width || !scissor.extent.height)
                 continue;
-            const int slot = shadows.reserve(light_snapshot.shadow, spot, candidate.distance, light_snapshot.range);
             LocalLightUniform local{};
             local.debug_mode[0] = sun_uniform.options[1];
             if (volumetric)
@@ -126,8 +128,9 @@ void VulkanGameDevice::render_lights(const float (&mvp)[16], bool render_world, 
             const bool cast = slot >= 0;
             if (cast)
             {
-                const uint32_t footprint = std::max(scissor.extent.width, scissor.extent.height);
-                shadow_tiles[slot] = {footprint <= 160 ? 128u : footprint <= 320 ? 256u : LocalShadowSize,
+                const uint32_t resolution = local_shadow_resolution(candidate.distance, light_snapshot.range,
+                    std::abs(Device.mProject._22), extent.height, LocalShadowSize);
+                shadow_tiles[slot] = {resolution,
                     spot ? 1u : LocalShadowFaces};
             }
             local.shadow_params[0] = cast ? float(slot * LocalShadowFaces) : 0.f;

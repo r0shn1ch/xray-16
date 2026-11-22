@@ -17,7 +17,9 @@ struct ParticleEmitterBasis
 };
 inline std::array<float, 3> particle_water_plane_normal(const ParticleEmitterBasis& basis)
 {
-    return basis.j;
+    // CBulletManager::FireShotmark stores the contact normal in pos.k.
+    // pos.j is a tangent, so using it makes the surface ring stand upright.
+    return basis.k;
 }
 inline ParticleSpriteBasis particle_path_basis(std::array<float,3> direction,
     const std::array<float,3>& camera_direction)

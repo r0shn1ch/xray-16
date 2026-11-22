@@ -198,7 +198,9 @@ int main()
     assert(!tessellation_enabled && !legacy_level_lights);
     assert(is_water_contact_effect("hit_fx\\effects\\hit_water_hit_distort_big"));
     assert(!is_water_contact_effect("hit_fx\\effects\\hit_water_hit_splash"));
-    const ParticleEmitterBasis emitter_basis{{1.f, 0.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}};
+    // FireShotmark constructs pos.k from the hit normal, then orthogonal i/j.
+    // Identity would describe an impact on a vertical wall, not flat water.
+    const ParticleEmitterBasis emitter_basis{{1.f, 0.f, 0.f}, {0.f, 0.f, -1.f}, {0.f, 1.f, 0.f}};
     const auto water_normal = particle_water_plane_normal(emitter_basis);
     assert(water_normal[0] == 0.f && water_normal[1] == 1.f && water_normal[2] == 0.f);
     const auto water_basis = particle_face_basis(water_normal);
@@ -297,6 +299,11 @@ int main()
     assert(quality_preset == 4 && detail_radius == 37 && texture_anisotropy == 3);
 
     LocalShadowBudget slots{2, 1, 1};
+    assert(local_shadow_resolution(1.f, 2.f, 1.f, 1080, 512) == 512); // inside the light
+    assert(local_shadow_resolution(100.f * 100.f, 2.f, 1.f, 1080, 512) == 128);
+    assert(local_shadow_resolution(10.f * 10.f, 2.f, 1.f, 1080, 512) == 256);
+    assert(local_shadow_resolution(5.f * 5.f, 2.f, 1.f, 1080, 512) == 512);
+    assert(local_shadow_resolution(100.f, 2.f, 1.f, 2160, 512) == 512); // actual viewport pixels
     assert(slots.reserve(true, false, 400.f, 2.f) == -1); // distant point
     assert(slots.reserve(true, true, 4.f, 5.f) == 0);
     assert(slots.reserve(true, true, 9.f, 5.f) == -1);
