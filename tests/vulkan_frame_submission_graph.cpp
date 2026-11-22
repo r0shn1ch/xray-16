@@ -209,6 +209,9 @@ int main()
     source.graphics_prepass_pass = second;
     source.graphics_continuation_pass = third;
     source.request_submission_command_buffer = [](auto, auto, auto&, auto&) { return true; };
+    source.resolve_nvrhi_command_list = [](VkCommandBuffer command) -> nvrhi::ICommandList* {
+        return command == handle<VkCommandBuffer>(201) ? handle<nvrhi::ICommandList*>(401) : nullptr;
+    };
     source.geometry_motion_submission_pass = external;
     auto ray_visibility = external;
     source.ray_visibility_submission_pass = &ray_visibility;
@@ -219,6 +222,7 @@ int main()
         handle<VkCommandBuffer>(201), handle<VkRenderPass>(202), handle<VkFramebuffer>(203),
         generated_extent, 4, generated_offset, FrameSubmissionGraph::Queue::Compute);
     assert(generated.command_buffer == handle<VkCommandBuffer>(201));
+    assert(generated.nvrhi_command_list() == handle<nvrhi::ICommandList*>(401));
     assert(generated.compute_command_buffer == VK_NULL_HANDLE);
     assert(generated.render_pass == handle<VkRenderPass>(202));
     assert(generated.framebuffer == handle<VkFramebuffer>(203));
@@ -243,4 +247,8 @@ int main()
         handle<VkCommandBuffer>(301), VK_NULL_HANDLE, VK_NULL_HANDLE, generated_extent,
         0, {}, FrameSubmissionGraph::Queue::Copy);
     assert(copy_recording.command_queue_flags == source.copy_queue_flags);
+    assert(!copy_recording.nvrhi_command_list());
+    auto rebound = generated;
+    rebound.command_buffer = handle<VkCommandBuffer>(301);
+    assert(!rebound.nvrhi_command_list());
 }

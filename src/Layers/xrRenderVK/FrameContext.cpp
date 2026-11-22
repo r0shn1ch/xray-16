@@ -2066,11 +2066,29 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
     std::array<size_t, 3> generated_group_cursors{};
     bool generated_frame_graph_groups = false;
     bool acquire_wait_queued = false;
+    std::vector<std::pair<VkCommandBuffer, nvrhi::ICommandList*>> nvrhi_recordings;
+    const auto register_nvrhi_recording = [&](VkCommandBuffer command_buffer, nvrhi::ICommandList* list) {
+        const auto found = std::find_if(nvrhi_recordings.begin(), nvrhi_recordings.end(),
+            [command_buffer](const auto& item) { return item.first == command_buffer; });
+        if (found == nvrhi_recordings.end()) nvrhi_recordings.emplace_back(command_buffer, list);
+        else found->second = list;
+    };
+    const auto resolve_nvrhi_recording = [&](VkCommandBuffer command_buffer) -> nvrhi::ICommandList* {
+        const auto found = std::find_if(nvrhi_recordings.begin(), nvrhi_recordings.end(),
+            [command_buffer](const auto& item) { return item.first == command_buffer; });
+        if (found == nvrhi_recordings.end()) return nullptr;
+        nvrhi::ICommandList* list = found->second;
+        const bool active = (list == submission_guard.command_list && submission_guard.command_list_open) ||
+            (list == submission_guard.compute_command_list && submission_guard.compute_command_list_open) ||
+            std::find(submission_guard.generated_command_lists_open.begin(),
+                submission_guard.generated_command_lists_open.end(), list) != submission_guard.generated_command_lists_open.end();
+        return active ? list : nullptr;
+    };
     using framegraph::submit_nvrhi_command_list;
     const auto queue_wait = framegraph::nvrhi_queue_wait(m_nvrhi_device.Get());
     const auto request_submission_command_buffer = [this, &async_submissions,
         &group_executors, &generated_group_passes, &generated_group_cursors,
-        &submission_guard, &generated_frame_graph_groups,
+        &submission_guard, &generated_frame_graph_groups, &register_nvrhi_recording,
         record_async_compute, record_async_copy, &compute_submission_pass,
         &graphics_prepass_pass](FrameSubmissionGraph::Pass pass,
             FrameSubmissionGraph::Queue queue, VkCommandBuffer& command_buffer,
@@ -2137,6 +2155,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
                 request_error = "NVRHI generated command list has no Vulkan command buffer";
                 return false;
             }
+            register_nvrhi_recording(command_buffer, list);
             group_executors.emplace_back(pass,
                 [this, &submission_guard, list](FrameSubmissionGraph::Queue submitted_queue) {
                     list->close();
@@ -2202,6 +2221,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
             error = "NVRHI frame command list has no Vulkan command buffer";
             return false;
         }
+        register_nvrhi_recording(command, command_list);
         if (record_async_compute)
         {
             nvrhi::ICommandList* compute_list = m_nvrhi_compute_command_lists[m_current_frame].Get();
@@ -2229,6 +2249,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
                 error = "NVRHI compute command list has no Vulkan command buffer";
                 return false;
             }
+            register_nvrhi_recording(compute_command, compute_list);
         }
     }
     else
@@ -2259,6 +2280,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
     }
     FrameRecordingContext callback_context{};
     callback_context.command_buffer = command;
+    if (m_nvrhi_device) callback_context.resolve_nvrhi_command_list = resolve_nvrhi_recording;
     callback_context.extent = m_extent;
     callback_context.image_index = image_index;
     callback_context.frame_index = m_current_frame;
@@ -2379,6 +2401,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
                 error = "NVRHI graphics continuation has no Vulkan command buffer";
                 return false;
             }
+            register_nvrhi_recording(command, continuation);
         }
         catch (const std::exception& exception)
         {
@@ -3179,6 +3202,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
                 error = "NVRHI presentation continuation has no Vulkan command buffer";
                 return false;
             }
+            register_nvrhi_recording(command, continuation);
         }
         else
         {

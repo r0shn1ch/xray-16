@@ -137,6 +137,13 @@ struct FrameRecordingContext
     uint32_t compute_queue_family = VK_QUEUE_FAMILY_IGNORED;
     uint32_t copy_queue_family = VK_QUEUE_FAMILY_IGNORED;
     FrameSubmissionGraph::Queue command_queue = FrameSubmissionGraph::Queue::Graphics;
+    // Valid only while this frame is being recorded. Native-only recording
+    // returns null; generated and asynchronous submissions resolve by buffer.
+    std::function<nvrhi::ICommandList*(VkCommandBuffer)> resolve_nvrhi_command_list;
+    nvrhi::ICommandList* nvrhi_command_list() const
+    {
+        return resolve_nvrhi_command_list && command_buffer ? resolve_nvrhi_command_list(command_buffer) : nullptr;
+    }
     std::function<bool(FrameSubmissionGraph::Pass, FrameSubmissionGraph::Queue,
         VkCommandBuffer&, std::string&)> request_submission_command_buffer;
     // Generated producer for current-frame motion vectors and object velocity.
