@@ -168,6 +168,7 @@ if (XRAY_BUILD_VULKAN_TESTS)
     xray_add_vulkan_state_test(vulkan_buffer_upload_test tests/vulkan_buffer_upload.cpp)
     target_sources(vulkan_buffer_upload_test PRIVATE
         "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/BufferUpload.cpp"
+        "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/FrameBufferPool.cpp"
         "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/BufferResource.cpp")
     target_include_directories(vulkan_buffer_upload_test PRIVATE
         "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include")

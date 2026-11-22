@@ -1,4 +1,5 @@
 #include "src/Layers/xrRenderVK/BufferUpload.h"
+#include "src/Layers/xrRenderVK/FrameBufferPool.h"
 
 #include <array>
 #include <cassert>
@@ -36,6 +37,7 @@ uint32_t unmapped_memories = 0;
 VkResult submit_result = VK_SUCCESS;
 VkResult fence_status = VK_SUCCESS;
 VkResult wait_result = VK_SUCCESS;
+bool fail_next_allocation{};
 
 VkResult VKAPI_CALL create_buffer(VkDevice, const VkBufferCreateInfo* info,
     const VkAllocationCallbacks*, VkBuffer* buffer)
@@ -71,6 +73,8 @@ VkResult VKAPI_CALL allocate_memory(VkDevice, const VkMemoryAllocateInfo* info,
 {
     assert(info->allocationSize == 16);
     assert(info->memoryTypeIndex < 2);
+    if (std::exchange(fail_next_allocation, false))
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     *memory = fake_handle<VkDeviceMemory>(++next_memory);
     return VK_SUCCESS;
 }
@@ -292,4 +296,18 @@ int main()
     assert(!upload_buffer(device, queue, pool, memory, dispatch, source, sizeof(source),
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, failed_result, pending, error));
     assert(!failed_result.handle() && pending.empty() && !error.empty());
+
+    FrameBufferPool frame_buffers;
+    assert(frame_buffers.initialize(device, memory, dispatch.buffer));
+    BufferResource *idle{}, *active{}, *recovered{};
+    assert(frame_buffers.acquire(8, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false, idle, error));
+    assert(frame_buffers.release(idle));
+    constexpr auto host_memory = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    assert(frame_buffers.acquire(8, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host_memory, false, active, error));
+    const auto freed_before_pressure = freed_memories;
+    fail_next_allocation = true;
+    assert(frame_buffers.acquire(8, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host_memory, false, recovered, error));
+    assert(freed_memories == freed_before_pressure + 1);
+    assert(recovered != active && frame_buffers.release(active) && frame_buffers.release(recovered));
 }

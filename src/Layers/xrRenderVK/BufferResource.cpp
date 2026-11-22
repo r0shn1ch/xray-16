@@ -41,7 +41,7 @@ std::vector<std::weak_ptr<BufferMemoryBlock>>& pool_blocks()
 
 bool allocate_pooled(VkDevice device, uint32_t memory_type, const VkMemoryRequirements& requirements,
     bool host_visible, const BufferResourceDispatch& vk, std::shared_ptr<BufferMemoryBlock>& block,
-    VkDeviceSize& offset, std::string& error)
+    VkDeviceSize& offset, std::string& error, VkResult* allocation_result)
 {
     std::lock_guard lock(pool_mutex());
     auto& blocks = pool_blocks();
@@ -75,6 +75,8 @@ bool allocate_pooled(VkDevice device, uint32_t memory_type, const VkMemoryRequir
     }
     if (result != VK_SUCCESS)
     {
+        if (allocation_result)
+            *allocation_result = result;
         error = "vkAllocateMemory failed for pooled buffer block result=" + std::to_string(result) +
             " bytes=" + std::to_string(info.allocationSize);
         return false;
@@ -207,8 +209,10 @@ bool BufferResource::initialize(VkDevice device, VkDeviceSize size, VkBufferUsag
     VkMemoryPropertyFlags required_memory_properties,
     const VkPhysicalDeviceMemoryProperties& memory_properties,
     const BufferResourceDispatch& dispatch, std::string& error, bool pooled,
-    VkQueueFlags shared_queue_flags)
+    VkQueueFlags shared_queue_flags, VkResult* allocation_result)
 {
+    if (allocation_result)
+        *allocation_result = VK_SUCCESS;
     destroy();
     if (!device || !size || !usage || !complete(dispatch))
     {
@@ -325,7 +329,7 @@ bool BufferResource::initialize(VkDevice device, VkDeviceSize size, VkBufferUsag
     {
         if (!allocate_pooled(device, memory_type, requirements,
                 (required_memory_properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0,
-                dispatch, pool_block, binding_offset, error))
+                dispatch, pool_block, binding_offset, error, allocation_result))
         {
             dispatch.destroy_buffer(device, buffer, nullptr);
             if (!nvrhi_error.empty())
@@ -345,8 +349,11 @@ bool BufferResource::initialize(VkDevice device, VkDeviceSize size, VkBufferUsag
             address_flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
             allocate_info.pNext = &address_flags;
         }
-        if (dispatch.allocate_memory(device, &allocate_info, nullptr, &memory) != VK_SUCCESS)
+        const VkResult allocated = dispatch.allocate_memory(device, &allocate_info, nullptr, &memory);
+        if (allocated != VK_SUCCESS)
         {
+            if (allocation_result)
+                *allocation_result = allocated;
             dispatch.destroy_buffer(device, buffer, nullptr);
             set_vulkan_error("vkAllocateMemory failed for buffer resource");
             return false;

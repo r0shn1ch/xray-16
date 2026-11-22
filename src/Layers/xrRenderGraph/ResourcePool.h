@@ -64,6 +64,14 @@ public:
         }), entries_.end());
     }
 
+    bool evict_idle()
+    {
+        const auto before = entries_.size();
+        entries_.erase(std::remove_if(entries_.begin(), entries_.end(),
+            [](const Entry& entry) { return !entry.in_use; }), entries_.end());
+        return entries_.size() != before;
+    }
+
     void reset()
     {
         entries_.clear();
