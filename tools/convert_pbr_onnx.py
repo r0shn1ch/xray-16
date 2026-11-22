@@ -178,6 +178,24 @@ def run_openxray_models(directory, diffuse, normal, sessions=None):
     return packed, albedo8, parallax
 
 
+def downsample_mip(values):
+    for axis in (0, 1):
+        rows = np.moveaxis(values, axis, 0)
+        size = rows.shape[0]
+        half = size // 2
+        if not half:
+            continue
+        if size % 2:
+            # Each destination interval spans 2 + 1/half source texels.
+            index = np.arange(half, dtype=np.float32).reshape((half,) + (1,) * (rows.ndim - 1))
+            reduced = (rows[:-2:2] * (half - index) + rows[1:-1:2] * half +
+                       rows[2::2] * (index + 1)) / size
+        else:
+            reduced = (rows[::2] + rows[1::2]) * 0.5
+        values = np.moveaxis(reduced, 0, axis)
+    return values
+
+
 def write_dds(file, image, srgb=False):
     width, height = image.size
     mip_count = max(width, height).bit_length()
@@ -199,20 +217,13 @@ def write_dds(file, image, srgb=False):
         linear_channels = np.asarray(image, dtype=np.float32)
     for level in range(mip_count):
         if level:
-            size = (max(1, image.width // 2), max(1, image.height // 2))
             if linear_rgb is None:
                 # Quantize only the DDS bytes, keeping each channel independent.
-                linear_channels = np.stack([
-                    np.asarray(Image.fromarray(channel).resize(size, Image.Resampling.BOX))
-                    for channel in linear_channels.transpose(2, 0, 1)
-                ], axis=-1)
+                linear_channels = downsample_mip(linear_channels)
                 image = Image.fromarray(np.rint(linear_channels).astype(np.uint8))
             else:
-                linear_rgb = np.stack([
-                    np.asarray(Image.fromarray(channel).resize(size, Image.Resampling.BOX))
-                    for channel in linear_rgb.transpose(2, 0, 1)
-                ], axis=-1)
-                coverage = np.asarray(Image.fromarray(coverage).resize(size, Image.Resampling.BOX))
+                linear_rgb = downsample_mip(linear_rgb)
+                coverage = downsample_mip(coverage)
                 color = np.divide(linear_rgb, coverage[..., None], out=np.zeros_like(linear_rgb),
                                   where=coverage[..., None] > 0)
                 encoded = np.where(color <= 0.0031308, color * 12.92,
