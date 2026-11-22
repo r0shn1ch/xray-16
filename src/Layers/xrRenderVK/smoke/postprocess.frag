@@ -80,6 +80,18 @@ vec3 reconstructed(vec2 uv, vec2 pixel)
     return max(filtered, vec3(0.0));
 }
 
+float depth_of_field_amount(float depth, float focus_disparity)
+{
+    if (!(depth >= 0.0 && depth <= 1.0)) return 0.0;
+    float defocus = abs(depth - settings.tint.w);
+    if (settings.bloom.w == 1.0)
+    {
+        float limit = depth < settings.tint.w ? settings.bloom.y : settings.bloom.z;
+        return smoothstep(0.0, 1.0, defocus / max(abs(limit - settings.tint.w), 0.000001));
+    }
+    return smoothstep(0.03, 0.7, defocus / focus_disparity);
+}
+
 void main()
 {
     vec2 pixel = 1.0 / vec2(textureSize(sampler2D(frame_image, frame_sampler), 0));
@@ -124,15 +136,8 @@ void main()
         // Perspective depth packs most of the playable distance range near 1.
         // Normalize by the focus disparity so far focus distances retain blur.
         float focus_disparity = max(1.0 - settings.tint.w, 0.00001);
-        float defocus = abs(depth - settings.tint.w) / focus_disparity;
-        float amount = smoothstep(0.03, 0.7, defocus);
-        if (settings.bloom.w == 1.0)
-        {
-            float limit = depth < settings.tint.w ? settings.bloom.y : settings.bloom.z;
-            float width = max(abs(limit - settings.tint.w), 0.000001);
-            amount = smoothstep(0.0, 1.0, abs(depth - settings.tint.w) / width);
-        }
-        amount *= settings.add.w;
+        float defocus = depth_of_field_amount(depth, focus_disparity);
+        float amount = defocus * settings.add.w;
         if (amount > 0.001)
         {
             const vec2 taps[8] = vec2[8](
@@ -150,9 +155,11 @@ void main()
                     vec2 neighbor = clamp(texcoord + taps[i] * pixel * radius,
                         pixel * 0.5, 1.0 - pixel * 0.5);
                     float neighbor_depth = texture(depth_image, neighbor).r;
+                    float neighbor_defocus = depth_of_field_amount(neighbor_depth, focus_disparity);
+                    if (neighbor_defocus <= 0.0) continue;
                     float disparity = max(1.0 - depth, focus_disparity);
                     float weight = ring_weight * (1.0 - smoothstep(0.025, 0.35,
-                        abs(neighbor_depth - depth) / disparity));
+                        abs(neighbor_depth - depth) / disparity)) * min(neighbor_defocus / defocus, 1.0);
                     blurred += aa_sample(neighbor) * weight;
                     total += weight;
                 }
