@@ -25,4 +25,19 @@ inline FrameSubmissionGraph::QueueWait nvrhi_queue_wait(nvrhi::IDevice* device)
         device->queueWaitForCommandList(to_nvrhi_queue(destination), to_nvrhi_queue(source), submission);
     };
 }
+
+inline nvrhi::CommandListHandle create_nvrhi_command_list(nvrhi::IDevice& device,
+    FrameSubmissionGraph::Queue queue)
+{
+    nvrhi::CommandListParameters parameters;
+    parameters.enableImmediateExecution = false;
+    parameters.queueType = to_nvrhi_queue(queue);
+    return device.createCommandList(parameters);
+}
+
+inline uint64_t submit_nvrhi_command_list(nvrhi::IDevice& device, nvrhi::ICommandList* list,
+    FrameSubmissionGraph::Queue queue)
+{
+    return device.executeCommandList(list, to_nvrhi_queue(queue));
+}
 }

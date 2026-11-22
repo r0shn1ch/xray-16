@@ -2023,7 +2023,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
     std::array<size_t, 3> generated_group_cursors{};
     bool generated_frame_graph_groups = false;
     bool acquire_wait_queued = false;
-    using framegraph::to_nvrhi_queue;
+    using framegraph::submit_nvrhi_command_list;
     const auto queue_wait = framegraph::nvrhi_queue_wait(m_nvrhi_device.Get());
     const auto request_submission_command_buffer = [this, &async_submissions,
         &group_executors, &generated_group_passes, &generated_group_cursors,
@@ -2070,10 +2070,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
         {
             if (list_index == lists.size())
             {
-                nvrhi::CommandListParameters parameters;
-                parameters.enableImmediateExecution = false;
-                parameters.queueType = to_nvrhi_queue(queue);
-                nvrhi::CommandListHandle created = m_nvrhi_device->createCommandList(parameters);
+                auto created = framegraph::create_nvrhi_command_list(*m_nvrhi_device.Get(), queue);
                 if (!created)
                 {
                     request_error = "NVRHI could not create a generated frame graph command list";
@@ -2101,7 +2098,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
                 [this, &submission_guard, list](FrameSubmissionGraph::Queue submitted_queue) {
                     list->close();
                     submission_guard.mark_generated_closed(list);
-                    return m_nvrhi_device->executeCommandList(list, to_nvrhi_queue(submitted_queue));
+                    return submit_nvrhi_command_list(*m_nvrhi_device.Get(), list, submitted_queue);
                 });
             generated_group_passes.push_back(pass);
             generated_frame_graph_groups = true;
@@ -2282,16 +2279,14 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
                 [this, &submission_guard](FrameSubmissionGraph::Queue queue) {
                     submission_guard.compute_command_list->close();
                     submission_guard.compute_command_list_open = false;
-                    return m_nvrhi_device->executeCommandList(
-                        submission_guard.compute_command_list, to_nvrhi_queue(queue));
+                    return submit_nvrhi_command_list(*m_nvrhi_device.Get(), submission_guard.compute_command_list, queue);
                 });
         if (graphics_prepass_pass != FrameSubmissionGraph::InvalidPass)
             group_executors.emplace_back(graphics_prepass_pass,
                 [this, &submission_guard](FrameSubmissionGraph::Queue queue) {
                     submission_guard.command_list->close();
                     submission_guard.command_list_open = false;
-                    return m_nvrhi_device->executeCommandList(
-                        submission_guard.command_list, to_nvrhi_queue(queue));
+                    return submit_nvrhi_command_list(*m_nvrhi_device.Get(), submission_guard.command_list, queue);
                 });
         // The prepass callback may add resource-derived queue dependencies.
         // Compute submission order only after those edges are present, then
@@ -3070,7 +3065,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
             }
             if (!async_submissions.submit(graphics_continuation_pass,
                     [this, scene_list](FrameSubmissionGraph::Queue queue) {
-                        return m_nvrhi_device->executeCommandList(scene_list, to_nvrhi_queue(queue));
+                        return submit_nvrhi_command_list(*m_nvrhi_device.Get(), scene_list, queue);
                     }, queue_wait, error))
             {
                 m_device_lost = true;
@@ -3514,8 +3509,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
                 }
                 if (!async_submissions.submit(final_graphics_pass,
                         [this, command_list](FrameSubmissionGraph::Queue queue) {
-                            return m_nvrhi_device->executeCommandList(command_list,
-                                to_nvrhi_queue(queue));
+                            return submit_nvrhi_command_list(*m_nvrhi_device.Get(), command_list, queue);
                         }, queue_wait, error))
                 {
                     m_device_lost = true;
