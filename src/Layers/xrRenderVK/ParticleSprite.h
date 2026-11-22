@@ -1,8 +1,15 @@
 #pragma once
 #include <array>
 #include <cmath>
+#include <cstdint>
 namespace xray::render::vulkan {
 struct ParticleSpriteCorner { float right, up, u, v; };
+inline std::array<float, 2> particle_sprite_uv_origin(uint16_t frame, uint32_t frames,
+    uint32_t columns, const std::array<float, 2>& size)
+{
+    const uint32_t index = frame / 255u % frames;
+    return {(index % columns) * size[0], (index / columns) * size[1]};
+}
 struct ParticleSpriteBasis { std::array<float,3> right,up; };
 struct ParticleEmitterBasis
 {

@@ -606,9 +606,8 @@ bool VulkanParticleEffect::record(const FrameRecordingContext& frame, const Defe
                 sprite_right.crossproduct(sprite_up, Device.vCameraDirection).normalize_safe();
             }
         }
-        const u32 sprite_frame = p.frame / 255u % def_->frame_count;
-        const float u0 = (sprite_frame % def_->frame_columns) * def_->frame_size[0];
-        const float v0 = (sprite_frame / def_->frame_columns) * def_->frame_size[1];
+        const auto [u0, v0] = particle_sprite_uv_origin(p.frame, def_->frame_count,
+            def_->frame_columns, def_->frame_size);
         const float du = def_->frame_size[0], dv = def_->frame_size[1];
 
         for (u32 corner = 0; corner < 4; ++corner)

@@ -10,6 +10,7 @@
 #include "EngineParticleSource.h"
 #include "ParticleCatalog.h"
 #include "ParticleVisual.h"
+#include "ParticleSprite.h"
 #include "xrParticles/psystem.h"
 #include "xrEngine/XR_IOConsole.h"
 #include "xrEngine/xr_ioc_cmd.h"
@@ -247,6 +248,7 @@ bool export_particle_document(const std::vector<uint8_t>& library, std::string& 
 class VulkanParticleEditor final : public xray::editor::ide_tool
 {
 public:
+    explicit VulkanParticleEditor(VulkanLevelRender& renderer) : renderer_(renderer) {}
     pcstr tool_name() const override { return "Particle Editor"; }
 
     void on_tool_frame() override
@@ -352,6 +354,7 @@ private:
             catalog->effects.push_back(effect);
             preview_ = std::make_unique<VulkanParticleEffect>(catalog, catalog->effects.front());
             preview_->Play();
+            preview_texture_failed_ = false;
         }
         ImGui::SameLine();
         ImGui::BeginDisabled(!preview_);
@@ -367,6 +370,14 @@ private:
         u32 count = 0;
         preview_->particles(particles, count);
         ImGui::Text("%u / %u particles", count, effect.max_particles);
+        xrImTextureData texture{};
+        if ((effect.flags & 1u) && !preview_texture_failed_)
+        {
+            texture = renderer_.GetImGuiTextureId(effect.texture.c_str());
+            preview_texture_failed_ = texture.texture == ImTextureID_Invalid;
+        }
+        if (preview_texture_failed_)
+            ImGui::TextDisabled("Preview texture unavailable");
         ImGui::SliderFloat("Preview zoom", &preview_zoom_, 4.f, 128.f, "%.0f px/m", ImGuiSliderFlags_Logarithmic);
         const ImVec2 size(std::max(1.f, ImGui::GetContentRegionAvail().x), 180.f);
         ImGui::InvisibleButton("##particle_preview", size);
@@ -383,10 +394,34 @@ private:
         const u32 stride = std::max(1u, (count + max_preview_points - 1) / max_preview_points);
         for (u32 i = 0; particles && i < count; i += stride)
         {
-            const auto& pos = particles[i].pos;
+            const auto& particle = particles[i];
+            const auto& pos = particle.pos;
             const ImVec2 point(center.x + (pos.x - pos.z) * preview_zoom_ * .7071f,
                 center.y - (pos.y - (pos.x + pos.z) * .35f) * preview_zoom_);
-            if (point.x >= min.x && point.x < max.x && point.y >= min.y && point.y < max.y)
+            if (!std::isfinite(point.x) || !std::isfinite(point.y))
+                continue;
+            if (texture.texture != ImTextureID_Invalid)
+            {
+                const float half_width = std::abs(particle.size.x) * preview_zoom_ * .5f;
+                const float half_height = std::abs(particle.size.y) * preview_zoom_ * .5f;
+                if (!std::isfinite(half_width) || !std::isfinite(half_height) || !std::isfinite(particle.rot.x))
+                    continue;
+                const auto [u, v] = particle_sprite_uv_origin(particle.frame, effect.frame_count,
+                    effect.frame_columns, effect.frame_size);
+                ImVec2 positions[4], uvs[4];
+                constexpr unsigned order[]{3, 2, 1, 0};
+                for (unsigned corner = 0; corner < 4; ++corner)
+                {
+                    const auto sprite = particle_sprite_corner(order[corner], half_width, half_height, particle.rot.x);
+                    positions[corner] = {point.x + sprite.right, point.y - sprite.up};
+                    uvs[corner] = {u + sprite.u * effect.frame_size[0], v + sprite.v * effect.frame_size[1]};
+                }
+                const u32 argb = particle.color;
+                const ImU32 tint = IM_COL32((argb >> 16) & 255u, (argb >> 8) & 255u, argb & 255u, argb >> 24);
+                draw->AddImageQuad(texture.texture, positions[0], positions[1], positions[2], positions[3],
+                    uvs[0], uvs[1], uvs[2], uvs[3], tint);
+            }
+            else if (point.x >= min.x && point.x < max.x && point.y >= min.y && point.y < max.y)
                 draw->AddRectFilled({point.x - 1.f, point.y - 1.f}, {point.x + 1.f, point.y + 1.f}, color);
         }
         draw->PopClipRect();
@@ -405,6 +440,7 @@ private:
         preview_.reset();
     }
 
+    VulkanLevelRender& renderer_;
     std::vector<uint8_t> library_;
     ParticleCatalog catalog_;
     std::string message_;
@@ -413,6 +449,7 @@ private:
     ImGuiTextFilter filter_;
     std::unique_ptr<VulkanParticleEffect> preview_;
     float preview_zoom_{32.f};
+    bool preview_texture_failed_{};
     size_t selected_{SIZE_MAX};
     int limit_{};
     float duration_{1.f};
@@ -688,7 +725,7 @@ class VulkanRendererModule final : public RendererModule
         R_ASSERT2(!GEnv.Render || GEnv.Render == &renderer, "Another renderer is still bound to GEnv");
         GEnv.Render = &renderer;
         register_vulkan_options(renderer);
-        particle_editor = std::make_unique<VulkanParticleEditor>();
+        particle_editor = std::make_unique<VulkanParticleEditor>(renderer);
         Msg("[renderer-vulkan] module.selected mode=%s", mode);
         GEnv.RenderFactory = &factory;
         GEnv.UIRender = &device.ui();
