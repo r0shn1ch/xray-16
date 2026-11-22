@@ -263,7 +263,9 @@ void main()
     uint row = gl_GlobalInvocationID.y * row_width;
     if (gl_GlobalInvocationID.x >= parameters.count - row) return;
     uint index = row + gl_GlobalInvocationID.x;
-    if ((index & 3u) != 0u) return;
+    // Rotate the quarter-rate update pattern so stationary cameras still
+    // feed samples from each pixel phase into the world cache.
+    if ((index & 3u) != (parameters.frame & 3u)) return;
     Surface surface = surfaces[index];
     vec4 current_radiance = radiance[index];
     if (surface.position_valid.w <= 0.0 || current_radiance.w <= 0.0 ||
