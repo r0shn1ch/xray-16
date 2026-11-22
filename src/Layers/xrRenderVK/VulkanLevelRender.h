@@ -187,6 +187,7 @@ private:
   BindlessTextureTable visibility_materials_;
   std::unique_ptr<VisibilityPasses> visibility_passes_;
   std::vector<VkImageView> visibility_material_views_;
+  std::vector<VkImageView> visibility_cube_views_;
   RaySurfacePass ray_surfaces_;
   std::vector<VkImageView> ray_material_views_;
   std::vector<VkImageView> ray_diffuse_material_views_;

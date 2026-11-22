@@ -179,6 +179,12 @@ static void animated_texture_matrices()
     const auto reflection = library.find("mod\\moving_environment")->matrices.values[2].evaluate(2.f, view);
     assert(reflection[0][0] == .5f && reflection[0][3] == .5f &&
         reflection[1][1] == -.5f && reflection[1][3] == .5f);
+    const auto environment_matrices = library.find("mod\\moving_environment")->matrices;
+    ranges = {{0, 1, environment_matrices}};
+    assert(update_visibility_material_matrices(visibility_entries, ranges, 2.f, view) &&
+        visibility_entries[0].environment_xx == reflection[0][0] &&
+        visibility_entries[0].environment_yy == reflection[1][1] &&
+        visibility_entries[0].environment_zz == reflection[2][2]);
     Bytes damaged;
     table.pop_back();
     chunk(damaged, 1, table); chunk(damaged, 2, records);

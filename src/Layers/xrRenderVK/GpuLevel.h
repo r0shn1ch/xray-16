@@ -44,6 +44,7 @@ class GpuLevel
     const std::vector<VisibilityDrawRange>& visibility_draw_ranges() const { return visibility_draw_ranges_; }
     struct VisibilityTexture { std::string name; bool lightmap; bool linear; bool clamp; };
     const std::vector<VisibilityTexture>& visibility_textures() const { return visibility_textures_; }
+    const std::vector<std::string>& visibility_cubemaps() const { return visibility_cubemaps_; }
     bool visibility_draw_entries(uint32_t frame, VkDescriptorBufferInfo& entries,
         bool& host_written, std::string& error) const;
     VkDescriptorBufferInfo visibility_camera_commands(uint32_t frame) const
@@ -205,6 +206,7 @@ class GpuLevel
         bool visibility_rasterizable{};
         bool visibility_material_supported{};
         bool visibility_clamp{};
+        std::string visibility_cubemap;
         float visibility_material_class{1.f / 3.f};
         float detail_radius{}, detail_wind_extent{};
         uint32_t first_vertex{}, first_index{};
@@ -320,6 +322,7 @@ class GpuLevel
     mutable std::array<BufferResource, FrameContext::FramesInFlight> visibility_frame_entries_;
     std::vector<VisibilityDrawRange> visibility_draw_ranges_;
     std::vector<VisibilityTexture> visibility_textures_;
+    std::vector<std::string> visibility_cubemaps_;
     // CPU-authored indirect arguments use one fenced buffer per frame slot.
     // The command array is also storage-capable for the planned GPU culler.
     mutable std::array<BufferResource, FrameContext::FramesInFlight> cluster_draw_commands_;

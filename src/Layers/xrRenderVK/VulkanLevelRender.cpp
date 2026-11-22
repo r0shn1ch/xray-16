@@ -2097,6 +2097,7 @@ void VulkanLevelRender::level_Unload()
 bool VulkanLevelRender::prepare_visibility_materials(const VulkanWindowDevice& window, std::string& error)
 {
     const auto& names = level_.visibility_textures();
+    const auto& cubes = level_.visibility_cubemaps();
     error.clear();
     const char* enabled = SDL_getenv("XRAY_VK_VISIBILITY_BUFFER");
     if (!enabled || std::strcmp(enabled, "1") != 0 || names.empty() || !window.bindless_textures_enabled() ||
@@ -2116,16 +2117,18 @@ bool VulkanLevelRender::prepare_visibility_materials(const VulkanWindowDevice& w
     properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
     properties.pNext = &indexing;
     get_properties(window.physical().handle, &properties);
-    const uint64_t total = uint64_t(ray_materials_.capacity()) + ray_diffuse_materials_.capacity() + names.size();
+    const uint64_t count = uint64_t(names.size()) + cubes.size();
+    const uint64_t total = uint64_t(ray_materials_.capacity()) + ray_diffuse_materials_.capacity() + count;
     const auto per_stage = std::min({indexing.maxPerStageDescriptorUpdateAfterBindSamplers,
         indexing.maxPerStageDescriptorUpdateAfterBindSampledImages,
         indexing.maxDescriptorSetUpdateAfterBindSamplers, indexing.maxDescriptorSetUpdateAfterBindSampledImages});
-    if (names.size() >= per_stage || total > indexing.maxUpdateAfterBindDescriptorsInAllPools)
+    if (count >= per_stage || count > UINT32_MAX || total > indexing.maxUpdateAfterBindDescriptorsInAllPools)
     {
         error = "visibility materials exceed descriptor indexing limits";
         return false;
     }
-    if (!visibility_materials_.initialize(device_, window.device_proc(), static_cast<uint32_t>(names.size()), error))
+    if (!visibility_materials_.initialize(device_, window.device_proc(), static_cast<uint32_t>(names.size()), error,
+            static_cast<uint32_t>(cubes.size())))
         return false;
 
     const bool ready = refresh_visibility_views(error);
@@ -2148,16 +2151,23 @@ bool VulkanLevelRender::prepare_visibility_materials(const VulkanWindowDevice& w
 void VulkanLevelRender::release_visibility_views()
 {
     if (textures_)
+    {
         for (VkImageView view : visibility_material_views_)
             textures_->release_environment(view);
+        for (VkImageView view : visibility_cube_views_)
+            textures_->release_environment(view);
+    }
     visibility_material_views_.clear();
+    visibility_cube_views_.clear();
 }
 
 bool VulkanLevelRender::refresh_visibility_views(std::string& error)
 {
     if (!visibility_materials_.set()) { error.clear(); return true; }
     const auto& names = level_.visibility_textures();
-    if (!textures_ || !visibility_material_views_.empty() || names.size() != visibility_materials_.capacity())
+    const auto& cubes = level_.visibility_cubemaps();
+    if (!textures_ || !visibility_material_views_.empty() || !visibility_cube_views_.empty() ||
+        names.size() != visibility_materials_.capacity() || cubes.size() != visibility_materials_.cube_capacity())
     { error = "visibility texture reload has inconsistent material state"; return false; }
     visibility_material_views_.reserve(names.size());
     for (const auto& texture : names)
@@ -2166,6 +2176,16 @@ bool VulkanLevelRender::refresh_visibility_views(std::string& error)
         if (!textures_->projection_texture(texture.name, view, error, texture.linear))
             return false;
         visibility_material_views_.push_back(view);
+    }
+    visibility_cube_views_.reserve(cubes.size());
+    for (const auto& name : cubes)
+    {
+        VkImageView view{};
+        if (!textures_->environment(name, view, error)) return false;
+        visibility_cube_views_.push_back(view);
+        ShaderImageShape shape{};
+        if (!textures_->image_shape(view, shape) || shape.dimension != ShaderImageDimension::Cube || shape.arrayed)
+        { error = "visibility environment texture must be a single cubemap: " + name; return false; }
     }
     if (!textures_->finish_uploads())
     { error = "visibility texture uploads did not complete"; return false; }
@@ -2176,8 +2196,10 @@ bool VulkanLevelRender::rebind_visibility_samplers(std::string& error)
 {
     if (!visibility_materials_.set()) { error.clear(); return true; }
     const auto& names = level_.visibility_textures();
+    const auto& cubes = level_.visibility_cubemaps();
     if (!textures_ || names.size() != visibility_material_views_.size() ||
-        names.size() != visibility_materials_.capacity())
+        names.size() != visibility_materials_.capacity() || cubes.size() != visibility_cube_views_.size() ||
+        cubes.size() != visibility_materials_.cube_capacity())
     { error = "visibility sampler update has inconsistent material state"; return false; }
     for (uint32_t slot = 0; slot < names.size(); ++slot)
     {
@@ -2186,6 +2208,9 @@ bool VulkanLevelRender::rebind_visibility_samplers(std::string& error)
         if (!visibility_materials_.write(slot, visibility_material_views_[slot], sampler, error, VK_IMAGE_LAYOUT_GENERAL))
             return false;
     }
+    for (uint32_t slot = 0; slot < cubes.size(); ++slot)
+        if (!visibility_materials_.write_cube(slot, visibility_cube_views_[slot], textures_->sampler(),
+                error, VK_IMAGE_LAYOUT_GENERAL)) return false;
     error.clear(); return true;
 }
 
