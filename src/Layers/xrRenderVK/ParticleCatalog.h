@@ -55,8 +55,11 @@ struct ParticleSpriteMaterial
 bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string& name,
     uint32_t max_particles, std::string& error, std::optional<float> time_limit = {},
     const ParticleSpriteMaterial* material = nullptr);
+using ParticleGroupChildEdits = std::array<std::optional<std::string>, 3>; // Attached, birth, death
+inline constexpr std::array<uint32_t, 3> particle_group_child_flags{1u << 1, 1u << 5, 1u << 6};
 bool edit_particle_group_item(std::vector<uint8_t>& library, const std::string& name,
-    size_t item_index, float begin, float end, std::string& error, const std::string* replacement = nullptr);
+    size_t item_index, float begin, float end, std::string& error, const std::string* replacement = nullptr,
+    const ParticleGroupChildEdits& children = {});
 enum class ParticleGroupItemOperation { Duplicate, Remove };
 bool change_particle_group_items(std::vector<uint8_t>& library, const std::string& name,
     size_t item_index, ParticleGroupItemOperation operation, std::string& error);

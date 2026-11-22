@@ -132,6 +132,7 @@ public:
     }
 
 private:
+
     Parameter parameter_;
 };
 
@@ -373,6 +374,28 @@ public:
     }
 
 private:
+    void choose_effect(pcstr label, std::string& selected, bool allow_empty = false)
+    {
+        if (!ImGui::BeginCombo(label, selected.empty() ? "None" : selected.c_str()))
+            return;
+        if (allow_empty && ImGui::Selectable("None", selected.empty()))
+            selected.clear();
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(catalog_.effects.size()));
+        while (clipper.Step())
+        {
+            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
+            {
+                const auto& name = catalog_.effects[i].name;
+                ImGui::PushID(i);
+                if (ImGui::Selectable(name.c_str(), selected == name))
+                    selected = name;
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndCombo();
+    }
+
     void draw_group_timing()
     {
         auto& group = catalog_.groups[selected_group_];
@@ -403,6 +426,10 @@ private:
                     group_begin_ = item.begin;
                     group_end_ = item.end;
                     group_effect_ = item.effect;
+                    const std::string* children[]{&item.on_play, &item.on_birth, &item.on_dead};
+                    for (size_t child = 0; child < group_children_.size(); ++child)
+                        group_children_[child] = (item.flags & particle_group_child_flags[child])
+                            ? *children[child] : std::string{};
                 }
                 ImGui::PopID();
             }
@@ -410,23 +437,7 @@ private:
         }
         if (!adding_group_item_ && group_item_ >= group.effects.size())
             return;
-        if (ImGui::BeginCombo("Main effect", group_effect_.c_str()))
-        {
-            ImGuiListClipper clipper;
-            clipper.Begin(static_cast<int>(catalog_.effects.size()));
-            while (clipper.Step())
-            {
-                for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
-                {
-                    const auto& name = catalog_.effects[i].name;
-                    ImGui::PushID(i);
-                    if (ImGui::Selectable(name.c_str(), group_effect_ == name))
-                        group_effect_ = name;
-                    ImGui::PopID();
-                }
-            }
-            ImGui::EndCombo();
-        }
+        choose_effect("Main effect", group_effect_);
         ImGui::InputFloat("Start (s)", &group_begin_, .1f, 1.f, "%.3f");
         ImGui::InputFloat("End (s)", &group_end_, .1f, 1.f, "%.3f");
         if (adding_group_item_)
@@ -446,16 +457,44 @@ private:
             return;
         }
         const auto& item = group.effects[group_item_];
+        constexpr pcstr labels[]{"Attached child", "On particle birth", "On particle death"};
+        const std::string* current[]{&item.on_play, &item.on_birth, &item.on_dead};
+        ParticleGroupChildEdits children;
+        bool children_changed = false;
+        for (size_t child = 0; child < children.size(); ++child)
+        {
+            choose_effect(labels[child], group_children_[child], true);
+            const bool enabled = (item.flags & particle_group_child_flags[child]) != 0;
+            if ((enabled && *current[child] != group_children_[child]) ||
+                (!enabled && !group_children_[child].empty()))
+            {
+                children[child] = group_children_[child];
+                children_changed = true;
+            }
+        }
         ImGui::BeginDisabled(!std::isfinite(group_begin_) || !std::isfinite(group_end_) ||
             group_begin_ < 0.f || group_end_ <= group_begin_ ||
-            (group_begin_ == item.begin && group_end_ == item.end && group_effect_ == item.effect));
+            (!children_changed && group_begin_ == item.begin && group_end_ == item.end && group_effect_ == item.effect));
         if (ImGui::Button("Apply group edit to draft") &&
-            edit_particle_group_item(library_, group.name, group_item_, group_begin_, group_end_, message_, &group_effect_))
+            edit_particle_group_item(library_, group.name, group_item_, group_begin_, group_end_,
+                message_, &group_effect_, children))
         {
             auto& edited = catalog_.groups[selected_group_].effects[group_item_];
             edited.begin = group_begin_;
             edited.end = group_end_;
             edited.effect = group_effect_;
+            std::string* fields[]{&edited.on_play, &edited.on_birth, &edited.on_dead};
+            for (size_t child = 0; child < children.size(); ++child)
+            {
+                if (!children[child])
+                    continue;
+                *fields[child] = *children[child];
+                const auto flag = particle_group_child_flags[child];
+                if (fields[child]->empty())
+                    edited.flags &= ~flag;
+                else
+                    edited.flags |= flag;
+            }
             preview_.reset();
             dirty_ = true;
         }
@@ -633,6 +672,7 @@ private:
     size_t group_item_{SIZE_MAX};
     bool adding_group_item_{};
     std::string group_effect_;
+    std::array<std::string, 3> group_children_;
     float group_begin_{}, group_end_{};
     int limit_{};
     float duration_{1.f};

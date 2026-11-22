@@ -460,7 +460,8 @@ bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string
 
 static bool update_particle_group_item(std::vector<uint8_t>& library, const std::string& name,
     size_t item_index, float begin, float end, std::string& error, const std::string* replacement,
-    std::optional<ParticleGroupItemOperation> operation, bool add = false)
+    std::optional<ParticleGroupItemOperation> operation, bool add = false,
+    const ParticleGroupChildEdits& children = {})
 {
     if (!operation && (!std::isfinite(begin) || !std::isfinite(end) || begin < 0.f || end <= begin))
     {
@@ -475,6 +476,14 @@ static bool update_particle_group_item(std::vector<uint8_t>& library, const std:
     {
         error = "Replacement effect not found: " + *replacement;
         return false;
+    }
+    for (const auto& child : children)
+    {
+        if (child && !child->empty() && !catalog.effect(*child))
+        {
+            error = "Child effect not found: " + *child;
+            return false;
+        }
     }
     const auto* definition = catalog.group(name);
     if (!definition || (!add && item_index >= definition->effects.size()))
@@ -605,10 +614,30 @@ static bool update_particle_group_item(std::vector<uint8_t>& library, const std:
                 error.clear();
                 return true;
             }
-            if (replacement && *replacement != item.effect)
+            if (replacement || std::any_of(children.begin(), children.end(), [](const auto& child)
+                { return child.has_value(); }))
             {
-                const auto old_size = item.effect.size();
-                const auto new_size = replacement->size();
+                std::array<const std::string*, 4> names{
+                    replacement ? replacement : &item.effect, &item.on_play, &item.on_birth, &item.on_dead};
+                for (size_t child = 0; child < children.size(); ++child)
+                {
+                    if (!children[child])
+                        continue;
+                    names[child + 1] = &*children[child];
+                    const auto flag = particle_group_child_flags[child];
+                    if (children[child]->empty())
+                        item.flags &= ~flag;
+                    else
+                        item.flags |= flag;
+                }
+                std::vector<uint8_t> serialized;
+                for (const auto* field : names)
+                {
+                    serialized.insert(serialized.end(), field->begin(), field->end());
+                    serialized.push_back(0);
+                }
+                const auto old_size = timing_offset - item_start;
+                const auto new_size = serialized.size();
                 if (new_size > max_catalog_bytes - library.size() + old_size)
                 {
                     error = "Particle catalog exceeds the size limit.";
@@ -619,13 +648,14 @@ static bool update_particle_group_item(std::vector<uint8_t>& library, const std:
                     library.insert(library.begin() + start + old_size, new_size - old_size, 0);
                 else if (new_size < old_size)
                     library.erase(library.begin() + start + new_size, library.begin() + start + old_size);
-                std::copy(replacement->begin(), replacement->end(), library.begin() + start);
+                std::copy(serialized.begin(), serialized.end(), library.begin() + start);
                 resize_chunks(old_size, new_size);
                 timing_offset = timing_offset - old_size + new_size;
             }
             auto* dest = library.data() + effects_offset + timing_offset;
             put_real(dest, begin);
             put_real(dest + 4, end);
+            put32(dest + 8, item.flags);
             error.clear();
             return true;
         }
@@ -635,9 +665,10 @@ static bool update_particle_group_item(std::vector<uint8_t>& library, const std:
 }
 
 bool edit_particle_group_item(std::vector<uint8_t>& library, const std::string& name,
-    size_t item_index, float begin, float end, std::string& error, const std::string* replacement)
+    size_t item_index, float begin, float end, std::string& error, const std::string* replacement,
+    const ParticleGroupChildEdits& children)
 {
-    return update_particle_group_item(library, name, item_index, begin, end, error, replacement, {});
+    return update_particle_group_item(library, name, item_index, begin, end, error, replacement, {}, false, children);
 }
 
 bool change_particle_group_items(std::vector<uint8_t>& library, const std::string& name,

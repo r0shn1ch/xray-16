@@ -92,6 +92,15 @@ int main()
     const std::string original = "campfire";
     assert(edit_particle_group_item(retimed, "campfire_group", 0, 0.f, 2.f, error, &original) &&
         retimed == timing_library);
+    ParticleGroupChildEdits children{replacement, original, replacement};
+    assert(edit_particle_group_item(retimed, "campfire_group", 0, 0.f, 2.f, error, nullptr, children));
+    assert(parse_particle_catalog({retimed.data(), retimed.size()}, catalog, error));
+    const auto& child_entry = catalog.group("campfire_group")->effects.front();
+    assert(child_entry.on_play == replacement && child_entry.on_birth == original &&
+        child_entry.on_dead == replacement && child_entry.flags == (5u | 2u | 32u | 64u));
+    children.fill(std::string{});
+    assert(edit_particle_group_item(retimed, "campfire_group", 0, 0.f, 2.f, error, nullptr, children) &&
+        retimed == timing_library);
     assert(change_particle_group_items(retimed, "campfire_group", 0, ParticleGroupItemOperation::Duplicate, error));
     assert(parse_particle_catalog({retimed.data(), retimed.size()}, catalog, error));
     assert(catalog.group("campfire_group")->effects.size() == 2);
