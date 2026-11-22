@@ -20,5 +20,7 @@ void main()
     gl_FragDepth = uintBitsToFloat(texelFetch(visibilityDepth, pixel, 0).r);
     albedo = texelFetch(resolvedBaseColor, pixel, 0);
     normalBuffer = vec4(normal.xyz * 0.5 + 0.5, normal.a);
-    surfaceBuffer = vec4(0.0);
+    // The flat opaque/lightmapped materials admitted to visibility raster use
+    // the default material class (1), encoded as class / 3 in opaque.ps.
+    surfaceBuffer = vec4(0.0, 1.0 / 3.0, 0.0, 0.0);
 }
