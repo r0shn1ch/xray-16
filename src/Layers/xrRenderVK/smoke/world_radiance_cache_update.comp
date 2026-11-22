@@ -267,7 +267,13 @@ void main()
     Surface surface = surfaces[index];
     vec4 current_radiance = radiance[index];
     if (surface.position_valid.w <= 0.0 || current_radiance.w <= 0.0 ||
-        any(isnan(current_radiance.rgb)) || any(isinf(current_radiance.rgb))) return;
+        any(isnan(surface.position_valid)) || any(isinf(surface.position_valid)) ||
+        any(isnan(current_radiance)) || any(isinf(current_radiance)) ||
+        any(isnan(surface.pbr)) || any(isinf(surface.pbr))) return;
+    vec3 fine_coordinates = floor(surface.position_valid.xyz / WORLD_CACHE_FINE_CELL_SIZE);
+    // Keep float-to-int conversion inside the representable signed cell range.
+    if (any(lessThan(fine_coordinates, vec3(-2147483648.0))) ||
+        any(greaterThanEqual(fine_coordinates, vec3(2147483648.0)))) return;
     float normal_length2 = dot(surface.normal.xyz, surface.normal.xyz);
     if (!(normal_length2 > 1e-10) || isnan(normal_length2) || isinf(normal_length2)) return;
     vec3 normal = surface.normal.xyz * inversesqrt(normal_length2);
@@ -288,7 +294,7 @@ void main()
         directional_fraction = max(metallic, dielectric_specular);
     }
     vec3 directional_value = radiance_value * directional_fraction;
-    ivec3 fine_cell = ivec3(floor(surface.position_valid.xyz / WORLD_CACHE_FINE_CELL_SIZE));
+    ivec3 fine_cell = ivec3(fine_coordinates);
     update_cache_cell(fine_cell, normal_class, WORLD_CACHE_FINE_LEVEL, radiance_value,
         directional_value,
         normal, outgoing_direction);
