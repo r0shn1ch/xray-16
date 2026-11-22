@@ -11,7 +11,7 @@ inline bool sample_sky_probes(const framegraph::SkyProbeLayout& layout,
     const std::vector<SkyProbeVisibility>& probes, const std::array<float, 3>& position,
     std::array<float, 6>& faces)
 {
-    if (!layout.count || probes.size() != layout.count)
+    if (!layout.count || probes.empty() || probes.size() > layout.count)
         return false;
     std::array<uint32_t, 3> base{};
     std::array<float, 3> fraction{};
@@ -29,19 +29,24 @@ inline bool sample_sky_probes(const framegraph::SkyProbeLayout& layout,
         base[axis] = std::min(static_cast<uint32_t>(coordinate), last - 1);
         fraction[axis] = static_cast<float>(coordinate - base[axis]);
     }
-    faces.fill(0.f);
+    std::array<float, 6> result{};
     for (unsigned corner = 0; corner < 8; ++corner)
     {
         const uint32_t x = base[0] + (corner & 1u);
         const uint32_t y = base[1] + ((corner >> 1) & 1u);
         const uint32_t z = base[2] + ((corner >> 2) & 1u);
-        const auto& probe = probes[(z * layout.dimensions[1] + y) * layout.dimensions[0] + x];
         float weight = 1.f;
         for (unsigned axis = 0; axis < 3; ++axis)
             weight *= (corner & (1u << axis)) ? fraction[axis] : 1.f - fraction[axis];
-        for (unsigned face = 0; face < faces.size(); ++face)
-            faces[face] += probe.faces[face] * weight;
+        if (weight == 0.f)
+            continue;
+        const uint32_t index = (z * layout.dimensions[1] + y) * layout.dimensions[0] + x;
+        if (index >= probes.size())
+            return false;
+        for (unsigned face = 0; face < result.size(); ++face)
+            result[face] += probes[index].faces[face] * weight;
     }
+    faces = result;
     return true;
 }
 

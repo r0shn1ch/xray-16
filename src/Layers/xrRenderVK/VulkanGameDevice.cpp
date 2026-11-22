@@ -174,7 +174,7 @@ bool VulkanGameDevice::wait_idle()
     if (window_.device() && !window_.frame().device_lost() && !window_.frame().wait_idle() &&
         !window_.frame().device_lost())
         return false;
-    if (gpu_particles_ && !window_.frame().device_lost())
+    if (!window_.frame().device_lost())
         for (uint32_t slot = 0; slot < gpu_particle_pending_.size(); ++slot)
         {
             std::string ignored;
@@ -320,8 +320,7 @@ void VulkanGameDevice::gpu_particles_submitted(uint32_t slot, uint32_t, void* us
         if (owner.sky_probe_recorded_[slot])
         {
             owner.sky_probe_next_ += owner.sky_probe_recorded_[slot];
-            if (owner.sky_probe_next_ == owner.sky_probe_layout_.count)
-                owner.sky_probe_last_slot_ = slot;
+            owner.sky_probe_submitted_end_[slot] = owner.sky_probe_next_;
         }
         owner.sky_probe_recorded_[slot] = 0;
     }
@@ -352,16 +351,23 @@ void VulkanGameDevice::disable_gpu_particles()
 bool VulkanGameDevice::gpu_particles_completed(uint32_t slot, uint32_t, void* user, std::string& error)
 {
     auto& owner = *static_cast<VulkanGameDevice*>(user);
-    if (slot == owner.sky_probe_last_slot_)
+    if (slot < owner.sky_probe_submitted_end_.size())
     {
-        owner.sky_probe_last_slot_ = UINT32_MAX;
-        owner.sky_probe_cpu_.resize(owner.sky_probe_layout_.count);
-        if (!owner.sky_probe_results_.read(0, owner.sky_probe_cpu_.data(),
-                owner.sky_probe_cpu_.size() * sizeof(SkyProbeVisibility), error))
+        const uint32_t end = std::exchange(owner.sky_probe_submitted_end_[slot], 0u);
+        const size_t first = owner.sky_probe_cpu_.size();
+        // Bake slices run on the same graphics queue in submission order.
+        // A completed slice makes its prefix available, even if a callback
+        // for an earlier slot has not been delivered yet.
+        if (end > first)
         {
-            owner.sky_probe_cpu_.clear();
-            Msg("! [renderer-vulkan] sky probe readback: %s", error.c_str());
-            error.clear();
+            owner.sky_probe_cpu_.resize(end);
+            if (!owner.sky_probe_results_.read(first * sizeof(SkyProbeVisibility),
+                    owner.sky_probe_cpu_.data() + first, (end - first) * sizeof(SkyProbeVisibility), error))
+            {
+                owner.sky_probe_cpu_.resize(first);
+                Msg("! [renderer-vulkan] sky probe readback: %s", error.c_str());
+                error.clear();
+            }
         }
     }
     if (!owner.gpu_particles_ || slot >= owner.gpu_particle_pending_.size() || !owner.gpu_particle_pending_[slot])
@@ -2199,14 +2205,11 @@ void VulkanGameDevice::record_sky_probe_slice(const FrameRecordingContext& frame
         Msg("! [renderer-vulkan] sky probe recording: %s", error.c_str());
         return;
     }
-    if (sky_probe_next_ + count == sky_probe_layout_.count)
-    {
-        VkMemoryBarrier host_read{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-        host_read.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        host_read.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-        frame_dispatch_.cmd_pipeline_barrier(frame.command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &host_read, 0, nullptr, 0, nullptr);
-    }
+    VkMemoryBarrier host_read{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    host_read.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    host_read.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    frame_dispatch_.cmd_pipeline_barrier(frame.command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &host_read, 0, nullptr, 0, nullptr);
     sky_probe_recorded_[frame.frame_index] = count;
 }
 
@@ -2726,7 +2729,7 @@ void VulkanGameDevice::release_ray_frames()
     sky_probe_results_.destroy();
     sky_probe_layout_ = {};
     sky_probe_next_ = 0;
-    sky_probe_last_slot_ = UINT32_MAX;
+    sky_probe_submitted_end_ = {};
     sky_probe_cpu_.clear();
     sky_probe_failed_ = false;
     sky_probe_recorded_ = {};
