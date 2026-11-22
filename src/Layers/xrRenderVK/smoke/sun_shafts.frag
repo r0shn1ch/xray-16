@@ -21,7 +21,14 @@ void main()
     vec2 delta = sun - texcoord;
     vec2 size = vec2(textureSize(depth_image, 0));
     float distance = length(delta * vec2(size.x / size.y, 1.0));
-    float falloff = exp(-3.0 * distance);
+    vec2 offscreen = max(-sun, sun - 1.0);
+    float fade = 1.0 - smoothstep(0.0, 0.5, max(offscreen.x, offscreen.y));
+    float falloff = exp(-3.0 * distance) * fade;
+    float ray_end = 1.0;
+    if (sun.x < 0.0 || sun.x > 1.0)
+        ray_end = min(ray_end, (clamp(sun.x, 0.0, 1.0) - texcoord.x) / delta.x);
+    if (sun.y < 0.0 || sun.y > 1.0)
+        ray_end = min(ray_end, (clamp(sun.y, 0.0, 1.0) - texcoord.y) / delta.y);
     int sample_count = clamp(int(settings.effect.x + 0.5), 1, maximum_samples);
     float visibility = 0.0;
     float weight_sum = 0.0;
@@ -30,7 +37,7 @@ void main()
         if (i >= sample_count)
             break;
         float t = (float(i) + 0.5) / float(sample_count);
-        vec2 uv = texcoord + delta * t;
+        vec2 uv = texcoord + delta * (t * ray_end);
         if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0))))
         {
             float weight = t * t;

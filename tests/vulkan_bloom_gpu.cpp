@@ -323,7 +323,7 @@ int main(int argc, char** argv) try
     shafts.set_depth_view(shaft_depth_view, vk.sampler);
     PostProcessConstants shaft_constants;
     shaft_constants.tint[0] = .25f;
-    shaft_constants.tint[1] = .05f;
+    shaft_constants.tint[1] = -.05f;
     shaft_constants.tint[2] = 1.f;
     shaft_constants.add[0] = shaft_constants.add[1] = shaft_constants.add[2] = 1.f;
     shaft_constants.effect[0] = 16.f;
