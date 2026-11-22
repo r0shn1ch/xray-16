@@ -216,6 +216,17 @@ end
 function options_dialog:OnPresetChanged()
 	local opt					= COptionsManager()
 	opt:SetCurrentValues		("mm_opt_video_adv")
+    if self.combo_renderer:CurrentID() == 7 and get_console():get_string("r_vk_aa") ~= nil and self.vk_aniso_track and self.vk_density_track and self.vk_radius_track then
+        local id = self.combo_preset:CurrentID() + 1
+        local anisotropy = {2, 4, 8, 16, 16}
+        local density = {1, 0.75, 0.5, 0.375, 0.25}
+        local radius = {0, 20, 40, 60, 80}
+        if anisotropy[id] then
+            self.vk_aniso_track:SetIValue(anisotropy[id])
+            self.vk_density_track:SetFValue(density[id])
+            self.vk_radius_track:SetIValue(radius[id])
+        end
+    end
 end
 
 
@@ -240,6 +251,13 @@ function options_dialog:OnBtnAccept()
 	opt:SaveValues("key_binding")
 	opt:SaveValues("mm_opt_video")
 	opt:SaveValues("mm_opt_video_adv")
+    if self.combo_renderer:CurrentID() == 7 and get_console():get_string("r_vk_aa") ~= nil and self.vk_aniso_track and self.vk_density_track and self.vk_radius_track then
+        -- The preset has just been applied. Save the displayed choices even
+        -- if one was manually returned to its original value.
+        self.vk_aniso_track:SaveOptValue()
+        self.vk_density_track:SaveOptValue()
+        self.vk_radius_track:SaveOptValue()
+    end
 	opt:SaveValues("mm_opt_gameplay")
 	opt:SaveValues("mm_opt_sound")
 	opt:SaveValues("mm_opt_controls")

@@ -210,12 +210,80 @@ class AndroidMenuContractTest(unittest.TestCase):
         self.assertIn("detail-spacing=%.3f", module)
         self.assertIn("point-shadows=%d", module)
 
+    def test_vulkan_preset_preview_executes_lua(self):
+        import shutil
+        import subprocess
+        import tempfile
+        built = ROOT / "build/windows-vulkan/Externals/LuaJIT-proj/HostBuildTools/minilua/Release/minilua.exe"
+        interpreter = shutil.which("luajit") or shutil.which("lua") or (str(built) if built.exists() else None)
+        if not interpreter:
+            self.skipTest("minilua is not built")
+        source = (ROOT / "res/gamedata/scripts/ui_mm_opt_main.script").read_text()
+        start = source.index("function options_dialog:OnPresetChanged()")
+        end = source.index("function options_dialog:OnBtnDefGraph()", start)
+        harness = """options_dialog={}
+function COptionsManager() return {SetCurrentValues=function() end} end
+local enabled=true
+function get_console() return {get_string=function() if enabled then return 'FXAA' end end} end
+local function track() return {SetIValue=function(self,v) self.value=v end, SetFValue=function(self,v) self.value=v end} end
+""" + source[start:end] + """
+local selected=0
+local d={combo_renderer={CurrentID=function() return 7 end},combo_preset={CurrentID=function() return selected end},vk_aniso_track=track(),vk_density_track=track(),vk_radius_track=track()}
+local a={2,4,8,16,16}; local b={1,0.75,0.5,0.375,0.25}; local c={0,20,40,60,80}
+for i=1,5 do selected=i-1; options_dialog.OnPresetChanged(d); assert(d.vk_aniso_track.value==a[i] and d.vk_density_track.value==b[i] and d.vk_radius_track.value==c[i]) end
+enabled=false; selected=0; options_dialog.OnPresetChanged(d); assert(d.vk_radius_track.value==80)
+"""
+        accept_start = source.index("function options_dialog:OnBtnAccept()")
+        accept_end = source.index("function options_dialog:OnBtnCancel()", accept_start)
+        harness += source[accept_start:accept_end] + """
+local saved={}
+function COptionsManager() return {SaveValues=function(self,group) if group=='mm_opt_video_preset' then saved.radius=60 end end, NeedVidRestart=function() return false end, OptionsPostAccept=function() end} end
+function get_console() return {get_string=function() return 'FXAA' end, execute=function() end} end
+d.vk_aniso_track.SaveOptValue=function(self) saved.aniso=self.value end
+d.vk_density_track.SaveOptValue=function(self) saved.density=self.value end
+d.vk_radius_track.SaveOptValue=function(self) saved.radius=self.value end
+d.OnApplyChanges=function() end
+d.vk_aniso_track.value=8; d.vk_density_track.value=0.5; d.vk_radius_track.value=40
+options_dialog.OnBtnAccept(d)
+assert(saved.aniso==8 and saved.density==0.5 and saved.radius==40)
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "preset.lua"
+            path.write_text(harness)
+            subprocess.run([str(interpreter), str(path)], check=True)
+
     def test_combo_selection_and_restore_use_the_same_token_id(self):
         combo = (ROOT / "src/xrUICore/ComboBox/UIComboBox.cpp").read_text()
         self.assertIn("itm->SetTAG(_data)", combo)
         self.assertIn("get_token_id(tokens, current)", combo)
         self.assertIn("m_list_box.GetIdxByTAG(m_itoken_id)", combo)
         self.assertNotIn("m_list_box.SetSelectedText", combo)
+
+    def test_vulkan_preset_saves_displayed_sliders_after_preset(self):
+        script = (ROOT / "res/gamedata/scripts/ui_mm_opt_main.script").read_text()
+        settings = (ENGINE / "VulkanSettings.h").read_text()
+        policy = (ENGINE / "RenderPolicy.h").read_text()
+        def values(pattern, source):
+            match = re.search(pattern, source, re.DOTALL)
+            self.assertIsNotNone(match)
+            return [float(value.strip().rstrip('f')) for value in match.group(1).split(',')]
+        for lua_name, cpp_name in (("anisotropy", "PresetAnisotropy"),
+                                   ("density", "PresetDetailSpacing")):
+            self.assertEqual(values(rf'local {lua_name} = \{{([^}}]+)\}}', script),
+                             values(rf'{cpp_name}\[\]\{{([^}}]+)\}}', settings))
+        quality = re.search(r'RenderQualities\{\{(.*?)\}\};', policy, re.DOTALL)
+        self.assertIsNotNone(quality)
+        radii = [float(row.split(',')[1]) for row in re.findall(r'\{([^{}]+)\}', '{' + quality.group(1) + '}')]
+        self.assertEqual(values(r'local radius = \{([^}]+)\}', script), radii)
+        apply = script[script.index("function options_dialog:OnBtnAccept()"):
+                       script.index("function options_dialog:OnBtnCancel()")]
+        preset = apply.index('opt:SaveValues("mm_opt_video_preset")')
+        advanced = apply.index('opt:SaveValues("mm_opt_video_adv")')
+        config = apply.index('console:execute("cfg_save")')
+        for track in ("vk_aniso_track", "vk_density_track", "vk_radius_track"):
+            self.assertLess(preset, advanced)
+            self.assertLess(advanced, apply.index(f"self.{track}:SaveOptValue()"))
+            self.assertLess(apply.index(f"self.{track}:SaveOptValue()"), config)
 
 
 if __name__ == "__main__":
