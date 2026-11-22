@@ -145,16 +145,17 @@ VkResult VKAPI_PTR present(VkQueue, const VkPresentInfoKHR* info)
 VkResult VKAPI_PTR idle(VkDevice) { ++idle_calls; return next_idle; }
 VkResult VKAPI_PTR create_queries(VkDevice, const VkQueryPoolCreateInfo* info,
     const VkAllocationCallbacks*, VkQueryPool* out)
-{ assert(info->queryType == VK_QUERY_TYPE_TIMESTAMP && info->queryCount == 4);
+{ assert(info->queryType == VK_QUERY_TYPE_TIMESTAMP && info->queryCount == 12);
   *out = handle<VkQueryPool>(++next_handle); ++query_creates; return VK_SUCCESS; }
 void VKAPI_PTR destroy_queries(VkDevice, VkQueryPool, const VkAllocationCallbacks*) { ++query_destroys; }
 void VKAPI_PTR reset_queries(VkCommandBuffer, VkQueryPool, uint32_t, uint32_t count)
-{ assert(count == 2); }
+{ assert(count == 6); }
 void VKAPI_PTR write_timestamp(VkCommandBuffer, VkPipelineStageFlagBits, VkQueryPool, uint32_t)
 { ++timestamp_writes; }
 VkResult VKAPI_PTR query_results(VkDevice, VkQueryPool, uint32_t, uint32_t count,
     size_t, void* output, VkDeviceSize, VkQueryResultFlags)
-{ assert(count == 2); auto* ticks = static_cast<uint64_t*>(output); ticks[0] = 100; ticks[1] = 500100; return VK_SUCCESS; }
+{ assert(count == 6); auto* ticks = static_cast<uint64_t*>(output);
+  for (uint32_t i = 0; i < count; ++i) ticks[i] = 100 + 100000 * i; return VK_SUCCESS; }
 VkResult VKAPI_PTR success_command(VkCommandBuffer, VkCommandBufferResetFlags) { return VK_SUCCESS; }
 VkResult VKAPI_PTR begin(VkCommandBuffer, const VkCommandBufferBeginInfo*) { return VK_SUCCESS; }
 VkResult VKAPI_PTR end(VkCommandBuffer) { return VK_SUCCESS; }
@@ -373,6 +374,10 @@ int main()
     next_present = VK_ERROR_SURFACE_LOST_KHR;
     assert(frame.render_frame(clear, status, error) && frame.surface_lost());
     assert(frame.take_gpu_frame_ms().value_or(-1.) == .5);
+    assert(frame.gpu_timing());
+    const auto timing = *frame.gpu_timing();
+    assert(timing.prepass_ms == .1 && timing.lighting_ms == .1 && timing.forward_ms == .1 &&
+        timing.postprocess_ms == .1 && timing.display_ms == .1);
     assert(frame.recreate(physical, surface, {720, 1280}, error) && !frame.surface_lost());
     next_acquire = VK_ERROR_DEVICE_LOST;
     assert(!frame.render_frame(clear, status, error) && frame.device_lost());

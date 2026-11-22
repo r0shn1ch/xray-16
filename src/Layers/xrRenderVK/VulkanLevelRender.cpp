@@ -1728,6 +1728,7 @@ void VulkanLevelRender::End()
     const VulkanFrameSample sample{frame_ms, cpu_ms, game_device_->window().frame().take_gpu_frame_ms(),
                                    textures_ ? textures_->resident_bytes() : 0, geometry_bytes, frame_draw_calls_};
     metrics_.record(sample);
+    log_metrics_.record(sample);
     const bool was_recording = benchmark_.recording();
     const bool eligible = render_world && Device.dwPrecacheFrame == 0 && Device.b_is_Active &&
                           !Device.Paused() && (!Console || !Console->bVisible) &&
@@ -1739,14 +1740,16 @@ void VulkanLevelRender::End()
         Msg("[renderer-vulkan] benchmark.started frames=%u", benchmark_.requested_frames());
     if (metrics_.frame_count() && metrics_.frame_count() % 300 == 0)
     {
-        const auto sample = metrics_.summary();
-        Msg("[renderer-vulkan] frame.progress frames=%llu fps=%.1f frame-p95=%.2fms cpu-p95=%.2fms gpu-p95=%.2fms "
+        const auto sample = log_metrics_.summary();
+        Msg("[renderer-vulkan] frame.progress frames=%llu window=%llu fps=%.1f frame-p95=%.2fms cpu-p95=%.2fms gpu-p95=%.2fms "
             "gpu-missing=%llu textures=%llu geometry=%llu geometry-metric-ms=%.2f draws=%u",
+            static_cast<unsigned long long>(metrics_.frame_count()),
             static_cast<unsigned long long>(sample.frames), sample.fps, sample.frame_p95_ms, sample.cpu_p95_ms,
             sample.gpu_p95_ms.value_or(-1.), static_cast<unsigned long long>(sample.gpu_unavailable_frames),
             static_cast<unsigned long long>(sample.texture_bytes),
             static_cast<unsigned long long>(sample.geometry_bytes), geometry_metric_ms,
             frame_draw_calls_);
+        log_metrics_ = {};
     }
     if (status == FrameStatus::RecreateRequired)
         surface_state_.request_reset();

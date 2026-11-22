@@ -2154,6 +2154,10 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         const auto &timing = window_.frame().cpu_timing();
         Msg("[renderer-vulkan] frame.cpu frame=%u fence=%.3f acquire=%.3f record=%.3f submit=%.3f present=%.3f",
             Device.dwFrame, timing.fence_ms, timing.acquire_ms, timing.record_ms, timing.submit_ms, timing.present_ms);
+        if (const auto& gpu = window_.frame().gpu_timing())
+            Msg("[renderer-vulkan] frame.gpu frame=%u prepass=%.3f lighting=%.3f forward=%.3f postprocess=%.3f display=%.3f",
+                Device.dwFrame, gpu->prepass_ms, gpu->lighting_ms, gpu->forward_ms,
+                gpu->postprocess_ms, gpu->display_ms);
     }
     if (status == FrameStatus::RecreateRequired)
     {

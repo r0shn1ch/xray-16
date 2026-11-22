@@ -240,6 +240,7 @@ private:
     bool reset_in_progress_{};
     bool device_loss_reported_{};
     VulkanFrameMetrics metrics_;
+    VulkanFrameMetrics log_metrics_;
     VulkanFrameBenchmark benchmark_;
     std::string benchmark_context_;
     void save_benchmark();

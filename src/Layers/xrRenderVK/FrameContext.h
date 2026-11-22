@@ -319,6 +319,13 @@ public:
         double fence_ms{}, acquire_ms{}, record_ms{}, submit_ms{}, present_ms{};
     };
     const CpuTiming& cpu_timing() const { return m_cpu_timing; }
+    // Fence-completed graphics timeline intervals, including waits for producer
+    // queues. These are elapsed intervals, not isolated shader execution costs.
+    struct GpuTiming
+    {
+        double prepass_ms{}, lighting_ms{}, forward_ms{}, postprocess_ms{}, display_ms{};
+    };
+    const std::optional<GpuTiming>& gpu_timing() const { return m_last_gpu_timing; }
     // Scene callbacks and borrowed depth use extent(); composition/readback use presentation_extent().
     VkExtent2D extent() const { return m_extent; }
     VkExtent2D presentation_extent() const { return m_presentation_extent; }
@@ -407,10 +414,12 @@ private:
     VkRenderPass m_overlay_pass = VK_NULL_HANDLE;
     VkCommandPool m_command_pool = VK_NULL_HANDLE;
     VkQueryPool m_timestamp_pool = VK_NULL_HANDLE;
+    static constexpr uint32_t TimestampCount = 6;
     float m_timestamp_period_ns{};
     uint32_t m_timestamp_valid_bits{};
     std::array<bool, FramesInFlight> m_timestamp_submitted{};
     std::optional<double> m_last_gpu_ms;
+    std::optional<GpuTiming> m_last_gpu_timing;
     CpuTiming m_cpu_timing{};
     VkExtent2D m_extent{};
     VkExtent2D m_presentation_extent{};
