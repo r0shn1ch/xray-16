@@ -24,6 +24,8 @@ void main()
         for (int x = base.x; x < end.x; ++x)
         {
             float depth = texelFetch(source_depth, ivec2(x, y), 0).r;
+            if (!(depth >= 0.0 && depth <= 1.0))
+                depth = 1.0;
             if (options.reject_dynamic_occluders != 0u &&
                 texelFetch(dynamic_occluder_mask, ivec2(x, y), 0).a > 0.5)
                 depth = 1.0;

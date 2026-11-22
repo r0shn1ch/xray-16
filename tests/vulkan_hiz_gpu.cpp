@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -271,12 +272,13 @@ int run_test(int argc, char** argv)
         !pyramid.view(0) || !pyramid.image(0))
         throw std::runtime_error("Hi-Z pyramid dimensions are wrong");
 
-    for (uint32_t iteration = 0; iteration < 3; ++iteration)
+    for (uint32_t iteration = 0; iteration < 4; ++iteration)
     {
         std::array<float, 15> input{};
         for (uint32_t i = 0; i < input.size(); ++i)
             input[i] = iteration == 0 ? float(i) / 16.f : iteration == 1 ? .25f : .5f;
         if (iteration == 2) input.back() = 1.f; // Far-plane clear on an odd edge.
+        if (iteration == 3) input.front() = std::numeric_limits<float>::quiet_NaN();
         void* mapped{};
         check(vkMapMemory(vk.device, vk.upload_memory, 0, sizeof(input), 0, &mapped));
         std::memcpy(mapped, input.data(), sizeof(input));
@@ -329,10 +331,11 @@ int run_test(int argc, char** argv)
         const std::array<float, 3> expected = iteration == 0
             ? std::array<float, 3>{11.f / 16, 1.f, 1.f}
             : iteration == 1 ? std::array<float, 3>{.25f, 1.f, 1.f}
-                             : std::array<float, 3>{.5f, 1.f, 1.f};
+            : iteration == 2 ? std::array<float, 3>{.5f, 1.f, 1.f}
+                             : std::array<float, 3>{1.f, 1.f, 1.f};
         const float* result = static_cast<const float*>(mapped);
         for (uint32_t i = 0; i < expected.size(); ++i)
-            if (std::abs(result[i] - expected[i]) > 1e-5f)
+            if (!(std::abs(result[i] - expected[i]) <= 1e-5f))
                 throw std::runtime_error("Hi-Z GPU reduction mismatch at " + std::to_string(i) +
                     ": got " + std::to_string(result[i]) + ", expected " + std::to_string(expected[i]));
         vkUnmapMemory(vk.device, vk.readback_memory);
