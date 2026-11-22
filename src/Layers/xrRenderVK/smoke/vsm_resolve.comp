@@ -29,14 +29,15 @@ bool tile_origin(uint slot, uint columns, int size, ivec2 atlas_size, out ivec2 
 
 bool sample_page(sampler2D atlas, bool dynamic_layer, uint slot, uint columns, uint slots,
     uint level, uvec2 page, vec2 local_uv, float depth, float bias,
-    out float visibility)
+    out uint visible_taps)
 {
     int size = int(params.config.z);
     ivec2 atlas_size = textureSize(atlas, 0);
     ivec2 origin;
+    visible_taps = 511u;
     if (!tile_origin(slot, columns, size, atlas_size, origin)) return false;
     ivec2 center = clamp(ivec2(local_uv * float(size)), ivec2(0), ivec2(size - 1));
-    float visible = 0.0;
+    visible_taps = 0u;
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x)
         {
@@ -58,9 +59,9 @@ bool sample_page(sampler2D atlas, bool dynamic_layer, uint slot, uint columns, u
                         p = neighbor_origin + tap - shift * size;
                 }
             }
-            visible += depth <= texelFetch(atlas, p, 0).r + bias ? 1.0 : 0.0;
+            if (depth <= texelFetch(atlas, p, 0).r + bias)
+                visible_taps |= 1u << uint((y + 1) * 3 + x + 1);
         }
-    visibility = visible / 9.0;
     return true;
 }
 void main()
@@ -80,6 +81,8 @@ void main()
             if (depth >= 0.0 && depth <= 1.0)
             {
                 bool static_found = false, dynamic_found = params.dynamic_config.y == 0u;
+                uint static_taps = 511u, dynamic_taps = 511u;
+                uint static_level = 0xffffffffu, dynamic_level = 0xffffffffu;
                 uint axis = params.config.x;
                 for (uint i = 0u; i < params.config.y && !(static_found && dynamic_found); ++i)
                 {
@@ -92,28 +95,30 @@ void main()
                     if (!static_found && index < static_pages.length())
                     {
                         uint slot = static_pages[index];
-                        float sampled;
                         if (slot < params.dynamic_config.z &&
                             sample_page(static_atlas, false, slot, params.config.w, params.dynamic_config.z,
-                                i, page, local_uv, depth, params.zparams.z, sampled))
+                                i, page, local_uv, depth, params.zparams.z, static_taps))
                         {
-                            result = min(result, sampled);
+                            static_level = i;
                             static_found = true;
                         }
                     }
                     if (!dynamic_found && index < dynamic_pages.length())
                     {
                         uint slot = dynamic_pages[index];
-                        float sampled;
                         if (slot < params.dynamic_config.w &&
                             sample_page(dynamic_atlas, true, slot, params.dynamic_config.x, params.dynamic_config.w,
-                                i, page, local_uv, depth, params.zparams.z, sampled))
+                                i, page, local_uv, depth, params.zparams.z, dynamic_taps))
                         {
-                            result = min(result, sampled);
+                            dynamic_level = i;
                             dynamic_found = true;
                         }
                     }
                 }
+                // Matching levels use the same filter footprint. A tap is
+                // visible only if both layers leave it unoccluded.
+                result = float(static_level == dynamic_level ? bitCount(static_taps & dynamic_taps) :
+                    min(bitCount(static_taps), bitCount(dynamic_taps))) / 9.0;
             }
         }
     }
