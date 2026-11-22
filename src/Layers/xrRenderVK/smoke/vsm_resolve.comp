@@ -68,7 +68,8 @@ void main()
 {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy), extent = imageSize(visibility_image);
     if (any(greaterThanEqual(pixel, extent))) return;
-    float z = texelFetch(scene_depth, pixel, 0).r;
+    bool depth_matches = all(equal(textureSize(scene_depth, 0), extent));
+    float z = depth_matches ? texelFetch(scene_depth, pixel, 0).r : 1.0;
     float result = 1.0;
     if (z >= 0.0 && z < 1.0)
     {
@@ -122,7 +123,11 @@ void main()
             }
         }
     }
-    if (params.zparams.w > 0.5)
-        result = min(result, texelFetch(ray_visibility, pixel, 0).r);
+    if (params.zparams.w > 0.5 && all(equal(textureSize(ray_visibility, 0), extent)))
+    {
+        float traced = texelFetch(ray_visibility, pixel, 0).r;
+        if (traced >= 0.0 && traced <= 1.0)
+            result = min(result, traced);
+    }
     imageStore(visibility_image, pixel, vec4(result));
 }
