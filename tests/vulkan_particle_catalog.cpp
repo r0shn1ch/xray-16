@@ -88,6 +88,15 @@ int main()
     assert(parse_particle_catalog({edited.data(), edited.size()}, catalog, error));
     assert(catalog.effect("campfire")->time_limit == -1.f);
     assert(edit_particle_effect_limit(edited, "campfire", 512, error, 2.5f) && edited == timed);
+    const ParticleSpriteMaterial smoke{"particles\\blend", "fx\\campfire_smoke"};
+    assert(edit_particle_effect_limit(edited, "campfire", 128, error, 3.f, &smoke));
+    assert(parse_particle_catalog({edited.data(), edited.size()}, catalog, error));
+    const auto* smoke_effect = catalog.effect("campfire");
+    assert(smoke_effect && smoke_effect->shader == smoke.shader && smoke_effect->texture == smoke.texture &&
+        smoke_effect->max_particles == 128 && smoke_effect->time_limit == 3.f);
+    assert(catalog.group("campfire_group")->effects.size() == 1);
+    const ParticleSpriteMaterial fire{"particle", "fire"};
+    assert(edit_particle_effect_limit(edited, "campfire", 512, error, 2.5f, &fire) && edited == timed);
     const auto collision_library = [&](bool include, bool truncated) {
         Bytes def, values, table, lib;
         chunk(def, 1, version); name(values, "collision"); chunk(def, 2, values); values.clear();

@@ -288,6 +288,8 @@ public:
                             limit_ = static_cast<int>(effect.max_particles);
                             duration_enabled_ = effect.time_limit >= 0.f;
                             duration_ = duration_enabled_ ? effect.time_limit : 1.f;
+                            xr_strcpy(shader_, effect.shader.c_str());
+                            xr_strcpy(texture_, effect.texture.c_str());
                         }
                         ImGui::PopID();
                     }
@@ -296,8 +298,13 @@ public:
                 if (selected_ < catalog_.effects.size())
                 {
                     auto& effect = catalog_.effects[selected_];
-                    ImGui::Text("Shader: %s", effect.shader.c_str());
-                    ImGui::Text("Texture: %s", effect.texture.c_str());
+                    const bool sprite = (effect.flags & 1u) != 0;
+                    if (sprite)
+                    {
+                        ImGui::InputText("Sprite shader", shader_, sizeof(shader_));
+                        ImGui::InputText("Sprite texture", texture_, sizeof(texture_));
+                    }
+                    const bool material_changed = sprite && (effect.shader != shader_ || effect.texture != texture_);
                     ImGui::InputInt("Particle limit", &limit_);
                     ImGui::Checkbox("Limit emission duration", &duration_enabled_);
                     ImGui::BeginDisabled(!duration_enabled_);
@@ -305,16 +312,26 @@ public:
                     ImGui::EndDisabled();
                     const float duration = duration_enabled_ ? duration_ : -1.f;
                     ImGui::BeginDisabled(limit_ < 1 || limit_ > 65535 ||
+                        (sprite && !texture_[0]) ||
                         (duration_enabled_ && (!std::isfinite(duration_) || duration_ < 0.f)) ||
-                        (uint32_t(limit_) == effect.max_particles && duration == effect.time_limit));
-                    if (ImGui::Button("Apply to draft") &&
-                        edit_particle_effect_limit(library_, effect.name, static_cast<uint32_t>(limit_), message_,
-                            duration == effect.time_limit ? std::nullopt : std::optional<float>{duration}))
+                        (!material_changed && uint32_t(limit_) == effect.max_particles && duration == effect.time_limit));
+                    if (ImGui::Button("Apply to draft"))
                     {
-                        effect.max_particles = static_cast<uint32_t>(limit_);
-                        effect.time_limit = duration;
-                        preview_.reset();
-                        dirty_ = true;
+                        ParticleSpriteMaterial material{shader_, texture_};
+                        if (edit_particle_effect_limit(library_, effect.name, static_cast<uint32_t>(limit_), message_,
+                            duration == effect.time_limit ? std::nullopt : std::optional<float>{duration},
+                            material_changed ? &material : nullptr))
+                        {
+                            effect.max_particles = static_cast<uint32_t>(limit_);
+                            effect.time_limit = duration;
+                            if (material_changed)
+                            {
+                                effect.shader = std::move(material.shader);
+                                effect.texture = std::move(material.texture);
+                            }
+                            preview_.reset();
+                            dirty_ = true;
+                        }
                     }
                     ImGui::EndDisabled();
                     draw_preview(effect);
@@ -392,6 +409,7 @@ private:
     ParticleCatalog catalog_;
     std::string message_;
     char copy_name_[64]{"particles_edited"};
+    char shader_[256]{}, texture_[256]{};
     ImGuiTextFilter filter_;
     std::unique_ptr<VulkanParticleEffect> preview_;
     float preview_zoom_{32.f};

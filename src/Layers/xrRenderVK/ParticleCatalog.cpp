@@ -310,7 +310,8 @@ bool parse_particle_catalog(LevelBytes bytes, ParticleCatalog& result, std::stri
     return true;
 }
 bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string& name,
-    uint32_t max_particles, std::string& error, std::optional<float> time_limit)
+    uint32_t max_particles, std::string& error, std::optional<float> time_limit,
+    const ParticleSpriteMaterial* material)
 {
     if (!max_particles || max_particles > 65535 || name.empty())
     {
@@ -326,7 +327,8 @@ bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string
     ParticleCatalog validated;
     if (!parse_particle_catalog(input, validated, error))
         return false;
-    if (!validated.effect(name))
+    const auto* definition = validated.effect(name);
+    if (!definition)
     {
         error = "particle effect is missing or unsupported: " + name;
         return false;
@@ -338,7 +340,7 @@ bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string
         return false;
     }
     LevelBytes target{};
-    LevelBytes record{}, flags{}, duration{};
+    LevelBytes record{}, flags{}, duration{}, sprite{};
     for (const auto& entry : entries)
     {
         parts.clear();
@@ -356,6 +358,7 @@ bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string
         record = entry.second;
         flags = find(parts, 5);
         duration = find(parts, 8);
+        sprite = find(parts, 7);
     }
     if (!target.data)
     {
@@ -371,6 +374,9 @@ bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string
         for (unsigned i = 0; i < sizeof(value); ++i)
             dest[i] = static_cast<uint8_t>(value >> (i * 8));
     };
+    std::vector<uint8_t> updated(record.data, record.data + record.size);
+    const auto local_offset = [&](LevelBytes field) { return static_cast<size_t>(field.data - record.data); };
+    write(updated.data() + local_offset(target), max_particles);
     if (time_limit)
     {
         const bool enabled = *time_limit >= 0.f;
@@ -383,37 +389,55 @@ bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string
         std::memcpy(&bits, &*time_limit, sizeof(bits));
         const uint32_t old_flags = flags.data ? get32(flags.data) : 0;
         const uint32_t new_flags = enabled ? old_flags | effect_time_limited : old_flags & ~effect_time_limited;
-        uint8_t added[24];
-        size_t added_size = 0;
         const auto append = [&](uint32_t id, uint32_t value)
         {
-            write(added + added_size, id);
-            write(added + added_size + 4, 4);
-            write(added + added_size + 8, value);
-            added_size += 12;
+            const auto start = updated.size();
+            updated.resize(start + 12);
+            write(updated.data() + start, id);
+            write(updated.data() + start + 4, 4);
+            write(updated.data() + start + 8, value);
         };
+        if (flags.data) write(updated.data() + local_offset(flags), new_flags);
+        if (enabled && duration.data) write(updated.data() + local_offset(duration), bits);
         if (enabled && !flags.data) append(5, new_flags);
         if (enabled && !duration.data) append(8, bits);
-        const auto table = find(root, 3);
-        if (added_size > UINT32_MAX - table.size)
+    }
+    if (material)
+    {
+        const auto valid_name = [](const std::string& value)
         {
-            error = "effect table exceeds the particle library format limit";
+            return value.size() < 256 && value.find('\0') == std::string::npos;
+        };
+        if (!(definition->flags & 1u) || !valid_name(material->shader) ||
+            material->texture.empty() || !valid_name(material->texture))
+        {
+            error = "invalid sprite material for effect: " + name;
             return false;
         }
-        const auto table_offset = offset(table.data);
-        const auto record_offset = offset(record.data);
-        const auto target_offset = offset(target.data);
-        const auto flags_offset = flags.data ? offset(flags.data) : 0;
-        const auto duration_offset = duration.data ? offset(duration.data) : 0;
-        library.insert(library.begin() + record_offset + record.size, added, added + added_size);
-        write(library.data() + table_offset - 4, static_cast<uint32_t>(table.size + added_size));
-        write(library.data() + record_offset - 4, static_cast<uint32_t>(record.size + added_size));
-        if (flags_offset) write(library.data() + flags_offset, new_flags);
-        if (enabled && duration_offset) write(library.data() + duration_offset, bits);
-        write(library.data() + target_offset, max_particles);
+        const auto start = local_offset(sprite);
+        const auto old_names_size = definition->shader.size() + definition->texture.size() + 2;
+        std::vector<uint8_t> names(material->shader.c_str(), material->shader.c_str() + material->shader.size() + 1);
+        names.insert(names.end(), material->texture.c_str(), material->texture.c_str() + material->texture.size() + 1);
+        updated.erase(updated.begin() + start, updated.begin() + start + old_names_size);
+        updated.insert(updated.begin() + start, names.begin(), names.end());
+        write(updated.data() + start - 4, static_cast<uint32_t>(sprite.size - old_names_size + names.size()));
     }
-    else
-        write(library.data() + offset(target.data), max_particles);
+    const auto table = find(root, 3);
+    const auto remaining_table_bytes = table.size - record.size;
+    if (updated.size() > UINT32_MAX - remaining_table_bytes)
+    {
+        error = "effect table exceeds the particle library format limit";
+        return false;
+    }
+    const auto table_offset = offset(table.data);
+    const auto record_offset = offset(record.data);
+    if (updated.size() > record.size)
+        library.insert(library.begin() + record_offset + record.size, updated.size() - record.size, 0);
+    else if (updated.size() < record.size)
+        library.erase(library.begin() + record_offset + updated.size(), library.begin() + record_offset + record.size);
+    std::copy(updated.begin(), updated.end(), library.begin() + record_offset);
+    write(library.data() + table_offset - 4, static_cast<uint32_t>(remaining_table_bytes + updated.size()));
+    write(library.data() + record_offset - 4, static_cast<uint32_t>(updated.size()));
     error.clear();
     return true;
 }

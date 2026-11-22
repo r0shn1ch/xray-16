@@ -47,6 +47,12 @@ struct ParticleCatalog
 };
 
 bool parse_particle_catalog(LevelBytes bytes, ParticleCatalog& result, std::string& error);
+struct ParticleSpriteMaterial
+{
+    std::string shader, texture;
+};
+
 bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string& name,
-    uint32_t max_particles, std::string& error, std::optional<float> time_limit = {});
+    uint32_t max_particles, std::string& error, std::optional<float> time_limit = {},
+    const ParticleSpriteMaterial* material = nullptr);
 } // namespace xray::render::vulkan
