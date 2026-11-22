@@ -44,7 +44,8 @@ public:
         }
         std::vector<uint32_t> words(binary.size() / sizeof(uint32_t));
         std::memcpy(words.data(), binary.data(), binary.size());
-        max_groups_ = limits.maxComputeWorkGroupCount[0];
+        max_groups_x_ = limits.maxComputeWorkGroupCount[0];
+        max_groups_y_ = limits.maxComputeWorkGroupCount[1];
         return compute_.initialize(device, get, slots, 4, sizeof(Parameters), limits.maxStorageBufferRange,
             cache, words.data(), binary.size(), error);
     }
@@ -62,7 +63,9 @@ public:
         }
         const uint64_t count = candidates * params.slot_count;
         const uint64_t groups = (count - 1) / 64 + 1;
-        if (groups > max_groups_)
+        const uint32_t groups_x = static_cast<uint32_t>(std::min<uint64_t>(groups, max_groups_x_));
+        const uint64_t groups_y = groups_x ? (groups - 1) / groups_x + 1 : 0;
+        if (!groups_y || groups_y > max_groups_y_ || count > UINT32_MAX)
         {
             error = "GPU detail generation exceeds dispatch capacity";
             return false;
@@ -70,11 +73,11 @@ public:
         return compute_.record(command, slot, {{slots.handle(), 0, slots.size()},
             {ground.handle(), 0, ground.size()}, {prototypes.handle(), 0, prototypes.size()},
             {output.handle(), 0, count * sizeof(GeneratedDetail)}}, &params,
-            static_cast<uint32_t>(groups), 1, error);
+            groups_x, static_cast<uint32_t>(groups_y), error);
     }
 
 private:
     StorageComputePass compute_;
-    uint32_t max_groups_{};
+    uint32_t max_groups_x_{}, max_groups_y_{};
 };
 }

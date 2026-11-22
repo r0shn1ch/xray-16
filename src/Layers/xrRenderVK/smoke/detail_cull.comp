@@ -75,12 +75,16 @@ void reserve_instances()
 
 void main()
 {
+    uint group = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    if (group > 0xffffffffu / gl_WorkGroupSize.x)
+        return;
     if (gl_LocalInvocationIndex == 0u)
         group_count = 0u;
     barrier();
     vec3 position;
     float scale, yaw;
-    bool accepted = load_visible_placement(gl_GlobalInvocationID.x, position, scale, yaw);
+    uint index = group * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
+    bool accepted = load_visible_placement(index, position, scale, yaw);
     uint rank = accepted ? atomicAdd(group_count, 1u) : 0u;
     barrier();
     if (gl_LocalInvocationIndex == 0u)

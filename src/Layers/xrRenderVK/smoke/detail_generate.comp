@@ -49,7 +49,10 @@ float triangle_height(Triangle triangle, vec2 position)
 
 void main()
 {
-    uint index = gl_GlobalInvocationID.x;
+    uint group = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    if (group > 0xffffffffu / gl_WorkGroupSize.x)
+        return;
+    uint index = group * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
     uint candidates_per_slot = settings.grid_size * settings.grid_size;
     if (candidates_per_slot == 0u || index >= output_placements.length())
         return;

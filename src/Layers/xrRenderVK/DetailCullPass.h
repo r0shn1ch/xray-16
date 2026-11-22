@@ -2,6 +2,7 @@
 
 #include "DetailInstance.h"
 #include "StorageComputePass.h"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -24,7 +25,8 @@ public:
     {
         update_ = reinterpret_cast<PFN_vkCmdUpdateBuffer>(get(device, "vkCmdUpdateBuffer"));
         barrier_ = reinterpret_cast<PFN_vkCmdPipelineBarrier>(get(device, "vkCmdPipelineBarrier"));
-        max_groups_ = limits.maxComputeWorkGroupCount[0];
+        max_groups_x_ = limits.maxComputeWorkGroupCount[0];
+        max_groups_y_ = limits.maxComputeWorkGroupCount[1];
         std::vector<uint8_t> binary;
         if (!update_ || !barrier_ || !source("vk/detail_cull.cs.spv", binary, error) ||
             binary.size() < 20 || binary.size() % sizeof(uint32_t))
@@ -47,13 +49,15 @@ public:
         uint32_t capacity = 0) const
     {
         const uint64_t groups = (uint64_t(count) + 63) / 64;
+        const uint32_t groups_x = static_cast<uint32_t>(std::min<uint64_t>(groups, max_groups_x_));
+        const uint64_t groups_y = groups_x ? (groups - 1) / groups_x + 1 : 0;
         const uint32_t source_stride = generated_model == UINT32_MAX ? 5 : 8;
         const VkDeviceSize input_bytes = VkDeviceSize(count) * source_stride * sizeof(float);
         if (!capacity)
             capacity = count;
         const VkDeviceSize output_bytes = VkDeviceSize(capacity) * sizeof(DetailInstance);
         if (!command || !count || !index_count || !update_ || !barrier_ ||
-            !input.handle() || !output.handle() || !args.handle() || groups > max_groups_ ||
+            !input.handle() || !output.handle() || !args.handle() || !groups_y || groups_y > max_groups_y_ ||
             input_bytes > input.size() || output_bytes > output.size() ||
             args.size() < sizeof(VkDrawIndexedIndirectCommand))
         {
@@ -97,7 +101,7 @@ public:
         constants.model = generated_model;
         if (!compute_.record(command, slot, {{input.handle(), 0, input_bytes},
                 {output.handle(), 0, output_bytes}, {args.handle(), 0, sizeof(initial)}},
-                &constants, static_cast<uint32_t>(groups), 1, error))
+                &constants, groups_x, static_cast<uint32_t>(groups_y), error))
             return false;
 
         dependency.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -120,6 +124,6 @@ private:
     StorageComputePass compute_;
     PFN_vkCmdUpdateBuffer update_{};
     PFN_vkCmdPipelineBarrier barrier_{};
-    uint32_t max_groups_{};
+    uint32_t max_groups_x_{}, max_groups_y_{};
 };
 }
