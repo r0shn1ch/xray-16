@@ -42,6 +42,15 @@ unsigned idle_calls{}, swapchain_creates{}, swapchain_destroys{}, submissions{},
 VkResult next_acquire = VK_SUCCESS, next_present = VK_SUCCESS;
 VkResult next_idle = VK_SUCCESS, next_submit = VK_SUCCESS;
 VkSwapchainKHR active_swapchain = VK_NULL_HANDLE;
+unsigned hdr_metadata_updates = 0;
+VkHdrMetadataEXT last_hdr_metadata{};
+void VKAPI_PTR set_hdr_metadata(VkDevice, uint32_t count, const VkSwapchainKHR* swapchains,
+    const VkHdrMetadataEXT* metadata)
+{
+    assert(count == 1 && *swapchains == active_swapchain);
+    last_hdr_metadata = *metadata;
+    ++hdr_metadata_updates;
+}
 unsigned frame_generation_ui_registrations{};
 bool frame_generation_ui_registered_after_overlay{};
 VkResult VKAPI_PTR capabilities(VkPhysicalDevice, VkSurfaceKHR, VkSurfaceCapabilitiesKHR* out)
@@ -767,6 +776,7 @@ int main()
     frame.destroy();
     float_bloom_supported=true;
     advertised_format = {VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_COLOR_SPACE_HDR10_ST2084_EXT};
+    world_dispatch.set_hdr_metadata = set_hdr_metadata;
     if (!frame.initialize(physical, device, surface, queue, 0, {640, 360}, world_dispatch, error,
         true, false, false, true, 0.f, 0, {320, 180}, {}, false, VK_QUEUE_GRAPHICS_BIT,
         VK_QUEUE_COMPUTE_BIT, nullptr, nullptr, nullptr, nullptr, false, VK_QUEUE_TRANSFER_BIT,
@@ -776,12 +786,21 @@ int main()
         return 1;
     }
     assert(frame.hdr10_active());
+    frame.update_hdr_metadata(203.f, 1000.f, .05f);
+    assert(hdr_metadata_updates == 1 && last_hdr_metadata.maxLuminance == 1000.f &&
+        last_hdr_metadata.minLuminance == .05f);
+    frame.update_hdr_metadata(203.f, 1000.f, .05f);
+    assert(hdr_metadata_updates == 1);
     advertised_format = {VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
     assert(!frame.recreate(physical, surface, {640, 360}, error));
     assert(error.find("color space changed") != std::string::npos && frame.hdr10_active() &&
         frame.hdr10_surface_available());
+    frame.update_hdr_metadata(203.f, 1000.f, .05f);
+    assert(hdr_metadata_updates == 1);
     advertised_format = {VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_COLOR_SPACE_HDR10_ST2084_EXT};
     assert(frame.recreate(physical, surface, {640, 360}, error) && frame.hdr10_active());
+    frame.update_hdr_metadata(203.f, 1000.f, .05f);
+    assert(hdr_metadata_updates == 2);
     frame.destroy();
     assert(swapchain_creates == swapchain_destroys && fences_created == fences_destroyed &&
         semaphores_created == semaphores_destroyed && query_creates == query_destroys && timestamp_writes >= 4);
