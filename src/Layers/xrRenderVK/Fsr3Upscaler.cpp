@@ -444,6 +444,15 @@ bool Fsr3Upscaler::record(const FrameRecordingContext& frame, std::string& error
         error = "FSR3 dispatch has invalid frame inputs";
         return false;
     }
+    if (!matches_render_extent(frame.extent) ||
+        frame.viewport_offset.x || frame.viewport_offset.y)
+    {
+        error = "FSR3 dispatch extent or viewport does not match the configured inputs";
+        reset_history();
+        if (frame_generation_frame_enabled_)
+            configure_frame_generation(false);
+        return false;
+    }
     if (frame_generation_context_ && !frame_generation_config_valid_)
     {
         error = "FSR could not configure or disable interpolation for this frame";

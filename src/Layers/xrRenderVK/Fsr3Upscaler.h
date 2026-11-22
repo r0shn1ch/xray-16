@@ -40,6 +40,10 @@ public:
     void reset_for_reinitialize();
     void destroy();
     bool ready() const { return context_initialized_; }
+    bool matches_render_extent(VkExtent2D extent) const
+    {
+        return ready() && extent.width == render_extent_.width && extent.height == render_extent_.height;
+    }
     bool active() const { return active_; }
     void set_active(bool active)
     {
