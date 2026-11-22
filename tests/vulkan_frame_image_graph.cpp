@@ -33,6 +33,23 @@ int main()
     const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     std::string error;
     {
+        FrameImageGraph graph;
+        FrameImageGraph::BufferResource buffer;
+        assert(graph.declare_buffer(64, VK_BUFFER_USAGE_TRANSFER_DST_BIT, buffer, error));
+        const auto upload = graph.add_pass("upload virtual buffer", [] {});
+        assert(graph.write_buffer(upload, buffer, BufferUse::TransferDestination, buffer, error));
+        assert(graph.materialize_buffers([](const auto&, auto& out, std::string&) {
+            out.handle = reinterpret_cast<VkBuffer>(uintptr_t(1));
+            out.owner = std::make_shared<int>(0);
+            return true;
+        }, error));
+        const auto sample = graph.add_pass("read transfer-only buffer", [] {});
+        assert(graph.read_buffer(sample, buffer, BufferUse::ComputeRead, error));
+        FrameImageGraph::ExecutionState execution;
+        assert(!graph.begin_execution(execution, error));
+        assert(error.find("transient buffer usage does not support pass read transfer-only buffer") != std::string::npos);
+    }
+    {
         FrameImageGraph virtual_graph;
         FrameImageGraph::Resource image;
         FrameImageGraph::BufferResource buffer;

@@ -228,6 +228,7 @@ public:
 private:
     using PendingBuffers = std::vector<std::pair<size_t, TransientBuffer>>;
     using PendingImages = std::vector<std::pair<size_t, TransientImage>>;
+    bool validate_transient_usage(std::string& error) const;
     bool allocate_buffers(const AllocateBuffer& allocate, const ResourceLifetimes& lifetimes,
         PendingBuffers& allocations, std::string& error) const;
     bool allocate_images(const AllocateImage& allocate, const ResourceLifetimes& lifetimes,

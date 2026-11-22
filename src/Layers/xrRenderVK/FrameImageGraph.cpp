@@ -1057,13 +1057,8 @@ bool FrameImageGraph::build_pass_graph(std::vector<std::set<Pass>>& edges,
     return true;
 }
 
-bool FrameImageGraph::compile_resource_lifetimes(ResourceLifetimes& lifetimes, std::string& error) const
+bool FrameImageGraph::validate_transient_usage(std::string& error) const
 {
-    ResourceLifetimes compiled;
-    std::vector<std::set<Pass>> edges;
-    if (!build_pass_graph(edges, compiled.pass_order, error))
-        return false;
-
     const auto validate_image = [&](const Access& access, const PassInfo& pass)
     {
         const auto usage = m_images[access.resource.index].transient_info.usage;
@@ -1093,12 +1088,8 @@ bool FrameImageGraph::compile_resource_lifetimes(ResourceLifetimes& lifetimes, s
         }
         return true;
     };
-    std::vector<uint32_t> execution_indices(compiled.pass_order.size());
-    for (uint32_t index = 0; index < compiled.pass_order.size(); ++index)
+    for (const PassInfo& pass : m_passes)
     {
-        const Pass id = compiled.pass_order[index];
-        execution_indices[id] = index;
-        const PassInfo& pass = m_passes[id];
         for (const auto& access : pass.reads)
             if (!validate_image(access, pass)) return false;
         for (const auto& access : pass.writes)
@@ -1108,6 +1099,18 @@ bool FrameImageGraph::compile_resource_lifetimes(ResourceLifetimes& lifetimes, s
         for (const auto& access : pass.buffer_writes)
             if (!validate_buffer(access, pass)) return false;
     }
+    return true;
+}
+
+bool FrameImageGraph::compile_resource_lifetimes(ResourceLifetimes& lifetimes, std::string& error) const
+{
+    ResourceLifetimes compiled;
+    std::vector<std::set<Pass>> edges;
+    if (!build_pass_graph(edges, compiled.pass_order, error) || !validate_transient_usage(error))
+        return false;
+    std::vector<uint32_t> execution_indices(compiled.pass_order.size());
+    for (uint32_t index = 0; index < compiled.pass_order.size(); ++index)
+        execution_indices[compiled.pass_order[index]] = index;
     compiled.images.reserve(m_images.size());
     for (const auto& image : m_images)
         compiled.images.push_back(framegraph::resource_lifetime(image.versions, execution_indices));
@@ -2174,6 +2177,7 @@ bool FrameImageGraph::connect_submission_dependencies(FrameSubmissionGraph& subm
 bool FrameImageGraph::begin_execution(ExecutionState& state, std::string& error) const
 {
     state = {};
+    if (!validate_transient_usage(error)) return false;
     for (const Image& image : m_images)
         if (!image.image && (image.versions.size() > 1 || !image.versions.front().readers.empty()))
         {
