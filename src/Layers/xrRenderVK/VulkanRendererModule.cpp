@@ -284,12 +284,20 @@ public:
             ImGui::SameLine();
             ImGui::BeginDisabled(library_.empty());
             if (ImGui::Button("Export copy") && export_particle_document(library_, message_, copy_name_))
+            {
+                saved_library_ = library_;
                 dirty_ = false;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!dirty_);
+            if (ImGui::Button("Discard draft changes") && load_draft(saved_library_))
+                message_ = "Draft restored";
             ImGui::EndDisabled();
             if (!message_.empty())
                 ImGui::TextWrapped("%s", message_.c_str());
 
-            if (!catalog_.effects.empty())
+            if (!catalog_.effects.empty() || !catalog_.groups.empty())
             {
                 filter_.Draw("Filter effects");
                 if (ImGui::BeginListBox("##effects", ImVec2(-1.f, 180.f)))
@@ -672,21 +680,29 @@ private:
     void open(pcstr copy_stem = nullptr)
     {
         std::vector<uint8_t> bytes;
+        if (load_particle_document(bytes, message_, copy_stem) && load_draft(bytes))
+            saved_library_ = std::move(bytes);
+    }
+
+    bool load_draft(const std::vector<uint8_t>& bytes)
+    {
         ParticleCatalog catalog;
-        if (!load_particle_document(bytes, message_, copy_stem) ||
-            !parse_particle_catalog({bytes.data(), bytes.size()}, catalog, message_))
-            return;
-        library_ = std::move(bytes);
+        if (!parse_particle_catalog({bytes.data(), bytes.size()}, catalog, message_))
+            return false;
+        library_ = bytes;
         catalog_ = std::move(catalog);
         selected_ = SIZE_MAX;
         selected_group_ = SIZE_MAX;
         group_item_ = SIZE_MAX;
         adding_group_item_ = false;
         preview_.reset();
+        dirty_ = false;
+        return true;
     }
 
     VulkanLevelRender& renderer_;
     std::vector<uint8_t> library_;
+    std::vector<uint8_t> saved_library_;
     ParticleCatalog catalog_;
     std::string message_;
     char copy_name_[64]{"particles_edited"};
