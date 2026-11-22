@@ -268,6 +268,7 @@ bool BufferResource::initialize(VkDevice device, VkDeviceSize size, VkBufferUsag
         desc.isIndexBuffer = (usage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) != 0;
         desc.isConstantBuffer = (usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) != 0;
         desc.canHaveUAVs = (usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) != 0;
+        desc.canHaveRawViews = (usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) != 0;
         desc.isDrawIndirectArgs = (usage & VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT) != 0;
         desc.initialState = nvrhi::ResourceStates::Common;
         desc.debugName = "xrRenderVK BufferResource";

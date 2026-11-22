@@ -1373,24 +1373,44 @@ int main(int argc, char** argv)
         VkPhysicalDeviceDescriptorIndexingFeatures indexing{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES};
         VkPhysicalDeviceTimelineSemaphoreFeatures timeline{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
         VkPhysicalDeviceBufferDeviceAddressFeatures address{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES};
+        VkPhysicalDeviceSynchronization2Features sync2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES};
         bool bindless = false;
         bool timeline_available = false;
         bool address_available = false;
+        bool sync2_available = false;
+        uint32_t extension_count = 0;
+        vkEnumerateDeviceExtensionProperties(physical, nullptr, &extension_count, nullptr);
+        std::vector<VkExtensionProperties> extensions(extension_count);
+        vkEnumerateDeviceExtensionProperties(physical, nullptr, &extension_count, extensions.data());
+        const bool sync2_extension = std::any_of(extensions.begin(), extensions.end(), [](const auto& extension) {
+            return std::strcmp(extension.extensionName, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME) == 0;
+        });
         if (app.apiVersion >= VK_API_VERSION_1_2 && props.apiVersion >= VK_API_VERSION_1_2)
         {
             VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
             features.pNext = &timeline;
             timeline.pNext = &address;
-            address.pNext = &indexing;
+            address.pNext = sync2_extension ? static_cast<void*>(&sync2) : static_cast<void*>(&indexing);
+            sync2.pNext = &indexing;
             vkGetPhysicalDeviceFeatures2(physical, &features);
             timeline_available = timeline.timelineSemaphore;
             address_available = address.bufferDeviceAddress;
+            sync2_available = sync2_extension && sync2.synchronization2;
             bindless = indexing.runtimeDescriptorArray && indexing.shaderSampledImageArrayNonUniformIndexing &&
                 indexing.descriptorBindingSampledImageUpdateAfterBind && indexing.descriptorBindingPartiallyBound;
-            address.pNext = bindless ? &indexing : nullptr;
-            timeline.pNext = address_available ? static_cast<void*>(&address) : bindless ? static_cast<void*>(&indexing) : nullptr;
+            sync2.pNext = bindless ? &indexing : nullptr;
+            address.pNext = sync2_available ? static_cast<void*>(&sync2) : bindless ? static_cast<void*>(&indexing) : nullptr;
+            timeline.pNext = address_available ? static_cast<void*>(&address) :
+                sync2_available ? static_cast<void*>(&sync2) : bindless ? static_cast<void*>(&indexing) : nullptr;
             di.pNext = timeline_available ? static_cast<void*>(&timeline) :
-                address_available ? static_cast<void*>(&address) : bindless ? static_cast<void*>(&indexing) : nullptr;
+                address_available ? static_cast<void*>(&address) :
+                sync2_available ? static_cast<void*>(&sync2) : bindless ? static_cast<void*>(&indexing) : nullptr;
+        }
+        const char* device_extensions[]{VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME};
+        if (sync2_available)
+        {
+            di.enabledExtensionCount = 1;
+            di.ppEnabledExtensionNames = device_extensions;
         }
         require(vkCreateDevice(physical, &di, nullptr, &f.device) == VK_SUCCESS, "device");
         VkQueue queue{}; vkGetDeviceQueue(f.device, family, 0, &queue);
@@ -1514,7 +1534,7 @@ int main(int argc, char** argv)
         require(result.statuses[0].generation == 1 && result.statuses[0].serial == 1 && result.errors == 0, "simulation status");
         require(commands.acknowledge(result.statuses, error) && commands.snapshot(batch, error) && batch.commands.empty(), error);
         for (size_t i = 0; i < 28; ++i) require(draw_words[i * 4] == 6 && draw_words[i * 4 + 1] == 0, "draw arguments");
-        if (timeline_available)
+        if (timeline_available && sync2_available)
         {
             // Exercise the real NVRHI clear on the same software Vulkan device,
             // then consume its result through the existing native graph path.
@@ -1532,6 +1552,10 @@ int main(int argc, char** argv)
             GpuParticleBuffers nvrhi_buffers;
             require(nvrhi_buffers.initialize(f.device, props.limits, memory, nvrhi_dispatch, capacity, error), error);
             require(nvrhi_buffers.get(GpuParticleBuffers::Status).nvrhi_buffer(), "NVRHI status buffer");
+            GpuParticleCompute nvrhi_compute;
+            require(nvrhi_compute.initialize_from_source(f.device, vkGetDeviceProcAddr, props.limits, 3,
+                VK_NULL_HANDLE, source, error, device.Get()) && nvrhi_compute.nvrhi_initialize_available(),
+                "NVRHI particle compute pipeline");
             GpuParticleReadback nvrhi_readback;
             require(nvrhi_readback.initialize(f.device, vkGetDeviceProcAddr, 2, memory, vk, error), error);
             GpuParticleUpload nvrhi_upload;
@@ -1545,6 +1569,9 @@ int main(int argc, char** argv)
             BufferResource program_copy;
             require(program_copy.initialize(f.device, sizeof(uploaded_program), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, memory, vk, error), error);
+            BufferResource emitter_copy;
+            require(emitter_copy.initialize(f.device, sizeof(fg::GpuPapiEmitter), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, memory, vk, error), error);
             auto list = device->createCommandList();
             require(bool(list), "NVRHI particle test command list");
             list->open();
@@ -1552,6 +1579,8 @@ int main(int argc, char** argv)
             require(native != VK_NULL_HANDLE, "NVRHI particle native command buffer");
             vkCmdFillBuffer(native, nvrhi_buffers.get(GpuParticleBuffers::Status).handle(), 0,
                 nvrhi_buffers.get(GpuParticleBuffers::Status).size(), 0xffffffffu);
+            vkCmdFillBuffer(native, nvrhi_buffers.get(GpuParticleBuffers::Emitters).handle(), 0,
+                nvrhi_buffers.get(GpuParticleBuffers::Emitters).size(), 0xffffffffu);
             uint32_t resolved = 0;
             const auto resolve = [&](VkCommandBuffer candidate) -> nvrhi::ICommandList* {
                 if (candidate != native) return nullptr;
@@ -1561,7 +1590,7 @@ int main(int argc, char** argv)
             uniforms.reset();
             auto nvrhi_constants = constants;
             nvrhi_constants.commandCount = 0;
-            require(frame.record(native, compute, nvrhi_buffers, uniforms, 0, nvrhi_constants, 0, 0, planes,
+            require(frame.record(native, nvrhi_compute, nvrhi_buffers, uniforms, 0, nvrhi_constants, 0, 0, planes,
                 true, error, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT, false, nullptr,
                 FrameSubmissionGraph::InvalidPass, FrameSubmissionGraph::InvalidPass, 0,
                 VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
@@ -1579,6 +1608,16 @@ int main(int argc, char** argv)
                 0, 0, nullptr, 1, &program_barrier, 0, nullptr);
             const VkBufferCopy program_region{0, 0, sizeof(uploaded_program)};
             vkCmdCopyBuffer(native, program_barrier.buffer, program_copy.handle(), 1, &program_region);
+            VkBufferMemoryBarrier emitter_barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+            emitter_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            emitter_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            emitter_barrier.srcQueueFamilyIndex = emitter_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            emitter_barrier.buffer = nvrhi_buffers.get(GpuParticleBuffers::Emitters).handle();
+            emitter_barrier.offset = 0; emitter_barrier.size = sizeof(fg::GpuPapiEmitter);
+            vkCmdPipelineBarrier(native, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0, 0, nullptr, 1, &emitter_barrier, 0, nullptr);
+            const VkBufferCopy emitter_region{0, 0, sizeof(fg::GpuPapiEmitter)};
+            vkCmdCopyBuffer(native, emitter_barrier.buffer, emitter_copy.handle(), 1, &emitter_region);
             vkCmdPipelineBarrier(native, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
                 0, 1, &barrier, 0, nullptr, 0, nullptr);
             list->close();
@@ -1589,13 +1628,16 @@ int main(int argc, char** argv)
             fg::GpuPapiProgram copied_program{};
             require(program_copy.read(0, &copied_program, sizeof(copied_program), error) &&
                 copied_program.maxParticles == uploaded_program.maxParticles, "NVRHI particle upload/readback");
+            fg::GpuPapiEmitter cleared_emitter{};
+            require(emitter_copy.read(0, &cleared_emitter, sizeof(cleared_emitter), error) &&
+                cleared_emitter.active == 0 && cleared_emitter.capacity == 0, "NVRHI particle initialization/readback");
             list = nullptr;
             nvrhi_buffers.destroy();
             device->runGarbageCollection();
-            std::cout << "NVRHI particle upload, buffer clear and native readback passed (device address "
+            std::cout << "NVRHI particle upload, clear, initialization and native readback passed (device address "
                 << (address_available ? "enabled" : "unavailable") << ")\n";
         }
-        else std::cout << "NVRHI particle buffer clear skipped (timeline semaphore unavailable)\n";
+        else std::cout << "NVRHI particle initialization skipped (timeline semaphore or synchronization2 unavailable)\n";
         {
             // Exercise more than two workgroup-width batches, both predicate
             // directions, and the swap-with-last order used by removal.

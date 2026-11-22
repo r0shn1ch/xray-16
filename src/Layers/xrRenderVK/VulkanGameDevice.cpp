@@ -484,6 +484,7 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
                              texture_dispatch_.unmap_memory};
     buffer_upload_.buffer.nvrhi_device = window_.nvrhi_device();
     buffer_upload_.buffer.buffer_device_address_enabled = window_.buffer_device_address_enabled();
+    buffer_upload_.buffer.nvrhi_synchronization2_enabled = window_.nvrhi_synchronization2_enabled();
     buffer_upload_.buffer.graphics_queue_family = physical.graphics_present_family;
     buffer_upload_.buffer.compute_queue_family = physical.compute_queue_family;
     buffer_upload_.buffer.transfer_queue_family = physical.transfer_queue_family;

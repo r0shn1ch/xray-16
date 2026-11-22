@@ -83,6 +83,15 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
     auto dispatch = [&](VkCommandBuffer recording_command, P pass, uint32_t slot,
                         fg::GpuPapiConstants params,
                         VkDescriptorBufferInfo visibility, uint32_t count, std::string& dispatch_error) {
+        if (pass == P::Initialize && compute.nvrhi_initialize_available() && resolve_nvrhi_command_list)
+        {
+            auto* list = resolve_nvrhi_command_list(recording_command);
+            const std::array<nvrhi::IBuffer*, 4> native{{buffers.get(B::Emitters).nvrhi_buffer(),
+                buffers.get(B::ParticleAllocation).nvrhi_buffer(), buffers.get(B::StateAllocation).nvrhi_buffer(),
+                buffers.get(B::Errors).nvrhi_buffer()}};
+            if (list && std::all_of(native.begin(), native.end(), [](auto* buffer) { return buffer != nullptr; }))
+                return compute.record_nvrhi_initialize(*list, &params, sizeof(params), native, count, dispatch_error);
+        }
         VkDescriptorBufferInfo constants{};
         std::vector<VkDescriptorBufferInfo> descriptors;
         if (!uniforms.append(&params, sizeof(params), constants, dispatch_error) ||

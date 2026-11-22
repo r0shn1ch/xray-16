@@ -337,6 +337,9 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
     nvrhi_desc.numDeviceExtensions = enabled_device_info.extensions.size();
     nvrhi_desc.bufferDeviceAddressSupported = enabled_device_info.buffer_device_address;
     m_buffer_device_address_enabled = enabled_device_info.buffer_device_address;
+    m_nvrhi_synchronization2_enabled = enabled_device_info.synchronization2 &&
+        (m_device_proc(m_device, "vkCmdPipelineBarrier2") ||
+            m_device_proc(m_device, "vkCmdPipelineBarrier2KHR"));
     nvrhi_desc.descriptorBindingUniformBufferUpdateAfterBind =
         enabled_device_info.descriptor_binding_uniform_buffer_update_after_bind;
     if (enabled_device_info.timeline_semaphore)
@@ -555,6 +558,7 @@ void VulkanWindowDevice::destroy()
     m_frame.destroy();
     m_nvrhi_device = nullptr;
     m_buffer_device_address_enabled = false;
+    m_nvrhi_synchronization2_enabled = false;
     if (m_device && m_destroy_device)
         m_destroy_device(m_device, nullptr);
     if (m_surface && m_instance && m_destroy_surface)

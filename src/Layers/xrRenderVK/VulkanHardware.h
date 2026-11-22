@@ -56,6 +56,8 @@ struct PhysicalDevice
     RayTracingAvailability ray_tracing{};
     bool bindless_textures{};
     bool timeline_semaphore{};
+    bool synchronization2{};
+    bool synchronization2_extension{};
     bool create_render_pass2_extension{};
     bool depth_stencil_resolve_extension{};
     bool frame_generation_queues{};
@@ -82,6 +84,7 @@ struct EnabledDeviceInfo
     bool buffer_device_address{};
     bool descriptor_binding_uniform_buffer_update_after_bind{};
     bool timeline_semaphore{};
+    bool synchronization2{};
 };
 
 bool select_physical_device(VkInstance instance, VkSurfaceKHR surface,

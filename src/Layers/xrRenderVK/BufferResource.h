@@ -32,6 +32,7 @@ struct BufferResourceDispatch
     uint32_t compute_queue_family = VK_QUEUE_FAMILY_IGNORED;
     uint32_t transfer_queue_family = VK_QUEUE_FAMILY_IGNORED;
     bool buffer_device_address_enabled{};
+    bool nvrhi_synchronization2_enabled{};
 };
 
 // A small mapped-buffer owner for host-visible coherent memory and an

@@ -16,7 +16,8 @@ bool GpuParticleRuntime::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get
     if (!frames || frames > 5) { error = "invalid GPU particle frame count"; return false; }
     if (capacity.commands < capacity.roots)
     { error = "GPU particle command capacity must allow one command per root"; return false; }
-    if (!compute_.initialize_from_source(device, get, limits, frames * 3, cache, source, error) ||
+    if (!compute_.initialize_from_source(device, get, limits, frames * 3, cache, source, error,
+            dispatch.nvrhi_synchronization2_enabled ? dispatch.nvrhi_device : nullptr) ||
         !buffers_.initialize(device, limits, memory, dispatch, capacity, error, buffer_pool) ||
         !frame_.initialize(device, get, error))
     { destroy(); return false; }

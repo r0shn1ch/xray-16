@@ -172,6 +172,21 @@ bool probe_timeline_semaphore_availability(VkPhysicalDevice device,
     return timeline.timelineSemaphore == VK_TRUE;
 }
 
+bool probe_synchronization2_availability(VkPhysicalDevice device,
+    const std::vector<VkExtensionProperties>& extensions, uint32_t api_version,
+    PFN_vkGetPhysicalDeviceFeatures2KHR get_features2)
+{
+    if (!device || !get_features2 || api_version < VK_API_VERSION_1_1 ||
+        (api_version < VK_API_VERSION_1_3 &&
+            !supports_extension(extensions, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME)))
+        return false;
+    VkPhysicalDeviceSynchronization2Features sync{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES};
+    VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    features.pNext = &sync;
+    get_features2(device, &features);
+    return sync.synchronization2 == VK_TRUE;
+}
+
 uint32_t visibility_texture_capacity(const VkPhysicalDeviceProperties& properties,
     const VkPhysicalDeviceDescriptorIndexingProperties& indexing)
 {
@@ -429,6 +444,9 @@ bool select_physical_device(VkInstance instance, VkSurfaceKHR surface, const Har
                 extensions, candidate.properties.apiVersion, vk.get_physical_features2);
             candidate.timeline_semaphore = probe_timeline_semaphore_availability(device,
                 extensions, candidate.properties.apiVersion, vk.get_physical_features2);
+            candidate.synchronization2_extension = supports_extension(extensions, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
+            candidate.synchronization2 = probe_synchronization2_availability(device,
+                extensions, candidate.properties.apiVersion, vk.get_physical_features2);
             candidate.hdr_metadata = supports_extension(extensions, VK_EXT_HDR_METADATA_EXTENSION_NAME);
             candidate.create_render_pass2_extension = supports_extension(extensions,
                 VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME);
@@ -550,6 +568,10 @@ bool create_logical_device(const PhysicalDevice &physical_device, const DeviceDi
         queue_info.pQueuePriorities = priorities.data();
     }
     std::vector<const char*> extensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    const bool use_sync2 = physical_device.synchronization2 &&
+        (effective_api_version >= VK_API_VERSION_1_3 || physical_device.synchronization2_extension);
+    if (use_sync2 && effective_api_version < VK_API_VERSION_1_3)
+        extensions.push_back(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
     if (physical_device.hdr_metadata)
         extensions.push_back(VK_EXT_HDR_METADATA_EXTENSION_NAME);
     if (physical_device.timeline_semaphore && effective_api_version < VK_API_VERSION_1_2)
@@ -607,6 +629,7 @@ bool create_logical_device(const PhysicalDevice &physical_device, const DeviceDi
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
     VkPhysicalDeviceDescriptorIndexingFeatures indexing{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES};
+    VkPhysicalDeviceSynchronization2Features sync2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES};
     if (physical_device.timeline_semaphore)
     {
         timeline.timelineSemaphore = VK_TRUE;
@@ -651,7 +674,13 @@ bool create_logical_device(const PhysicalDevice &physical_device, const DeviceDi
         else
             features2.pNext = &indexing;
     }
-    if (enable_ray_tracing || enable_bindless_textures || physical_device.timeline_semaphore)
+    if (use_sync2)
+    {
+        sync2.synchronization2 = VK_TRUE;
+        sync2.pNext = features2.pNext;
+        features2.pNext = &sync2;
+    }
+    if (enable_ray_tracing || enable_bindless_textures || physical_device.timeline_semaphore || use_sync2)
     {
         features2.features = enabled_features;
         device_info.pEnabledFeatures = nullptr;
@@ -746,6 +775,7 @@ bool create_logical_device(const PhysicalDevice &physical_device, const DeviceDi
         // The engine currently enables sampled-image update-after-bind only.
         enabled_info->descriptor_binding_uniform_buffer_update_after_bind = false;
         enabled_info->timeline_semaphore = physical_device.timeline_semaphore;
+        enabled_info->synchronization2 = use_sync2;
     }
     error.clear();
     return true;
