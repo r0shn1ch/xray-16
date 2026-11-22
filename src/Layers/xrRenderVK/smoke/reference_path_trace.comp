@@ -773,8 +773,16 @@ void main()
     uint row = gl_GlobalInvocationID.y * row_width;
     if (gl_GlobalInvocationID.x >= count - row) return;
     uint index = row + gl_GlobalInvocationID.x;
+    if (index >= uint(next_history.length()))
+        return;
+    if (index >= uint(surfaces.length()) || index >= uint(rays.length()) || index >= uint(radiance.length()))
+    {
+        next_history[index] = TraceHistory(vec4(0.0), vec3(0.0), 0u);
+        return;
+    }
     Surface primary = surfaces[index];
-    if (primary.position_valid.w <= 0.0)
+    if (!(primary.position_valid.w > 0.0) || isinf(primary.position_valid.w) ||
+        !finite3(primary.position_valid.xyz))
     {
         next_history[index] = TraceHistory(vec4(0.0), vec3(0.0), 0u);
         return;
@@ -911,7 +919,7 @@ void main()
     if (parameters.control.y != 0u)
     {
         uint width = max(uint(parameters.sky.w), 1u);
-        uint height = max((count + width - 1u) / width, 1u);
+        uint height = (count - 1u) / width + 1u;
         ivec2 motion_size = textureSize(motion_vectors, 0);
         uint x = index % width;
         uint y = index / width;
@@ -925,7 +933,7 @@ void main()
             ivec2 previous_pixel = clamp(ivec2(previous_uv * vec2(width, height)), ivec2(0),
                 ivec2(int(width) - 1, int(height) - 1));
             uint previous_index = uint(previous_pixel.y) * width + uint(previous_pixel.x);
-            if (previous_index < count)
+            if (previous_index < count && previous_index < uint(previous_history.length()))
             {
                 old_history = previous_history[previous_index];
                 history_matches = old_history.radiance_count.w >= 1.0 &&
