@@ -40,6 +40,7 @@ int main()
     chunk(effect, 4, Bytes{0, 0, 0, 0});
     put_u32(data, 1); chunk(effect, 5, data); data.clear();
     name(data, "particle"); name(data, "fire"); chunk(effect, 7, data); data.clear();
+    chunk(effect, 0x7ff0, Bytes{0xde, 0xad, 0xbe, 0xef});
     chunk(effects, 0, effect);
     Bytes group_version; put_u16(group_version, 3);
     chunk(group, 1, group_version);
@@ -59,6 +60,14 @@ int main()
     assert(catalog.effect("campfire") && catalog.effect("campfire")->max_particles == 64);
     assert(catalog.effect("campfire")->collision_friction == 1.f);
     assert(catalog.group("campfire_group") && catalog.group("campfire_group")->effects.size() == 1);
+    Bytes edited = library;
+    assert(edit_particle_effect_limit(edited, "campfire", 512, error));
+    assert(parse_particle_catalog({edited.data(), edited.size()}, catalog, error));
+    assert(catalog.effect("campfire")->max_particles == 512);
+    const Bytes before_invalid_edit = edited;
+    assert(!edit_particle_effect_limit(edited, "campfire", 65536, error) && edited == before_invalid_edit);
+    assert(!edit_particle_effect_limit(edited, "missing", 128, error) && edited == before_invalid_edit);
+    assert(edit_particle_effect_limit(edited, "campfire", 64, error) && edited == library);
     const auto collision_library = [&](bool include, bool truncated) {
         Bytes def, values, table, lib;
         chunk(def, 1, version); name(values, "collision"); chunk(def, 2, values); values.clear();

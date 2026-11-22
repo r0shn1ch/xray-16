@@ -308,4 +308,57 @@ bool parse_particle_catalog(LevelBytes bytes, ParticleCatalog& result, std::stri
         "legacy defaults applied: velocity_scale=" + std::to_string(defaulted_velocity_scales) : std::string{};
     return true;
 }
+bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string& name,
+    uint32_t max_particles, std::string& error)
+{
+    if (!max_particles || max_particles > 65535 || name.empty())
+    {
+        error = "invalid effect name or particle limit";
+        return false;
+    }
+    const LevelBytes input{library.data(), library.size()};
+    ParticleCatalog validated;
+    if (!parse_particle_catalog(input, validated, error))
+        return false;
+    if (!validated.effect(name))
+    {
+        error = "particle effect is missing or unsupported: " + name;
+        return false;
+    }
+    std::vector<std::pair<uint32_t, LevelBytes>> root, entries, parts;
+    if (!chunks(input, root) || !chunks(find(root, 3), entries))
+    {
+        error = "invalid particle effect table";
+        return false;
+    }
+    LevelBytes target{};
+    for (const auto& entry : entries)
+    {
+        parts.clear();
+        if (!chunks(entry.second, parts))
+            continue;
+        Cursor field{find(parts, 2)};
+        std::string candidate;
+        if (!field.name(candidate) || candidate != name)
+            continue;
+        if (target.data || !unique_chunks(parts) || (target = find(parts, 3)).size != sizeof(uint32_t))
+        {
+            error = "ambiguous or invalid particle effect record: " + name;
+            return false;
+        }
+    }
+    if (!target.data)
+    {
+        error = "particle effect record not found: " + name;
+        return false;
+    }
+
+    // Updating the original chunk preserves fields and action opcodes that
+    // the runtime does not interpret, including unknown legacy chunks.
+    const auto offset = static_cast<size_t>(target.data - input.data);
+    for (uint32_t i = 0; i < sizeof(uint32_t); ++i)
+        library[offset + i] = static_cast<uint8_t>(max_particles >> (i * 8));
+    error.clear();
+    return true;
+}
 } // namespace xray::render::vulkan
