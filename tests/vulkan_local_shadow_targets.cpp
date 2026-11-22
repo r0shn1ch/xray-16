@@ -176,6 +176,8 @@ int main()
     assert(targets.begin_face(frame, 1, 1, shadow, true));
     targets.end(frame.command_buffer);
     targets.remember_face(1, 1, matrix);
+    assert(!targets.cached_face(1, 1, matrix)); // Recorded work is not submitted yet.
+    targets.commit_cache();
     assert(targets.cached_face(1, 1, matrix));
     assert(targets.copy_cached_face(frame, 1, 1) && copies == 1 && barriers == 2);
     assert(targets.begin_face(frame, 1, 1, shadow, false, true));
@@ -201,6 +203,7 @@ int main()
     targets.end(frame.command_buffer);
     assert(targets.copy_cached_face(frame, 1, 1) && copies == 2);
     targets.remember_face(1, 1, matrix);
+    targets.commit_cache();
     targets.layout_tiles(requests);
     assert(targets.cached_face(1, 1, matrix));
     requests[0] = {4096, LocalShadowFaces};

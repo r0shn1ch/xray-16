@@ -100,6 +100,15 @@ void VulkanGameDevice::render_lights(const float (&mvp)[16], bool render_world, 
             // Reserve in distance/ID order even for an offscreen lamp. Otherwise
             // camera rotation transfers its shadow budget to another lamp.
             const int slot = shadows.reserve(light_snapshot.shadow, spot, candidate.distance, light_snapshot.range);
+            if (slot >= 0)
+            {
+                // Keep the atlas layout stable as the camera turns too. An
+                // offscreen reserved light still needs its tile reservation;
+                // otherwise every visible light after it can move in the atlas.
+                const uint32_t resolution = local_shadow_resolution(candidate.distance, light_snapshot.range,
+                    std::abs(Device.mProject._22), extent.height, LocalShadowSize);
+                shadow_tiles[slot] = {resolution, spot ? 1u : LocalShadowFaces};
+            }
             if (!scissor.extent.width || !scissor.extent.height)
                 continue;
             LocalLightUniform local{};
@@ -126,13 +135,6 @@ void VulkanGameDevice::render_lights(const float (&mvp)[16], bool render_world, 
             const float cone = std::clamp(light_snapshot.cone, .15f, 3.f);
             local.direction_cone[3] = std::cos(cone * .5f);
             const bool cast = slot >= 0;
-            if (cast)
-            {
-                const uint32_t resolution = local_shadow_resolution(candidate.distance, light_snapshot.range,
-                    std::abs(Device.mProject._22), extent.height, LocalShadowSize);
-                shadow_tiles[slot] = {resolution,
-                    spot ? 1u : LocalShadowFaces};
-            }
             local.shadow_params[0] = cast ? float(slot * LocalShadowFaces) : 0.f;
             local.shadow_params[1] = LocalShadowReceiverOffset;
             local.shadow_params[2] = cast ? 1.f : 0.f;
