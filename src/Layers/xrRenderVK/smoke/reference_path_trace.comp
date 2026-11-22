@@ -930,7 +930,7 @@ void main()
             (motion.z >= 0.0 && motion.z < 1.0);
         vec2 previous_uv = uv + motion.xy;
         if (valid_previous_depth && finite3(vec3(motion.xy, 0.0)) &&
-            all(greaterThan(previous_uv, vec2(0.0))) &&
+            all(greaterThanEqual(previous_uv, vec2(0.0))) &&
             all(lessThan(previous_uv, vec2(1.0))))
         {
             ivec2 previous_pixel = clamp(ivec2(previous_uv * vec2(width, height)), ivec2(0),
