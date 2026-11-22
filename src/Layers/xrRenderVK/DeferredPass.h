@@ -132,6 +132,13 @@ class DeferredPass
                     VkShaderModule multisampled_light_fragment = VK_NULL_HANDLE,
                     VkShaderModule multisampled_weather_fragment = VK_NULL_HANDLE,
                     VkShaderModule multisampled_local_light_fragment = VK_NULL_HANDLE);
+    // Requires idle GPU and a rebuild of registered game shader pipelines when samples change.
+    bool rebuild_scene_pipelines(VkRenderPass geometry_pass, VkRenderPass light_pass, VkSampleCountFlagBits samples,
+        VkShaderModule geometry_vertex, VkShaderModule geometry_fragment, VkShaderModule alpha_test_fragment,
+        VkShaderModule transparent_fragment, VkShaderModule light_vertex, VkShaderModule light_fragment,
+        VkShaderModule weather_fragment, VkShaderModule local_light_fragment, VkShaderModule water_fragment,
+        VkShaderModule multisampled_light_fragment, VkShaderModule multisampled_weather_fragment,
+        VkShaderModule multisampled_local_light_fragment, std::string& error);
     bool material(VkImageView albedo, VkSampler sampler, VkDescriptorSet &set, std::string &error);
     bool lightmapped_material(VkImageView albedo, VkImageView lightmap, VkSampler sampler, VkDescriptorSet &set,
                               std::string &error, VkSampler lightmap_sampler = VK_NULL_HANDLE);

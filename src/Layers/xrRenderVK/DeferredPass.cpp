@@ -503,25 +503,10 @@ bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRen
         layout.pPushConstantRanges = water_ranges;
         VK_STEP("vkCreatePipelineLayout(water)", vk_.create_pipeline_layout(device, &layout, nullptr, &water_layout_));
     }
-    if (!make_pipeline(device, geometry_pass, geometry_layout_, geometry_vertex, geometry_fragment,
-                       PipelineFlag::Geometry | PipelineFlag::GBuffer, vk_, geometry_, error, "geometry") ||
-        !make_pipeline(device, geometry_pass, geometry_layout_, geometry_vertex, alpha_test_fragment,
-                       PipelineFlag::Geometry | PipelineFlag::GBuffer | PipelineFlag::Cutout, vk_, alpha_test_, error,
-                       "alpha test") ||
-        !make_pipeline(device, light_pass, geometry_layout_, geometry_vertex, transparent_fragment,
-                       PipelineFlag::Geometry | PipelineFlag::Transparent, vk_, transparent_, error, "transparent") ||
-        !make_pipeline(device, light_pass, geometry_layout_, geometry_vertex, transparent_fragment,
-                       PipelineFlag::Geometry | PipelineFlag::Hud, vk_, hud_, error, "HUD") ||
-        !make_pipeline(device, light_pass, light_layout_, light_vertex, light_fragment, PipelineFlag::None, vk_,
-                       lighting_, error, "lighting") ||
-        !make_pipeline(device, light_pass, weather_layout_, light_vertex, weather_fragment, PipelineFlag::None, vk_,
-                       weather_pipeline_, error, "weather"))
-        goto failed;
-    if (multisampled_light_fragment && multisampled_weather_fragment &&
-        (!make_pipeline(device, light_pass, light_layout_, light_vertex, multisampled_light_fragment,
-                        PipelineFlag::None, vk_, multisampled_lighting_, error, "multisample lighting") ||
-         !make_pipeline(device, light_pass, weather_layout_, light_vertex, multisampled_weather_fragment,
-                        PipelineFlag::None, vk_, multisampled_weather_pipeline_, error, "multisample weather")))
+    if (!rebuild_scene_pipelines(geometry_pass, light_pass, dispatch.gbuffer_samples,
+            geometry_vertex, geometry_fragment, alpha_test_fragment, transparent_fragment,
+            light_vertex, light_fragment, weather_fragment, local_light_fragment, water_fragment,
+            multisampled_light_fragment, multisampled_weather_fragment, multisampled_local_light_fragment, error))
         goto failed;
     if (shadow_pass &&
         (!shadow_vertex || !shadow_opaque || !shadow_cutout ||
@@ -529,16 +514,6 @@ bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRen
                         PipelineFlag::Geometry | PipelineFlag::Shadow, vk_, shadow_opaque_, error, "shadow opaque") ||
          !make_pipeline(device, shadow_pass, geometry_layout_, shadow_vertex, shadow_cutout,
                         PipelineFlag::Geometry | PipelineFlag::Shadow, vk_, shadow_cutout_, error, "shadow cutout")))
-        goto failed;
-    if (local_shadow_pass &&
-        (!shadow_pass || !local_light_fragment ||
-         !make_pipeline(device, light_pass, local_light_layout_, light_vertex, local_light_fragment,
-                        PipelineFlag::Additive, vk_, local_light_pipeline_, error, "local light")))
-        goto failed;
-    if (local_shadow_pass && multisampled_local_light_fragment &&
-        !make_pipeline(device, light_pass, local_light_layout_, light_vertex, multisampled_local_light_fragment,
-                       PipelineFlag::Additive, vk_, multisampled_local_light_pipeline_, error,
-                       "multisample local light"))
         goto failed;
     if (shadow_pass && shadow_skin &&
         (!make_pipeline(device, shadow_pass, skinned_layout_, shadow_skin, shadow_opaque,
@@ -551,11 +526,6 @@ bool DeferredPass::initialize(VkDevice device, VkRenderPass geometry_pass, VkRen
         destroy();
         return false;
     }
-    if (water_fragment &&
-        !make_pipeline(device, light_pass, water_layout_, geometry_vertex, water_fragment,
-                       PipelineFlag::Geometry | PipelineFlag::Transparent | PipelineFlag::WaterDepthWrite, vk_,
-                       water_pipeline_, error, "water"))
-        goto failed;
     error.clear();
     return true;
 failed:
@@ -564,6 +534,104 @@ failed:
     destroy();
     return false;
 #undef VK_STEP
+}
+
+bool DeferredPass::rebuild_scene_pipelines(VkRenderPass geometry_pass, VkRenderPass light_pass, VkSampleCountFlagBits samples,
+        VkShaderModule geometry_vertex, VkShaderModule geometry_fragment, VkShaderModule alpha_test_fragment,
+        VkShaderModule transparent_fragment, VkShaderModule light_vertex, VkShaderModule light_fragment,
+        VkShaderModule weather_fragment, VkShaderModule local_light_fragment, VkShaderModule water_fragment,
+        VkShaderModule multisampled_light_fragment, VkShaderModule multisampled_weather_fragment,
+        VkShaderModule multisampled_local_light_fragment, std::string& error)
+{
+    const VkDevice device = device_;
+    const VkRenderPass shadow_pass = shadow_pass_, local_shadow_pass = local_shadow_pass_;
+    auto dispatch = vk_;
+    dispatch.gbuffer_samples = samples;
+    struct Pipelines
+    {
+        VkPipeline geometry_{};
+        VkPipeline alpha_test_{};
+        VkPipeline transparent_{};
+        VkPipeline hud_{};
+        VkPipeline lighting_{};
+        VkPipeline weather_pipeline_{};
+        VkPipeline multisampled_lighting_{};
+        VkPipeline multisampled_weather_pipeline_{};
+        VkPipeline local_light_pipeline_{};
+        VkPipeline multisampled_local_light_pipeline_{};
+        VkPipeline water_pipeline_{};
+    } next;
+    const auto release = [&]
+    {
+        if (next.geometry_) vk_.destroy_pipeline(device_, next.geometry_, nullptr);
+        if (next.alpha_test_) vk_.destroy_pipeline(device_, next.alpha_test_, nullptr);
+        if (next.transparent_) vk_.destroy_pipeline(device_, next.transparent_, nullptr);
+        if (next.hud_) vk_.destroy_pipeline(device_, next.hud_, nullptr);
+        if (next.lighting_) vk_.destroy_pipeline(device_, next.lighting_, nullptr);
+        if (next.weather_pipeline_) vk_.destroy_pipeline(device_, next.weather_pipeline_, nullptr);
+        if (next.multisampled_lighting_) vk_.destroy_pipeline(device_, next.multisampled_lighting_, nullptr);
+        if (next.multisampled_weather_pipeline_) vk_.destroy_pipeline(device_, next.multisampled_weather_pipeline_, nullptr);
+        if (next.local_light_pipeline_) vk_.destroy_pipeline(device_, next.local_light_pipeline_, nullptr);
+        if (next.multisampled_local_light_pipeline_) vk_.destroy_pipeline(device_, next.multisampled_local_light_pipeline_, nullptr);
+        if (next.water_pipeline_) vk_.destroy_pipeline(device_, next.water_pipeline_, nullptr);
+    };
+    if (!make_pipeline(device, geometry_pass, geometry_layout_, geometry_vertex, geometry_fragment,
+                       PipelineFlag::Geometry | PipelineFlag::GBuffer, dispatch, next.geometry_, error, "geometry") ||
+        !make_pipeline(device, geometry_pass, geometry_layout_, geometry_vertex, alpha_test_fragment,
+                       PipelineFlag::Geometry | PipelineFlag::GBuffer | PipelineFlag::Cutout, dispatch, next.alpha_test_, error,
+                       "alpha test") ||
+        !make_pipeline(device, light_pass, geometry_layout_, geometry_vertex, transparent_fragment,
+                       PipelineFlag::Geometry | PipelineFlag::Transparent, dispatch, next.transparent_, error, "transparent") ||
+        !make_pipeline(device, light_pass, geometry_layout_, geometry_vertex, transparent_fragment,
+                       PipelineFlag::Geometry | PipelineFlag::Hud, dispatch, next.hud_, error, "HUD") ||
+        !make_pipeline(device, light_pass, light_layout_, light_vertex, light_fragment, PipelineFlag::None, dispatch,
+                       next.lighting_, error, "lighting") ||
+        !make_pipeline(device, light_pass, weather_layout_, light_vertex, weather_fragment, PipelineFlag::None, dispatch,
+                       next.weather_pipeline_, error, "weather"))
+        goto failed;
+    if (multisampled_light_fragment && multisampled_weather_fragment &&
+        (!make_pipeline(device, light_pass, light_layout_, light_vertex, multisampled_light_fragment,
+                        PipelineFlag::None, dispatch, next.multisampled_lighting_, error, "multisample lighting") ||
+         !make_pipeline(device, light_pass, weather_layout_, light_vertex, multisampled_weather_fragment,
+                        PipelineFlag::None, dispatch, next.multisampled_weather_pipeline_, error, "multisample weather")))
+        goto failed;
+    if (local_shadow_pass &&
+        (!shadow_pass || !local_light_fragment ||
+         !make_pipeline(device, light_pass, local_light_layout_, light_vertex, local_light_fragment,
+                        PipelineFlag::Additive, dispatch, next.local_light_pipeline_, error, "local light")))
+        goto failed;
+    if (local_shadow_pass && multisampled_local_light_fragment &&
+        !make_pipeline(device, light_pass, local_light_layout_, light_vertex, multisampled_local_light_fragment,
+                       PipelineFlag::Additive, dispatch, next.multisampled_local_light_pipeline_, error,
+                       "multisample local light"))
+        goto failed;
+    if (water_fragment &&
+        !make_pipeline(device, light_pass, water_layout_, geometry_vertex, water_fragment,
+                       PipelineFlag::Geometry | PipelineFlag::Transparent | PipelineFlag::WaterDepthWrite, dispatch,
+                       next.water_pipeline_, error, "water"))
+        goto failed;
+    std::swap(geometry_, next.geometry_);
+    std::swap(alpha_test_, next.alpha_test_);
+    std::swap(transparent_, next.transparent_);
+    std::swap(hud_, next.hud_);
+    std::swap(lighting_, next.lighting_);
+    std::swap(weather_pipeline_, next.weather_pipeline_);
+    std::swap(multisampled_lighting_, next.multisampled_lighting_);
+    std::swap(multisampled_weather_pipeline_, next.multisampled_weather_pipeline_);
+    std::swap(local_light_pipeline_, next.local_light_pipeline_);
+    std::swap(multisampled_local_light_pipeline_, next.multisampled_local_light_pipeline_);
+    std::swap(water_pipeline_, next.water_pipeline_);
+    release();
+    geometry_pass_ = geometry_pass;
+    light_pass_ = light_pass;
+    vk_.gbuffer_samples = samples;
+    error.clear();
+    return true;
+failed:
+    release();
+    if (error.empty())
+        error = "missing shader or render pass for Vulkan deferred pipeline";
+    return false;
 }
 
 bool DeferredPass::allocate(VkDescriptorSetLayout layout, VkImageView first, VkImageView second, VkSampler sampler,

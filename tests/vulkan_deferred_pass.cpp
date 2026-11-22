@@ -26,6 +26,8 @@ template <typename T> T handle(uintptr_t value)
 
 uint32_t pipeline_count{}, draw_count{}, descriptor_updates{}, descriptor_frees{};
 uint32_t optional_stage_count{};
+VkSampleCountFlagBits expected_samples = VK_SAMPLE_COUNT_4_BIT;
+bool fail_scene_alpha_pipeline{};
 constexpr VkShaderStageFlags expected_game_stage_flags = VK_SHADER_STAGE_VERTEX_BIT |
     VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT |
     VK_SHADER_STAGE_GEOMETRY_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -114,7 +116,14 @@ VkResult VKAPI_PTR create_pipeline(VkDevice, VkPipelineCache, uint32_t count, co
         return VK_SUCCESS;
     }
     assert(count == 1 && info->stageCount == 2);
-    assert(info->pMultisampleState->rasterizationSamples == VK_SAMPLE_COUNT_4_BIT);
+    assert(info->pMultisampleState->rasterizationSamples == expected_samples);
+    if (expected_samples == VK_SAMPLE_COUNT_2_BIT)
+    {
+        if (fail_scene_alpha_pipeline && info->pStages[1].module == handle<VkShaderModule>(14))
+            return VK_ERROR_INITIALIZATION_FAILED;
+        *output = handle<VkPipeline>(100 + pipeline_count++);
+        return VK_SUCCESS;
+    }
     if (info->pStages[1].module == handle<VkShaderModule>(103) ||
         info->pStages[1].module == handle<VkShaderModule>(105))
     {
@@ -1103,4 +1112,16 @@ int main()
     deferred.release_pose_descriptor(pose);
     deferred.release_gbuffer(detail);
     deferred.release_forward_sets();
+    expected_samples = VK_SAMPLE_COUNT_2_BIT;
+    const auto rebuild = [&] {
+        return deferred.rebuild_scene_pipelines(handle<VkRenderPass>(10), handle<VkRenderPass>(11), expected_samples,
+            handle<VkShaderModule>(12), handle<VkShaderModule>(13), handle<VkShaderModule>(14),
+            handle<VkShaderModule>(18), handle<VkShaderModule>(15), handle<VkShaderModule>(16),
+            handle<VkShaderModule>(17), {}, {}, {}, {}, {}, error);
+    };
+    const auto destroyed_before_rebuild = pipeline_destroys;
+    fail_scene_alpha_pipeline = true;
+    assert(!rebuild() && pipeline_destroys == destroyed_before_rebuild + 1);
+    fail_scene_alpha_pipeline = false;
+    assert(rebuild() && pipeline_destroys == destroyed_before_rebuild + 7);
 }
