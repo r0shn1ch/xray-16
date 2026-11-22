@@ -21,6 +21,17 @@ inline constexpr float SkyDirections[26][3] = {
 
     {-0.42533, 0.85065, -0.30902}, {0.68819, 0.52573, 0.50000},
 };
+inline constexpr auto SkyFaceWeights = [] {
+    std::array<float, 6> weights{};
+    for (const auto& direction : SkyDirections)
+        for (unsigned axis = 0; axis < 3; ++axis)
+        {
+            const float component = direction[axis];
+            const bool negative = component < 0.f;
+            weights[axis + (negative ? 3 : 0)] += negative ? -component : component;
+        }
+    return weights;
+}();
 class ObjectVisibility
 {
     struct Entry

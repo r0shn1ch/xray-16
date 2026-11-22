@@ -192,21 +192,16 @@ void VulkanObjectSpecific::update(const float *ambient, const float *hemi, const
     }
     if (ray_budget)
         *ray_budget -= before - work;
-    auto sky_faces = visibility_.faces(hemi_sky_scale);
+    std::array<float, 6> sky_faces{};
     if (has_probe)
     {
         // Preserve the legacy hemisphere's unoccluded face response.
-        sky_faces.fill(0.f);
-        for (const auto& direction : SkyDirections)
-            for (unsigned axis = 0; axis < 3; ++axis)
-            {
-                const bool negative = direction[axis] < 0.f;
-                sky_faces[axis + (negative ? 3 : 0)] += std::abs(direction[axis]) *
-                    probe_faces[2 * axis + unsigned(negative)] * hemi_sky_scale;
-            }
-        for (auto& value : sky_faces)
-            value = std::clamp(value, 1.f / 255.f, 1.f);
+        for (unsigned face = 0; face < sky_faces.size(); ++face)
+            sky_faces[face] = std::clamp(SkyFaceWeights[face] *
+                probe_faces[2 * (face % 3) + face / 3] * hemi_sky_scale, 1.f / 255.f, 1.f);
     }
+    else if (ray_budget)
+        sky_faces = visibility_.faces(hemi_sky_scale);
     const VulkanObjectLighting lighting =
         evaluate_object_lighting(position, ambient, hemi, sun, mode_, lighting_sources_,
                                  (has_probe || ray_budget) ? &sky_faces : nullptr, hemi_light_scale, hemi_light_flow);
