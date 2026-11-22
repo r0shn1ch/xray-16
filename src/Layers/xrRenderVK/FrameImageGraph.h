@@ -95,6 +95,7 @@ public:
     {
         const FrameImageGraph* graph = nullptr;
         std::vector<BufferStateSegment> buffers;
+        ImageStateTracker transient_images;
     };
 
     bool import_image(VkImage image, const VkImageSubresourceRange& range,

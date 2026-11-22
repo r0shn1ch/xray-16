@@ -2102,9 +2102,15 @@ bool FrameImageGraph::begin_execution(ExecutionState& state, std::string& error)
             error = "Frame image graph: used transient buffer has not been materialized";
             return false;
         }
-    state.graph = this;
     try
     {
+        for (const Image& image : m_images)
+            if (image.allocation &&
+                !state.transient_images.register_image(image.image, image.range, ImageUse::Undefined, error))
+            {
+                state = {};
+                return false;
+            }
         for (size_t i = 0; i < m_buffers.size(); ++i)
         {
             const VkBuffer handle = m_buffers[i].buffer;
@@ -2141,6 +2147,7 @@ bool FrameImageGraph::begin_execution(ExecutionState& state, std::string& error)
         error = "Frame image graph: execution state allocation failed";
         return false;
     }
+    state.graph = this;
     error.clear();
     return true;
 }
@@ -2218,6 +2225,9 @@ bool FrameImageGraph::execute_internal(VkCommandBuffer command, ImageStateTracke
         error = "Frame image graph: execution state belongs to a different graph";
         return false;
     }
+    const auto image_tracker = [&](const Image& image) -> ImageStateTracker& {
+        return image.allocation ? state.transient_images : states;
+    };
     std::vector<std::set<Pass>> edges;
     std::vector<Pass> order;
     if (!build_pass_graph(edges, order, error))
@@ -2314,13 +2324,13 @@ bool FrameImageGraph::execute_internal(VkCommandBuffer command, ImageStateTracke
         for (const Access& access : info.reads)
         {
             const Image& image = m_images[access.resource.index];
-            if (!states.can_transition(image.image, image.range, access.use, error))
+            if (!image_tracker(image).can_transition(image.image, image.range, access.use, error))
                 return false;
         }
         for (const Access& access : info.writes)
         {
             const Image& image = m_images[access.resource.index];
-            if (!states.can_transition(image.image, image.range, access.use, error))
+            if (!image_tracker(image).can_transition(image.image, image.range, access.use, error))
                 return false;
         }
     }
@@ -2351,14 +2361,14 @@ bool FrameImageGraph::execute_internal(VkCommandBuffer command, ImageStateTracke
                     error = "Frame image graph: image ownership acquire does not match its destination pass";
                     return false;
                 }
-                if (!states.acquire_ownership(command, image.image, range,
+                if (!image_tracker(image).acquire_ownership(command, image.image, range,
                         transfer.source_image_use, transfer.destination_image_use,
                         transfer.source_family, transfer.destination_family, vk, error, queue_flags))
                     return false;
                 acquired_image_transfers.insert(&transfer);
             }
         }
-        return states.transition(command, image.image, image.range, access.use, vk, error,
+        return image_tracker(image).transition(command, image.image, image.range, access.use, vk, error,
             queue_flags, semaphore_handoff);
     };
     std::set<std::pair<const QueueGroup::OwnershipTransfer*, VkDeviceSize>> acquired_buffer_segments;
@@ -2526,7 +2536,7 @@ bool FrameImageGraph::execute_internal(VkCommandBuffer command, ImageStateTracke
                 const Image& image = m_images[transfer.resource_id];
                 const VkImageSubresourceRange& range = transfer.image_range.levelCount &&
                     transfer.image_range.layerCount ? transfer.image_range : image.range;
-                if (!states.release_ownership(command, image.image, range,
+                if (!image_tracker(image).release_ownership(command, image.image, range,
                         transfer.source_image_use, transfer.destination_image_use,
                         transfer.source_family, transfer.destination_family, vk, error, queue_flags))
                     return false;
@@ -2644,7 +2654,7 @@ bool FrameImageGraph::execute_internal(VkCommandBuffer command, ImageStateTracke
             if (access.final_use == ImageUse::Undefined)
                 continue;
             const Image& image = m_images[access.resource.index];
-            if (!states.set_render_pass_final_state(image.image, image.range,
+            if (!image_tracker(image).set_render_pass_final_state(image.image, image.range,
                     access.final_use, error))
                 return false;
         }

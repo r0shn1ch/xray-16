@@ -867,9 +867,9 @@ int main(int argc, char** argv)
             require(vkAllocateCommandBuffers(f.device, &ai, &transient_command) == VK_SUCCESS &&
                 vkBeginCommandBuffer(transient_command, &begin) == VK_SUCCESS, "transient buffer begin");
             ImageStateTracker states;
-            require(states.register_image(graph.image_handle(image), color_range, ImageUse::Undefined, error), error);
             require(graph.execute(transient_command, states, {vkCmdPipelineBarrier}, error,
                 frame_queue_flags), error);
+            require(!states.has_image(graph.image_handle(image)), "transient image leaked into imported image state");
             require(vkEndCommandBuffer(transient_command) == VK_SUCCESS, "transient buffer end");
             xray::render::framegraph::ResourceRetirement retirement(2);
             graph.retire_allocations(retirement, 1u << 1);
