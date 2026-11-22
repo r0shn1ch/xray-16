@@ -30,7 +30,7 @@ bool GpuParticleBuffers::initialize(VkDevice device, const VkPhysicalDeviceLimit
         VkDeviceSize(capacity.noise_values) * 16,
         VkDeviceSize(capacity.particles) * 4,
         VkDeviceSize(std::max(capacity.action_states, 1u)) * 4,
-        4, VkDeviceSize(capacity.emitters) * sizeof(GpuPapiStatus), capacity.collision_bytes,
+        4, VkDeviceSize(capacity.roots) * sizeof(GpuPapiStatus), capacity.collision_bytes,
         VkDeviceSize(capacity.roots) * 4, VkDeviceSize(capacity.particles) * 4,
         VkDeviceSize(capacity.programs) * 28 * 16, VkDeviceSize(capacity.programs) * 28 * 4,
         VkDeviceSize(capacity.programs) * 28 * 4};
