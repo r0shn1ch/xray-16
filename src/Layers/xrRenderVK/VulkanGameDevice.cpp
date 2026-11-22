@@ -1563,6 +1563,8 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
                               FrameStatus &status, std::string &error, bool render_world, bool clear_target,
                               const DeferredEnvironment *environment)
 {
+    // A prior frame can abort before its visibility output is consumed.
+    visibility_recorded_ = {};
     float render_mvp[16];
     std::copy_n(mvp, 16, render_mvp);
     if (render_world && temporal_jitter_active_)
