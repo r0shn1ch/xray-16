@@ -44,7 +44,12 @@ public:
         active_ = active;
     }
     void reset_history() { history_valid_ = false; }
-    void commit_frame() { if (active_) history_valid_ = true; }
+    void commit_frame()
+    {
+        if (!active_) return;
+        history_frame_id_ = frame_id_;
+        history_valid_ = true;
+    }
     void set_frame(uint64_t frame_id, float delta_ms, float camera_near, float camera_far,
         float camera_fov_vertical);
     void set_jitter(float x, float y) { jitter_ = {x, y}; }
@@ -115,6 +120,7 @@ private:
     FfxFsr3Context context_{};
 #endif
     uint64_t frame_id_{};
+    uint64_t history_frame_id_{};
     float delta_ms_{16.67f};
     float camera_near_{0.1f};
     float camera_far_{500.f};
