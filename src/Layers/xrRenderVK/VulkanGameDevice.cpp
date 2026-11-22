@@ -1129,8 +1129,11 @@ void VulkanGameDevice::record_hdr_output(const FrameRecordingContext& frame, voi
 {
     auto& self = *static_cast<VulkanGameDevice*>(user);
     auto& pass = *self.hdr_output_passes_[frame.image_index];
-    self.window_.frame().update_hdr_metadata(hdr_paper_white_nits, hdr_peak_nits, hdr_black_nits);
-    pass.set_hdr_calibration(hdr_paper_white_nits, hdr_peak_nits, hdr_black_nits, hdr_calibration_pattern != 0);
+    const float peak = std::clamp(std::isfinite(hdr_peak_nits) ? hdr_peak_nits : 1000.f, 80.f, 10000.f);
+    const float white = std::clamp(std::isfinite(hdr_paper_white_nits) ? hdr_paper_white_nits : 203.f, 80.f, peak);
+    const float black = std::clamp(std::isfinite(hdr_black_nits) ? hdr_black_nits : 0.f, 0.f, white - 1.f);
+    self.window_.frame().update_hdr_metadata(white, peak, black);
+    pass.set_hdr_calibration(white, peak, black, hdr_calibration_pattern != 0);
     pass.record(frame);
 }
 

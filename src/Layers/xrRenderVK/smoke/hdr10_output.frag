@@ -30,7 +30,16 @@ void main()
     float peak = clamp(calibration.peak_nits, 80.0, 10000.0);
     float white = clamp(calibration.paper_white_nits, 80.0, peak);
     float black = clamp(calibration.black_nits, 0.0, white - 1.0);
-    vec3 rgb = max(texture(sampler2D(composed_image, composed_sampler), texcoord).rgb, 0.0);
+    if (calibration.test_pattern > 0.5)
+    {
+        // Three neutral reference patches for black, paper white and peak.
+        float level = texcoord.x < 1.0 / 3.0 ? black : texcoord.x < 2.0 / 3.0 ? white : peak;
+        pixel_color = vec4(encode_pq(vec3(level)), 1.0);
+        return;
+    }
+    vec3 composed = texture(sampler2D(composed_image, composed_sampler), texcoord).rgb;
+    // Keep invalid HDR highlights from contaminating every channel in PQ.
+    vec3 rgb = clamp(mix(composed, vec3(0.0), isnan(composed)), 0.0, 65504.0);
     // Convert the renderer's linear Rec.709 primaries to linear BT.2020.
     const mat3 to_bt2020 = mat3(
         vec3(0.627404, 0.069097, 0.016391),
@@ -45,14 +54,8 @@ void main()
     if (maximum > 1.0)
     {
         float excess = scaled_max - white_range;
-        scaled_max = white_range + headroom * excess / (headroom + excess);
+        scaled_max = white_range + headroom * (excess / (headroom + excess));
     }
     vec3 nits = vec3(black) + rgb * (maximum > 0.0 ? scaled_max / maximum : 0.0);
-    if (calibration.test_pattern > 0.5)
-    {
-        // Three neutral reference patches for black, paper white and peak.
-        float level = texcoord.x < 1.0 / 3.0 ? black : texcoord.x < 2.0 / 3.0 ? white : peak;
-        nits = vec3(level);
-    }
     pixel_color = vec4(encode_pq(nits), 1.0);
 }
