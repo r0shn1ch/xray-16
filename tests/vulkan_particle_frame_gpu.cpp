@@ -1421,7 +1421,7 @@ int main(int argc, char** argv)
         std::cout << "Visibility material resolve " << (bindless ? "passed" : "skipped (no descriptor indexing)") << '\n';
         require(compute.initialize_from_source(f.device, vkGetDeviceProcAddr, props.limits, 3, VK_NULL_HANDLE, source, error), error);
         GpuParticleBuffers buffers;
-        GpuParticleBuffers::Capacity capacity{8, 5, 1, 2, 1, 1, 2, 514, 48};
+        GpuParticleBuffers::Capacity capacity{8, 5, 2, 2, 1, 1, 2, 514, 48};
         require(buffers.initialize(f.device, props.limits, memory, vk, capacity, error), error);
         GpuParticleUniforms uniforms;
         require(uniforms.initialize(f.device, props.limits, memory, vk, 8, error), error);
@@ -1472,7 +1472,7 @@ int main(int argc, char** argv)
             FrameSubmissionGraph::Queue::Copy, true), error);
         fg::GpuPapiConstants constants{}; constants.particleCapacity = 8; constants.emitterCapacity = capacity.emitters;
         constants.rootCapacity = capacity.roots;
-        constants.actionStateCapacity = 1; constants.commandCount = inputs.command_count;
+        constants.actionStateCapacity = capacity.action_states; constants.commandCount = inputs.command_count;
         constants.programCount = inputs.program_count;
         const float planes[24]{};
         require(frame.record(cb, compute, buffers, uniforms, 0, constants, inputs.pending_roots,
@@ -1589,6 +1589,49 @@ int main(int argc, char** argv)
                 result.statuses[0].retired == uint32_t(exhausted) &&
                 result.statuses[0].error == uint32_t(exhausted) &&
                 result.errors == uint32_t(exhausted), "root reservation failure or recovery status");
+        }
+        for (bool exhausted : {true, false})
+        {
+            // State allocation fails after claiming the entire particle pool.
+            // The next generation must be able to reclaim that full range.
+            fg::GpuPapiProgram state_program = program;
+            state_program.maxParticles = 8;
+            state_program.stateCount = 1;
+            fg::GpuPapiEmitter empty_emitters[5]{};
+            uint32_t particle_stamps[8]{};
+            const uint32_t state_stamps[2]{exhausted ? 2u : 0x80000002u, exhausted ? 2u : 0u};
+            fg::GpuPapiCommand create{};
+            create.generation = exhausted ? 4 : 5;
+            create.serial = 1;
+            const uint32_t range[]{0, 1};
+            std::vector<GpuParticleUpload::Update> updates{
+                {&buffers.get(GpuParticleBuffers::Programs), 0, &state_program, sizeof(state_program)},
+                {&buffers.get(GpuParticleBuffers::StateAllocation), 0, state_stamps, sizeof(state_stamps)},
+                {&buffers.get(GpuParticleBuffers::Commands), 0, &create, sizeof(create)},
+                {&buffers.get(GpuParticleBuffers::RootCommands), 0, range, sizeof(range)}};
+            if (exhausted)
+            {
+                updates.push_back({&buffers.get(GpuParticleBuffers::ParticleAllocation), 0,
+                    particle_stamps, sizeof(particle_stamps)});
+                updates.push_back({&buffers.get(GpuParticleBuffers::Emitters), 0,
+                    empty_emitters, sizeof(empty_emitters)});
+            }
+            require(vkAllocateCommandBuffers(f.device, &ai, &cb) == VK_SUCCESS &&
+                vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS, "state allocation begin");
+            require(upload.record(cb, updates, VK_QUEUE_TRANSFER_BIT, error,
+                FrameSubmissionGraph::Queue::Copy), error);
+            uniforms.reset();
+            require(frame.record(cb, compute, buffers, uniforms, 0, constants, 1, 0, planes, false, error), error);
+            require(readback.record(cb, buffers, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT, error), error);
+            submit.pCommandBuffers = &cb;
+            require(vkEndCommandBuffer(cb) == VK_SUCCESS &&
+                vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS &&
+                vkQueueWaitIdle(queue) == VK_SUCCESS && readback.read(result, error), "state allocation submit");
+            require(result.statuses[0].generation == create.generation && result.statuses[0].serial == 1 &&
+                result.statuses[0].retired == uint32_t(exhausted) &&
+                result.statuses[0].error == uint32_t(exhausted) && result.errors == (exhausted ? 4u : 0u),
+                "state reservation failure did not roll back particles or recover past a tentative claim");
+            vkFreeCommandBuffers(f.device, f.pool, 1, &cb);
         }
         std::cout << "GPU particle root rejection/recovery and child pool pressure passed\n";
         uniforms.reset();
