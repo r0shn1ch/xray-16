@@ -28,6 +28,7 @@ uint32_t color_map_updates = 0;
 uint32_t draw_calls = 0;
 uint32_t pushed_constants = 0;
 float expected_aa = 0.f;
+int expected_hdr_mode = -1;
 VkResult pipeline_result = VK_SUCCESS;
 bool expected_additive = false;
 
@@ -244,6 +245,11 @@ void VKAPI_CALL cmd_push_constants(VkCommandBuffer, VkPipelineLayout, VkShaderSt
     assert(size == sizeof(xray::render::vulkan::PostProcessConstants));
     assert(static_cast<const xray::render::vulkan::PostProcessConstants*>(data)->effect[0] == 2.f);
     assert(static_cast<const xray::render::vulkan::PostProcessConstants*>(data)->color_map[3] == expected_aa);
+    if (expected_hdr_mode >= 0)
+    {
+        const auto& grade = static_cast<const xray::render::vulkan::PostProcessConstants*>(data)->grade;
+        assert(grade[0] == 203.f && grade[1] == 1000.f && grade[2] == .05f && grade[3] == float(expected_hdr_mode));
+    }
     ++pushed_constants;
 }
 
@@ -297,6 +303,12 @@ int main()
     pass.record({fake_handle<VkCommandBuffer>(12), VK_NULL_HANDLE, VK_NULL_HANDLE, {0, 480}, 0, 0});
     pass.record({fake_handle<VkCommandBuffer>(12), fake_handle<VkRenderPass>(14), VK_NULL_HANDLE, {640, 480}, 0, 0});
     assert(draw_calls == 3);
+    for (expected_hdr_mode = 0; expected_hdr_mode <= 2; ++expected_hdr_mode)
+    {
+        pass.set_hdr_calibration(203.f, 1000.f, .05f, expected_hdr_mode);
+        pass.record(frame);
+    }
+    assert(draw_calls == 6 && pushed_constants == 6 && created_pipelines == 1 && descriptor_updates == 6);
     pass.destroy();
     assert(destroyed_pipelines == 1);
     assert(destroyed_pipeline_layouts == 1);

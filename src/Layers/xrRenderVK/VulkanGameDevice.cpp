@@ -1135,9 +1135,10 @@ void VulkanGameDevice::record_hdr_output(const FrameRecordingContext& frame, voi
     self.window_.frame().update_hdr_metadata(white, peak, black);
     const bool menu_active = g_pGamePersistent && g_pGamePersistent->m_pMainMenu &&
         g_pGamePersistent->m_pMainMenu->IsActive();
-    // Show the composed frame while the player adjusts calibration values.
+    // Keep controls visible while showing a compact calibration strip.
     const bool calibration_controls_visible = menu_active || (Console && Console->bVisible);
-    pass.set_hdr_calibration(white, peak, black, hdr_calibration_pattern != 0 && !calibration_controls_visible);
+    const int pattern = hdr_calibration_pattern == 0 ? 0 : calibration_controls_visible ? 2 : 1;
+    pass.set_hdr_calibration(white, peak, black, pattern);
     pass.record(frame);
 }
 

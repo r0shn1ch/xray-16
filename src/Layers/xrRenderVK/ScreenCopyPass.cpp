@@ -2,12 +2,12 @@
 
 namespace xray::render::vulkan
 {
-void ScreenCopyPass::set_hdr_calibration(float paper_white, float peak, float black, bool pattern)
+void ScreenCopyPass::set_hdr_calibration(float paper_white, float peak, float black, int pattern)
 {
     m_constants.grade[0] = paper_white;
     m_constants.grade[1] = peak;
     m_constants.grade[2] = black;
-    m_constants.grade[3] = pattern ? 1.f : 0.f;
+    m_constants.grade[3] = static_cast<float>(pattern);
 }
 namespace
 {

@@ -30,13 +30,16 @@ void main()
     float peak = clamp(calibration.peak_nits, 80.0, 10000.0);
     float white = clamp(calibration.paper_white_nits, 80.0, peak);
     float black = clamp(calibration.black_nits, 0.0, white - 1.0);
-    if (calibration.test_pattern > 0.5)
+    bool compact = calibration.test_pattern > 1.5;
+    bool show_pattern = calibration.test_pattern > 0.5 && (!compact || texcoord.y >= 0.75);
+    if (show_pattern)
     {
         // Use a dark surround and separated patches to limit the effect of
         // full-screen luminance limits on the peak-white reference.
         float x = clamp(texcoord.x, 0.0, 0.999999);
+        float y = compact ? (texcoord.y - 0.75) * 4.0 : texcoord.y;
         float level = black;
-        if (texcoord.y >= 0.12 && texcoord.y < 0.36)
+        if (y >= 0.12 && y < 0.36)
         {
             float column = x * 3.0;
             if (abs(fract(column) - 0.5) < 0.34)
@@ -45,9 +48,9 @@ void main()
         else if (abs(fract(x * 8.0) - 0.5) < 0.44)
         {
             float step_index = floor(x * 8.0);
-            if (texcoord.y >= 0.5 && texcoord.y < 0.65)
+            if (y >= 0.5 && y < 0.65)
                 level = min(white, black + step_index * 0.1);
-            else if (texcoord.y >= 0.75 && texcoord.y < 0.9)
+            else if (y >= 0.75 && y < 0.9)
                 level = mix(max(white, peak * 0.8), peak, step_index / 7.0);
         }
         pixel_color = vec4(encode_pq(vec3(level)), 1.0);
