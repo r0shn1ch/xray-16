@@ -68,8 +68,9 @@ def run_model(model, diffuse, normal, output_name, sessions=None):
     return pack_pbr(packed)
 
 
-def pack_pbr(packed):
-    rgb8 = np.rint(np.clip(packed[0].transpose(1, 2, 0), 0.0, 1.0) * 255).astype(np.uint8)
+def pack_pbr(packed, round_to_nearest=True):
+    values = np.clip(packed[0].transpose(1, 2, 0), 0.0, 1.0) * 255
+    rgb8 = (np.rint(values) if round_to_nearest else values).astype(np.uint8)
     if rgb8.shape[2] == 3:
         alpha = np.full((*rgb8.shape[:2], 1), 255, dtype=np.uint8)
         rgb8 = np.concatenate((rgb8, alpha), axis=2)
@@ -166,12 +167,31 @@ def resize_mask(mask, height, width):
     return top * (1 - uy) + bottom * uy
 
 
+def prepare_openxray_inputs(diffuse, normal):
+    # Match PBRTextureConverter's nearest-neighbor mapping, including the
+    # minimum model input extent and independent normal-map resizing.
+    with Image.open(diffuse) as image:
+        rgba = np.asarray(image.convert("RGBA"), dtype=np.uint8)
+    with Image.open(normal) as image:
+        normal_rgba = np.asarray(image.convert("RGBA"), dtype=np.uint8)
+    height, width = max(rgba.shape[0], 32), max(rgba.shape[1], 32)
+
+    def resize_nearest(source):
+        rows = np.arange(height, dtype=np.int64) * source.shape[0] // height
+        cols = np.arange(width, dtype=np.int64) * source.shape[1] // width
+        return source[rows[:, None], cols]
+
+    rgba = resize_nearest(rgba)
+    normal_rgba = resize_nearest(normal_rgba)
+    return (rgba[..., :3].astype(np.float32) / 255.0,
+            normal_rgba[..., :3].astype(np.float32) / 255.0,
+            rgba[..., 3])
+
+
 def run_openxray_models(directory, diffuse, normal, sessions=None, corrected_normal_features=False):
     if normal is None:
         raise ValueError("the OpenXRay model set requires --normal with an RGB tangent-space normal map")
-    rgb, normals = read_rgb(diffuse), read_rgb(normal)
-    if rgb.shape != normals.shape:
-        raise ValueError("normal and diffuse dimensions must match")
+    rgb, normals, alpha = prepare_openxray_inputs(diffuse, normal)
     height, width = rgb.shape[:2]
     diffuse_nchw = rgb.transpose(2, 0, 1)[None]
     normal_nchw = normals.transpose(2, 0, 1)[None] * 2 - 1
@@ -209,11 +229,10 @@ def run_openxray_models(directory, diffuse, normal, sessions=None, corrected_nor
         if values.shape != (1, 1, height, width):
             raise ValueError(f"{name} model must output [1,1,{height},{width}]")
         channels.append(1 / (1 + np.exp(-np.clip(values, -80, 80))))
-    packed = pack_pbr(np.concatenate(channels, axis=1))
-    with Image.open(diffuse) as original:
-        alpha = original.convert("RGBA").getchannel("A")
-    albedo8 = pack_pbr(albedo)
-    albedo8.putalpha(alpha)
+    # The original pipeline casts to u8 after scaling, truncating fractions.
+    packed = pack_pbr(np.concatenate(channels, axis=1), round_to_nearest=False)
+    albedo8 = pack_pbr(albedo, round_to_nearest=False)
+    albedo8.putalpha(Image.fromarray(alpha))
     parallax = packed.getchannel("A").convert("RGBA")
     return packed, albedo8, parallax
 
