@@ -175,11 +175,26 @@ def write_dds(file, image, srgb=False):
     header = [124, flags, height, width, width * 4, 0, mip_count, *([0] * 11),
               32, 4, dx10, 0, 0, 0, 0, 0, caps, 0, 0, 0, 0]
     file.write(b"DDS " + struct.pack("<31I", *header) + struct.pack("<5I", 29 if srgb else 28, 3, 0, 1, 0))
+    linear_rgb = None
+    if srgb and mip_count > 1:
+        encoded = np.asarray(image, dtype=np.float32)[..., :3] / 255.0
+        linear_rgb = np.where(encoded <= 0.04045, encoded / 12.92, ((encoded + 0.055) / 1.055) ** 2.4)
     for level in range(mip_count):
         if level:
             size = (max(1, image.width // 2), max(1, image.height // 2))
-            # DDS alpha can contain parallax. Filter each data channel directly.
-            image = Image.merge("RGBA", tuple(channel.resize(size, Image.Resampling.BOX) for channel in image.split()))
+            if linear_rgb is None:
+                # Packed PBR channels, including parallax alpha, are already linear.
+                image = Image.merge("RGBA", tuple(channel.resize(size, Image.Resampling.BOX) for channel in image.split()))
+            else:
+                linear_rgb = np.stack([
+                    np.asarray(Image.fromarray(channel).resize(size, Image.Resampling.BOX))
+                    for channel in linear_rgb.transpose(2, 0, 1)
+                ], axis=-1)
+                encoded = np.where(linear_rgb <= 0.0031308, linear_rgb * 12.92,
+                                   1.055 * linear_rgb ** (1 / 2.4) - 0.055)
+                alpha = image.getchannel("A").resize(size, Image.Resampling.BOX)
+                image = Image.fromarray(np.rint(np.clip(encoded, 0, 1) * 255).astype(np.uint8))
+                image.putalpha(alpha)
         file.write(image.tobytes())
 
 
