@@ -389,6 +389,7 @@ private:
                     group_item_ = i;
                     group_begin_ = item.begin;
                     group_end_ = item.end;
+                    group_effect_ = item.effect;
                 }
                 ImGui::PopID();
             }
@@ -397,17 +398,35 @@ private:
         if (group_item_ >= group.effects.size())
             return;
         const auto& item = group.effects[group_item_];
+        if (ImGui::BeginCombo("Main effect", group_effect_.c_str()))
+        {
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>(catalog_.effects.size()));
+            while (clipper.Step())
+            {
+                for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
+                {
+                    const auto& name = catalog_.effects[i].name;
+                    ImGui::PushID(i);
+                    if (ImGui::Selectable(name.c_str(), group_effect_ == name))
+                        group_effect_ = name;
+                    ImGui::PopID();
+                }
+            }
+            ImGui::EndCombo();
+        }
         ImGui::InputFloat("Start (s)", &group_begin_, .1f, 1.f, "%.3f");
         ImGui::InputFloat("End (s)", &group_end_, .1f, 1.f, "%.3f");
         ImGui::BeginDisabled(!std::isfinite(group_begin_) || !std::isfinite(group_end_) ||
             group_begin_ < 0.f || group_end_ <= group_begin_ ||
-            (group_begin_ == item.begin && group_end_ == item.end));
-        if (ImGui::Button("Apply timing to draft") &&
-            edit_particle_group_timing(library_, group.name, group_item_, group_begin_, group_end_, message_))
+            (group_begin_ == item.begin && group_end_ == item.end && group_effect_ == item.effect));
+        if (ImGui::Button("Apply group edit to draft") &&
+            edit_particle_group_item(library_, group.name, group_item_, group_begin_, group_end_, message_, &group_effect_))
         {
             auto& edited = catalog_.groups[selected_group_].effects[group_item_];
             edited.begin = group_begin_;
             edited.end = group_end_;
+            edited.effect = group_effect_;
             preview_.reset();
             dirty_ = true;
         }
@@ -564,6 +583,7 @@ private:
     size_t selected_{SIZE_MAX};
     size_t selected_group_{SIZE_MAX};
     size_t group_item_{SIZE_MAX};
+    std::string group_effect_;
     float group_begin_{}, group_end_{};
     int limit_{};
     float duration_{1.f};

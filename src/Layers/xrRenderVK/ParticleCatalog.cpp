@@ -458,8 +458,8 @@ bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string
     return true;
 }
 
-bool edit_particle_group_timing(std::vector<uint8_t>& library, const std::string& name,
-    size_t item_index, float begin, float end, std::string& error)
+bool edit_particle_group_item(std::vector<uint8_t>& library, const std::string& name,
+    size_t item_index, float begin, float end, std::string& error, const std::string* replacement)
 {
     if (!std::isfinite(begin) || !std::isfinite(end) || begin < 0.f || end <= begin)
     {
@@ -470,6 +470,11 @@ bool edit_particle_group_timing(std::vector<uint8_t>& library, const std::string
     ParticleCatalog catalog;
     if (!parse_particle_catalog(input, catalog, error))
         return false;
+    if (replacement && !catalog.effect(*replacement))
+    {
+        error = "Replacement effect not found: " + *replacement;
+        return false;
+    }
     const auto* definition = catalog.group(name);
     if (!definition || item_index >= definition->effects.size())
     {
@@ -478,8 +483,9 @@ bool edit_particle_group_timing(std::vector<uint8_t>& library, const std::string
     }
     std::vector<std::pair<uint32_t, LevelBytes>> root, groups, parts;
     chunks(input, root);
-    chunks(find(root, 4), groups);
-    LevelBytes effects{};
+    const auto table = find(root, 4);
+    chunks(table, groups);
+    LevelBytes record{}, effects{};
     for (const auto& entry : groups)
     {
         parts.clear();
@@ -494,6 +500,7 @@ bool edit_particle_group_timing(std::vector<uint8_t>& library, const std::string
             error = "Ambiguous or invalid group record: " + name;
             return false;
         }
+        record = entry.second;
     }
     Cursor cursor{effects};
     uint32_t count;
@@ -501,6 +508,7 @@ bool edit_particle_group_timing(std::vector<uint8_t>& library, const std::string
     {
         for (uint32_t i = 0; i < count; ++i)
         {
+            const auto item_start = cursor.at;
             ParticleGroupItem item;
             size_t timing_offset;
             if (!read_group_item(cursor, item, timing_offset))
@@ -508,7 +516,31 @@ bool edit_particle_group_timing(std::vector<uint8_t>& library, const std::string
             // Unsupported effects are hidden in the editor, but remain in the file.
             if (!catalog.effect(item.effect) || item_index-- != 0)
                 continue;
-            auto* dest = library.data() + (effects.data - input.data) + timing_offset;
+            const auto effects_offset = static_cast<size_t>(effects.data - input.data);
+            if (replacement && *replacement != item.effect)
+            {
+                const auto old_size = item.effect.size();
+                const auto new_size = replacement->size();
+                constexpr size_t max_catalog_bytes = 64 * 1024 * 1024;
+                if (new_size > max_catalog_bytes - library.size() + old_size)
+                {
+                    error = "Particle catalog exceeds the size limit.";
+                    return false;
+                }
+                const auto table_offset = static_cast<size_t>(table.data - input.data);
+                const auto record_offset = static_cast<size_t>(record.data - input.data);
+                const auto start = effects_offset + item_start;
+                if (new_size > old_size)
+                    library.insert(library.begin() + start + old_size, new_size - old_size, 0);
+                else if (new_size < old_size)
+                    library.erase(library.begin() + start + new_size, library.begin() + start + old_size);
+                std::copy(replacement->begin(), replacement->end(), library.begin() + start);
+                put32(library.data() + table_offset - 4, static_cast<uint32_t>(table.size - old_size + new_size));
+                put32(library.data() + record_offset - 4, static_cast<uint32_t>(record.size - old_size + new_size));
+                put32(library.data() + effects_offset - 4, static_cast<uint32_t>(effects.size - old_size + new_size));
+                timing_offset = timing_offset - old_size + new_size;
+            }
+            auto* dest = library.data() + effects_offset + timing_offset;
             put_real(dest, begin);
             put_real(dest + 4, end);
             error.clear();
