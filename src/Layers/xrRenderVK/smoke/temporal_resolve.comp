@@ -118,7 +118,7 @@ void main()
         vec2 motion = velocity.xy;
         vec2 reprojected_motion = motion + current_jitter - previous_jitter;
         vec2 previous_uv = uv + reprojected_motion;
-        if (all(greaterThan(previous_uv, vec2(0.0))) &&
+        if (all(greaterThanEqual(previous_uv, vec2(0.0))) &&
             all(lessThan(previous_uv, vec2(1.0))))
         {
             vec3 minimum_color = current;

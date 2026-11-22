@@ -27,13 +27,13 @@ void main()
     vec2 current_uv = (vec2(pixel) + 0.5) / vec2(size);
     vec4 clip = vec4(current_uv.x * 2.0 - 1.0, 1.0 - current_uv.y * 2.0, depth, 1.0);
     vec4 world = camera.inverse_view_projection * clip;
-    if (abs(world.w) < 1e-6)
+    if (!(depth >= 0.0) || abs(world.w) < 1e-6 || any(isnan(world)) || any(isinf(world)))
     {
         imageStore(velocity, pixel, vec4(0.0, 0.0, -1.0, 0.0));
         return;
     }
     vec4 previous = camera.previous_view_projection * vec4(world.xyz / world.w, 1.0);
-    if (previous.w <= 1e-6)
+    if (previous.w <= 1e-6 || any(isnan(previous)) || any(isinf(previous)))
     {
         imageStore(velocity, pixel, vec4(0.0, 0.0, -1.0, 0.0));
         return;
