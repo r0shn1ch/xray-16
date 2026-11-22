@@ -1605,20 +1605,34 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         (legacy_bloom_threshold - default_legacy_bloom_threshold), 0.f, 4.f);
     frame_postprocess.bloom[2] = bloom_mip;
     frame_postprocess.bloom[3] = bloom_fast ? -bloom_knee : bloom_knee;
+    float dof_range[3]{};
     if (render_world && dof_strength > 0.f)
     {
         Fmatrix projection;
         std::memcpy(&projection, render_mvp, sizeof(projection));
         float focus_distance = dof_focus;
-        float gameplay_focus{};
-        if (g_pGamePersistent && g_pGamePersistent->GetDofFocusOverride(gameplay_focus) &&
-            std::isfinite(gameplay_focus))
-            focus_distance = gameplay_focus;
-        Fvector focus_point;
-        focus_point.mad(Device.vCameraPosition, Device.vCameraDirection, std::max(focus_distance, .2f));
-        Fvector4 projected;
-        projection.transform(projected, focus_point);
-        frame_postprocess.tint[3] = std::clamp(projected.z, 0.f, 1.f);
+        const auto project_distance = [&](float distance)
+        {
+            Fvector point;
+            point.mad(Device.vCameraPosition, Device.vCameraDirection, std::max(distance, .2f));
+            Fvector4 projected;
+            projection.transform(projected, point);
+            return std::clamp(projected.z, 0.f, 1.f);
+        };
+        Fvector3 gameplay_dof;
+        if (g_pGamePersistent && g_pGamePersistent->GetDofOverride(gameplay_dof) &&
+            std::isfinite(gameplay_dof.y))
+        {
+            focus_distance = gameplay_dof.y;
+            if (std::isfinite(gameplay_dof.x) && std::isfinite(gameplay_dof.z) &&
+                gameplay_dof.x < gameplay_dof.y && gameplay_dof.y < gameplay_dof.z)
+            {
+                dof_range[0] = project_distance(gameplay_dof.x);
+                dof_range[1] = project_distance(gameplay_dof.z);
+                dof_range[2] = 1.f;
+            }
+        }
+        frame_postprocess.tint[3] = project_distance(focus_distance);
     }
     frame_postprocess.add[3] = render_world ? dof_strength : 0.f;
     sun_shafts_active_ = false;
@@ -1663,12 +1677,16 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         exposure_.ready() && render_world && tonemap_enabled ? 1.f : 0.f;
     exposure_.set_parameters(tonemap_middlegray, tonemap_low_luminance,
         Device.fTimeDelta, tonemap_adaptation_speed);
+    // The final compositor only uses bloom intensity. Its remaining bloom
+    // slots carry the gameplay DOF range; the actual bloom passes keep their parameters.
+    auto final_postprocess = frame_postprocess;
+    std::copy_n(dof_range, 3, final_postprocess.bloom + 1);
     for (auto &pass : postprocess_passes_)
-        pass->set_constants(frame_postprocess);
+        pass->set_constants(final_postprocess);
     for (auto& pair : temporal_upscale_passes_)
-        for (auto& pass : pair) pass->set_constants(frame_postprocess);
+        for (auto& pass : pair) pass->set_constants(final_postprocess);
     for (auto& pass : fsr3_upscale_passes_)
-        pass->set_constants(frame_postprocess);
+        pass->set_constants(final_postprocess);
     for (auto &pass : bloom_bright_passes_)
         pass->set_constants(frame_postprocess);
     for (auto &image_passes : bloom_upsample_passes_)

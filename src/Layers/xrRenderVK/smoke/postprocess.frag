@@ -125,7 +125,14 @@ void main()
         // Normalize by the focus disparity so far focus distances retain blur.
         float focus_disparity = max(1.0 - settings.tint.w, 0.00001);
         float defocus = abs(depth - settings.tint.w) / focus_disparity;
-        float amount = smoothstep(0.03, 0.7, defocus) * settings.add.w;
+        float amount = smoothstep(0.03, 0.7, defocus);
+        if (settings.bloom.w == 1.0)
+        {
+            float limit = depth < settings.tint.w ? settings.bloom.y : settings.bloom.z;
+            float width = max(abs(limit - settings.tint.w), 0.000001);
+            amount = smoothstep(0.0, 1.0, abs(depth - settings.tint.w) / width);
+        }
+        amount *= settings.add.w;
         if (amount > 0.001)
         {
             const vec2 taps[8] = vec2[8](

@@ -341,6 +341,9 @@ int main(int argc, char** argv) try
     constants.add[3] = 1.f;
     dof.set_constants(constants);
     constants.tint[3] = .9998f;
+    constants.bloom[1] = .95f;
+    constants.bloom[2] = 1.f;
+    constants.bloom[3] = 1.f;
     focused.set_constants(constants);
     PostProcessConstants scale_constants;
     scale_constants.bloom[0] = 0.f;
