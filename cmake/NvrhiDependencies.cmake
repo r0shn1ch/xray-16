@@ -29,6 +29,9 @@ target_link_libraries(xrNvrhi INTERFACE nvrhi)
 add_library(xrNvrhiVulkan INTERFACE)
 target_link_libraries(xrNvrhiVulkan INTERFACE xrNvrhi)
 if (TARGET nvrhi_vk)
+    # Vulkan backend objects call helpers in the core static archive. Declare
+    # that dependency so consumers also resolve it with one-pass linkers.
+    target_link_libraries(nvrhi_vk PUBLIC nvrhi)
     target_link_libraries(xrNvrhiVulkan INTERFACE nvrhi_vk)
     target_compile_definitions(xrNvrhiVulkan INTERFACE XRAY_HAS_NVRHI_VULKAN)
     if (MSVC)
