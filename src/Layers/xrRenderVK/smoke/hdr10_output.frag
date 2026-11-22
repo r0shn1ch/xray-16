@@ -32,20 +32,23 @@ void main()
     float black = clamp(calibration.black_nits, 0.0, white - 1.0);
     if (calibration.test_pattern > 0.5)
     {
-        // Keep the three reference patches above near-black and highlight steps.
+        // Use a dark surround and separated patches to limit the effect of
+        // full-screen luminance limits on the peak-white reference.
         float x = clamp(texcoord.x, 0.0, 0.999999);
-        float level;
-        if (texcoord.y < 0.5)
-            level = x < 1.0 / 3.0 ? black : x < 2.0 / 3.0 ? white : peak;
-        else if (texcoord.y < 0.75)
+        float level = black;
+        if (texcoord.y >= 0.12 && texcoord.y < 0.36)
+        {
+            float column = x * 3.0;
+            if (abs(fract(column) - 0.5) < 0.34)
+                level = column < 1.0 ? black : column < 2.0 ? white : peak;
+        }
+        else if (abs(fract(x * 8.0) - 0.5) < 0.44)
         {
             float step_index = floor(x * 8.0);
-            level = min(white, black + step_index * 0.1);
-        }
-        else
-        {
-            float step_fraction = floor(x * 8.0) / 7.0;
-            level = mix(max(white, peak * 0.8), peak, step_fraction);
+            if (texcoord.y >= 0.5 && texcoord.y < 0.65)
+                level = min(white, black + step_index * 0.1);
+            else if (texcoord.y >= 0.75 && texcoord.y < 0.9)
+                level = mix(max(white, peak * 0.8), peak, step_index / 7.0);
         }
         pixel_color = vec4(encode_pq(vec3(level)), 1.0);
         return;
