@@ -20,5 +20,15 @@ class DeferredShaderFactory
     // The caller waits for submitted frames before swapping pipelines.
     bool reload_game_pipelines(VkDevice device, const ShaderModuleDispatch &shader_dispatch, DeferredPass &pass, GameShaderResources &resources,
                                std::string &error);
+    bool rebuild_scene(VkDevice device, const ShaderModuleDispatch& shader_dispatch,
+        VkSampleCountFlagBits samples, VkRenderPass geometry_pass, VkRenderPass light_pass,
+        DeferredPass& pass, GameShaderResources& resources, std::string& error,
+        VkRenderPass local_shadow_pass);
+
+private:
+    bool build(VkDevice device, const ShaderModuleDispatch& shader_dispatch, const ScenePassDispatch* initial_dispatch,
+        VkSampleCountFlagBits samples, VkRenderPass geometry_pass, VkRenderPass light_pass,
+        DeferredPass& pass, GameShaderResources& resources, std::string& error,
+        VkRenderPass shadow_pass, VkRenderPass local_shadow_pass);
 };
 } // namespace xray::render::vulkan

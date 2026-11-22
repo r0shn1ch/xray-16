@@ -87,6 +87,23 @@ bool DeferredShaderFactory::create(VkDevice device, const ShaderModuleDispatch &
                                    VkRenderPass geometry_pass, VkRenderPass light_pass, DeferredPass &pass, GameShaderResources &resources, std::string &error,
                                    VkRenderPass shadow_pass, VkRenderPass local_shadow_pass)
 {
+    return build(device, shader_dispatch, &pass_dispatch, pass_dispatch.gbuffer_samples, geometry_pass, light_pass,
+        pass, resources, error, shadow_pass, local_shadow_pass);
+}
+
+bool DeferredShaderFactory::rebuild_scene(VkDevice device, const ShaderModuleDispatch& shader_dispatch,
+    VkSampleCountFlagBits samples, VkRenderPass geometry_pass, VkRenderPass light_pass,
+    DeferredPass& pass, GameShaderResources& resources, std::string& error, VkRenderPass local_shadow_pass)
+{
+    return build(device, shader_dispatch, nullptr, samples, geometry_pass, light_pass,
+        pass, resources, error, VK_NULL_HANDLE, local_shadow_pass);
+}
+
+bool DeferredShaderFactory::build(VkDevice device, const ShaderModuleDispatch& shader_dispatch,
+    const ScenePassDispatch* initial_dispatch, VkSampleCountFlagBits samples,
+    VkRenderPass geometry_pass, VkRenderPass light_pass, DeferredPass& pass, GameShaderResources& resources,
+    std::string& error, VkRenderPass shadow_pass, VkRenderPass local_shadow_pass)
+{
     ShaderModule vertex, fragment, alpha_test_fragment, transparent_fragment, light_vertex, light_fragment, weather_fragment;
     ShaderModule multisampled_light_fragment, multisampled_weather_fragment;
     ShaderModule shadow_vertex, shadow_opaque, shadow_cutout, shadow_skin;
@@ -117,12 +134,20 @@ bool DeferredShaderFactory::create(VkDevice device, const ShaderModuleDispatch &
         !water.initialize(device, shader_dispatch, water_shaders::Fragment,
             sizeof(water_shaders::Fragment), error))
         return false;
-    if (!pass.initialize(device, geometry_pass, light_pass, vertex.handle(), fragment.handle(), alpha_test_fragment.handle(), transparent_fragment.handle(),
-                         light_vertex.handle(), light_fragment.handle(), weather_fragment.handle(), pass_dispatch, error,
+    if (initial_dispatch)
+    {
+        if (!pass.initialize(device, geometry_pass, light_pass, vertex.handle(), fragment.handle(), alpha_test_fragment.handle(), transparent_fragment.handle(),
+                         light_vertex.handle(), light_fragment.handle(), weather_fragment.handle(), *initial_dispatch, error,
                          shadow_pass, shadow_vertex.handle(), shadow_opaque.handle(), shadow_cutout.handle(),
                          local_shadow_pass, local_light.handle(), water.handle(), shadow_skin.handle(),
                          multisampled_light_fragment.handle(), multisampled_weather_fragment.handle(),
                          multisampled_local_light.handle()))
+            return false;
+    }
+    else if (!pass.rebuild_scene_pipelines(geometry_pass, light_pass, samples, vertex.handle(), fragment.handle(),
+        alpha_test_fragment.handle(), transparent_fragment.handle(), light_vertex.handle(), light_fragment.handle(),
+        weather_fragment.handle(), local_light.handle(), water.handle(), multisampled_light_fragment.handle(),
+        multisampled_weather_fragment.handle(), multisampled_local_light.handle(), error))
         return false;
     ShaderModule distortion_vertex, distortion_fragment, distortion_composite;
     if (!distortion_vertex.initialize(device, shader_dispatch, distortion_shaders::Vertex,

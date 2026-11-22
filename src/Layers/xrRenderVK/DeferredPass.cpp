@@ -2306,11 +2306,21 @@ bool DeferredPass::initialize_distortion(VkShaderModule vertex, VkShaderModule f
         error = "distortion requires initialized scene descriptors and shader stages";
         return false;
     }
-    return make_pipeline(device_, light_pass_, water_layout_, vertex, fragment,
-                         PipelineFlag::Geometry | PipelineFlag::Transparent, vk_, distortion_pipeline_, error,
-                         "particle distortion") &&
-           make_pipeline(device_, light_pass_, water_layout_, screen_vertex, composite,
-                         PipelineFlag::None, vk_, distortion_composite_, error, "distortion composite");
+    VkPipeline distortion{}, fullscreen{};
+    const bool built = make_pipeline(device_, light_pass_, water_layout_, vertex, fragment,
+        PipelineFlag::Geometry | PipelineFlag::Transparent, vk_, distortion, error, "particle distortion") &&
+        make_pipeline(device_, light_pass_, water_layout_, screen_vertex, composite,
+            PipelineFlag::None, vk_, fullscreen, error, "distortion composite");
+    if (built)
+    {
+        std::swap(distortion_pipeline_, distortion);
+        std::swap(distortion_composite_, fullscreen);
+    }
+    if (distortion)
+        vk_.destroy_pipeline(device_, distortion, nullptr);
+    if (fullscreen)
+        vk_.destroy_pipeline(device_, fullscreen, nullptr);
+    return built;
 }
 
 bool DeferredPass::composite_distortion(const FrameRecordingContext &frame) const
