@@ -11,6 +11,7 @@
 #include "ParticleCatalog.h"
 #include "xrEngine/XR_IOConsole.h"
 #include "xrEngine/xr_ioc_cmd.h"
+#include "xrEngine/editor_base.h"
 #include <SDL.h>
 #include <cstring>
 #include <algorithm>
@@ -178,6 +179,127 @@ private:
     VulkanLevelRender& renderer_;
 };
 
+bool load_particle_document(std::vector<uint8_t>& library, std::string& error)
+{
+    string_path path;
+    FS.update_path(path, _game_data_, "particles.xr");
+    IReader* source = FS.r_open(path);
+    if (!source)
+    {
+        error = "could not open particles.xr";
+        return false;
+    }
+    const bool loaded = editable_particle_library_bytes(*source, library, error);
+    FS.r_close(source);
+    return loaded;
+}
+
+bool export_particle_document(const std::vector<uint8_t>& library, std::string& message)
+{
+    string_path path;
+    FS.update_path(path, "$app_data_root$", "particles_edited.xr");
+    convert_path_separators(path);
+    FILE* file = std::fopen(path, "wbx");
+    if (!file)
+    {
+        message = std::string("could not create export (existing files are preserved): ") + path;
+        return false;
+    }
+    const bool wrote = std::fwrite(library.data(), 1, library.size(), file) == library.size();
+    const bool closed = std::fclose(file) == 0;
+    if (!wrote || !closed)
+    {
+        std::remove(path);
+        message = std::string("incomplete particle export: ") + path;
+        return false;
+    }
+    message = std::string("Exported particle library to ") + path;
+    return true;
+}
+
+class VulkanParticleEditor final : public xray::editor::ide_tool
+{
+public:
+    pcstr tool_name() const override { return "Particle Editor"; }
+
+    void on_tool_frame() override
+    {
+        if (ImGui::Begin(tool_name(), &get_open_state(), get_default_window_flags()))
+        {
+            ImGui::BeginDisabled(dirty_);
+            if (ImGui::Button("Open particles.xr"))
+                open();
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!dirty_);
+            if (ImGui::Button("Export copy") && export_particle_document(library_, message_))
+                dirty_ = false;
+            ImGui::EndDisabled();
+            if (!message_.empty())
+                ImGui::TextWrapped("%s", message_.c_str());
+
+            if (!catalog_.effects.empty())
+            {
+                filter_.Draw("Filter effects");
+                if (ImGui::BeginListBox("##effects", ImVec2(-1.f, 180.f)))
+                {
+                    for (size_t i = 0; i < catalog_.effects.size(); ++i)
+                    {
+                        const auto& effect = catalog_.effects[i];
+                        if (!filter_.PassFilter(effect.name.c_str()))
+                            continue;
+                        ImGui::PushID(static_cast<int>(i));
+                        if (ImGui::Selectable(effect.name.c_str(), selected_ == i))
+                        {
+                            selected_ = i;
+                            limit_ = static_cast<int>(effect.max_particles);
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndListBox();
+                }
+                if (selected_ < catalog_.effects.size())
+                {
+                    auto& effect = catalog_.effects[selected_];
+                    ImGui::Text("Shader: %s", effect.shader.c_str());
+                    ImGui::Text("Texture: %s", effect.texture.c_str());
+                    ImGui::InputInt("Particle limit", &limit_);
+                    ImGui::BeginDisabled(limit_ < 1 || limit_ > 65535 || uint32_t(limit_) == effect.max_particles);
+                    if (ImGui::Button("Apply to draft") &&
+                        edit_particle_effect_limit(library_, effect.name, static_cast<uint32_t>(limit_), message_))
+                    {
+                        effect.max_particles = static_cast<uint32_t>(limit_);
+                        dirty_ = true;
+                    }
+                    ImGui::EndDisabled();
+                }
+            }
+        }
+        ImGui::End();
+    }
+
+private:
+    void open()
+    {
+        std::vector<uint8_t> bytes;
+        ParticleCatalog catalog;
+        if (!load_particle_document(bytes, message_) ||
+            !parse_particle_catalog({bytes.data(), bytes.size()}, catalog, message_))
+            return;
+        library_ = std::move(bytes);
+        catalog_ = std::move(catalog);
+        selected_ = SIZE_MAX;
+    }
+
+    std::vector<uint8_t> library_;
+    ParticleCatalog catalog_;
+    std::string message_;
+    ImGuiTextFilter filter_;
+    size_t selected_{SIZE_MAX};
+    int limit_{};
+    bool dirty_{};
+};
+
 class VulkanParticleLimitCommand final : public IConsole_Command
 {
 public:
@@ -202,41 +324,14 @@ public:
             return;
         }
 
-        string_path path;
-        FS.update_path(path, _game_data_, "particles.xr");
-        IReader* source = FS.r_open(path);
-        if (!source)
-        {
-            Msg("! [renderer-vulkan] could not open particles.xr");
-            return;
-        }
         std::vector<uint8_t> library;
         std::string error;
-        const bool loaded = editable_particle_library_bytes(*source, library, error);
-        FS.r_close(source);
-        if (!loaded || !edit_particle_effect_limit(library, input.substr(0, name_end + 1), limit, error))
-        {
+        if (!load_particle_document(library, error) ||
+            !edit_particle_effect_limit(library, input.substr(0, name_end + 1), limit, error) ||
+            !export_particle_document(library, error))
             Msg("! [renderer-vulkan] particle export failed: %s", error.c_str());
-            return;
-        }
-
-        FS.update_path(path, "$app_data_root$", "particles_edited.xr");
-        convert_path_separators(path);
-        FILE* file = std::fopen(path, "wbx");
-        if (!file)
-        {
-            Msg("! [renderer-vulkan] could not create %s (existing exports are preserved)", path);
-            return;
-        }
-        const bool wrote = std::fwrite(library.data(), 1, library.size(), file) == library.size();
-        const bool closed = std::fclose(file) == 0;
-        if (!wrote || !closed)
-        {
-            std::remove(path);
-            Msg("! [renderer-vulkan] incomplete particle export: %s", path);
-            return;
-        }
-        Msg("[renderer-vulkan] exported particle library to %s", path);
+        else
+            Msg("[renderer-vulkan] %s", error.c_str());
     }
 
     void Info(TInfo& info) override { xr_strcpy(info, "<effect name> <1..65535> (exports particles_edited.xr)"); }
@@ -396,6 +491,7 @@ class VulkanRendererModule final : public RendererModule
     VulkanLevelRender renderer{device};
     VulkanRenderFactory factory{device};
     VulkanDrawUtils draw_utils{device};
+    std::unique_ptr<VulkanParticleEditor> particle_editor;
 #ifdef DEBUG
     VulkanDebugRender debug_render{device};
 #endif
@@ -472,6 +568,7 @@ class VulkanRendererModule final : public RendererModule
         R_ASSERT2(!GEnv.Render || GEnv.Render == &renderer, "Another renderer is still bound to GEnv");
         GEnv.Render = &renderer;
         register_vulkan_options(renderer);
+        particle_editor = std::make_unique<VulkanParticleEditor>();
         Msg("[renderer-vulkan] module.selected mode=%s", mode);
         GEnv.RenderFactory = &factory;
         GEnv.UIRender = &device.ui();
@@ -486,6 +583,7 @@ class VulkanRendererModule final : public RendererModule
         if (GEnv.Render != &renderer)
             return;
         Msg("[renderer-vulkan] module.clear begin");
+        particle_editor.reset();
         renderer.Destroy();
         GEnv.DRender = nullptr;
         GEnv.DU = nullptr;
