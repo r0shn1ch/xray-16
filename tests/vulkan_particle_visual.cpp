@@ -214,6 +214,8 @@ int main()
     GpuParticleEmitters emitter_manager(programs, emitter_commands, 1);
     GpuParticleEmitters::Handle emitter_handle{};
     assert(emitter_manager.create(translated_def, emitter_handle, program_error));
+    uint32_t visible_root{};
+    assert(!emitter_manager.visible_index(emitter_handle, visible_root));
     assert(emitter_manager.play(emitter_handle, program_error));
     assert(!emitter_manager.children(emitter_handle, GPU_PAPI_INVALID, GPU_PAPI_INVALID,
         GPU_PAPI_INVALID, 32, program_error));
@@ -232,6 +234,15 @@ int main()
     emitter_status[0].serial = 5;
     assert(emitter_commands.acknowledge(emitter_status, program_error) && emitter_manager.apply(emitter_status, program_error) &&
         emitter_manager.snapshot(emitter_handle, read_status));
+    assert(emitter_manager.visible_index(emitter_handle, visible_root) && visible_root == 0);
+    emitter_status[0].error = emitter_status[0].retired = 1;
+    assert(emitter_commands.acknowledge(emitter_status, program_error) &&
+        emitter_manager.apply(emitter_status, program_error));
+    assert(!emitter_manager.visible_index(emitter_handle, visible_root));
+    GpuParticleEmitters::Handle replacement{};
+    assert(emitter_manager.create(translated_def, replacement, program_error) && replacement != emitter_handle);
+    assert(!emitter_manager.visible_index(replacement, visible_root));
+    emitter_status[0].error = emitter_status[0].retired = 0;
     {
         GpuParticleCommands drain_commands(1);
         GpuParticleEmitters drain_emitters(programs, drain_commands, 1);
@@ -313,6 +324,12 @@ int main()
         assert(group_gpu_commands.snapshot(group_batch, program_error) && group_batch.commands.size() == 4);
         assert(group_batch.commands[0].type == 0 && group_batch.commands[1].type == 7 &&
             group_batch.commands[1].p1 == 0 && group_batch.commands[2].type == 0 && group_batch.commands[3].type == 7);
+        assert(!instance.effects()[0]->gpu_draw_compatible() && !instance.effects()[1]->gpu_draw_compatible());
+        std::vector<xray::render::fg::GpuPapiStatus> group_statuses(4);
+        group_statuses[0].generation = group_statuses[1].generation = 1;
+        group_statuses[0].serial = group_statuses[1].serial = 2;
+        assert(group_gpu_commands.acknowledge(group_statuses, program_error));
+        assert(group_gpu_emitters.apply(group_statuses, program_error));
         assert(instance.effects()[0]->gpu_draw_compatible() && instance.effects()[1]->gpu_draw_compatible());
         FrameRecordingContext empty_frame{}; DeferredPass empty_pass;
         const float identity[]{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};

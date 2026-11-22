@@ -135,8 +135,7 @@ bool VulkanParticleEffect::attach_gpu_emitter(GpuParticleEmitters& emitters, std
 }
 void VulkanParticleEffect::detach_gpu_emitter()
 {
-    uint32_t root_index{};
-    if (gpu_visible_index(root_index))
+    if (gpu_emitters_ && gpu_emitters_->draw_programs(gpu_emitter_))
     {
         std::string error;
         if (!gpu_emitters_->destroy(gpu_emitter_, error))

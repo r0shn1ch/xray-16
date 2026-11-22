@@ -128,7 +128,9 @@ bool GpuParticleEmitters::draining(Handle handle) const
 }
 bool GpuParticleEmitters::visible_index(Handle handle, uint32_t& index) const
 {
-    if (!find(handle)) return false;
+    const auto* root = find(handle);
+    // Keep the CPU visual until the GPU has acknowledged allocation.
+    if (!root || !root->has_snapshot) return false;
     index = (static_cast<uint32_t>(handle) - 1) * 2; return true;
 }
 const std::vector<uint32_t>* GpuParticleEmitters::draw_programs(Handle handle) const
