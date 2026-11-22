@@ -15,6 +15,14 @@ optional `ANDROID_DEPS_PREFIX_ARM64` alongside its ARMv7 prefix.
 An ARM64-only build needs `ANDROID_DEPS_PREFIX_ARM64`; the ARMv7 prefix is
 required only when packaging both ABIs.
 
+APK packaging stages SDL's complete Java package automatically from a source
+tree matching the version in each native dependency prefix. It can resolve the
+matching source from an SDL CMake build or the versioned renderer dependency
+cache. It rejects mixed ABI versions or missing matching sources before Gradle
+builds the APK. It preserves SDL sources as supplied and never changes Java
+version constants to conceal a mismatch. The selected source and Java hashes
+are recorded in `sdl-java-provenance.json` in the staging project.
+
 ## Supported configuration
 
 | Component | Value |

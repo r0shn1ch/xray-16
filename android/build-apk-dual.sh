@@ -151,6 +151,14 @@ done
 project_dir=$(mktemp -d "$build_dir/gradle-project.XXXXXXXX")
 trap 'remove_path "$project_dir"' EXIT
 cp -R "$sdl_dir/android-project/." "$project_dir/"
+if [ "$arm64_only" = ON ]; then
+    python3 "$script_dir/apk/stage_sdl_java.py" --project "$project_dir" \
+        --version-header "$deps_prefix64/include/SDL2/SDL_version.h" --sdl-source "$sdl_dir"
+else
+    python3 "$script_dir/apk/stage_sdl_java.py" --project "$project_dir" \
+        --version-header "$deps_prefix64/include/SDL2/SDL_version.h" \
+        --version-header "$deps_prefix/include/SDL2/SDL_version.h" --sdl-source "$sdl_dir"
+fi
 
 # A reusable SDL tree may contain Gradle task history and outputs from an
 # earlier OpenXRay package. Never let those copied files make assembleDebug
