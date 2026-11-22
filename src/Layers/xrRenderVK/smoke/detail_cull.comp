@@ -13,7 +13,7 @@ layout(set = 0, binding = 2, std430) buffer DrawArguments
 };
 layout(push_constant) uniform DetailCull
 {
-    mat4 view_projection;
+    vec4 planes[6];
     uint placement_count;
     uint instance_capacity;
     float radius;
@@ -23,11 +23,8 @@ layout(push_constant) uniform DetailCull
 
 bool visible(vec3 position, float radius)
 {
-    mat4 m = transpose(settings.view_projection);
-    vec4 planes[6] = vec4[6](m[3] + m[0], m[3] - m[0], m[3] + m[1],
-        m[3] - m[1], m[2], m[3] - m[2]);
     for (int i = 0; i < 6; ++i)
-        if (dot(planes[i], vec4(position, 1.0)) < -radius * length(planes[i].xyz))
+        if (dot(settings.planes[i], vec4(position, 1.0)) < -radius)
             return false;
     return true;
 }

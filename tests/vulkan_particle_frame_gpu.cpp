@@ -480,7 +480,8 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
         detail_args.initialize(device, sizeof(VkDrawIndexedIndirectCommand), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
             host_memory, memory, vk, error) && placements.write(0, planted.data(), sizeof(planted), error), error);
-    const float identity[16]{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    // Uniform clip-space scaling leaves the frustum and world-space radius unchanged.
+    const float identity[16]{2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2};
     require(vkAllocateCommandBuffers(device, &ai, &cb) == VK_SUCCESS &&
         vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS &&
         grass.record(cb, 0, placements, instances, detail_args, identity, 2, 12, 1.f, error), error);

@@ -2,6 +2,7 @@
 
 #include "DetailInstance.h"
 #include "StorageComputePass.h"
+#include <cmath>
 #include <cstring>
 #include <functional>
 
@@ -68,7 +69,27 @@ public:
             0, 1, &dependency, 0, nullptr, 0, nullptr);
 
         Parameters constants{};
-        std::memcpy(constants.view_projection, mvp, sizeof(mvp));
+        // The projection matrix is column-major. Normalize the six planes
+        // once per dispatch so the shader compares distances in world units.
+        for (unsigned component = 0; component < 4; ++component)
+        {
+            const float* column = mvp + component * 4;
+            constants.planes[0][component] = column[3] + column[0];
+            constants.planes[1][component] = column[3] - column[0];
+            constants.planes[2][component] = column[3] + column[1];
+            constants.planes[3][component] = column[3] - column[1];
+            constants.planes[4][component] = column[2];
+            constants.planes[5][component] = column[3] - column[2];
+        }
+        for (auto& plane : constants.planes)
+        {
+            const float length = std::hypot(plane[0], plane[1], plane[2]);
+            if (length > 0.f && std::isfinite(length))
+                for (float& component : plane)
+                    component /= length;
+            else
+                plane[3] = plane[3] < 0.f ? -INFINITY : INFINITY;
+        }
         constants.placement_count = count;
         constants.instance_capacity = capacity;
         constants.radius = model_radius;
@@ -90,11 +111,12 @@ public:
 private:
     struct Parameters
     {
-        float view_projection[16];
+        float planes[6][4];
         uint32_t placement_count, instance_capacity;
         float radius;
         uint32_t source_stride, model;
     };
+    static_assert(sizeof(Parameters) == 116);
     StorageComputePass compute_;
     PFN_vkCmdUpdateBuffer update_{};
     PFN_vkCmdPipelineBarrier barrier_{};
