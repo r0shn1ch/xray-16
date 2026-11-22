@@ -147,6 +147,8 @@ target_sources(xrRenderVK PRIVATE
     DetailGeneratePass.h
     DetailCellCullPass.h
     DetailInteractionField.h
+    DetailBendPass.h
+    smoke/detail_bend.comp
     smoke/ray_generate.comp
     smoke/indirect_radiance.comp
     smoke/world_radiance_cache.glsl

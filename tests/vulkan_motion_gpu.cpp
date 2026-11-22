@@ -164,8 +164,9 @@ int run_test(int argc, char** argv)
     const uint8_t detail_alpha = mode == "detail_transparent_empty" ? 0 :
         mode == "detail_transparent_faint" ? 1 : mode == "detail_transparent_partial" ? 64 : 255;
     const bool detail_still = mode == "detail_still";
+    const bool detail_contact = mode == "detail_contact";
     const DetailWindParameters detail_current{{.1f, 0.f, .1f, 0.f}, .12f};
-    const DetailWindParameters detail_previous = mode == "detail_reset" ? detail_current :
+    const DetailWindParameters detail_previous = (mode == "detail_reset" || detail_contact) ? detail_current :
         DetailWindParameters{{.5f, 0.f, .5f, 0.f}, .25f};
     const bool offset_velocity = argc > 2 && std::string(argv[2]) == "offset";
     const bool cutout_velocity = argc > 2 &&
@@ -481,8 +482,13 @@ int run_test(int argc, char** argv)
         }
         if (detail_velocity)
         {
-            const DetailInstance instances[]{detail_instance(detail_offset ? 100.f : 0.f, 0.f, 0.f, 0.f, 1.f),
+            DetailInstance instances[]{detail_instance(detail_offset ? 100.f : 0.f, 0.f, 0.f, 0.f, 1.f),
                 detail_instance(0.f, 0.f, detail_layers ? -.25f : 0.f, 0.f, 1.f)};
+            if (detail_contact)
+            {
+                instances[0].interaction[0]=.2f;
+                instances[0].previous_interaction[0]=-.1f;
+            }
             const auto bytes = sizeof(DetailInstance) * (detail_offset || detail_layers ? 2 : 1);
             vk.buffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                 vk.previous_vertices, vk.previous_vertex_memory);
@@ -633,6 +639,11 @@ int run_test(int argc, char** argv)
                         detail_still ? 0.f : 1.f, detail_current)[0];
                     previous_x[i] = positions[i][0] + detail_wind_displacement(positions[i], root,
                         detail_still ? 0.f : 1.f, detail_previous)[0];
+                    if (detail_contact)
+                    {
+                        current_x[i] += .2f * std::max(positions[i][1], 0.f);
+                        previous_x[i] -= .1f * std::max(positions[i][1], 0.f);
+                    }
                 }
                 const float x = pixel % 2 ? .5f : -.5f, y = pixel / 2 ? -.5f : .5f;
                 const float b = (y + 1.f) / 4.f;

@@ -313,6 +313,7 @@ bool VulkanGameDevice::record_gpu_particles(const FrameRecordingContext& frame, 
 void VulkanGameDevice::gpu_particles_submitted(uint32_t slot, uint32_t, void* user)
 {
     auto& owner = *static_cast<VulkanGameDevice*>(user);
+    if (owner.current_level_) owner.current_level_->commit_detail_interaction();
     if (slot < owner.sky_probe_recorded_.size())
     {
         if (owner.sky_probe_recorded_[slot])
@@ -2085,6 +2086,7 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
             near_plane, far_plane, vertical_fov);
     }
     const auto discard_frame_history = [&] {
+        level.discard_detail_interaction();
         // Shadow faces can be marked cached while recording the frame.
         local_shadows_.invalidate_cache();
         hiz_.reset_history();
@@ -2135,7 +2137,10 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         return false;
     }
     if (!render_world)
+    {
+        level.discard_detail_interaction();
         hiz_.reset_history();
+    }
     else
         hiz_.commit_history(hiz_dynamic_mask_recorded_);
     if (indirect_recorded_image_ != UINT32_MAX)

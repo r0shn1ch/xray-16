@@ -8,8 +8,10 @@ struct DetailInstance
 {
     float position_scale[4];
     float rotation[2];
+    float interaction[2]{};
+    float previous_interaction[2]{};
 };
-static_assert(sizeof(DetailInstance) == 24);
+static_assert(sizeof(DetailInstance) == 40);
 inline DetailInstance detail_instance(float x, float y, float z, float yaw, float scale)
 {
     return {{x, y, z, scale}, {std::cos(yaw), std::sin(yaw)}};

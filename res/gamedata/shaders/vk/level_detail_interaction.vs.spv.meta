@@ -1,0 +1,8 @@
+XRAY_VULKAN_SHADER_METADATA_V1
+source=vk/detail_interaction_instanced.vs
+stage=vs
+entry=main
+defines=LEVEL_GEOMETRY=1|VK_INSTANCED_DETAIL=1
+source-fingerprint=6d883a1db5ffc4dd
+dependency=vk/detail_interaction_wind.hlsli=efcbff71fbf10e58
+spirv-fingerprint=f956828e29b4a9e3

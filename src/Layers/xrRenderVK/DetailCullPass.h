@@ -1,10 +1,10 @@
 #pragma once
 
 #include "DetailInstance.h"
+#include "DetailCullShaders.h"
 #include "StorageComputePass.h"
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 #include <functional>
 
 namespace xray::render::vulkan
@@ -19,26 +19,21 @@ class DetailCullPass
 {
 public:
     using Source = std::function<bool(const char*, std::vector<uint8_t>&, std::string&)>;
-
     bool initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, const VkPhysicalDeviceLimits& limits,
-        uint32_t slots, VkPipelineCache cache, const Source& source, std::string& error)
+        uint32_t slots, VkPipelineCache cache, std::string& error)
     {
         update_ = reinterpret_cast<PFN_vkCmdUpdateBuffer>(get(device, "vkCmdUpdateBuffer"));
         barrier_ = reinterpret_cast<PFN_vkCmdPipelineBarrier>(get(device, "vkCmdPipelineBarrier"));
         max_groups_x_ = std::min(limits.maxComputeWorkGroupCount[0], 65535u);
         max_groups_y_ = std::min(limits.maxComputeWorkGroupCount[1], 65535u);
-        std::vector<uint8_t> binary;
-        if (!update_ || !barrier_ || !source("vk/detail_cull.cs.spv", binary, error) ||
-            binary.size() < 20 || binary.size() % sizeof(uint32_t))
+        if (!update_ || !barrier_)
         {
             if (error.empty())
                 error = "invalid GPU detail culling shader or procedures";
             return false;
         }
-        std::vector<uint32_t> words(binary.size() / sizeof(uint32_t));
-        std::memcpy(words.data(), binary.data(), binary.size());
         return compute_.initialize(device, get, slots, 3, sizeof(Parameters), limits.maxStorageBufferRange,
-            cache, words.data(), binary.size(), error);
+            cache, detail_cull_shaders::Compute, sizeof(detail_cull_shaders::Compute), error);
     }
 
     // Keep each slot fenced, and use one descriptor slot per prototype dispatch.

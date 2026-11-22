@@ -97,6 +97,11 @@ class VulkanGameDevice
     void set_gpu_particle_catalog(std::shared_ptr<const ParticleCatalog> catalog) { gpu_particle_catalog_ = std::move(catalog); }
     bool prepare_ray_frames(std::string& error);
     bool prepare_vsm_frames(std::string& error);
+    bool enable_level_detail_interaction(GpuLevel& level, std::string& error)
+    {
+        return level.enable_detail_interaction(window_.physical().handle, window_.device_proc(),
+            window_.physical().properties.limits, frame_dispatch_, error);
+    }
     void release_vsm_frames();
     bool prepare_indirect_frames(RaySurfacePass& surfaces, BindlessTextureTable& alpha_textures,
         std::string& error);

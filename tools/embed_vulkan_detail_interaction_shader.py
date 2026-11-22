@@ -38,7 +38,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
     for source, header, namespace in [(SOURCE, HEADER, "detail_interaction_shaders"),
             (SOURCE.with_name("detail_ground_height.comp"), HEADER.with_name("DetailGroundHeightShaders.h"),
-             "detail_ground_height_shaders")]:
+             "detail_ground_height_shaders"),
+            (SOURCE.with_name("detail_bend.comp"), HEADER.with_name("DetailBendShaders.h"),
+             "detail_bend_shaders"),
+            (SOURCE.with_name("detail_cull.comp"), HEADER.with_name("DetailCullShaders.h"),
+             "detail_cull_shaders")]:
         result = generate(args.glslc, source, namespace)
         if args.check:
             if header.read_text() != result: parser.error(f"{header.name} is stale")

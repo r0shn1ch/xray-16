@@ -51,6 +51,13 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
         if (!context.level_->record_detail_cull(frame, camera_mvp, error, context.pass_->detail_wind_amplitude()) &&
             Device.dwFrame % 300 == 0)
             Msg("! [renderer-vulkan] GPU details use CPU preparation: %s", error.c_str());
+        if (!context.level_->record_detail_interaction(frame, error))
+        {
+            Msg("! [renderer-vulkan] GPU detail interaction failed: %s", error.c_str());
+            context.level_->disable_detail_interaction();
+            context.recorded_ = false;
+            return;
+        }
     }
     if (context.render_world_ && context.level_->has_cluster_visibility())
     {

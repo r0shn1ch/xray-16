@@ -875,7 +875,7 @@ int main(int argc, char **argv)
                 write.pImageInfo = &local_images[i == 0 ? 0 : 1];
         }
         vkUpdateDescriptorSets(device, 3, local_writes, 0, nullptr);
-        const auto instanced_vertex = module("level_detail_instanced.vs.spv");
+        const auto instanced_vertex = module("level_detail_interaction.vs.spv");
         const DetailInstance detail_instances[]{detail_instance(-.5f, 0, .5f, 0, .6f),
                                                 detail_instance(.5f, 0, .5f, 3.14159265359f, .6f)};
         buffer_info.size = sizeof(detail_instances);
@@ -900,7 +900,8 @@ int main(int argc, char **argv)
             attributes[5],
             attributes[6],
             {9, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(DetailInstance, position_scale)},
-            {10, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(DetailInstance, rotation)}};
+            {10, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(DetailInstance, rotation)},
+            {12, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(DetailInstance, interaction)}};
         bool inputs_initialized = false;
         const auto forward_fragment = module("object_priority_opaque.ps.spv");
         const auto forward_vertex = module("object_opaque.vs.spv");
@@ -1011,7 +1012,7 @@ int main(int argc, char **argv)
                                    : weather ? weather_pipeline_layout
                                    : skinned ? skinned_pipeline_layout
                                              : pipeline_layout;
-            vertex_input.vertexAttributeDescriptionCount = instanced ? 9 : ui ? 4 : 7;
+            vertex_input.vertexAttributeDescriptionCount = instanced ? 10 : ui ? 4 : 7;
             vertex_input.vertexBindingDescriptionCount = instanced ? 2 : 1;
             vertex_input.pVertexBindingDescriptions = instanced ? instance_bindings : &vertex_binding;
             vertex_input.pVertexAttributeDescriptions = instanced ? instance_attributes
@@ -2135,8 +2136,10 @@ int main(int argc, char **argv)
         unsigned animated_changes = 0;
         for (const float root_x : {-.4f, .35f})
         {
-            const DetailInstance test_instances[]{detail_instance(root_x, 0.f, .5f, .7f, .6f),
+            DetailInstance test_instances[]{detail_instance(root_x, 0.f, .5f, .7f, .6f),
                 detail_instance(100.f, 0.f, .5f, 0.f, .6f)};
+            test_instances[0].interaction[0]=.35f;
+            test_instances[0].interaction[1]=-.2f;
             tested_second_wave |= detail_second_wave(root_x, .5f);
             tested_first_wave |= !detail_second_wave(root_x, .5f);
             check(vkMapMemory(device, instance_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
@@ -2174,6 +2177,10 @@ int main(int argc, char **argv)
                         const auto displacement = detail_wind_displacement(p.data(),
                             test_instances[0].position_scale, vertex.lightmap_uv[0], wind);
                         for (unsigned axis = 0; axis < 3; ++axis) vertex.position[axis] = p[axis] + displacement[axis];
+                        const float contact_weight=std::max(p[1]-test_instances[0].position_scale[1],0.f) *
+                            std::clamp(vertex.lightmap_uv[0],0.f,1.f);
+                        vertex.position[0]+=test_instances[0].interaction[0]*contact_weight;
+                        vertex.position[2]+=test_instances[0].interaction[1]*contact_weight;
                         const float c = test_instances[0].rotation[0], s = test_instances[0].rotation[1];
                         const float x = vertex.normal[0], z = vertex.normal[2];
                         vertex.normal[0] = c * x + s * z;

@@ -290,11 +290,12 @@ VkResult VKAPI_PTR create_pipeline(VkDevice, VkPipelineCache, uint32_t count, co
     {
         assert(info->renderPass == handle<VkRenderPass>(11));
         const auto& inputs = *info->pVertexInputState;
-        assert(inputs.vertexBindingDescriptionCount == 2 && inputs.vertexAttributeDescriptionCount == 10);
+        assert(inputs.vertexBindingDescriptionCount == 2 && inputs.vertexAttributeDescriptionCount == 11);
         assert(inputs.pVertexBindingDescriptions[1].stride == sizeof(DetailInstance) &&
             inputs.pVertexBindingDescriptions[1].inputRate == VK_VERTEX_INPUT_RATE_INSTANCE);
         assert(inputs.pVertexAttributeDescriptions[8].location == 9 &&
-            inputs.pVertexAttributeDescriptions[9].location == 10);
+            inputs.pVertexAttributeDescriptions[9].location == 10 &&
+            inputs.pVertexAttributeDescriptions[10].location == 12);
         assert(info->pColorBlendState->attachmentCount == 1 &&
             info->pColorBlendState->pAttachments[0].blendEnable &&
             info->pDepthStencilState->depthTestEnable && !info->pDepthStencilState->depthWriteEnable);

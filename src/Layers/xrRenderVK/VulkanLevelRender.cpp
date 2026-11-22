@@ -1888,6 +1888,9 @@ void VulkanLevelRender::level_Load(IReader *reader)
     if (device_owner && (device_owner->physical().graphics_queue_flags & VK_QUEUE_COMPUTE_BIT) &&
         !level_.enable_gpu_details(device_owner->device_proc(), device_owner->physical().properties.limits, error))
         Msg("! [renderer-vulkan] GPU detail preparation unavailable: %s", error.c_str());
+    if (device_owner && (device_owner->physical().graphics_queue_flags & VK_QUEUE_COMPUTE_BIT) &&
+        !game_device_->enable_level_detail_interaction(level_, error))
+        Msg("! [renderer-vulkan] GPU detail interaction unavailable: %s", error.c_str());
     if (ray_address)
     {
         const auto& window = game_device_->window();

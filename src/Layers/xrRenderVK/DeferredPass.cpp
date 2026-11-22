@@ -134,11 +134,12 @@ bool make_pipeline(VkDevice device, VkRenderPass pass, VkPipelineLayout layout, 
         static_attributes[6],
         static_attributes[7],
         {9, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(DetailInstance, position_scale)},
-        {10, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(DetailInstance, rotation)}};
+        {10, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(DetailInstance, rotation)},
+        {12, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(DetailInstance, interaction)}};
     VkPipelineVertexInputStateCreateInfo inputs{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
     inputs.vertexBindingDescriptionCount = geometry_input ? (instanced ? 2 : 1) : 0;
     inputs.pVertexBindingDescriptions = geometry_input ? (instanced ? instance_bindings : &binding) : nullptr;
-    inputs.vertexAttributeDescriptionCount = geometry_input ? (instanced ? 10 : skinned ? 7 : 8) : 0;
+    inputs.vertexAttributeDescriptionCount = geometry_input ? (instanced ? 11 : skinned ? 7 : 8) : 0;
     inputs.pVertexAttributeDescriptions = geometry_input ? (instanced ? instance_attributes
                                                             : skinned ? skinned_attributes
                                                                       : static_attributes)
@@ -1280,7 +1281,8 @@ bool DeferredPass::create_game_pipeline(const std::string &vertex_name, const st
     if (!make_pipeline(
             device_, transparent || hud ? light_pass_ : geometry_pass_, game_layout,
             vertex, fragment,
-            (vertex_name == "vk\\level_detail_instanced.vs" ? PipelineFlag::Instanced : PipelineFlag::None) |
+            ((vertex_name == "vk\\level_detail_instanced.vs" || vertex_name == "vk\\level_detail_interaction.vs") ?
+                PipelineFlag::Instanced : PipelineFlag::None) |
                 PipelineFlag::Geometry | (!transparent && !hud ? PipelineFlag::GBuffer : PipelineFlag::None) |
                 (transparent ? PipelineFlag::Transparent : PipelineFlag::None) |
                 (hud ? PipelineFlag::Hud : PipelineFlag::None) |
@@ -1950,7 +1952,8 @@ bool DeferredPass::record_geometry(const FrameRecordingContext &frame, VkBuffer 
                                    VkBuffer indirect_commands, VkDeviceSize indirect_offset,
                                    uint32_t indirect_draw_count, uint64_t variant_hash) const
 {
-    const bool instanced = vertex_name && std::strcmp(vertex_name, "vk\\level_detail_instanced.vs") == 0;
+    const bool instanced = vertex_name && (std::strcmp(vertex_name, "vk\\level_detail_instanced.vs") == 0 ||
+        std::strcmp(vertex_name, "vk\\level_detail_interaction.vs") == 0);
     if (instanced != bool(instances) || !instance_count)
         return false;
     if ((indirect_commands && (!vk_.cmd_draw_indexed_indirect || !indirect_draw_count)) ||
@@ -2107,7 +2110,8 @@ bool DeferredPass::record_transparent(const FrameRecordingContext &frame, VkBuff
             *failure = reason;
         return false;
     };
-    const bool instanced = vertex_name && std::strcmp(vertex_name, "vk\\level_detail_instanced.vs") == 0;
+    const bool instanced = vertex_name && (std::strcmp(vertex_name, "vk\\level_detail_instanced.vs") == 0 ||
+        std::strcmp(vertex_name, "vk\\level_detail_interaction.vs") == 0);
     if (instanced != bool(instances) || (!instances && instance_offset) ||
         instance_offset % sizeof(DetailInstance))
         return reject("incompatible instance buffer or offset");

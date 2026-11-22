@@ -28,9 +28,13 @@ public:
     {
         VkImage image{};
         VkImageView view{};
+        VkImage previous_image{};
+        VkImageView previous_view{};
         VkSampler sampler{};
         float origin[2]{}, texel_size{};
+        float previous_origin[2]{};
         uint32_t size{};
+        bool previous_valid{};
     };
 
     DetailInteractionField() = default;
@@ -158,10 +162,15 @@ public:
             !transition(current, ImageUse::StorageWrite) ||
             !interaction_->record(frame.command_buffer, frame.frame_index, entities_[frame.frame_index],
                 views_[previous], views_[2], sampler_, views_[current], params, error) ||
-            !transition(current, ImageUse::VertexSampled)) return false;
+            !transition(previous, ImageUse::ComputeSampled) ||
+            !transition(current, ImageUse::ComputeSampled)) return false;
         pending_ = true; pending_last_ = current;
         pending_origin_ = {params.origin[0], params.origin[1]};
-        output = {images_[current], views_[current], sampler_, {params.origin[0], params.origin[1]}, texel_size_, size_};
+        output.image = images_[current]; output.view = views_[current];
+        output.previous_image = images_[previous]; output.previous_view = views_[previous]; output.sampler = sampler_;
+        output.origin[0] = params.origin[0]; output.origin[1] = params.origin[1];
+        output.previous_origin[0] = params.previous_origin[0]; output.previous_origin[1] = params.previous_origin[1];
+        output.texel_size = texel_size_; output.size = size_; output.previous_valid = params.previous_valid != 0;
         return true;
     }
 

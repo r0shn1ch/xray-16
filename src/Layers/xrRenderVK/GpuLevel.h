@@ -13,6 +13,7 @@
 #include "Layers/xrRenderGraph/VisibilityId.h"
 #include "DetailGeneratePass.h"
 #include "DetailCellCullPass.h"
+#include "DetailBendPass.h"
 #include "ResourceIssueCounter.h"
 #include "xrCore/_matrix.h"
 #include <algorithm>
@@ -152,6 +153,12 @@ class GpuLevel
                               std::vector<uint32_t> &roots) const;
     void all_level_roots(std::vector<uint32_t> &roots) const;
     bool enable_gpu_details(PFN_vkGetDeviceProcAddr get, const VkPhysicalDeviceLimits& limits, std::string& error);
+    bool enable_detail_interaction(VkPhysicalDevice physical, PFN_vkGetDeviceProcAddr get,
+        const VkPhysicalDeviceLimits& limits, const FrameDispatch& dispatch, std::string& error);
+    bool record_detail_interaction(const FrameRecordingContext& frame, std::string& error) const;
+    void commit_detail_interaction() const { if (detail_interaction_) detail_interaction_->commit(); }
+    void discard_detail_interaction() const { if (detail_interaction_) detail_interaction_->reset_history(); }
+    void disable_detail_interaction() const { discard_detail_interaction(); detail_interaction_failed_ = true; }
     struct DetailGroundSource
     {
         // Both pointers are null when cell_count is zero. A heightmap caller
@@ -330,6 +337,10 @@ class GpuLevel
     std::unique_ptr<DetailCullPass> detail_cull_;
     std::unique_ptr<DetailGeneratePass> detail_generate_;
     std::unique_ptr<DetailCellCullPass> detail_cell_cull_;
+    std::unique_ptr<FrameImagePool> detail_interaction_pool_;
+    mutable std::unique_ptr<DetailInteractionField> detail_interaction_;
+    std::unique_ptr<DetailBendPass> detail_bend_;
+    mutable bool detail_interaction_failed_{};
     std::array<float, 4> detail_generation_camera_{};
     mutable bool detail_gpu_generation_failed_{};
     bool detail_cache_gpu_only_{};

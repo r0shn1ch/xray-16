@@ -17,6 +17,7 @@
 #include "src/Layers/xrRenderVK/DetailInteractionPass.h"
 #include "src/Layers/xrRenderVK/DetailGroundHeightPass.h"
 #include "src/Layers/xrRenderVK/DetailInteractionField.h"
+#include "src/Layers/xrRenderVK/DetailBendPass.h"
 #include "src/Layers/xrRenderVK/GpuParticleBuffers.h"
 #include "src/Layers/xrRenderVK/GpuParticleCompute.h"
 #include "src/Layers/xrRenderVK/GpuParticleFrame.h"
@@ -511,7 +512,7 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
         sky_result.faces == std::array<float, 6>{.5f, 0.f, 1.f, 1.f, 1.f, 1.f}, "sky probe face visibility");
     vkFreeCommandBuffers(device, pool, 1, &cb);
     DetailCullPass grass;
-    require(grass.initialize(device, vkGetDeviceProcAddr, limits, 1, VK_NULL_HANDLE, source, error), error);
+    require(grass.initialize(device, vkGetDeviceProcAddr, limits, 1, VK_NULL_HANDLE, error), error);
     BufferResource placements, instances, detail_args;
     const std::array<DetailCullInput, 2> planted{{{2.5f, 0, .5f, 0, 2}, {3.5f, 0, .5f, 0, 1}}};
     require(placements.initialize(device, sizeof(planted), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -836,6 +837,15 @@ static void exercise_detail_interaction(VkPhysicalDevice physical, VkDevice devi
         DetailInteractionField field;
         require(field.initialize(physical,device,vkGetDeviceProcAddr,limits,memory,buffers,image_dispatch,
             images,1,VK_NULL_HANDLE,error,8,1.f,1.f),error);
+        DetailBendPass bend;
+        require(bend.initialize(device,vkGetDeviceProcAddr,limits,2,VK_NULL_HANDLE,error),error);
+        BufferResource bend_instances, indirect_instances, indirect_args;
+        require(bend_instances.initialize(device,2*sizeof(DetailInstance),
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,host,memory,buffers,error) &&
+            indirect_instances.initialize(device,2*sizeof(DetailInstance),
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,host,memory,buffers,error) &&
+            indirect_args.initialize(device,sizeof(VkDrawIndexedIndirectCommand),
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,host,memory,buffers,error),error);
         DetailGenerateSlot ground_slot{}; ground_slot.bounds[2]=-1.f; ground_slot.bounds[3]=2.f;
         ground_slot.data[3]=2;
         const DetailGroundTriangle ground_triangles[]{
@@ -847,6 +857,7 @@ static void exercise_detail_interaction(VkPhysicalDevice physical, VkDevice devi
             triangles.write(0,ground_triangles,sizeof(ground_triangles),error),error);
         DetailInteractionField::Ground ground{&cells,&triangles,1,4,4,0,0};
         std::vector<DetailInteractionEntity> contacts{{{.5f,0.f,.5f},1.f,{1.f,0.f,0.f},1.f}};
+        float last_bend=0.f;
         const auto record = [&](bool discard, bool empty_ground, bool contact) {
             VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
             allocate.commandPool=pool; allocate.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY; allocate.commandBufferCount=1;
@@ -868,13 +879,27 @@ static void exercise_detail_interaction(VkPhysicalDevice physical, VkDevice devi
                 vkFreeCommandBuffers(device,pool,1,&command);
                 return 0.f;
             }
+            const DetailInstance blades[]{detail_instance(.5f,0.f,.5f,0.f,1.f),
+                detail_instance(7.5f,0.f,7.5f,0.f,1.f)};
+            DetailInstance indirect_blades[]{blades[0],blades[1]};
+            indirect_blades[1].interaction[0]=9.f;
+            const VkDrawIndexedIndirectCommand draw_args{3,1,0,0,0};
+            require(bend_instances.write(0,blades,sizeof(blades),error) &&
+                indirect_instances.write(0,indirect_blades,sizeof(indirect_blades),error) &&
+                indirect_args.write(0,&draw_args,sizeof(draw_args),error) &&
+                bend.record(command,0,bend_instances,nullptr,2,output,error) &&
+                bend.record(command,1,indirect_instances,&indirect_args,2,output,error),error);
+            VkMemoryBarrier bend_host{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            bend_host.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT; bend_host.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
+            vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,
+                0,1,&bend_host,0,nullptr,0,nullptr);
             VkImageMemoryBarrier image_barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
             image_barrier.srcAccessMask=VK_ACCESS_SHADER_READ_BIT; image_barrier.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
             image_barrier.oldLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             image_barrier.newLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
             image_barrier.srcQueueFamilyIndex=image_barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
             image_barrier.image=output.image; image_barrier.subresourceRange=color;
-            vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
+            vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
                 0,0,nullptr,0,nullptr,1,&image_barrier);
             VkBufferMemoryBarrier buffer_barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
             buffer_barrier.srcAccessMask=VK_ACCESS_HOST_READ_BIT|VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -888,7 +913,7 @@ static void exercise_detail_interaction(VkPhysicalDevice physical, VkDevice devi
             image_barrier.srcAccessMask=VK_ACCESS_TRANSFER_READ_BIT; image_barrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
             image_barrier.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
             image_barrier.newLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+            vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                 0,0,nullptr,0,nullptr,1,&image_barrier);
             buffer_barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT; buffer_barrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
             vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,
@@ -900,6 +925,22 @@ static void exercise_detail_interaction(VkPhysicalDevice physical, VkDevice devi
             require(vkQueueWaitIdle(queue)==VK_SUCCESS,"field completion");
             std::array<uint16_t,8*8*4> value{};
             require(readback.read(0,value.data(),sizeof(value),error),error);
+            DetailInstance sampled[2]{};
+            require(bend_instances.read(0,sampled,sizeof(sampled),error),error);
+            require(std::abs(sampled[0].interaction[0]-half(value[0]))<.001f &&
+                sampled[1].interaction[0]==0.f && sampled[1].interaction[1]==0.f,
+                "detail instance field sampling");
+            if (!output.previous_valid)
+                require(sampled[0].previous_interaction[0]==sampled[0].interaction[0],
+                    "invalid history must not create a false detail velocity");
+            else
+                require(std::abs(sampled[0].previous_interaction[0]-last_bend)<.001f,
+                    "previous detail displacement did not follow submitted field history");
+            last_bend=sampled[0].interaction[0];
+            require(indirect_instances.read(0,indirect_blades,sizeof(indirect_blades),error) &&
+                indirect_blades[0].interaction[0]==sampled[0].interaction[0] &&
+                indirect_blades[1].interaction[0]==9.f,
+                "indirect detail count was ignored while sampling the field");
             vkFreeCommandBuffers(device,pool,1,&command);
             return half(value[0]);
         };

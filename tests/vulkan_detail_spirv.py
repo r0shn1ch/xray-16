@@ -73,7 +73,7 @@ def main(root):
     # Skinned transforms/hemi live in the pose SSBO, outside material data.
     manifest = json.loads((shaders / "opaque-variants.json").read_text())
     for variant in manifest["variants"]:
-        if variant["source"] not in ("opaque.vs", "detail_instanced.vs", "skinned.vs"):
+        if variant["source"] not in ("opaque.vs", "detail_instanced.vs", "detail_interaction_instanced.vs", "skinned.vs"):
             continue
         path = root / variant["output"]
         data = path.read_bytes()

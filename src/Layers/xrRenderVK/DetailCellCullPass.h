@@ -1,4 +1,5 @@
 #pragma once
+#include <cstring>
 #include "DetailGeneratePass.h"
 
 namespace xray::render::vulkan

@@ -227,10 +227,12 @@ bool ObjectVelocityPass::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get
         {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(LevelVertex, uv)},
         {3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(LevelVertex, lightmap_uv)},
         {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(DetailInstance, position_scale)},
-        {5, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(DetailInstance, rotation)}};
+        {5, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(DetailInstance, rotation)},
+        {6, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(DetailInstance, interaction)},
+        {7, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(DetailInstance, previous_interaction)}};
     input.pVertexBindingDescriptions = detail_bindings;
     input.pVertexAttributeDescriptions = detail_attributes;
-    input.vertexAttributeDescriptionCount = 5;
+    input.vertexAttributeDescriptionCount = 7;
     stages[0].module = detail_vertex.handle();
     if (create_pipeline(device_, cache, 1, &pipeline_info, nullptr, &detail_pipeline_) != VK_SUCCESS)
         return fail("object velocity detail pipeline creation failed");

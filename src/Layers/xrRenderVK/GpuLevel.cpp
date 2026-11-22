@@ -3,6 +3,7 @@
 #include "ObjectVelocityPass.h"
 #include "TangentBasis.h"
 #include "DetailInstance.h"
+#include "xrEngine/GrassInteractionCollector.h"
 #include "DeferredShaderFactory.h"
 #include "LevelLightmap.h"
 #include "VulkanSettings.h"
@@ -1471,7 +1472,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
             error = "level.details / " + prototype.shader + ": " + error;
             return false;
         }
-        mesh.pass_graph.passes[0].vertex = "vk\\level_detail_instanced.vs";
+        mesh.pass_graph.passes[0].vertex = "vk\\level_detail_interaction.vs";
         auto &node = mesh.pass_graph.passes[0];
         bool material_ready = false;
         if (surface_roles)
@@ -1998,7 +1999,7 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
             collider.box_query(CDB::OPT_FULL_TEST, g_pGameLevel->ObjectSpace.GetStaticModel(), box_center, box_half);
             const auto *tris = g_pGameLevel->ObjectSpace.GetStaticTris();
             const auto *verts = g_pGameLevel->ObjectSpace.GetStaticVerts();
-            if (gpu_generation)
+            if (gpu_generation || (detail_interaction_ && !detail_interaction_failed_))
             {
                 auto& ground = detail_ground_cache_[index];
                 for (const auto& hit : *collider.r_get())
@@ -2100,7 +2101,7 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
         if (found != detail_cache_.end())
             visible_details_.insert(visible_details_.end(), found->second.begin(), found->second.end());
     }
-    if (gpu_generation)
+    if (gpu_generation || (detail_interaction_ && !detail_interaction_failed_))
     {
         cells.erase(std::remove_if(cells.begin(), cells.end(), [&](size_t index) {
             const auto ground = detail_ground_cache_.find(index);
@@ -2164,7 +2165,7 @@ bool GpuLevel::enable_gpu_details(PFN_vkGetDeviceProcAddr get, const VkPhysicalD
     auto cull = std::make_unique<DetailCullPass>();
     const auto slots = detail_meshes_.size() * FrameContext::FramesInFlight;
     if (slots > 1024 || !cull->initialize(device_, get, limits, static_cast<uint32_t>(slots),
-            pass_->pipeline_cache(), read_engine_shader, error))
+            pass_->pipeline_cache(), error))
     {
         if (error.empty()) error = "too many GPU detail prototypes";
         return false;
@@ -2219,6 +2220,64 @@ bool GpuLevel::detail_ground_source(uint32_t frame_index, DetailGroundSource& so
     }
     source.cells=&data.cells; source.triangles=&data.triangles;
     return true;
+}
+
+bool GpuLevel::enable_detail_interaction(VkPhysicalDevice physical, PFN_vkGetDeviceProcAddr get,
+    const VkPhysicalDeviceLimits& limits, const FrameDispatch& vk, std::string& error)
+{
+    if (detail_interaction_) return true;
+    if (!detail_generate_ || detail_meshes_.empty()) return true;
+    const size_t slots=(detail_meshes_.size()+1)*FrameContext::FramesInFlight;
+    if (slots>1024) { error="too many detail interaction prototypes"; return false; }
+    auto pool=std::make_unique<FrameImagePool>();
+    if (!pool->initialize(device_,memory_,{vk.create_image,vk.destroy_image,vk.get_image_memory_requirements,
+            vk.allocate_memory,vk.free_memory,vk.bind_image_memory}))
+    { error="cannot initialize detail interaction image pool"; return false; }
+    auto field=std::make_unique<DetailInteractionField>();
+#if defined(XR_PLATFORM_ANDROID)
+    constexpr uint32_t field_size=512;
+    constexpr float field_texel=.125f;
+#else
+    constexpr uint32_t field_size=1024;
+    constexpr float field_texel=.0625f;
+#endif
+    if (!field->initialize(physical,device_,get,limits,memory_,upload_.buffer,vk,*pool,
+            FrameContext::FramesInFlight,pass_->pipeline_cache(),error,field_size,field_texel)) return false;
+    auto bend=std::make_unique<DetailBendPass>();
+    if (!bend->initialize(device_,get,limits,static_cast<uint32_t>(slots),pass_->pipeline_cache(),error)) return false;
+    detail_interaction_pool_=std::move(pool);
+    detail_interaction_=std::move(field);
+    detail_bend_=std::move(bend);
+    return true;
+}
+
+bool GpuLevel::record_detail_interaction(const FrameRecordingContext& frame, std::string& error) const
+{
+    if (!detail_interaction_ || !detail_bend_ || detail_interaction_failed_ || frame.frame_index>=gpu_detail_batches_.size() ||
+        !gpu_detail_recorded_[frame.frame_index]) return true;
+    DetailGroundSource source;
+    if (!detail_ground_source(frame.frame_index,source,error)) return false;
+    DetailInteractionField::Ground ground{source.cells,source.triangles,source.cell_count,
+        source.width,source.height,source.offset_x,source.offset_z};
+    auto contacts=xray::grass::snapshot();
+    // The collector orders objects nearest-first; the field shader has a
+    // bounded per-pixel loop and consumes only its first 64 contacts.
+    if (contacts.entities.size()>64) contacts.entities.resize(64);
+    const float camera[]{Device.vCameraPosition.x,Device.vCameraPosition.z};
+    DetailInteractionField::Output field;
+    if (!detail_interaction_->record(frame,ground,contacts.entities,camera,Device.fTimeDelta,1.f,.5f,field,error))
+        return false;
+    const auto& batches=gpu_detail_batches_[frame.frame_index];
+    const uint32_t first=static_cast<uint32_t>(frame.frame_index*(detail_meshes_.size()+1));
+    for (size_t model=0; model<batches.size(); ++model)
+    {
+        const auto& batch=batches[model];
+        if (batch.count && !detail_bend_->record(frame.command_buffer,first+static_cast<uint32_t>(model),
+                batch.instances,&batch.arguments,batch.count,field,error)) return false;
+    }
+    const auto count=transparent_detail_draws_[frame.frame_index].size();
+    return !count || detail_bend_->record(frame.command_buffer,first+static_cast<uint32_t>(detail_meshes_.size()),
+        transparent_detail_instances_[frame.frame_index],nullptr,static_cast<uint32_t>(count),field,error);
 }
 
 bool GpuLevel::record_generated_details(const FrameRecordingContext& frame, const float (&mvp)[16],
@@ -2316,6 +2375,8 @@ bool GpuLevel::record_generated_details(const FrameRecordingContext& frame, cons
 bool GpuLevel::record_detail_cull(const FrameRecordingContext& frame, const float (&mvp)[16],
     std::string& error, float wind_amplitude) const
 {
+    // Interaction displaces the tip by up to 1.25 times its weighted height.
+    if (detail_interaction_ && !detail_interaction_failed_) wind_amplitude += 1.25f;
     const auto slot = frame.frame_index;
     if (slot >= gpu_detail_batches_.size())
         return true;
@@ -2414,7 +2475,9 @@ bool GpuLevel::record_details(const FrameRecordingContext &frame, const Deferred
         const auto& mesh = detail_meshes_[p.model];
         if (mesh.mode == SurfaceMode::Transparent ||
             !visible_sphere(mvp, p.x, p.y, p.z, detail_wind_radius(mesh.detail_radius,
-                mesh.detail_wind_extent, pass.detail_wind_amplitude()) * std::abs(p.scale)))
+                mesh.detail_wind_extent, pass.detail_wind_amplitude() +
+                    (detail_interaction_ && !detail_interaction_failed_ ? 1.25f : 0.f)) *
+                std::abs(p.scale)))
             continue;
         auto instance = detail_instance(p.x, p.y, p.z, p.yaw, p.scale);
         const auto *bytes = reinterpret_cast<const uint8_t *>(&instance);
@@ -2466,6 +2529,7 @@ bool GpuLevel::record_details(const FrameRecordingContext &frame, const Deferred
 bool GpuLevel::prepare_transparent_details(const FrameRecordingContext &frame, const float (&mvp)[16],
                                            float wind_amplitude) const
 {
+    if (detail_interaction_ && !detail_interaction_failed_) wind_amplitude += 1.25f;
     if (frame.frame_index >= transparent_detail_instances_.size())
         return false;
     auto &draws = transparent_detail_draws_[frame.frame_index];
@@ -2506,7 +2570,8 @@ bool GpuLevel::prepare_transparent_details(const FrameRecordingContext &frame, c
     std::string error;
     const size_t bytes = instances.size() * sizeof(DetailInstance);
     if ((buffer.size() < bytes && !buffer.initialize(device_,
-            std::max<VkDeviceSize>(bytes, buffer.size() ? buffer.size() * 2 : 4096), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            std::max<VkDeviceSize>(bytes, buffer.size() ? buffer.size() * 2 : 4096),
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, memory_, upload_.buffer, error)) ||
         !buffer.write(0, instances.data(), bytes, error))
     {
@@ -3409,6 +3474,10 @@ void GpuLevel::destroy()
     detail_cull_.reset();
     detail_generate_.reset();
     detail_cell_cull_.reset();
+    detail_bend_.reset();
+    detail_interaction_.reset();
+    detail_interaction_pool_.reset();
+    detail_interaction_failed_ = false;
     detail_generation_camera_ = {};
     detail_gpu_generation_failed_ = detail_cache_gpu_only_ = false;
     detail_generation_frames_ = {};

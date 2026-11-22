@@ -13,6 +13,8 @@ struct Vertex {
     [[vk::location(3)]] float2 wind : TEXCOORD1;
     [[vk::location(4)]] float4 position_scale : TEXCOORD2;
     [[vk::location(5)]] float2 rotation : TEXCOORD3;
+    [[vk::location(6)]] float2 interaction : TEXCOORD4;
+    [[vk::location(7)]] float2 previous_interaction : TEXCOORD5;
 };
 struct Fragment {
     float4 position : SV_Position;
@@ -26,6 +28,9 @@ Fragment main(Vertex vertex) {
         vertex.wind.x, current_directions, phases.x);
     float3 previous = detail_world_position(vertex.position, vertex.position_scale, vertex.rotation,
         vertex.wind.x, previous_directions, phases.y);
+    float weight = max(current.y - vertex.position_scale.y, 0.0) * saturate(vertex.wind.x);
+    current.xz += vertex.interaction * weight;
+    previous.xz += vertex.previous_interaction * weight;
     result.position = mul(current_mvp, float4(current, 1));
     result.position.y = -result.position.y;
     result.current_clip = result.position;

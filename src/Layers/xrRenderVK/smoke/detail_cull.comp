@@ -57,7 +57,7 @@ void reserve_instances()
     group_reserved = 0u;
     if (group_count == 0u)
         return;
-    uint capacity = min(settings.instance_capacity, uint(instances.length()) / 6u);
+    uint capacity = min(settings.instance_capacity, uint(instances.length()) / 10u);
     uint destination = atomicAdd(instance_count, 0u);
     while (destination < capacity)
     {
@@ -93,11 +93,15 @@ void main()
     if (!accepted || rank >= group_reserved)
         return;
     uint destination = group_first + rank;
-    uint output_offset = destination * 6u;
+    uint output_offset = destination * 10u;
     instances[output_offset] = position.x;
     instances[output_offset + 1u] = position.y;
     instances[output_offset + 2u] = position.z;
     instances[output_offset + 3u] = scale;
     instances[output_offset + 4u] = cos(yaw);
     instances[output_offset + 5u] = sin(yaw);
+    instances[output_offset + 6u] = 0.0;
+    instances[output_offset + 7u] = 0.0;
+    instances[output_offset + 8u] = 0.0;
+    instances[output_offset + 9u] = 0.0;
 }

@@ -5,6 +5,7 @@
 android/PORT_VERSION text eol=lf
 # Shader metadata fingerprints the exact source bytes in game assets.
 res/gamedata/shaders/vk/*.h text eol=lf
+res/gamedata/shaders/vk/*.hlsli text eol=lf
 res/gamedata/shaders/vk/*.ps text eol=lf
 res/gamedata/shaders/vk/*.vs text eol=lf
 res/gamedata/shaders/vk/*.meta text eol=lf
