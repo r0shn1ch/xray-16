@@ -78,21 +78,21 @@ def pack_pbr(packed):
 
 def normal_features(normal):
     height, width = normal.shape[-2:]
-    blurred = np.zeros_like(normal[0])
-    if min(height, width) >= 3:
-        neighborhoods = np.lib.stride_tricks.sliding_window_view(normal[0], (3, 3), axis=(1, 2))
-        blurred[:, 1:-1, 1:-1] = np.median(neighborhoods, axis=(-2, -1))
-    curvature = np.zeros((height, width), dtype=np.float32)
-    if min(height, width) >= 3:
-        nx, ny = np.lib.stride_tricks.sliding_window_view(blurred[:2], (3, 3), axis=(1, 2))
-        sobel = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32)
-        divergence = np.einsum('...ij,ij->...', nx, sobel) + np.einsum('...ij,ij->...', ny, sobel.T)
-        curvature[1:-1, 1:-1] = np.abs(0.5 * divergence)
+    # Input is already a signed tangent-space normal. Extend the edge rather
+    # than inserting zero normals, which create false relief along every seam.
+    padded = np.pad(normal[0], ((0, 0), (1, 1), (1, 1)), mode='edge')
+    neighborhoods = np.lib.stride_tricks.sliding_window_view(padded, (3, 3), axis=(1, 2))
+    blurred = np.median(neighborhoods, axis=(-2, -1))
+    padded_xy = np.pad(blurred[:2], ((0, 0), (1, 1), (1, 1)), mode='edge')
+    nx, ny = np.lib.stride_tricks.sliding_window_view(padded_xy, (3, 3), axis=(1, 2))
+    sobel = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32)
+    divergence = np.einsum('...ij,ij->...', nx, sobel) + np.einsum('...ij,ij->...', ny, sobel.T)
+    curvature = np.abs(0.5 * divergence)
     rank99 = min(curvature.size - 1, int(curvature.size * 0.99))
     upper = max(np.partition(curvature.ravel(), rank99)[rank99], 1e-6)
     curvature = np.clip(curvature / upper, 0, 1) * 2 - 1
 
-    x, y, z = blurred * 2 - 1
+    x, y, z = blurred
     gradients = np.clip(np.stack((x, y)) / np.maximum(z, 1e-3), -10, 10)
     relief = np.zeros_like(curvature)
     for row in range(1, height):
@@ -105,13 +105,12 @@ def normal_features(normal):
     ranks = (int(relief.size * 0.01), rank99)
     low, high = np.partition(relief.ravel(), ranks)[list(ranks)]
     relief = (np.clip(relief, low, high) - low) / (high - low + 1e-6)
-    smooth = np.zeros_like(relief)
-    if min(height, width) >= 15:
-        kernel = np.exp(-np.arange(-7, 8, dtype=np.float32) ** 2 / 50)
-        kernel /= kernel.sum()
-        horizontal = np.einsum('...i,i->...', np.lib.stride_tricks.sliding_window_view(relief, 15, axis=1), kernel)
-        smooth[7:-7, 7:-7] = np.einsum('...i,i->...',
-            np.lib.stride_tricks.sliding_window_view(horizontal, 15, axis=0), kernel)
+    kernel = np.exp(-np.arange(-7, 8, dtype=np.float32) ** 2 / 50)
+    kernel /= kernel.sum()
+    horizontal = np.einsum('...i,i->...', np.lib.stride_tricks.sliding_window_view(
+        np.pad(relief, ((0, 0), (7, 7)), mode='edge'), 15, axis=1), kernel)
+    smooth = np.einsum('...i,i->...', np.lib.stride_tricks.sliding_window_view(
+        np.pad(horizontal, ((7, 7), (0, 0)), mode='edge'), 15, axis=0), kernel)
     return np.stack((curvature, smooth * 2 - 1))[None]
 
 

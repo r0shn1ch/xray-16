@@ -23,6 +23,24 @@ spec.loader.exec_module(converter)
 
 
 class BatchConversionTest(unittest.TestCase):
+    def test_flat_signed_normals_have_no_artificial_curvature_or_relief(self):
+        for height, width in ((1, 1), (2, 7), (32, 48)):
+            normal = np.zeros((1, 3, height, width), dtype=np.float32)
+            normal[:, 2] = 1
+            features = converter.normal_features(normal)
+            self.assertEqual(features.shape, (1, 2, height, width))
+            np.testing.assert_allclose(features, -1, atol=1e-6)
+
+    def test_tilted_normals_produce_relief_without_zeroed_borders(self):
+        normal = np.zeros((1, 3, 32, 48), dtype=np.float32)
+        normal[:, 0] = .25
+        normal[:, 2] = np.sqrt(1 - .25 ** 2)
+        features = converter.normal_features(normal)[0]
+        self.assertTrue(np.isfinite(features).all())
+        np.testing.assert_allclose(features[0], -1, atol=1e-5)
+        self.assertGreater(float(features[1, :, -1].mean()), .5)
+        self.assertGreater(float(features[1, :, -1].mean()), float(features[1, :, 0].mean()) + 1)
+
     def test_later_inference_failure_does_not_publish_or_replace_earlier_output(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
