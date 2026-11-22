@@ -3058,12 +3058,14 @@ bool GpuLevel::record_object_velocity_visual(size_t index, const FrameRecordingC
                 Device.vCameraPosition.x, Device.vCameraPosition.y, Device.vCameraPosition.z};
             const ClusterLodData* cluster_data = nullptr;
             uint32_t cluster_first_index = 0;
+            uint64_t cluster_index_count = 0;
             uint32_t cluster_first_draw_command = 0;
             uint32_t cluster_cull_count = 0;
             if (window_cluster)
             {
                 cluster_data = &window_cluster->data;
                 cluster_first_index = window_cluster->first_index;
+                cluster_index_count = window_cluster->index_count;
                 cluster_first_draw_command = window_cluster->first_draw_command;
                 cluster_cull_count = window_cluster->cull_cluster_count;
             }
@@ -3071,6 +3073,7 @@ bool GpuLevel::record_object_velocity_visual(size_t index, const FrameRecordingC
             {
                 cluster_data = &mesh.cluster_lod;
                 cluster_first_index = mesh.cluster_first_index;
+                cluster_index_count = mesh.cluster_index_bytes / sizeof(uint32_t);
                 cluster_first_draw_command = mesh.cluster_first_draw_command;
                 cluster_cull_count = mesh.cluster_cull_cluster_count;
             }
@@ -3109,9 +3112,11 @@ bool GpuLevel::record_object_velocity_visual(size_t index, const FrameRecordingC
                                 break;
                             }
                             const ClusterLodCluster& cluster = cluster_data->clusters[cluster_index];
+                            // The CPU index vector is released after packing.
+                            // Validate the retained GPU range for this LOD.
                             if (!cluster.index_count || cluster.index_count % 3 ||
-                                cluster.first_index > cluster_data->indices.size() ||
-                                cluster.index_count > cluster_data->indices.size() - cluster.first_index ||
+                                cluster.first_index > cluster_index_count ||
+                                cluster.index_count > cluster_index_count - cluster.first_index ||
                                 cluster_first_index > UINT32_MAX - cluster.first_index ||
                                 cluster.index_count > UINT32_MAX - cluster_first_index - cluster.first_index)
                             {
