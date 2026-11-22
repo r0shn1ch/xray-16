@@ -10,6 +10,7 @@
 #include "src/Layers/xrRenderVK/ResourceIssueCounter.h"
 #include "Include/xrRender/RenderFactory.h"
 #include "xrEngine/XR_IOConsole.h"
+#include "xrEngine/xr_ioc_cmd.h"
 
 #ifdef NDEBUG
 #undef NDEBUG // Keep ABI-compatible Release headers, then enable test assertions.
@@ -157,6 +158,44 @@ static void check_module()
         int aniso_min = 0, aniso_max = 0;
         assert(console.GetInteger("r__tf_aniso", aniso_min, aniso_max) == (i == 0 ? 2 : 12));
         console.Execute("r__tf_aniso 12");
+        if (i == 0)
+        {
+            // Exercise the same Save/GetStatus and Execute path as user.ltx,
+            // including a token containing whitespace.
+            const char* selected[]{"r_vk_aa TAA", "r_vk_msaa 4x", "r_vk_render_scale 67%",
+                "r_vk_upscaler FSR 3.1", "r_vk_ao_strength 0.35", "r_vk_dof_strength 0.45",
+                "r_vk_sun_shafts_strength 0.55", "r2_volumetric_lights off"};
+            const char* names[]{"r_vk_aa", "r_vk_msaa", "r_vk_render_scale", "r_vk_upscaler",
+                "r_vk_ao_strength", "r_vk_dof_strength", "r_vk_sun_shafts_strength", "r2_volumetric_lights"};
+            for (const auto* value : selected) console.Execute(value);
+            CMemoryWriter config;
+            for (const auto* name : names)
+            {
+                auto* command = console.GetCommand(name);
+                assert(command);
+                command->Save(&config);
+            }
+            const char* changed[]{"r_vk_aa off", "r_vk_msaa 1x", "r_vk_render_scale 100%",
+                "r_vk_upscaler Bilinear", "r_vk_ao_strength 0", "r_vk_dof_strength 0",
+                "r_vk_sun_shafts_strength 0", "r2_volumetric_lights on"};
+            for (const auto* value : changed) console.Execute(value);
+            IReader lines(config.pointer(), config.size());
+            string1024 line;
+            while (!lines.eof())
+            {
+                lines.r_string(line, sizeof(line));
+                console.Execute(line);
+            }
+            assert(std::strcmp(console.GetToken("r_vk_aa"), "TAA") == 0);
+            assert(std::strcmp(console.GetToken("r_vk_msaa"), "4x") == 0);
+            assert(std::strcmp(console.GetToken("r_vk_render_scale"), "67%") == 0);
+            assert(std::strcmp(console.GetToken("r_vk_upscaler"), "FSR 3.1") == 0);
+            float lo = 0.f, hi = 0.f;
+            assert(std::abs(console.GetFloat("r_vk_ao_strength", lo, hi) - .35f) < .001f);
+            assert(std::abs(console.GetFloat("r_vk_dof_strength", lo, hi) - .45f) < .001f);
+            assert(std::abs(console.GetFloat("r_vk_sun_shafts_strength", lo, hi) - .55f) < .001f);
+            assert(!console.GetBool("r2_volumetric_lights"));
+        }
         console.Execute("r_vk_upscaler Cubic");
         assert(std::strcmp(console.GetToken("r_vk_upscaler"), "Cubic") == 0);
         console.Execute("r_vk_upscaler Temporal");
