@@ -14,6 +14,7 @@
 #include "src/Layers/xrRenderVK/DetailCullPass.h"
 #include "src/Layers/xrRenderVK/DetailGeneratePass.h"
 #include "src/Layers/xrRenderVK/DetailCellCullPass.h"
+#include "src/Layers/xrRenderVK/DetailInteractionPass.h"
 #include "src/Layers/xrRenderVK/GpuParticleBuffers.h"
 #include "src/Layers/xrRenderVK/GpuParticleCompute.h"
 #include "src/Layers/xrRenderVK/GpuParticleFrame.h"
@@ -649,6 +650,124 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
     std::cout << "GPU smoke trail, cell selection, indirect detail generation and culling passed\n";
 }
 
+static void exercise_detail_interaction(VkDevice device, VkQueue queue, VkCommandPool pool,
+    const VkPhysicalDeviceLimits& limits, const VkPhysicalDeviceMemoryProperties& memory,
+    const BufferResourceDispatch& buffers)
+{
+    std::string error;
+    DetailInteractionPass interaction;
+    require(interaction.initialize(device, vkGetDeviceProcAddr, limits, 1, VK_NULL_HANDLE, error), error);
+    FrameImagePool images;
+    require(images.initialize(device, memory, {vkCreateImage, vkDestroyImage, vkGetImageMemoryRequirements,
+        vkAllocateMemory, vkFreeMemory, vkBindImageMemory}), "interaction image pool");
+    struct Views {
+        VkDevice device; VkImageView views[3]{}; VkSampler sampler{};
+        ~Views() { if (sampler) vkDestroySampler(device,sampler,nullptr);
+            for (auto view : views) if (view) vkDestroyImageView(device,view,nullptr); }
+    } views{device};
+    VkImage targets[3]{};
+    ImageStateTracker states;
+    constexpr VkImageSubresourceRange color{VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+    for (unsigned i=0; i<3; ++i)
+    {
+        VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        info.imageType=VK_IMAGE_TYPE_2D; info.extent={8,8,1}; info.mipLevels=info.arrayLayers=1;
+        info.samples=VK_SAMPLE_COUNT_1_BIT;
+        info.format=i==2 ? VK_FORMAT_R32_SFLOAT : VK_FORMAT_R16G16B16A16_SFLOAT;
+        info.usage=VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        require(images.acquire(info,targets[i],error),error);
+        VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view.image=targets[i]; view.viewType=VK_IMAGE_VIEW_TYPE_2D; view.format=info.format; view.subresourceRange=color;
+        require(vkCreateImageView(device,&view,nullptr,&views.views[i])==VK_SUCCESS,"interaction image view");
+        require(states.register_image(targets[i],color,ImageUse::Undefined,error),error);
+    }
+    VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    sampler.magFilter=sampler.minFilter=VK_FILTER_NEAREST; sampler.mipmapMode=VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sampler.addressModeU=sampler.addressModeV=sampler.addressModeW=VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    require(vkCreateSampler(device,&sampler,nullptr,&views.sampler)==VK_SUCCESS,"interaction sampler");
+    BufferResource entity_buffer, readback;
+    constexpr auto host=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    require(entity_buffer.initialize(device,sizeof(DetailInteractionEntity),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        host,memory,buffers,error) && readback.initialize(device,8*8*8,VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        host,memory,buffers,error),error);
+    DetailInteractionEntity entity{{3.5f,0.f,3.5f},2.f,{2.f,0.f,0.f},1.f};
+    DetailInteractionParameters base;
+    const float camera[]{4.f,4.f}, origin[]{0.f,0.f};
+    require(detail_interaction_parameters(base,camera,origin,false,.04f,1.f,.5f,1,origin,1.f,8,1.f),"interaction parameters");
+    std::array<uint16_t,8*8*4> previous{}, output{};
+    const auto half=[](uint16_t value) {
+        const float sign=value&0x8000u ? -1.f : 1.f;
+        const int exponent=(value>>10)&31;
+        return exponent ? sign*std::ldexp(1.f+float(value&1023)/1024.f,exponent-15) : sign*std::ldexp(float(value&1023),-24);
+    };
+    constexpr size_t center=(3*8+3)*4;
+    for (unsigned step=0; step<7; ++step)
+    {
+        auto params=base; params.previous_valid=step>0;
+        if (step>=1 && step<=4) params.entity_count=0;
+        if (step>=2 && step<=4) params.delta=0;
+        if (step==3) { params.origin[0]=1.f; params.shift[0]=1; }
+        if (step==4) { params.origin[0]=1000.f; params.previous_valid=0; }
+        if (step>=5) { params.previous_valid=0; entity.position[1]=5.f; }
+        if (step==6) { entity.position[1]=0.f; entity.position[0]=std::numeric_limits<float>::quiet_NaN(); }
+        require(entity_buffer.write(0,&entity,sizeof(entity),error),error);
+        VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        allocate.commandPool=pool; allocate.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY; allocate.commandBufferCount=1;
+        VkCommandBuffer command{};
+        require(vkAllocateCommandBuffers(device,&allocate,&command)==VK_SUCCESS,"interaction command allocation");
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        require(vkBeginCommandBuffer(command,&begin)==VK_SUCCESS,"interaction command begin");
+        if (step==0)
+            for (auto target : targets)
+            {
+                require(states.transition(command,target,ImageUse::TransferDestination,{vkCmdPipelineBarrier},error),error);
+                VkClearColorValue zero{}; vkCmdClearColorImage(command,target,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&zero,1,&color);
+            }
+        const unsigned source=step%2, destination=source^1u;
+        require(states.transition(command,targets[source],ImageUse::StorageRead,{vkCmdPipelineBarrier},error) &&
+            states.transition(command,targets[destination],ImageUse::StorageWrite,{vkCmdPipelineBarrier},error) &&
+            states.transition(command,targets[2],ImageUse::ComputeSampled,{vkCmdPipelineBarrier},error),error);
+        require(interaction.record(command,0,entity_buffer,views.views[source],views.views[2],views.sampler,
+            views.views[destination],params,error),error);
+        require(states.transition(command,targets[destination],ImageUse::TransferSource,{vkCmdPipelineBarrier},error),error);
+        VkBufferMemoryBarrier copy{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+        copy.srcAccessMask=VK_ACCESS_HOST_READ_BIT|VK_ACCESS_TRANSFER_WRITE_BIT; copy.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+        copy.srcQueueFamilyIndex=copy.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+        copy.buffer=readback.handle(); copy.size=VK_WHOLE_SIZE;
+        vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_HOST_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0,0,nullptr,1,&copy,0,nullptr);
+        VkBufferImageCopy region{0,0,0,{VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},{0,0,0},{8,8,1}};
+        vkCmdCopyImageToBuffer(command,targets[destination],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,readback.handle(),1,&region);
+        copy.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT; copy.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
+        vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,0,nullptr,1,&copy,0,nullptr);
+        require(vkEndCommandBuffer(command)==VK_SUCCESS,"interaction command end");
+        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO}; submit.commandBufferCount=1; submit.pCommandBuffers=&command;
+        require(vkQueueSubmit(queue,1,&submit,VK_NULL_HANDLE)==VK_SUCCESS && vkQueueWaitIdle(queue)==VK_SUCCESS,"interaction submit");
+        require(readback.read(0,output.data(),sizeof(output),error),error);
+        vkFreeCommandBuffers(device,pool,1,&command);
+        if (step==0)
+            require(std::abs(half(output[center])-base.contact_rate)<.001f && half(output[center+1])==0.f &&
+                std::abs(half(output[center+2])-12.f)<.001f && output[0]==0,"interaction contact and velocity limit");
+        if (step==1)
+            require(std::abs(half(output[center])-(base.spring[0]*half(previous[center])+base.spring[1]*half(previous[center+2])))<.003f &&
+                std::abs(half(output[center+2])-(base.spring[2]*half(previous[center])+base.spring[3]*half(previous[center+2])))<.01f,
+                "interaction analytic spring recovery");
+        if (step==2) require(output==previous,"interaction pause must preserve position and velocity");
+        if (step==3)
+        {
+            for (size_t channel=0; channel<4; ++channel)
+                require(output[(3*8+2)*4+channel]==previous[center+channel],"interaction window scroll");
+            for (size_t row=0; row<8; ++row)
+                for (size_t channel=0; channel<4; ++channel)
+                    require(output[(row*8+7)*4+channel]==0,"interaction exposed strip must clear");
+        }
+        if (step>=4)
+            for (uint16_t value : output) require((value&0x7fffu)==0,"interaction teleport, height and invalid entity rejection");
+        previous=output;
+    }
+    std::cout << "GPU detail interaction contact, spring recovery, pause, scrolling and history reset passed\n";
+}
+
 void exercise_deferred_startup(VkDevice device, const VkPhysicalDeviceLimits& limits, const std::string& shader_directory)
 {
     if (limits.maxPushConstantsSize < 256) return;
@@ -806,6 +925,7 @@ int main(int argc, char** argv)
         BufferResourceDispatch vk{vkCreateBuffer, vkDestroyBuffer, vkGetBufferMemoryRequirements, vkAllocateMemory,
             vkFreeMemory, vkBindBufferMemory, vkMapMemory, vkUnmapMemory};
         exercise_deferred_startup(f.device, props.limits, shader_directory);
+        exercise_detail_interaction(f.device,queue,f.pool,props.limits,memory,vk);
         if (collision_shader) exercise_collision_shader(physical, f.device, queue, f.pool, props.limits, memory, vk, collision_shader);
         std::string error;
         GpuParticleCompute compute;

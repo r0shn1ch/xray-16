@@ -1,5 +1,6 @@
 #include "src/Layers/xrRenderVK/DetailAssets.h"
 #include "src/Layers/xrRenderVK/DetailWind.h"
+#include "src/Layers/xrRenderVK/DetailInteraction.h"
 
 #include <cassert>
 #include <cstring>
@@ -22,6 +23,29 @@ static LevelBytes span(const Bytes& bytes) { return {bytes.data(), bytes.size()}
 
 int main()
 {
+    {
+        DetailInteractionParameters params;
+        const float camera[]{0.f, 0.f}, origin[]{-32.f, -32.f}, height_origin[]{-100.f, -100.f};
+        assert(detail_interaction_parameters(params, camera, origin, true, .04f, 1.f, .5f, 1, height_origin, .5f));
+        assert(params.origin[0] == -32.f && params.origin[1] == -32.f && params.previous_valid == 1 &&
+            params.shift[0] == 0 && params.shift[1] == 0 && params.entity_count == 1);
+        assert(std::abs(params.contact_rate - (1.f - std::exp(-1.f))) < 1e-6f);
+        const auto step = params;
+        assert(detail_interaction_parameters(params, camera, origin, true, .08f, 1.f, .5f, 1, height_origin, .5f));
+        const float x = .2f, v = .4f;
+        const float x1 = step.spring[0]*x + step.spring[1]*v, v1 = step.spring[2]*x + step.spring[3]*v;
+        assert(std::abs(step.spring[0]*x1 + step.spring[1]*v1 - (params.spring[0]*x + params.spring[1]*v)) < 1e-5f);
+        assert(std::abs(step.spring[2]*x1 + step.spring[3]*v1 - (params.spring[2]*x + params.spring[3]*v)) < 1e-5f);
+        const float moved[]{.0625f, -.0625f};
+        assert(detail_interaction_parameters(params, moved, origin, true, 0.f, 1.f, .5f, 0, height_origin, .5f));
+        assert(params.shift[0] == 1 && params.shift[1] == -1 && params.previous_valid == 1);
+        assert(params.spring[0] == 1.f && params.spring[1] == 0.f && params.spring[2] == 0.f && params.spring[3] == 1.f);
+        const float teleported[]{1000.f, 0.f};
+        assert(detail_interaction_parameters(params, teleported, origin, true, 1.f, 1.f, .5f, 0, height_origin, .5f));
+        assert(params.previous_valid == 0 && params.delta == .1f);
+        assert(!detail_interaction_parameters(params, camera, origin, true, .04f, 1.f, .5f, 65, height_origin, .5f));
+        assert(!detail_interaction_parameters(params, camera, origin, true, .04f, 1.f, .5f, 0, height_origin, 0.f));
+    }
     Bytes header, model, slots;
     for (uint32_t value : {3u, 1u, 0u, 0u, 2u, 1u}) u32(header, value);
     const char shader[] = "details\\set";

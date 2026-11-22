@@ -1,0 +1,60 @@
+#version 450
+layout(local_size_x=8, local_size_y=8) in;
+struct Entity { vec3 position; float radius; vec3 velocity; float weight; };
+layout(set=0,binding=0,std430) readonly buffer Entities { Entity entities[]; };
+layout(set=0,binding=1,rgba16f) uniform readonly image2D previous_field;
+layout(set=0,binding=2) uniform sampler2D heightmap;
+layout(set=0,binding=3,rgba16f) uniform writeonly image2D current_field;
+layout(push_constant) uniform Parameters {
+    vec2 origin; vec2 previous_origin; ivec2 shift; float texel_size; uint size;
+    vec4 spring; float contact_rate; float delta; float max_velocity; uint entity_count;
+    vec2 height_origin; float height_texel_size; uint previous_valid;
+} params;
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, ivec2(params.size))) || any(greaterThanEqual(pixel, imageSize(current_field)))) return;
+    vec4 state = vec4(0);
+    ivec2 previous = pixel + params.shift;
+    if (params.previous_valid != 0u && all(greaterThanEqual(previous, ivec2(0))) &&
+        all(lessThan(previous, imageSize(previous_field)))) state = imageLoad(previous_field, previous);
+    // Pause still scrolls the window, but preserves spring velocity as well.
+    if (params.delta <= 0.0) { imageStore(current_field, pixel, state); return; }
+    vec2 world = params.origin + (vec2(pixel) + .5) * params.texel_size;
+    ivec2 height_pixel = ivec2(floor((world - params.height_origin) / params.height_texel_size));
+    bool valid_height = all(greaterThanEqual(height_pixel, ivec2(0))) && all(lessThan(height_pixel, textureSize(heightmap, 0)));
+    float terrain = valid_height ? texelFetch(heightmap, height_pixel, 0).r : -1e10;
+    vec2 target = vec2(0); float contact = 0;
+    for (uint i=0u; i<min(params.entity_count,uint(entities.length())); ++i) {
+        Entity entity = entities[i];
+        if (entity.radius <= 0.0 || entity.weight <= 0.0 || isnan(entity.radius) || isinf(entity.radius) ||
+            isnan(entity.weight) || isinf(entity.weight) || any(isnan(entity.position)) || any(isinf(entity.position)) ||
+            any(isnan(entity.velocity)) || any(isinf(entity.velocity))) continue;
+        vec2 d = world - entity.position.xz;
+        float distance = length(d);
+        if (distance >= entity.radius) continue;
+        float height_limit = clamp(1.0 - abs(entity.position.y - terrain) * .8, 0.0, 1.0);
+        float strength = min(pow(1.0-distance/entity.radius,.75) * height_limit * entity.weight,1.0);
+        if (strength <= contact) continue;
+        float speed = length(entity.velocity.xz);
+        vec2 movement = speed > 1e-3 ? entity.velocity.xz/speed : vec2(0,1);
+        vec2 radial = distance > 1e-3 ? d/distance : movement;
+        vec2 direction = mix(radial,movement,clamp(speed*.5,0.0,1.0)*.6);
+        float magnitude = length(direction);
+        direction = magnitude > 1e-3 ? direction/magnitude : radial;
+        contact = strength; target = direction * strength;
+    }
+    vec2 x = state.xy, v = state.zw;
+    if (contact > 0.0) {
+        vec2 next = mix(x,target,params.contact_rate);
+        v = (next-x)/params.delta; x = next;
+        float speed = length(v);
+        if (speed > params.max_velocity) v *= params.max_velocity/speed;
+    } else {
+        vec2 next = params.spring.x*x + params.spring.y*v;
+        v = params.spring.z*x + params.spring.w*v; x = next;
+    }
+    float magnitude = length(x);
+    if (magnitude > 1.25) x *= 1.25/magnitude;
+    if (dot(x,x) < 1e-8 && dot(v,v) < 1e-8) { x=vec2(0); v=vec2(0); }
+    imageStore(current_field,pixel,vec4(x,v));
+}
