@@ -1716,6 +1716,18 @@ bool FrameContext::create_commands(std::string& error)
 
     if (m_nvrhi_device)
     {
+        const auto create_optional_graphics_list = [&]() -> nvrhi::CommandListHandle
+        {
+            try
+            {
+                return m_nvrhi_device->createCommandList();
+            }
+            catch (...)
+            {
+                // Optional split submissions fall back to the main list.
+                return {};
+            }
+        };
         try
         {
             for (auto& frame_lists : m_nvrhi_command_lists)
@@ -1729,14 +1741,14 @@ bool FrameContext::create_commands(std::string& error)
                     return false;
                 }
                 if ((m_async_compute_enabled || m_async_copy_enabled) && !frame_lists[1])
-                    frame_lists[1] = m_nvrhi_device->createCommandList();
+                    frame_lists[1] = create_optional_graphics_list();
                 if ((m_async_compute_enabled || m_async_copy_enabled) && !frame_lists[1])
                 {
                     m_async_compute_enabled = false;
                     m_async_copy_enabled = false;
                 }
                 if (m_async_compute_enabled && !frame_lists[2])
-                    frame_lists[2] = m_nvrhi_device->createCommandList();
+                    frame_lists[2] = create_optional_graphics_list();
                 if (m_async_compute_enabled && !frame_lists[2])
                     m_async_compute_enabled = false;
             }
@@ -1772,15 +1784,15 @@ bool FrameContext::create_commands(std::string& error)
             {
                 m_async_compute_enabled = false;
             }
-            if (!m_async_compute_enabled)
+        }
+        if (!m_async_compute_enabled)
+        {
+            m_nvrhi_compute_command_lists = {};
+            for (auto& frame_lists : m_nvrhi_command_lists)
             {
-                m_nvrhi_compute_command_lists = {};
-                for (auto& frame_lists : m_nvrhi_command_lists)
-                {
-                    frame_lists[2] = nullptr;
-                    if (!m_async_copy_enabled)
-                        frame_lists[1] = nullptr;
-                }
+                frame_lists[2] = nullptr;
+                if (!m_async_copy_enabled)
+                    frame_lists[1] = nullptr;
             }
         }
     }
