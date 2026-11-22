@@ -190,8 +190,10 @@ def write_dds(file, image, srgb=False):
     file.write(b"DDS " + struct.pack("<31I", *header) + struct.pack("<5I", 29 if srgb else 28, 3, 0, 1, 0))
     linear_rgb = None
     if srgb and mip_count > 1:
-        encoded = np.asarray(image, dtype=np.float32)[..., :3] / 255.0
+        rgba = np.asarray(image, dtype=np.float32) / 255.0
+        encoded, coverage = rgba[..., :3], rgba[..., 3]
         linear_rgb = np.where(encoded <= 0.04045, encoded / 12.92, ((encoded + 0.055) / 1.055) ** 2.4)
+        linear_rgb *= coverage[..., None]
     for level in range(mip_count):
         if level:
             size = (max(1, image.width // 2), max(1, image.height // 2))
@@ -203,9 +205,12 @@ def write_dds(file, image, srgb=False):
                     np.asarray(Image.fromarray(channel).resize(size, Image.Resampling.BOX))
                     for channel in linear_rgb.transpose(2, 0, 1)
                 ], axis=-1)
-                encoded = np.where(linear_rgb <= 0.0031308, linear_rgb * 12.92,
-                                   1.055 * linear_rgb ** (1 / 2.4) - 0.055)
-                alpha = image.getchannel("A").resize(size, Image.Resampling.BOX)
+                coverage = np.asarray(Image.fromarray(coverage).resize(size, Image.Resampling.BOX))
+                color = np.divide(linear_rgb, coverage[..., None], out=np.zeros_like(linear_rgb),
+                                  where=coverage[..., None] > 0)
+                encoded = np.where(color <= 0.0031308, color * 12.92,
+                                   1.055 * color ** (1 / 2.4) - 0.055)
+                alpha = Image.fromarray(np.rint(np.clip(coverage, 0, 1) * 255).astype(np.uint8))
                 image = Image.fromarray(np.rint(np.clip(encoded, 0, 1) * 255).astype(np.uint8))
                 image.putalpha(alpha)
         file.write(image.tobytes())
