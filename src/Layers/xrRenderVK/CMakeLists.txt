@@ -235,7 +235,7 @@ target_sources(xrRenderVK PRIVATE
     EngineLevelModels.h
     FrameContext.cpp
     FrameContext.h
-    FrameGraphBufferAllocation.cpp
+    FrameGraphAllocation.cpp
     FrameImageGraph.cpp
     FrameImageGraph.h
     FrameBufferPool.cpp

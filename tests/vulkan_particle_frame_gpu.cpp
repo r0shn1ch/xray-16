@@ -850,16 +850,8 @@ int main(int argc, char** argv)
                 graph.read(fill, cleared, ImageUse::TransferSource, error) &&
                 graph.write_buffer(fill, transient, BufferUse::TransferDestination, written, error) &&
                 graph.read_buffer(host, written, BufferUse::HostRead, error), error);
-            require(graph.materialize_images([&image_pool](const VkImageCreateInfo& info,
-                FrameImageGraph::TransientImage& output, std::string& failure) {
-                if (!image_pool.acquire(info, output.handle, failure))
-                    return false;
-                output.owner = std::shared_ptr<void>(new VkImage(output.handle), [&image_pool](void* resource) {
-                    const std::unique_ptr<VkImage> image(static_cast<VkImage*>(resource));
-                    image_pool.release(*image);
-                });
-                return true;
-            }, error), error);
+            require(graph.materialize_images(image_pool, error), error);
+            const VkImage materialized_image = graph.image_handle(image);
             require(graph.materialize_buffers(buffer_pool, error), error);
             const VkBuffer materialized = graph.buffer_handle(written);
             require(materialized && !graph.buffer_handle(unused), "unexpected transient buffer allocation");
@@ -876,6 +868,9 @@ int main(int argc, char** argv)
             retirement.complete(0);
             require(retirement.size() == 2 && !graph.buffer_handle(written) && !graph.image_handle(image),
                 "transient resource ownership handoff");
+            VkImage other_image{};
+            require(image_pool.acquire(image_info, other_image, error), error);
+            require(other_image != materialized_image, "transient image recycled before frame completion");
             VkSubmitInfo transient_submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
             transient_submit.commandBufferCount = 1;
             transient_submit.pCommandBuffers = &transient_command;
@@ -884,6 +879,11 @@ int main(int argc, char** argv)
             vkFreeCommandBuffers(f.device, f.pool, 1, &transient_command);
             retirement.complete(1);
             require(retirement.size() == 0, "transient buffer retirement");
+            VkImage reused_image{};
+            require(image_pool.acquire(image_info, reused_image, error), error);
+            require(reused_image == materialized_image && image_pool.release(reused_image),
+                "transient image was not recycled after frame completion");
+            require(image_pool.release(other_image), "release second pooled image");
             BufferResource* physical = nullptr;
             require(buffer_pool.acquire(readback_description.size, readback_description.usage,
                 readback_description.memory_properties, readback_description.pooled_memory, physical, error), error);
