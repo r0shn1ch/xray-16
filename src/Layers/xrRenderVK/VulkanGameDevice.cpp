@@ -2843,6 +2843,12 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
     smoke_draw_.reset();
     trail_draw_.reset();
     bool replace_surface = recreate_surface || window_.frame().surface_lost();
+    if (replace_surface)
+    {
+        gbuffer_msaa_configured_ = false;
+        if (!window_.frame().request_scene_samples(VK_SAMPLE_COUNT_1_BIT, error))
+            return false;
+    }
     // The existing frame supplies the attachment formats for a same-surface reset.
     // A replacement surface is negotiated after SDL has created it.
     const bool preselect_msaa = !replace_surface && !gbuffer_msaa_configured_;
@@ -2908,7 +2914,8 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
             return false;
         Msg("! [renderer-vulkan] surface lost during swapchain reset; creating a replacement");
         replace_surface = true;
-        return recreate();
+        gbuffer_msaa_configured_ = false;
+        return window_.frame().request_scene_samples(VK_SAMPLE_COUNT_1_BIT, error) && recreate();
     };
     if (preselect_msaa && !window_.frame().request_scene_samples(selected_msaa.samples, error))
         return false;
@@ -2926,7 +2933,7 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
 
     auto &frame = window_.frame();
     const auto &physical = window_.physical();
-    if (!initialize_gbuffer_targets(error, preselect_msaa ? &selected_msaa : nullptr))
+    if (!initialize_gbuffer_targets(error, preselect_msaa && !replace_surface ? &selected_msaa : nullptr))
         return false;
     frame.set_frame_generation_ui(Fsr3Upscaler::frame_generation_ui_active_callback,
         Fsr3Upscaler::register_frame_generation_ui_callback, &fsr3_upscaler_);
