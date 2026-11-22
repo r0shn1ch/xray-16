@@ -25,8 +25,15 @@ layout(push_constant) uniform ResolveParameters
 vec3 finiteNormal(vec3 normal)
 {
     float squaredLength = dot(normal, normal);
-    return squaredLength > 1e-8 && !isinf(squaredLength)
+    return squaredLength > 1e-12 && squaredLength < 1e20
         ? normal * inversesqrt(squaredLength) : vec3(0.0, 1.0, 0.0);
+}
+
+vec3 finiteTangentNormal(vec3 normal)
+{
+    float squaredLength = dot(normal, normal);
+    return squaredLength > 1e-12 && squaredLength < 1e20
+        ? normal * inversesqrt(squaredLength) : vec3(0.0, 0.0, 1.0);
 }
 
 bool finiteUv(vec2 value)
@@ -97,6 +104,40 @@ void main()
     bool hasPbr = entry.pbrSlot < parameters.materialCount || entry.metallicSlot < parameters.materialCount ||
         entry.roughnessSlot < parameters.materialCount || entry.aoSlot < parameters.materialCount;
     vec4 surface = vec4(0.0, entry.materialClass, 0.0, 0.0);
+    bool hasBump = entry.bumpSlot < parameters.materialCount && entry.bumpAuxSlot < parameters.materialCount;
+    bool hasNormal = entry.normalSlot < parameters.materialCount;
+    if (hasBump || hasNormal)
+    {
+        vec3 mapped = vec3(0.0, 0.0, 1.0);
+        if (hasBump)
+        {
+            vec4 bump = textureGrad(baseColorTextures[nonuniformEXT(entry.bumpSlot)], uv, uvDx, uvDy);
+            vec4 aux = textureGrad(baseColorTextures[nonuniformEXT(entry.bumpAuxSlot)], uv, uvDx, uvDy);
+            mapped = finiteTangentNormal(bump.wzy + aux.xyz - 1.0);
+            surface.r = clamp(bump.r * bump.r, 0.0, 1.0);
+            surface.a = aux.z * entry.bumpHeight;
+        }
+        if (hasNormal)
+            mapped = finiteTangentNormal(textureGrad(baseColorTextures[nonuniformEXT(entry.normalSlot)],
+                uv, uvDx, uvDy).xyz * 2.0 - 1.0);
+        vec3 tangent = mat3(unpackSnorm4x8(a.bakedBATangentBitangent.z).xyz,
+            unpackSnorm4x8(b.bakedBATangentBitangent.z).xyz,
+            unpackSnorm4x8(c.bakedBATangentBitangent.z).xyz) * barycentrics.weights;
+        vec3 bitangent = mat3(unpackSnorm4x8(a.bakedBATangentBitangent.w).xyz,
+            unpackSnorm4x8(b.bakedBATangentBitangent.w).xyz,
+            unpackSnorm4x8(c.bakedBATangentBitangent.w).xyz) * barycentrics.weights;
+        tangent -= normal * dot(normal, tangent);
+        bitangent -= normal * dot(normal, bitangent);
+        float t2 = dot(tangent, tangent), b2 = dot(bitangent, bitangent);
+        float determinant = dot(cross(normal, tangent), bitangent);
+        if (t2 > 1e-12 && b2 > 1e-12 && t2 < 1e20 && b2 < 1e20 &&
+            determinant * determinant > t2 * b2 * 1e-6)
+        {
+            tangent *= inversesqrt(t2);
+            bitangent = cross(normal, tangent) * (determinant < 0.0 ? -1.0 : 1.0);
+            normal = finiteNormal(tangent * mapped.x + bitangent * mapped.y + normal * mapped.z);
+        }
+    }
     if (hasPbr)
     {
         vec3 pbr = vec3(0.0, 1.0, 1.0);

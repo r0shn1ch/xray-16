@@ -642,6 +642,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
             mesh.matrices = source.matrices;
             mesh.tessellation = source.tessellation;
             mesh.bump_texture = source.bump_texture;
+            mesh.visibility_external_normal = source.visibility_external_normal;
             mesh.pbr_texture = source.pbr_texture;
             mesh.metallic_texture = source.metallic_texture;
             mesh.roughness_texture = source.roughness_texture;
@@ -758,6 +759,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
         mesh.matrices = definition.matrices;
         mesh.tessellation = tessellation_enabled ? definition.tessellation : 0;
         mesh.bump_texture = metadata.bump_texture;
+        mesh.visibility_external_normal = metadata.external_normal_texture;
         mesh.bump_mode = metadata.bump_mode;
         mesh.bump_height = metadata.bump_height;
         mesh.lightmapped = !lightmap.empty();
@@ -824,8 +826,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
               !metadata.parallax_texture.empty()) ||
              definition.emissive);
         mesh.surface = surface_roles;
-        mesh.visibility_material_supported = metadata.bump_mode < 2 && !metadata.normal &&
-            metadata.external_normal_texture.empty() && mesh.parallax_texture.empty();
+        mesh.visibility_material_supported = !metadata.normal && mesh.parallax_texture.empty();
         mesh.visibility_material_class = std::clamp((float(metadata.material) + metadata.material_weight) / 3.f, 0.f, 1.f);
         bool surface_ready = false;
         if (surface_roles)
@@ -1317,7 +1318,8 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
             const auto append_entries = [&](const Mesh& mesh, const ClusterLodData& hierarchy,
                                             uint32_t first_draw, uint32_t first_index, uint32_t draw_count,
                                             uint32_t material_slot, uint32_t lightmap_slot,
-                                            const std::array<uint32_t, 4>& pbr_slots) -> bool {
+                                            const std::array<uint32_t, 4>& pbr_slots,
+                                            const std::array<uint32_t, 3>& normal_slots) -> bool {
                 if (!draw_count || draw_count > hierarchy.clusters.size() || first_draw > entries.size() ||
                     draw_count > entries.size() - first_draw || mesh.geometry_batch >= prepared.geometry_batches_.size())
                     return false;
@@ -1330,7 +1332,8 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                     const auto& cluster = hierarchy.clusters[i];
                     entries[first_draw + i] = {first_index + cluster.first_index, cluster.index_count,
                         static_cast<int32_t>(mesh.first_vertex), material_slot, mesh.geometry_batch, lightmap_slot,
-                        mesh.visibility_material_class, pbr_slots[0], pbr_slots[1], pbr_slots[2], pbr_slots[3]};
+                        mesh.visibility_material_class, pbr_slots[0], pbr_slots[1], pbr_slots[2], pbr_slots[3],
+                        normal_slots[0], normal_slots[1], normal_slots[2], mesh.bump_height};
                 }
                 auto& range = prepared.visibility_draw_ranges_[mesh.geometry_batch];
                 if (!range.draw_count)
@@ -1347,13 +1350,15 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
             {
                 const auto& node = mesh.pass_graph.passes[0];
                 const bool simple_shader = mesh.lightmapped
-                    ? !mesh.lightmap_texture_name.empty() && node.textures == (BaseRole | LightmapRole) &&
+                    ? !mesh.lightmap_texture_name.empty() &&
+                        (node.textures & ~(BumpRole | BumpAuxRole | GlossRole | NormalRole)) == (BaseRole | LightmapRole) &&
                         node.vertex == "vk\\level_lightmap.vs" && node.fragment == "vk\\level_lightmap.ps"
-                    : node.textures == BaseRole && node.vertex == "vk\\level_opaque.vs" && node.fragment == "vk\\level_opaque.ps";
+                    : (node.textures & ~(BumpRole | BumpAuxRole | GlossRole | NormalRole)) == BaseRole &&
+                        node.vertex == "vk\\level_opaque.vs" && node.fragment == "vk\\level_opaque.ps";
                 if (mesh.mode != SurfaceMode::Opaque || !mesh.packed_cluster_indices || mesh.secondary_opaque ||
                     !mesh.visibility_material_supported || mesh.terrain || mesh.single_detail || mesh.environment ||
                     mesh.environment_constant || mesh.laemb || mesh.lod_atlas || mesh.tree || mesh.emissive ||
-                    mesh.tessellation || mesh.fog || mesh.depth_proxy || !mesh.bump_texture.empty() || mesh.matrices.enabled[0] ||
+                    mesh.tessellation || mesh.fog || mesh.depth_proxy || mesh.matrices.enabled[0] ||
                     mesh.pass_graph.count != 1 ||
                     !simple_shader ||
                     mesh.material_id >= models.materials.size())
@@ -1371,12 +1376,17 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                 };
                 const std::array<uint32_t, 4> pbr_slots{optional_slot(mesh.pbr_texture),
                     optional_slot(mesh.metallic_texture), optional_slot(mesh.roughness_texture), optional_slot(mesh.ao_texture)};
+                const bool has_bump = mesh.bump_mode >= 2 && !mesh.bump_texture.empty();
+                const std::array<uint32_t, 3> normal_slots{
+                    has_bump ? optional_slot(mesh.bump_texture) : UINT32_MAX,
+                    has_bump ? optional_slot(mesh.bump_texture + "#") : UINT32_MAX,
+                    optional_slot(mesh.visibility_external_normal)};
                 if (mesh.windows.empty())
                     mesh.visibility_rasterizable = append_entries(mesh, mesh.cluster_lod, mesh.cluster_first_draw_command,
-                        mesh.cluster_first_index, mesh.cluster_cull_cluster_count, base_slot, lightmap_slot, pbr_slots);
+                        mesh.cluster_first_index, mesh.cluster_cull_cluster_count, base_slot, lightmap_slot, pbr_slots, normal_slots);
                 for (auto& window : mesh.cluster_lod_windows)
                     window.visibility_rasterizable = append_entries(mesh, window.data, window.first_draw_command,
-                        window.first_index, window.cull_cluster_count, base_slot, lightmap_slot, pbr_slots);
+                        window.first_index, window.cull_cluster_count, base_slot, lightmap_slot, pbr_slots, normal_slots);
             }
             auto& ranges = prepared.visibility_draw_ranges_;
             ranges.erase(std::remove_if(ranges.begin(), ranges.end(), [](const VisibilityDrawRange& range) {

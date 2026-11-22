@@ -274,6 +274,7 @@ class GpuLevel
         TextureMatrixSet matrices;
         uint8_t tessellation{};
         std::string bump_texture;
+        std::string visibility_external_normal;
         std::string pbr_texture, metallic_texture, roughness_texture, ao_texture;
         std::string parallax_texture;
         std::string ray_normal_texture;
