@@ -208,7 +208,7 @@ int main()
     targets.layout_tiles(requests);
     for (uint32_t face = 0; face < LocalShadowFaces; ++face)
     {
-        assert(targets.face_extent(0, face).width == LocalShadowSize);
+        assert(targets.face_extent(0, face).width == 1024);
         assert(targets.face_extent(1, face).width == 0);
     }
     assert(!targets.cached_face(1, 1, matrix));

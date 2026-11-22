@@ -259,7 +259,12 @@ void LocalShadowTargets::layout_tiles(const std::array<TileRequest, LocalShadowS
         if (!request.faces || !request.resolution)
             continue;
         std::array<uint32_t, LocalShadowFaces> nodes{};
-        if (!atlas.AllocateFaces(atlas.LevelOf(request.resolution), request.faces, nodes))
+        uint32_t level = atlas.LevelOf(request.resolution);
+        // Downgrade a light as a unit so point-light faces keep matching resolutions.
+        while (level < framegraph::kLocalAtlasLevels &&
+            !atlas.AllocateFaces(level, request.faces, nodes))
+            ++level;
+        if (level == framegraph::kLocalAtlasLevels)
         {
             fits = false;
             break;
