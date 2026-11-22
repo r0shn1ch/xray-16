@@ -2046,6 +2046,18 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         fsr3_upscaler_.set_frame(Device.dwFrame, Device.fTimeDelta * 1000.f, VIEWPORT_NEAR,
             far_plane, Device.fFOV * (3.14159265358979323846f / 180.f));
     }
+    const auto discard_frame_history = [&] {
+        hiz_.reset_history();
+        hiz_unsupported_dynamic_previous_ = false;
+        object_motion_.reset();
+        motion_.reset_history();
+        indirect_temporal_.reset_history();
+        indirect_frames_.reset_reservoir_history();
+        exposure_.reset_history();
+        temporal_.reset_history();
+        fsr3_upscaler_.reset_history();
+        temporal_sample_index_ = 0;
+    };
     if (!frame_.render(window_.frame(), targets_, level, deferred_, render_mvp, light, status, error, record_ui, this,
                        record_hud, this, record_models, this, record_transparent, this,
                        scene_visibility_ ? record_level_visuals : nullptr, this, render_world, clear_target,
@@ -2059,9 +2071,7 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
                        grade_display ? record_display_grade : nullptr, this,
                        validate_frame_recording, this))
     {
-        hiz_.reset_history();
-        fsr3_upscaler_.reset_history();
-        hiz_unsupported_dynamic_previous_ = false;
+        discard_frame_history();
         smoke_recorded_ = {};
         sky_probe_recorded_ = {};
         if (gpu_particles_)
@@ -2112,14 +2122,7 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
     if (status == FrameStatus::RecreateRequired)
     {
         reset_required_ = true;
-        object_motion_.reset();
-        motion_.reset_history();
-        indirect_temporal_.reset_history();
-        indirect_frames_.reset_reservoir_history();
-        exposure_.reset_history();
-        temporal_.reset_history();
-        fsr3_upscaler_.reset_history();
-        temporal_sample_index_ = 0;
+        discard_frame_history();
     }
     else
     {
