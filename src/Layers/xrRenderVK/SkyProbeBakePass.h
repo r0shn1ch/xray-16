@@ -22,10 +22,13 @@ inline bool sample_sky_probes(const framegraph::SkyProbeLayout& layout,
         if (!std::isfinite(position[axis]) || position[axis] < layout.origin[axis] ||
             position[axis] > static_cast<float>(end))
             return false;
-        // The last baked position is rounded to float and can lie just past
-        // the mathematical endpoint. Accept it as the final grid sample.
-        const double coordinate = position[axis] == static_cast<float>(end) ? double(last) :
-            (double(position[axis]) - layout.origin[axis]) / layout.spacing;
+        double coordinate = std::min((double(position[axis]) - layout.origin[axis]) / layout.spacing,
+            double(last));
+        // Positions produced by the bake are rounded to float. At an exact
+        // baked position, avoid weighting an adjacent, potentially unbaked probe.
+        const double nearest = std::round(coordinate);
+        if (position[axis] == static_cast<float>(double(layout.origin[axis]) + double(layout.spacing) * nearest))
+            coordinate = nearest;
         base[axis] = std::min(static_cast<uint32_t>(coordinate), last - 1);
         fraction[axis] = static_cast<float>(coordinate - base[axis]);
     }

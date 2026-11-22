@@ -1,5 +1,6 @@
 #include "src/Layers/xrRenderVK/DetailInstance.h"
 #include "src/Layers/xrRenderGraph/SkyProbeLayout.h"
+#include "src/Layers/xrRenderVK/SkyProbeBakePass.h"
 #include "src/Layers/xrRenderGraph/LocalAtlasAllocator.h"
 #include "src/Layers/xrRenderVK/LevelLightmap.h"
 #include "src/Layers/xrRenderVK/LevelModels.h"
@@ -72,6 +73,13 @@ int main()
         assert(sky.count == 8 && sky.spacing == 8.f);
         assert(!sky.position(8, position));
         assert(!sky.initialize({0.f, 0.f, 1.f}, {0.f, 0.f, 0.f}, 2.f, 64));
+        assert(sky.initialize({1000000.f, 0.f, 0.f}, {1000001.f, 0.f, 0.f}, .3f, 64));
+        assert(sky.position(1, position));
+        std::vector<xray::render::vulkan::SkyProbeVisibility> prefix(2);
+        prefix[1].faces.fill(.75f);
+        std::array<float, 6> sampled{};
+        assert(xray::render::vulkan::sample_sky_probes(sky, prefix, position, sampled));
+        assert(sampled == prefix[1].faces);
     }
     const auto blade = detail_instance(10, 2, 3, 1.57079632679f, 2);
     const float point[]{1, 0, 0};
