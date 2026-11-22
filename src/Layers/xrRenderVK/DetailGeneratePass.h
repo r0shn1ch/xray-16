@@ -29,11 +29,14 @@ public:
     {
         uint32_t slot_count{}, grid_size{};
         float sample_spacing{}, density{};
+        uint32_t compact_cells{};
     };
 
     bool initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, const VkPhysicalDeviceLimits& limits,
         uint32_t slots, VkPipelineCache cache, const DetailCullPass::Source& source, std::string& error)
     {
+        if (limits.maxPerStageDescriptorStorageBuffers < 5 || limits.maxDescriptorSetStorageBuffers < 5)
+        { error = "GPU detail generation needs five storage bindings"; return false; }
         std::vector<uint8_t> binary;
         if (!source("vk/detail_generate.cs.spv", binary, error))
             return false;
@@ -44,10 +47,10 @@ public:
         }
         std::vector<uint32_t> words(binary.size() / sizeof(uint32_t));
         std::memcpy(words.data(), binary.data(), binary.size());
-        max_groups_x_ = limits.maxComputeWorkGroupCount[0];
-        max_groups_y_ = limits.maxComputeWorkGroupCount[1];
+        max_groups_x_ = std::min(limits.maxComputeWorkGroupCount[0], 65535u);
+        max_groups_y_ = std::min(limits.maxComputeWorkGroupCount[1], 65535u);
         max_candidates_ = limits.maxStorageBufferRange / sizeof(GeneratedDetail);
-        return compute_.initialize(device, get, slots, 4, sizeof(Parameters), limits.maxStorageBufferRange,
+        return compute_.initialize(device, get, slots, 5, sizeof(Parameters), limits.maxStorageBufferRange,
             cache, words.data(), binary.size(), error);
     }
 
@@ -65,12 +68,16 @@ public:
 
     bool record(VkCommandBuffer command, uint32_t slot, const BufferResource& slots,
         const BufferResource& ground, const BufferResource& prototypes, const BufferResource& output,
-        const Parameters& params, std::string& error) const
+        const Parameters& params, std::string& error, const BufferResource* visible = nullptr,
+        const BufferResource* indirect_arguments = nullptr) const
     {
         uint32_t count{};
         if (!candidate_count(params, count, error)) return false;
         if (params.slot_count > slots.size() / sizeof(DetailGenerateSlot) ||
-            count > output.size() / sizeof(GeneratedDetail))
+            count > output.size() / sizeof(GeneratedDetail) ||
+            (params.compact_cells && (!visible || !indirect_arguments ||
+                visible->size() / sizeof(uint32_t) < uint64_t(params.slot_count) + 1)) ||
+            (!params.compact_cells && (visible || indirect_arguments)))
         {
             error = "invalid GPU detail generation range";
             return false;
@@ -83,10 +90,14 @@ public:
             error = "GPU detail generation exceeds dispatch capacity";
             return false;
         }
-        return compute_.record(command, slot, {{slots.handle(), 0, slots.size()},
+        const auto& selection = visible ? *visible : slots;
+        const std::vector<VkDescriptorBufferInfo> descriptors{{slots.handle(), 0, slots.size()},
             {ground.handle(), 0, ground.size()}, {prototypes.handle(), 0, prototypes.size()},
-            {output.handle(), 0, count * sizeof(GeneratedDetail)}}, &params,
-            groups_x, static_cast<uint32_t>(groups_y), error);
+            {output.handle(), 0, count * sizeof(GeneratedDetail)},
+            {selection.handle(), 0, selection.size()}};
+        if (indirect_arguments)
+            return compute_.record_indirect(command, slot, descriptors, &params, *indirect_arguments, 0, error);
+        return compute_.record(command, slot, descriptors, &params, groups_x, static_cast<uint32_t>(groups_y), error);
     }
 
 private:

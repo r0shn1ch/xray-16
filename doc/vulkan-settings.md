@@ -46,6 +46,13 @@ as Vulkan evidence. Keep a separate configuration for OpenGL comparisons.
 | Always active / FPS limits | `rs_always_active`, `rs_fps_limit`, `rs_fps_limit_in_menu` | Shared engine scheduling | Runtime; saved by `cfg_save` |
 | Resolution / window mode | `vid_mode`, `vid_window_mode` | Shared SDL device | Desktop only; launcher owns the Android render size |
 
+GPU detail generation selects resident cells by range and frustum, then builds
+an indirect generation dispatch and indirect instance draws without a CPU
+counter readback. Empty selections clear stale placements. Each frame slot owns
+its selection and dispatch buffers. Ground-triangle streaming and transparent
+detail sorting still use the CPU; this does not complete the upstream grass
+system, including its wind and interaction paths.
+
 On Android, the launcher resolution selects the 3D scene size. The G-buffer,
 world water/refraction targets and post-process input use that size, including
 the 3D weapon HUD and world-space UI. The swapchain and engine UI coordinate

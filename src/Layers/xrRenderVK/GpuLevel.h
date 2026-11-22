@@ -11,6 +11,7 @@
 #include "ClusterVisibility.h"
 #include "Layers/xrRenderGraph/VisibilityId.h"
 #include "DetailGeneratePass.h"
+#include "DetailCellCullPass.h"
 #include "ResourceIssueCounter.h"
 #include "xrCore/_matrix.h"
 #include <algorithm>
@@ -307,11 +308,13 @@ class GpuLevel
     struct GpuDetailBatch { BufferResource placements, instances, arguments; uint32_t count{}; };
     std::unique_ptr<DetailCullPass> detail_cull_;
     std::unique_ptr<DetailGeneratePass> detail_generate_;
+    std::unique_ptr<DetailCellCullPass> detail_cell_cull_;
+    std::array<float, 4> detail_generation_camera_{};
     mutable bool detail_gpu_generation_failed_{};
     bool detail_cache_gpu_only_{};
     struct DetailGenerationFrame
     {
-        BufferResource cells, triangles, placed;
+        BufferResource cells, triangles, placed, visible_cells, dispatch;
         std::vector<uint32_t> uploaded_cell_ids;
         std::vector<uint32_t> model_capacities;
         uint64_t ground_generation{};

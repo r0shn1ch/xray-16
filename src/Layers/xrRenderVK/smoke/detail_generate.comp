@@ -13,12 +13,14 @@ layout(set = 0, binding = 0, std430) readonly buffer Slots { Slot slots[]; };
 layout(set = 0, binding = 1, std430) readonly buffer Ground { Triangle triangles[]; };
 layout(set = 0, binding = 2, std430) readonly buffer Prototypes { vec2 scale_range[]; };
 layout(set = 0, binding = 3, std430) writeonly buffer Placements { Placement output_placements[]; };
+layout(set = 0, binding = 4, std430) readonly buffer Visible { uint visible_cells[]; };
 layout(push_constant) uniform Generate
 {
     uint slot_count;
     uint grid_size;
     float sample_spacing;
     float density;
+    uint compact_cells;
 } settings;
 
 uint detail_random(uint value)
@@ -59,6 +61,12 @@ void main()
     uint slot_index = index / candidates_per_slot;
     if (slot_index >= settings.slot_count || slot_index >= slots.length())
         return;
+    if (settings.compact_cells != 0u)
+    {
+        if (slot_index >= visible_cells[0] || slot_index + 1u >= visible_cells.length()) return;
+        slot_index = visible_cells[1u + slot_index];
+        if (slot_index >= settings.slot_count || slot_index >= slots.length()) return;
+    }
     output_placements[index] = Placement(vec4(0.0), 0.0, 0xffffffffu, uvec2(0u));
 
     Slot slot = slots[slot_index];

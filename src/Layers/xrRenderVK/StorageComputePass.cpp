@@ -58,6 +58,7 @@ bool StorageComputePass::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get
     LOAD(bind_sets_, PFN_vkCmdBindDescriptorSets, "vkCmdBindDescriptorSets");
     LOAD(push_constants_, PFN_vkCmdPushConstants, "vkCmdPushConstants");
     LOAD(dispatch_, PFN_vkCmdDispatch, "vkCmdDispatch");
+    LOAD(dispatch_indirect_, PFN_vkCmdDispatchIndirect, "vkCmdDispatchIndirect");
     LOAD(barrier_, PFN_vkCmdPipelineBarrier, "vkCmdPipelineBarrier");
 #undef LOAD
     auto fail = [&](const char* why) { error = why; destroy(); return false; };
@@ -113,7 +114,8 @@ bool StorageComputePass::record(VkCommandBuffer command, uint32_t slot,
 bool StorageComputePass::record_mixed(VkCommandBuffer command, uint32_t slot,
     const std::vector<VkDescriptorBufferInfo>& buffers, const std::vector<VkDescriptorImageInfo>& images,
     const void* constants, uint32_t groups_x, uint32_t groups_y, std::string& error,
-    VkDescriptorSet external_set, VkBufferView uniform_texels) const
+    VkDescriptorSet external_set, VkBufferView uniform_texels,
+    VkBuffer indirect_arguments, VkDeviceSize indirect_offset) const
 {
     const size_t expected_buffers = static_cast<size_t>(std::count_if(bindings_.begin(), bindings_.end(),
         [](const Binding& binding) { return binding.type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER ||
@@ -124,7 +126,9 @@ bool StorageComputePass::record_mixed(VkCommandBuffer command, uint32_t slot,
     const size_t expected_images = bindings_.size() - expected_buffers - size_t(expects_texels);
     if (!pipeline_ || !command || slot >= sets_.size() || buffers.size() != expected_buffers ||
         images.size() != expected_images || expects_texels != (uniform_texels != VK_NULL_HANDLE) || (push_size_ && !constants) ||
-        !groups_x || !groups_y || groups_x > 65535 || groups_y > 65535 || external_layout_ != (external_set != VK_NULL_HANDLE))
+        !groups_x || !groups_y || groups_x > 65535 || groups_y > 65535 ||
+        (indirect_arguments && (!dispatch_indirect_ || indirect_offset % 4)) ||
+        (!indirect_arguments && indirect_offset) || external_layout_ != (external_set != VK_NULL_HANDLE))
     { error = "invalid storage compute dispatch"; return false; }
     std::vector<VkWriteDescriptorSet> writes(bindings_.size());
     size_t buffer_index = 0, image_index = 0;
@@ -165,7 +169,10 @@ bool StorageComputePass::record_mixed(VkCommandBuffer command, uint32_t slot,
     bind_sets_(command, VK_PIPELINE_BIND_POINT_COMPUTE, layout_, 0, 1, &sets_[slot], 0, nullptr);
     if (external_layout_) bind_sets_(command, VK_PIPELINE_BIND_POINT_COMPUTE, layout_, 1, 1, &external_set, 0, nullptr);
     if (push_size_) push_constants_(command, layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, push_size_, constants);
-    dispatch_(command, groups_x, groups_y, 1);
+    if (indirect_arguments)
+        dispatch_indirect_(command, indirect_arguments, indirect_offset);
+    else
+        dispatch_(command, groups_x, groups_y, 1);
     VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT;
@@ -174,6 +181,17 @@ bool StorageComputePass::record_mixed(VkCommandBuffer command, uint32_t slot,
         0, 1, &barrier, 0, nullptr, 0, nullptr);
     error.clear(); return true;
 }
+bool StorageComputePass::record_indirect(VkCommandBuffer command, uint32_t slot,
+    const std::vector<VkDescriptorBufferInfo>& buffers, const void* constants,
+    const BufferResource& arguments, VkDeviceSize offset, std::string& error) const
+{
+    if (!arguments.handle() || offset > arguments.size() ||
+        sizeof(VkDispatchIndirectCommand) > arguments.size() - offset)
+    { error = "invalid storage compute indirect range"; return false; }
+    return record_mixed(command, slot, buffers, {}, constants, 1, 1, error,
+        VK_NULL_HANDLE, VK_NULL_HANDLE, arguments.handle(), offset);
+}
+
 void StorageComputePass::destroy()
 {
     if (device_ && pipeline_ && destroy_pipeline_) destroy_pipeline_(device_, pipeline_, nullptr);

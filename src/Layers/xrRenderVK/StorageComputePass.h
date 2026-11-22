@@ -27,11 +27,15 @@ public:
     bool record(VkCommandBuffer command, uint32_t slot, const std::vector<VkDescriptorBufferInfo>& buffers,
         const void* constants, uint32_t groups_x, uint32_t groups_y, std::string& error,
         VkDescriptorSet external_set = VK_NULL_HANDLE) const;
+    bool record_indirect(VkCommandBuffer command, uint32_t slot,
+        const std::vector<VkDescriptorBufferInfo>& buffers, const void* constants,
+        const BufferResource& arguments, VkDeviceSize offset, std::string& error) const;
     bool record_mixed(VkCommandBuffer command, uint32_t slot,
         const std::vector<VkDescriptorBufferInfo>& buffers,
         const std::vector<VkDescriptorImageInfo>& images, const void* constants,
         uint32_t groups_x, uint32_t groups_y, std::string& error,
-        VkDescriptorSet external_set = VK_NULL_HANDLE, VkBufferView uniform_texels = VK_NULL_HANDLE) const;
+        VkDescriptorSet external_set = VK_NULL_HANDLE, VkBufferView uniform_texels = VK_NULL_HANDLE,
+        VkBuffer indirect_arguments = VK_NULL_HANDLE, VkDeviceSize indirect_offset = 0) const;
     void destroy();
 private:
     VkDevice device_{};
@@ -54,6 +58,7 @@ private:
     PFN_vkCmdBindDescriptorSets bind_sets_{};
     PFN_vkCmdPushConstants push_constants_{};
     PFN_vkCmdDispatch dispatch_{};
+    PFN_vkCmdDispatchIndirect dispatch_indirect_{};
     PFN_vkCmdPipelineBarrier barrier_{};
 };
 }

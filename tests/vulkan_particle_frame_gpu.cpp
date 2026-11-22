@@ -7,6 +7,7 @@
 #include "src/Layers/xrRenderVK/SkyProbeBakePass.h"
 #include "src/Layers/xrRenderVK/DetailCullPass.h"
 #include "src/Layers/xrRenderVK/DetailGeneratePass.h"
+#include "src/Layers/xrRenderVK/DetailCellCullPass.h"
 #include "src/Layers/xrRenderVK/GpuParticleBuffers.h"
 #include "src/Layers/xrRenderVK/GpuParticleCompute.h"
 #include "src/Layers/xrRenderVK/GpuParticleFrame.h"
@@ -567,7 +568,79 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
         instances.read(0, &grass_instance, sizeof(grass_instance), error) &&
         grass_instance.position_scale[1] == 1.f, "GPU generated grass draw arguments");
     vkFreeCommandBuffers(device, pool, 1, &cb);
-    std::cout << "GPU smoke trail and detail compute passed\n";
+    {
+        // Limit X to one group so two visible cells also exercise the 2D
+        // indirect generation path without requiring a huge placement buffer.
+        auto compact_limits = limits;
+        compact_limits.maxComputeWorkGroupCount[0] = 1;
+        DetailCellCullPass cell_cull;
+        DetailGeneratePass compact_generate;
+        require(cell_cull.initialize(device, vkGetDeviceProcAddr, compact_limits, 1, VK_NULL_HANDLE, source, error) &&
+            compact_generate.initialize(device, vkGetDeviceProcAddr, compact_limits, 1, VK_NULL_HANDLE, source, error), error);
+        std::array<DetailGenerateSlot, 4> neighborhood{cells[0], cells[0], cells[0], cells[0]};
+        neighborhood[1].bounds[0] = 100.f;
+        neighborhood[2].bounds[2] = 100.f;
+        neighborhood[3].data[3] = 0; // A resident cell with no solid ground.
+        require(upload_data(cell_data, neighborhood.data(), sizeof(neighborhood)) &&
+            generated.initialize(device, 4 * 64 * sizeof(GeneratedDetail), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                host_memory, memory, vk, error), error);
+        BufferResource visible_cells, generation_dispatch;
+        require(visible_cells.initialize(device, 5 * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT, host_memory, memory, vk, error) &&
+            generation_dispatch.initialize(device, sizeof(VkDispatchIndirectCommand), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+                host_memory, memory, vk, error), error);
+        for (unsigned scenario = 0; scenario < 6; ++scenario)
+        {
+            const bool two_dimensional = scenario == 5;
+            const uint32_t grid = two_dimensional ? 8 : 1;
+            const uint32_t candidate_count = 4 * grid * grid;
+            DetailGeneratePass::Parameters params{4, grid, 2.f / grid, 1.f, 1};
+            float camera[4]{1.f, 0.f, 1.f, 10.f};
+            float projection[16]; std::copy_n(identity, 16, projection);
+            if (scenario == 1) { camera[0] = camera[2] = 20.f; camera[3] = 1.f; }
+            if (scenario == 2) projection[12] = 2000.f;
+            if (scenario == 3) camera[1] = -100.f;
+            if (two_dimensional)
+            {
+                neighborhood[1] = cells[0];
+                require(cell_data.write(0, neighborhood.data(), sizeof(neighborhood), error), error);
+            }
+            require(vkAllocateCommandBuffers(device, &ai, &cb) == VK_SUCCESS &&
+                vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS, "detail cell cull begin");
+            require(cell_cull.record(cb, 0, cell_data, visible_cells, generation_dispatch, generated,
+                projection, camera, 0.f, params, error), error);
+            require(compact_generate.record(cb, 0, cell_data, ground, prototype, generated,
+                params, error, &visible_cells, &generation_dispatch), error);
+            require(grass.record(cb, 0, generated, instances, detail_args, identity,
+                candidate_count, 12, 1.f, error, 0, 2), error);
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &probe_barrier, 0, nullptr, 0, nullptr);
+            require(vkEndCommandBuffer(cb) == VK_SUCCESS, "detail cell cull end");
+            submit.pCommandBuffers = &cb;
+            require(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS &&
+                vkQueueWaitIdle(queue) == VK_SUCCESS, "detail cell cull submit");
+            std::array<uint32_t, 5> selected{};
+            VkDispatchIndirectCommand dispatch{};
+            std::vector<GeneratedDetail> compacted(candidate_count);
+            require(visible_cells.read(0, selected.data(), sizeof(selected), error) &&
+                generation_dispatch.read(0, &dispatch, sizeof(dispatch), error) &&
+                generated.read(0, compacted.data(), compacted.size() * sizeof(GeneratedDetail), error) &&
+                detail_args.read(0, &draw, sizeof(draw), error), error);
+            const uint32_t visible_count = scenario == 0 || scenario == 4 ? 1 : two_dimensional ? 2 : 0;
+            require(selected[0] == visible_count && dispatch.x == (visible_count ? 1u : 0u) &&
+                dispatch.y == (two_dimensional ? 2u : 1u) && dispatch.z == 1, "GPU detail cell selection/dispatch");
+            for (uint32_t i = 0; i < visible_count; ++i)
+                require(selected[1 + i] < (two_dimensional ? 2u : 1u), "GPU detail cell ID");
+            if (two_dimensional) require(selected[1] != selected[2], "duplicate GPU detail cell ID");
+            for (size_t i = size_t(visible_count) * grid * grid; i < compacted.size(); ++i)
+                require(compacted[i].model == UINT32_MAX, "stale generated grass after visibility shrink");
+            require(draw.instanceCount == (visible_count ? (two_dimensional ? 2u : 1u) : 0u),
+                "GPU selected grass draw count");
+            vkFreeCommandBuffers(device, pool, 1, &cb);
+        }
+    }
+    std::cout << "GPU smoke trail, cell selection, indirect detail generation and culling passed\n";
 }
 
 int main(int argc, char** argv)

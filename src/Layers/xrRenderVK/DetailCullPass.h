@@ -25,8 +25,8 @@ public:
     {
         update_ = reinterpret_cast<PFN_vkCmdUpdateBuffer>(get(device, "vkCmdUpdateBuffer"));
         barrier_ = reinterpret_cast<PFN_vkCmdPipelineBarrier>(get(device, "vkCmdPipelineBarrier"));
-        max_groups_x_ = limits.maxComputeWorkGroupCount[0];
-        max_groups_y_ = limits.maxComputeWorkGroupCount[1];
+        max_groups_x_ = std::min(limits.maxComputeWorkGroupCount[0], 65535u);
+        max_groups_y_ = std::min(limits.maxComputeWorkGroupCount[1], 65535u);
         std::vector<uint8_t> binary;
         if (!update_ || !barrier_ || !source("vk/detail_cull.cs.spv", binary, error) ||
             binary.size() < 20 || binary.size() % sizeof(uint32_t))

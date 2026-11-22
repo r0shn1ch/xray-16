@@ -1892,6 +1892,8 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
     const int cx = static_cast<int>(std::floor(camera.x / 2.f)) + details_.offset_x;
     const int cz = static_cast<int>(std::floor(camera.z / 2.f)) + details_.offset_z;
     const int radius = static_cast<int>(max_distance / 2.f) + 1;
+    bool gpu_generation = detail_generate_ && detail_cell_cull_ && !detail_gpu_generation_failed_;
+    detail_generation_camera_ = {camera.x, camera.y, camera.z, max_distance};
     CDB::COLLIDER collider;
     struct NearbyCell
     {
@@ -1910,8 +1912,10 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
             const float distance_squared = dx * dx + dz * dz;
             const size_t index = size_t(z) * details_.width + x;
             const auto& cell = details_.cells[index];
-            if (distance_squared <= max_distance_squared &&
-                std::abs(cell.ground - camera.y) <= max_distance + cell.height &&
+            // CPU work streams a coarse rectangular neighborhood. Exact range
+            // and frustum selection for the generated path happens on GPU.
+            if ((gpu_generation || (distance_squared <= max_distance_squared &&
+                std::abs(cell.ground - camera.y) <= max_distance + cell.height)) &&
                 std::any_of(cell.ids.begin(), cell.ids.end(), [](uint8_t id) { return id != 63; }))
             {
                 cells.push_back(index);
@@ -1919,7 +1923,6 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
             }
         }
     }
-    bool gpu_generation = detail_generate_ && !detail_gpu_generation_failed_;
     if (gpu_generation && !cells.empty())
     {
         // Decide before populating the caches so a large view can use CPU
@@ -1928,6 +1931,19 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
         std::string capacity_error;
         gpu_generation = detail_generate_->candidate_count(
             {static_cast<uint32_t>(cells.size()), grid_size, sample_spacing, density}, candidates, capacity_error);
+    }
+    if (!gpu_generation)
+    {
+        const auto out_of_range = [&](size_t index) {
+            const float dx = float(int(index % details_.width) - details_.offset_x) * 2.f + 1.f - camera.x;
+            const float dz = float(int(index / details_.width) - details_.offset_z) * 2.f + 1.f - camera.z;
+            const auto& cell = details_.cells[index];
+            return dx * dx + dz * dz > max_distance_squared ||
+                std::abs(cell.ground - camera.y) > max_distance + cell.height;
+        };
+        cells.erase(std::remove_if(cells.begin(), cells.end(), out_of_range), cells.end());
+        updates.erase(std::remove_if(updates.begin(), updates.end(),
+            [&](const NearbyCell& cell) { return out_of_range(cell.index); }), updates.end());
     }
     if (detail_spacing_ != spacing || detail_cache_gpu_only_ != gpu_generation)
     {
@@ -2065,6 +2081,17 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
     // does not invalidate the cached detail vertex buffers by reordering cells.
     for (size_t index : cells)
     {
+        if (gpu_generation)
+        {
+            // Transparent details retain their CPU sorting path. Restrict
+            // those placements to the requested range of the coarse cache.
+            const float dx = float(int(index % details_.width) - details_.offset_x) * 2.f + 1.f - camera.x;
+            const float dz = float(int(index / details_.width) - details_.offset_z) * 2.f + 1.f - camera.z;
+            const auto& cell = details_.cells[index];
+            if (dx * dx + dz * dz > max_distance_squared ||
+                std::abs(cell.ground - camera.y) > max_distance + cell.height)
+                continue;
+        }
         const auto found = detail_cache_.find(index);
         if (found != detail_cache_.end())
             visible_details_.insert(visible_details_.end(), found->second.begin(), found->second.end());
@@ -2104,7 +2131,7 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
                 detail_generation_triangles_.insert(detail_generation_triangles_.end(), ground.begin(), ground.end());
             }
         }
-        detail_generation_params_ = {uint32_t(detail_generation_cells_.size()), grid_size, sample_spacing, density};
+        detail_generation_params_ = {uint32_t(detail_generation_cells_.size()), grid_size, sample_spacing, density, 1};
     }
     if (detail_cache_.size() > 4096)
     {
@@ -2137,9 +2164,15 @@ bool GpuLevel::enable_gpu_details(PFN_vkGetDeviceProcAddr get, const VkPhysicalD
         return false;
     }
     auto generate = std::make_unique<DetailGeneratePass>();
+    auto cell_cull = std::make_unique<DetailCellCullPass>();
     if (generate->initialize(device_, get, limits, FrameContext::FramesInFlight,
+            pass_->pipeline_cache(), read_engine_shader, error) &&
+        cell_cull->initialize(device_, get, limits, FrameContext::FramesInFlight,
             pass_->pipeline_cache(), read_engine_shader, error))
+    {
         detail_generate_ = std::move(generate);
+        detail_cell_cull_ = std::move(cell_cull);
+    }
     else
     {
         Msg("! [renderer-vulkan] GPU detail generation unavailable: %s", error.c_str());
@@ -2214,9 +2247,19 @@ bool GpuLevel::record_generated_details(const FrameRecordingContext& frame, cons
         }
         data.ground_generation = detail_ground_generation_;
     }
+    float margin = 0.f;
+    for (size_t i = 0; i < detail_meshes_.size(); ++i)
+        margin = std::max(margin, detail_meshes_[i].detail_radius * details_.prototypes[i].max_scale);
     if (!ensure(data.placed, VkDeviceSize(candidates) * sizeof(GeneratedDetail), storage, local) ||
+        !ensure(data.visible_cells, (VkDeviceSize(detail_generation_params_.slot_count) + 1) * sizeof(uint32_t),
+            storage | VK_BUFFER_USAGE_TRANSFER_DST_BIT, local) ||
+        !ensure(data.dispatch, sizeof(VkDispatchIndirectCommand),
+            storage | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, local) ||
+        !detail_cell_cull_->record(frame.command_buffer, frame.frame_index, data.cells, data.visible_cells,
+            data.dispatch, data.placed, mvp, detail_generation_camera_.data(), margin, detail_generation_params_, error) ||
         !detail_generate_->record(frame.command_buffer, frame.frame_index, data.cells, data.triangles,
-            detail_generation_prototypes_, data.placed, detail_generation_params_, error))
+            detail_generation_prototypes_, data.placed, detail_generation_params_, error,
+            &data.visible_cells, &data.dispatch))
         return false;
 
     for (size_t model = 0; model < batches.size(); ++model)
@@ -3293,6 +3336,8 @@ void GpuLevel::destroy()
     has_water_ = false;
     detail_cull_.reset();
     detail_generate_.reset();
+    detail_cell_cull_.reset();
+    detail_generation_camera_ = {};
     detail_gpu_generation_failed_ = detail_cache_gpu_only_ = false;
     detail_generation_frames_ = {};
     detail_generation_prototypes_.destroy();

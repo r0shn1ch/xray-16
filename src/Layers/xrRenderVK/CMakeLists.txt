@@ -133,6 +133,7 @@ target_sources(xrRenderVK PRIVATE
     smoke/sky_probe_reduce.comp
     smoke/detail_cull.comp
     smoke/detail_generate.comp
+    smoke/detail_cell_cull.comp
     smoke/visibility_common.glsl
     smoke/visibility_geometry.glsl
     smoke/visibility_material_resolve.comp
@@ -144,6 +145,7 @@ target_sources(xrRenderVK PRIVATE
     VisibilityPasses.h
     DetailCullPass.h
     DetailGeneratePass.h
+    DetailCellCullPass.h
     smoke/ray_generate.comp
     smoke/indirect_radiance.comp
     smoke/world_radiance_cache.glsl
