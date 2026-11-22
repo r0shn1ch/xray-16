@@ -23,6 +23,7 @@
 #include <cmath>
 #include <charconv>
 #include <string_view>
+#include <unordered_set>
 
 namespace xray::render::vulkan
 {
@@ -286,12 +287,29 @@ public:
                         {
                             if (selected_ != i)
                                 preview_.reset();
+                            selected_group_ = SIZE_MAX;
                             selected_ = i;
                             limit_ = static_cast<int>(effect.max_particles);
                             duration_enabled_ = effect.time_limit >= 0.f;
                             duration_ = duration_enabled_ ? effect.time_limit : 1.f;
                             xr_strcpy(shader_, effect.shader.c_str());
                             xr_strcpy(texture_, effect.texture.c_str());
+                        }
+                        ImGui::PopID();
+                    }
+                    for (size_t i = 0; i < catalog_.groups.size(); ++i)
+                    {
+                        const auto& group = catalog_.groups[i];
+                        if (!filter_.PassFilter(group.name.c_str()))
+                            continue;
+                        ImGui::PushID(&group);
+                        const auto label = group.name + " (group)";
+                        if (ImGui::Selectable(label.c_str(), selected_group_ == i))
+                        {
+                            if (selected_group_ != i)
+                                preview_.reset();
+                            selected_ = SIZE_MAX;
+                            selected_group_ = i;
                         }
                         ImGui::PopID();
                     }
@@ -336,7 +354,13 @@ public:
                         }
                     }
                     ImGui::EndDisabled();
-                    draw_preview(effect);
+                    draw_preview();
+                }
+                else if (selected_group_ < catalog_.groups.size())
+                {
+                    const auto& group = catalog_.groups[selected_group_];
+                    ImGui::Text("%zu effects", group.effects.size());
+                    draw_preview();
                 }
             }
         }
@@ -346,15 +370,31 @@ public:
     }
 
 private:
-    void draw_preview(const ParticleEffectDef& effect)
+    void draw_preview()
     {
+        const bool group = selected_group_ < catalog_.groups.size();
         if (ImGui::Button("Play preview"))
         {
             auto catalog = std::make_shared<ParticleCatalog>();
-            catalog->effects.push_back(effect);
-            preview_ = std::make_unique<VulkanParticleEffect>(catalog, catalog->effects.front());
-            preview_->Play();
-            preview_texture_failed_ = false;
+            if (group)
+            {
+                // Read the serialized draft so group children see the same
+                // flags and values as they will after opening the exported copy.
+                if (parse_particle_catalog({library_.data(), library_.size()}, *catalog, message_))
+                {
+                    const auto* definition = catalog->group(catalog_.groups[selected_group_].name);
+                    if (definition)
+                        preview_ = std::make_unique<VulkanParticleGroup>(catalog, *definition);
+                }
+            }
+            else
+            {
+                catalog->effects.push_back(catalog_.effects[selected_]);
+                preview_ = std::make_unique<VulkanParticleEffect>(catalog, catalog->effects.front());
+            }
+            if (preview_)
+                preview_->Play();
+            preview_texture_failures_.clear();
         }
         ImGui::SameLine();
         ImGui::BeginDisabled(!preview_);
@@ -366,17 +406,12 @@ private:
 
         const auto& io = ImGui::GetIO();
         preview_->OnFrame(static_cast<u32>(std::clamp(io.DeltaTime * 1000.f, 0.f, 100.f)));
-        PAPI::Particle* particles = nullptr;
-        u32 count = 0;
-        preview_->particles(particles, count);
-        ImGui::Text("%u / %u particles", count, effect.max_particles);
-        xrImTextureData texture{};
-        if ((effect.flags & 1u) && !preview_texture_failed_)
-        {
-            texture = renderer_.GetImGuiTextureId(effect.texture.c_str());
-            preview_texture_failed_ = texture.texture == ImTextureID_Invalid;
-        }
-        if (preview_texture_failed_)
+        const size_t total = preview_->ParticlesCount();
+        if (group)
+            ImGui::Text("%zu particles", total);
+        else
+            ImGui::Text("%zu / %u particles", total, catalog_.effects[selected_].max_particles);
+        if (!preview_texture_failures_.empty())
             ImGui::TextDisabled("Preview texture unavailable");
         ImGui::SliderFloat("Preview zoom", &preview_zoom_, 4.f, 128.f, "%.0f px/m", ImGuiSliderFlags_Logarithmic);
         const ImVec2 size(std::max(1.f, ImGui::GetContentRegionAvail().x), 180.f);
@@ -390,17 +425,48 @@ private:
         draw->AddLine({center.x, min.y}, {center.x, max.y}, ImGui::GetColorU32(ImGuiCol_Border));
         draw->PushClipRect(min, max, true);
         const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
-        constexpr u32 max_preview_points = 4096;
-        const u32 stride = std::max(1u, (count + max_preview_points - 1) / max_preview_points);
-        for (u32 i = 0; particles && i < count; i += stride)
+        constexpr size_t max_preview_points = 4096;
+        const size_t stride = std::max(size_t{1}, (total + max_preview_points - 1) / max_preview_points);
+        size_t sample_offset = 0;
+        const auto draw_effect = [&](const VulkanParticleEffect& visual)
+        {
+            PAPI::Particle* particles = nullptr;
+            u32 count = 0;
+            visual.particles(particles, count);
+            if (!particles || !count)
+                return;
+            const auto& effect = visual.definition();
+            xrImTextureData texture{};
+            if ((effect.flags & 1u) && preview_texture_failures_.find(effect.texture) == preview_texture_failures_.end())
+            {
+                texture = renderer_.GetImGuiTextureId(effect.texture.c_str());
+                if (texture.texture == ImTextureID_Invalid)
+                    preview_texture_failures_.insert(effect.texture);
+            }
+            draw_preview_particles(draw, min, max, center, color, effect, visual, texture.texture,
+                particles, count, sample_offset, stride);
+            sample_offset = (sample_offset + stride - count % stride) % stride;
+        };
+        if (group)
+            static_cast<VulkanParticleGroup&>(*preview_).visit_effects(draw_effect);
+        else
+            draw_effect(static_cast<VulkanParticleEffect&>(*preview_));
+        draw->PopClipRect();
+    }
+
+    void draw_preview_particles(ImDrawList* draw, ImVec2 min, ImVec2 max, ImVec2 center, ImU32 color,
+        const ParticleEffectDef& effect, const VulkanParticleEffect& visual, ImTextureID texture,
+        const PAPI::Particle* particles, u32 count, size_t sample_offset, size_t stride) const
+    {
+        for (size_t i = sample_offset; i < count; i += stride)
         {
             const auto& particle = particles[i];
-            const auto& pos = particle.pos;
+            const auto pos = visual.particle_world_position(particle);
             const ImVec2 point(center.x + (pos.x - pos.z) * preview_zoom_ * .7071f,
                 center.y - (pos.y - (pos.x + pos.z) * .35f) * preview_zoom_);
             if (!std::isfinite(point.x) || !std::isfinite(point.y))
                 continue;
-            if (texture.texture != ImTextureID_Invalid)
+            if (texture != ImTextureID_Invalid)
             {
                 const float half_width = std::abs(particle.size.x) * preview_zoom_ * .5f;
                 const float half_height = std::abs(particle.size.y) * preview_zoom_ * .5f;
@@ -418,13 +484,12 @@ private:
                 }
                 const u32 argb = particle.color;
                 const ImU32 tint = IM_COL32((argb >> 16) & 255u, (argb >> 8) & 255u, argb & 255u, argb >> 24);
-                draw->AddImageQuad(texture.texture, positions[0], positions[1], positions[2], positions[3],
+                draw->AddImageQuad(texture, positions[0], positions[1], positions[2], positions[3],
                     uvs[0], uvs[1], uvs[2], uvs[3], tint);
             }
             else if (point.x >= min.x && point.x < max.x && point.y >= min.y && point.y < max.y)
                 draw->AddRectFilled({point.x - 1.f, point.y - 1.f}, {point.x + 1.f, point.y + 1.f}, color);
         }
-        draw->PopClipRect();
     }
 
     void open(pcstr copy_stem = nullptr)
@@ -437,6 +502,7 @@ private:
         library_ = std::move(bytes);
         catalog_ = std::move(catalog);
         selected_ = SIZE_MAX;
+        selected_group_ = SIZE_MAX;
         preview_.reset();
     }
 
@@ -447,10 +513,11 @@ private:
     char copy_name_[64]{"particles_edited"};
     char shader_[256]{}, texture_[256]{};
     ImGuiTextFilter filter_;
-    std::unique_ptr<VulkanParticleEffect> preview_;
+    std::unique_ptr<IParticleCustom> preview_;
+    std::unordered_set<std::string> preview_texture_failures_;
     float preview_zoom_{32.f};
-    bool preview_texture_failed_{};
     size_t selected_{SIZE_MAX};
+    size_t selected_group_{SIZE_MAX};
     int limit_{};
     float duration_{1.f};
     bool duration_enabled_{};

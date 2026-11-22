@@ -81,6 +81,13 @@ void VulkanParticleEffect::particles(PAPI::Particle*& data, u32& count) const
     if (effect_ >= 0) PAPI::ParticleManager()->GetParticles(effect_, data, count);
 }
 
+Fvector VulkanParticleEffect::particle_world_position(const PAPI::Particle& particle) const
+{
+    Fvector center;
+    transform_.transform_tiny(center, particle.pos);
+    return center;
+}
+
 VulkanParticleEffect::VulkanParticleEffect(std::shared_ptr<const ParticleCatalog> catalog,
     const ParticleEffectDef& def) : catalog_(std::move(catalog)), def_(&def)
 {
@@ -560,8 +567,7 @@ bool VulkanParticleEffect::record(const FrameRecordingContext& frame, const Defe
     for (u32 i = 0; i < count; ++i)
     {
         const auto& p = particles[i];
-        Fvector center;
-        transform_.transform_tiny(center, p.pos);
+        Fvector center = particle_world_position(p);
         float sx = p.size.x * .5f, sy = p.size.y * .5f;
         Fvector sprite_right=right,sprite_up=up;
         const Fvector velocity{p.vel.x,p.vel.y,p.vel.z};
@@ -692,6 +698,14 @@ VulkanParticleGroup::~VulkanParticleGroup()
 {
     detach_gpu_emitters();
     for (auto& effect : effects_) effect->set_events({});
+}
+
+void VulkanParticleGroup::visit_effects(const std::function<void(const VulkanParticleEffect&)>& visit) const
+{
+    for (const auto& effect : effects_)
+        visit(*effect);
+    for (const auto& child : triggered_)
+        visit(*child.effect);
 }
 
 bool VulkanParticleGroup::attach_gpu_emitters(GpuParticleEmitters& emitters, std::string& error)

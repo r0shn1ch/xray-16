@@ -61,6 +61,8 @@ public:
     bool has_active_distortion() const;
     void set_events(std::function<void(bool, PAPI::Particle&, u32)> events);
     void particles(PAPI::Particle*& data, u32& count) const;
+    const ParticleEffectDef& definition() const { return *def_; }
+    Fvector particle_world_position(const PAPI::Particle& particle) const;
     int particle_handle() const { return effect_; }
     // Attach before Play; CPU simulation remains active until GPU rendering
     // and event handling are wired into the game frame.
@@ -159,6 +161,7 @@ public:
     void detach_gpu_emitters();
     void append_gpu_visible(std::vector<uint32_t>& roots) const;
     const auto& effects() const { return effects_; }
+    void visit_effects(const std::function<void(const VulkanParticleEffect&)>& visit) const;
     bool has_priority(uint8_t priority) const;
     bool has_distortion() const;
     size_t triggered_count() const { return triggered_.size(); }
