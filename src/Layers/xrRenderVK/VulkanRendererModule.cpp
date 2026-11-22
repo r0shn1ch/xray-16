@@ -8,6 +8,7 @@
 #include "VulkanDebugRender.h"
 #include "VulkanSettings.h"
 #include "EngineParticleSource.h"
+#include "GpuParticleTranslate.h"
 #include "ParticleCatalog.h"
 #include "ParticleVisual.h"
 #include "ParticleSprite.h"
@@ -371,6 +372,7 @@ public:
                             }
                             preview_.reset();
                             dirty_ = true;
+                            update_gpu_compatibility(effect);
                         }
                     }
                     ImGui::EndDisabled();
@@ -392,6 +394,7 @@ public:
                         }
                     }
                     ImGui::EndDisabled();
+                    ImGui::TextWrapped("%s", gpu_compatibility_.c_str());
                     draw_preview();
                 }
                 else if (selected_group_ < catalog_.groups.size())
@@ -418,6 +421,18 @@ private:
         duration_ = duration_enabled_ ? effect.time_limit : 1.f;
         xr_strcpy(shader_, effect.shader.c_str());
         xr_strcpy(texture_, effect.texture.c_str());
+        update_gpu_compatibility(effect);
+    }
+
+    void update_gpu_compatibility(const ParticleEffectDef& effect)
+    {
+        fg::GpuPapiProgram program{};
+        xr_vector<fg::GpuPapiAction> actions;
+        xr_string reason;
+        if (TranslateGpuParticleDefinition(effect, program, actions, reason))
+            gpu_compatibility_ = "Effect supports Vulkan GPU simulation";
+        else
+            gpu_compatibility_ = std::string("Effect uses CPU simulation: ") + reason.c_str();
     }
 
     void choose_effect(pcstr label, std::string& selected, bool allow_empty = false)
@@ -726,6 +741,7 @@ private:
     std::vector<uint8_t> saved_library_;
     ParticleCatalog catalog_;
     std::string message_;
+    std::string gpu_compatibility_;
     char copy_name_[64]{"particles_edited"};
     char effect_copy_name_[256]{};
     char shader_[256]{}, texture_[256]{};
