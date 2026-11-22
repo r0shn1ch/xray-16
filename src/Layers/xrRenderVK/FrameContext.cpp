@@ -233,6 +233,7 @@ bool FrameContext::recreate(VkPhysicalDevice physical_device, VkSurfaceKHR surfa
     }
 
     const VkFormat previous_format = m_format;
+    const VkColorSpaceKHR previous_color_space = m_color_space;
     if (!m_commands.empty())
         m_vk.free_command_buffers(m_device, m_command_pool,
             static_cast<uint32_t>(m_commands.size()), m_commands.data());
@@ -244,9 +245,9 @@ bool FrameContext::recreate(VkPhysicalDevice physical_device, VkSurfaceKHR surfa
 
     if (!create_swapchain(physical_device, surface, requested_extent, error))
         goto failed;
-    if (m_format != previous_format)
+    if (m_format != previous_format || m_color_space != previous_color_space)
     {
-        error = "Vulkan surface format changed; existing renderer pipelines must be rebuilt";
+        error = "Vulkan surface format or color space changed; existing renderer pipelines must be rebuilt";
         goto failed;
     }
     if (!create_render_targets(error) || !create_commands(error) || !create_sync(error))
@@ -259,6 +260,7 @@ bool FrameContext::recreate(VkPhysicalDevice physical_device, VkSurfaceKHR surfa
 failed:
     destroy_swapchain_resources();
     m_format = previous_format;
+    m_color_space = previous_color_space;
     return false;
 }
 
@@ -478,7 +480,9 @@ bool FrameContext::create_swapchain(VkPhysicalDevice physical_device, VkSurfaceK
         surface_format = *hdr10;
     else if (formats.size() == 1 && formats.front().format == VK_FORMAT_UNDEFINED)
     {
-        surface_format = {m_format != VK_FORMAT_UNDEFINED ? m_format : VK_FORMAT_B8G8R8A8_UNORM,
+        const bool previous_sdr = m_color_space == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR &&
+            m_format != VK_FORMAT_UNDEFINED;
+        surface_format = {previous_sdr ? m_format : VK_FORMAT_B8G8R8A8_UNORM,
             formats.front().colorSpace};
     }
     else
