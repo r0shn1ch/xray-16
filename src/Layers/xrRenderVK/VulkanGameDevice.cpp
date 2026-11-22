@@ -1664,7 +1664,8 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
             shafts.tint[2] = sun_shaft_intensity;
             const uint32_t shaft_quality = std::min<uint32_t>(quality_preset,
                 static_cast<uint32_t>(std::size(PresetSunShaftSamples) - 1));
-            shafts.effect[0] = static_cast<float>(PresetSunShaftSamples[shaft_quality]);
+            shafts.effect[0] = static_cast<float>(sun_shaft_samples_override ?
+                sun_shaft_samples_override : PresetSunShaftSamples[shaft_quality]);
             for (int channel = 0; channel < 3; ++channel)
                 shafts.add[channel] = std::clamp(light.color[channel], 0.f, 2.f);
             sun_shafts_active_ = shafts.tint[0] >= -.5f && shafts.tint[0] <= 1.5f &&

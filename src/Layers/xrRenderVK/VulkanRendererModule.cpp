@@ -34,6 +34,8 @@ const xr_token aa_tokens[]{{"off", 0}, {"FXAA", 1}, {"TAA", 2}, {nullptr, 0}};
 const xr_token msaa_tokens[]{{"1x", 1}, {"2x", 2}, {"4x", 4}, {nullptr, 0}};
 const xr_token ao_quality_tokens[]{{"Auto", 0}, {"Low", 4}, {"Medium", 8}, {"High", 12},
     {"Ultra", 16}, {nullptr, 0}};
+const xr_token sun_shafts_quality_tokens[]{{"Auto", 0}, {"Low", 8}, {"Medium", 16},
+    {"High", 24}, {"Ultra", 32}, {nullptr, 0}};
 
 class VulkanMsaaOption final : public CCC_Token
 {
@@ -831,6 +833,8 @@ void register_vulkan_options(VulkanLevelRender& renderer)
     static CCC_Float focus("r_vk_dof_focus", &dof_focus, .2f, 100.f);
     static CCC_Float motion_blur("r_vk_motion_blur", &motion_blur_strength, 0.f, 1.f);
     static CCC_Float sun_shafts("r_vk_sun_shafts_strength", &sun_shafts_strength, 0.f, 1.f);
+    static CCC_Token sun_shafts_quality("r_vk_sun_shafts_quality", &sun_shaft_samples_override,
+        sun_shafts_quality_tokens);
     static CCC_Float rtgi("r_vk_rtgi_strength", &rtgi_strength, 0.f, 2.f);
     static VulkanReadonlyState rtgi_support("r_vk_rtgi_available", &rtgi_available);
     static VulkanReadonlyState frame_generation_support("r_vk_frame_generation_available",
@@ -846,6 +850,7 @@ void register_vulkan_options(VulkanLevelRender& renderer)
     Console->AddCommand(&dof);
     Console->AddCommand(&motion_blur);
     Console->AddCommand(&sun_shafts);
+    Console->AddCommand(&sun_shafts_quality);
     Console->AddCommand(&rtgi);
     Console->AddCommand(&rtgi_support);
     Console->AddCommand(&frame_generation_support);

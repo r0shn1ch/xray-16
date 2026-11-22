@@ -75,6 +75,7 @@ inline float dof_strength = 0.f;
 inline float dof_focus = 2.5f;
 inline float motion_blur_strength = 0.f;
 inline float sun_shafts_strength = 1.f;
+inline uint32_t sun_shaft_samples_override = 0;
 inline int volumetric_lights_enabled = 1;
 inline float rtgi_strength = 1.f;
 inline int rtgi_available = 0;

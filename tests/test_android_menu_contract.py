@@ -56,6 +56,12 @@ class AndroidMenuContractTest(unittest.TestCase):
             self.assertEqual(ao_quality.get('list_length'), '5')
             self.assertEqual(ao_quality.find('options_item').attrib,
                              {'entry': 'r_vk_ao_quality', 'group': 'mm_opt_video_adv'})
+            start = text.index('<combo_vk_sun_shafts_quality ')
+            end = text.index('</combo_vk_sun_shafts_quality>', start) + len('</combo_vk_sun_shafts_quality>')
+            shaft_quality = ET.fromstring(text[start:end])
+            self.assertEqual(shaft_quality.get('list_length'), '5')
+            self.assertEqual(shaft_quality.find('options_item').attrib,
+                             {'entry': 'r_vk_sun_shafts_quality', 'group': 'mm_opt_video_adv'})
             found += 1
         self.assertGreaterEqual(found, 4)
 
