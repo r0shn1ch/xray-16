@@ -524,9 +524,12 @@ bool FrameContext::create_swapchain(VkPhysicalDevice physical_device, VkSurfaceK
 
     m_extent = m_requested_scene_extent.width ? m_requested_scene_extent : m_presentation_extent;
 #if defined(XR_PLATFORM_ANDROID)
-    if (m_requested_scene_extent.width && requested_extent.width && requested_extent.height &&
-        (requested_extent.width != m_presentation_extent.width ||
-            requested_extent.height != m_presentation_extent.height))
+    if (!m_scene_scale_reference.width && requested_extent.width && requested_extent.height)
+        m_scene_scale_reference = requested_extent;
+    const auto reference = m_scene_scale_reference;
+    if (m_requested_scene_extent.width && reference.width && reference.height &&
+        (reference.width != m_presentation_extent.width ||
+            reference.height != m_presentation_extent.height))
     {
         // A resumed surface can report a different extent than the native
         // window queried before swapchain creation. Preserve the scene scale.
@@ -536,10 +539,8 @@ bool FrameContext::create_swapchain(VkPhysicalDevice physical_device, VkSurfaceK
             const auto scaled = uint64_t(scene) * actual / requested;
             return static_cast<uint32_t>(std::clamp<uint64_t>(scaled & ~uint64_t(1), 2, actual));
         };
-        m_extent = {rescale(m_extent.width, requested_extent.width, m_presentation_extent.width),
-            rescale(m_extent.height, requested_extent.height, m_presentation_extent.height)};
-        // Subsequent same-surface retries use the negotiated presentation size.
-        m_requested_scene_extent = m_extent;
+        m_extent = {rescale(m_extent.width, reference.width, m_presentation_extent.width),
+            rescale(m_extent.height, reference.height, m_presentation_extent.height)};
     }
 #endif
 
@@ -768,6 +769,7 @@ bool FrameContext::request_scene_extent(VkExtent2D extent, std::string& error)
         return false;
     }
     m_requested_scene_extent = extent;
+    m_scene_scale_reference = {};
     error.clear();
     return true;
 }
@@ -3677,6 +3679,7 @@ void FrameContext::destroy()
     m_extent = {};
     m_presentation_extent = {};
     m_requested_scene_extent = {};
+    m_scene_scale_reference = {};
     m_scene_samples = VK_SAMPLE_COUNT_1_BIT;
     m_format = VK_FORMAT_UNDEFINED;
     m_scene_format = VK_FORMAT_UNDEFINED;

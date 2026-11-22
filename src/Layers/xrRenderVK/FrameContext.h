@@ -415,6 +415,7 @@ private:
     VkExtent2D m_extent{};
     VkExtent2D m_presentation_extent{};
     VkExtent2D m_requested_scene_extent{};
+    VkExtent2D m_scene_scale_reference{};
     VkSampleCountFlagBits m_scene_samples{VK_SAMPLE_COUNT_1_BIT};
     VkFormat m_format = VK_FORMAT_UNDEFINED;
     VkFormat m_scene_format = VK_FORMAT_UNDEFINED;
