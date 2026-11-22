@@ -171,9 +171,14 @@ bool occludedByPreviousDepth(vec4 sphere)
         if (all(lessThanEqual(last - first, ivec2(1))))
             break;
     }
-    float farthest_occluder = max(
-        max(texelFetch(previous_hiz, first, mip).r, texelFetch(previous_hiz, ivec2(last.x, first.y), mip).r),
-        max(texelFetch(previous_hiz, ivec2(first.x, last.y), mip).r, texelFetch(previous_hiz, last, mip).r));
+    if (mip >= mip_count) return false;
+    vec4 occluders = vec4(texelFetch(previous_hiz, first, mip).r,
+        texelFetch(previous_hiz, ivec2(last.x, first.y), mip).r,
+        texelFetch(previous_hiz, ivec2(first.x, last.y), mip).r,
+        texelFetch(previous_hiz, last, mip).r);
+    if (any(isnan(occluders)) || any(lessThan(occluders, vec4(0.0))) ||
+        any(greaterThan(occluders, vec4(1.0)))) return false;
+    float farthest_occluder = max(max(occluders.x, occluders.y), max(occluders.z, occluders.w));
     if (farthest_occluder >= 0.99999) return false;
     return min(previous_nearest, current_nearest) > farthest_occluder + 0.002;
 }
