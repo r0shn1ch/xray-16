@@ -18,11 +18,21 @@ const int maximum_samples = 32;
 void main()
 {
     vec2 sun = settings.tint.xy;
+    if (any(isnan(sun)) || any(isinf(sun)) || !(settings.tint.z > 0.0) || isinf(settings.tint.z))
+    {
+        pixel_color = vec4(0.0);
+        return;
+    }
     vec2 delta = sun - texcoord;
     vec2 size = vec2(textureSize(depth_image, 0));
     float distance = length(delta * vec2(size.x / size.y, 1.0));
     vec2 offscreen = max(-sun, sun - 1.0);
     float fade = 1.0 - smoothstep(0.0, 0.5, max(offscreen.x, offscreen.y));
+    if (fade <= 0.0)
+    {
+        pixel_color = vec4(0.0);
+        return;
+    }
     float falloff = exp(-3.0 * distance) * fade;
     float ray_end = 1.0;
     if (sun.x < 0.0 || sun.x > 1.0)
@@ -44,7 +54,7 @@ void main()
             ivec2 pixel = min(ivec2(uv * size), ivec2(size) - 1);
             // The depth attachment is cleared to 1. Far geometry can be very
             // close to that value and must still occlude the sky.
-            float sky = texelFetch(depth_image, pixel, 0).r >= 1.0 ? 1.0 : 0.0;
+            float sky = texelFetch(depth_image, pixel, 0).r == 1.0 ? 1.0 : 0.0;
             visibility += sky * weight;
             weight_sum += weight;
         }
