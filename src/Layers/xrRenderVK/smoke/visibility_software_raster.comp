@@ -71,13 +71,18 @@ float clipDistance(vec4 vertex, uint plane)
     }
 }
 
+bool finiteClipPosition(vec4 vertex)
+{
+    return !any(isnan(vertex)) && !any(isinf(vertex));
+}
+
 void rasterizeTriangle(vec4 a, vec4 b, vec4 c, uint id)
 {
     vec2 p0 = visibilityScreenPosition(a, parameters.viewportOrigin, parameters.viewportExtent);
     vec2 p1 = visibilityScreenPosition(b, parameters.viewportOrigin, parameters.viewportExtent);
     vec2 p2 = visibilityScreenPosition(c, parameters.viewportOrigin, parameters.viewportExtent);
     float area = visibilityEdge(p0, p1, p2);
-    if (area == 0.0)
+    if (area == 0.0 || isnan(area) || isinf(area))
         return;
     if (area < 0.0)
     {
@@ -89,7 +94,7 @@ void rasterizeTriangle(vec4 a, vec4 b, vec4 c, uint id)
         c = vertex;
         area = -area;
     }
-    ivec2 imageExtent = imageSize(depthBits);
+    ivec2 imageExtent = min(imageSize(depthBits), imageSize(visibilityImage));
     vec2 first = max(ceil(min(min(p0, p1), p2) - 0.5), vec2(0.0));
     vec2 last = min(floor(max(max(p0, p1), p2) - 0.5), vec2(imageExtent - 1));
     if (any(greaterThan(first, last)))
@@ -144,6 +149,9 @@ void rasterizeDrawTriangle(DrawEntry entry, uint triangle, uint id)
     polygon[0] = visibilityClipPosition(vertices[verticesOfTriangle.x], parameters.viewProjection);
     polygon[1] = visibilityClipPosition(vertices[verticesOfTriangle.y], parameters.viewProjection);
     polygon[2] = visibilityClipPosition(vertices[verticesOfTriangle.z], parameters.viewProjection);
+    if (!finiteClipPosition(polygon[0]) || !finiteClipPosition(polygon[1]) ||
+        !finiteClipPosition(polygon[2]))
+        return;
     if (insideFrustum(polygon[0]) && insideFrustum(polygon[1]) && insideFrustum(polygon[2]))
     {
         rasterizeTriangle(polygon[0], polygon[1], polygon[2], id);
