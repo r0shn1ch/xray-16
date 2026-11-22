@@ -1016,6 +1016,11 @@ bool CScriptEngine::process_file_if_exists(LPCSTR file_name, bool warn_if_not_ex
     if (m_reload_modules || (*file_name && !namespace_loaded(file_name)))
     {
         FS.update_path(S, "$game_scripts$", strconcat(sizeof(S1), S1, file_name, ".script"));
+#if defined(XR_PLATFORM_ANDROID)
+        if (!xr_strcmp(file_name, "ui_mm_opt_main") || !xr_strcmp(file_name, "ui_mm_opt_video_adv"))
+            // This is the resolved VFS path; game archives can also provide it.
+            Msg("[android] options script VFS path: %s", S);
+#endif
         if (!warn_if_not_exist && !FS.exist(S))
         {
 #ifdef DEBUG
