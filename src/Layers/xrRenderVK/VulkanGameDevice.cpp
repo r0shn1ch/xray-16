@@ -2748,9 +2748,7 @@ void VulkanGameDevice::release_indirect_frames()
 
 void VulkanGameDevice::release_ray_frames()
 {
-    release_indirect_frames();
-    model_ray_scenes_.destroy();
-    ray_queries_ = nullptr;
+    release_screen_ray_frames();
     sky_probe_textures_ = nullptr;
     sky_probe_bake_.reset();
     sky_probe_results_.destroy();
@@ -2761,6 +2759,13 @@ void VulkanGameDevice::release_ray_frames()
     sky_probe_cpu_.clear();
     sky_probe_failed_ = false;
     sky_probe_recorded_ = {};
+}
+
+void VulkanGameDevice::release_screen_ray_frames()
+{
+    release_indirect_frames();
+    model_ray_scenes_.destroy();
+    ray_queries_ = nullptr;
     frame_.set_ray_recorder(nullptr, nullptr);
     // Callers wait for the GPU before release. Restore valid descriptors before
     // destroying the visibility views, including when a level is unloaded.
@@ -2877,12 +2882,11 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
     const bool had_ray_frames = ray_frames_.count() != 0;
     const bool had_vsm_frames = vsm_frames_.count() != 0;
     RayQueryBatch* previous_ray_queries = ray_queries_;
-    const auto* previous_sky_probe_textures = sky_probe_textures_;
     RaySurfacePass* previous_indirect_surfaces = indirect_surfaces_;
     BindlessTextureTable* previous_indirect_alpha = indirect_alpha_textures_;
     targets_.release_lighting(deferred_);
     release_vsm_frames();
-    release_ray_frames();
+    release_screen_ray_frames();
     deferred_.release_water_sets();
     release_ui_scene_sets();
     for (auto &image : local_sets_)
@@ -2976,7 +2980,7 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
         error.clear();
     }
     else if (had_ray_frames)
-        set_ray_queries(previous_ray_queries, previous_sky_probe_textures);
+        ray_queries_ = previous_ray_queries;
     {
         std::vector<VkImage> sampled_depth;
         for (uint32_t i = 0; i < frame.image_count(); ++i)

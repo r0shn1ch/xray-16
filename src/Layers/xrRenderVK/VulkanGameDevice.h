@@ -108,8 +108,6 @@ class VulkanGameDevice
     {
         ray_queries_ = queries;
         sky_probe_textures_ = sky_probe_textures;
-        if (sky_probe_textures_)
-            window_.frame().set_frame_observer(gpu_particles_submitted, gpu_particles_completed, this);
     }
     using ModelRayPreparer = std::function<bool(GpuModel&, IKinematics*, uint32_t, VkCommandBuffer,
         const VkTransformMatrixKHR&, RayGeometryBatch&, std::vector<TextureMatrixSet>&, bool&, std::string&)>;
@@ -225,6 +223,7 @@ class VulkanGameDevice
     }
 
   private:
+    void release_screen_ray_frames();
     void render_lights(const float (&mvp)[16], bool render_world, const DeferredLight &light,
                        const SunShadowUniform &sun_uniform);
     static bool validate_frame_recording(void *user, std::string& error);
