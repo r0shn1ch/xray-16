@@ -127,7 +127,7 @@ bool SmokeTrailNoise::record(VkCommandBuffer command, uint32_t slot, float time,
         struct Params { float time, scale; uint32_t size; float padding; } params{time, tile_scale, size_, 0.f};
         auto& uniform = *uniforms_[slot]; uniform.reset(); VkDescriptorBufferInfo constants{};
         if (!uniform.append(&params, sizeof(params), constants, error)) return false;
-        const bool transient = buffer_pool && retirement && slot < 31;
+        const bool transient = buffer_pool && retirement && slot < 32;
         const uint32_t groups_x = (size_ + 3) / 4;
         const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         FrameImageGraph graph(recording_queue);
@@ -187,24 +187,32 @@ bool SmokeTrailNoise::record(VkCommandBuffer command, uint32_t slot, float time,
         if (!graph.begin_execution(execution, error))
             return false;
         const ImageStateDispatch state_dispatch{barrier_};
+        bool recorded = true;
         for (const FrameImageGraph::QueueGroup& group : queue_groups)
         {
             const FrameSubmissionGraph::Pass submission = group.submission;
             VkCommandBuffer group_command = VK_NULL_HANDLE;
             if (submission == FrameSubmissionGraph::InvalidPass ||
                 !request_submission_command_buffer(submission, group.queue, group_command, error))
-                return false;
+            {
+                recorded = false;
+                break;
+            }
             const VkQueueFlags group_flags = group.queue == FrameSubmissionGraph::Queue::Compute ?
                 queue_flags : group.queue == FrameSubmissionGraph::Queue::Copy ?
                     VK_QUEUE_TRANSFER_BIT : graphics_queue_flags;
             if (!graph.execute_group(group, group_command, image_states, execution, state_dispatch,
                     error, group_flags, semaphore_handoff))
-                return false;
+            {
+                recorded = false;
+                break;
+            }
         }
+        // Earlier queue groups can reference this buffer even if a later group fails.
         if (transient)
             graph.retire_allocations(*retirement, 1u << slot);
-        error.clear();
-        return true;
+        if (recorded) error.clear();
+        return recorded;
     }
     if (semaphore_handoff)
     {
