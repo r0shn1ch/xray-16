@@ -324,6 +324,13 @@
             <options_item entry="r_vk_sun_shafts_strength" group="mm_opt_video_adv"/>
         </track_vk_sun_shafts>
 
+        <cap_vk_bloom x="20" y="3" width="135" height="24">
+            <text r="170" g="170" b="170" font="letterica16" align="r" vert_align="c">st_vk_bloom</text>
+        </cap_vk_bloom>
+        <track_vk_bloom x="180" y="6" width="235" height="16" step="0.05">
+            <options_item entry="r_vk_bloom_intensity" group="mm_opt_video_adv"/>
+        </track_vk_bloom>
+
         <cap_r2_sun x="20" y="3" width="135" height="24">
             <text r="170" g="170" b="170" font="letterica16" align="r" vert_align="c">ui_mm_r2_sun</text>
         </cap_r2_sun>

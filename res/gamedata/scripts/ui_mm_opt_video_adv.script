@@ -200,6 +200,13 @@ function opt_video_adv:InitControls(x, y, xml, handler)
 		table.insert(handler.m_preconditions, {func=vulkan_mode, control=_st})
 	end
 
+	if xml.HasNode and xml:HasNode("video_adv:track_vk_bloom") then
+		_st = xml:InitStatic("video_adv:templ_item", nil)
+		xml:InitStatic("video_adv:cap_vk_bloom", _st)
+		xml:InitTrackBar("video_adv:track_vk_bloom", _st)
+		table.insert(handler.m_preconditions, {func=vulkan_mode, control=_st})
+	end
+
 	if xml.HasNode and xml:HasNode("video_adv:track_vk_sun_shafts") then
 		_st = xml:InitStatic("video_adv:templ_item", nil)
 		xml:InitStatic("video_adv:cap_vk_sun_shafts", _st)

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="windows-1252" ?>
 <string_table>
-	<string id="st_vk_upscaling"><text>Hochskalierung</text></string>	<string id="st_vk_render_scale"><text>3D-Aufl&#246;sung</text></string>	<string id="st_vk_frame_generation"><text>Frame Generation (FSR 3.1)</text></string>
+	<string id="st_vk_upscaling"><text>Hochskalierung</text></string>	<string id="st_vk_render_scale"><text>3D-Aufl&#246;sung</text></string>	<string id="st_vk_bloom"><text>Leuchten</text></string>	<string id="st_vk_frame_generation"><text>Frame Generation (FSR 3.1)</text></string>
 	<string id="st_vk_msaa"><text>MSAA</text></string>
 	<string id="st_vk_texture_mip_bias"><text>Mip-Bias</text></string>
 	<string id="st_vk_dof_focus"><text>DOF-Fokusentfernung</text></string>
