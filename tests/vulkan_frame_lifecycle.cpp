@@ -59,10 +59,11 @@ VkResult VKAPI_PTR capabilities(VkPhysicalDevice, VkSurfaceKHR, VkSurfaceCapabil
     out->supportedCompositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     return VK_SUCCESS;
 }
+VkSurfaceFormatKHR advertised_format{VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
 VkResult VKAPI_PTR formats(VkPhysicalDevice, VkSurfaceKHR, uint32_t* count, VkSurfaceFormatKHR* out)
 {
     *count = 1;
-    if (out) *out = {VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
+    if (out) *out = advertised_format;
     return VK_SUCCESS;
 }
 VkResult VKAPI_PTR create_chain(VkDevice, const VkSwapchainCreateInfoKHR* info,
@@ -154,7 +155,8 @@ void VKAPI_PTR unused() {}
 void VKAPI_PTR depth_formats(VkPhysicalDevice, VkFormat format, VkFormatProperties *out)
 { out->optimalTilingFeatures = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
     VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT |
-    VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+    VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
+    VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT;
   if (format == VK_FORMAT_R16G16B16A16_SFLOAT && !float_bloom_supported)
       out->optimalTilingFeatures &= ~VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT; }
 void VKAPI_PTR memory_types(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties *out)
@@ -764,6 +766,23 @@ int main()
     assert(allocated_formats.at(viewed_images.at(frame.bloom_view(0))) == VK_FORMAT_B8G8R8A8_UNORM);
     frame.destroy();
     float_bloom_supported=true;
+    advertised_format = {VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_COLOR_SPACE_HDR10_ST2084_EXT};
+    if (!frame.initialize(physical, device, surface, queue, 0, {640, 360}, world_dispatch, error,
+        true, false, false, true, 0.f, 0, {320, 180}, {}, false, VK_QUEUE_GRAPHICS_BIT,
+        VK_QUEUE_COMPUTE_BIT, nullptr, nullptr, nullptr, nullptr, false, VK_QUEUE_TRANSFER_BIT,
+        VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, false, true))
+    {
+        std::fprintf(stderr, "HDR lifecycle setup failed: %s\n", error.c_str());
+        return 1;
+    }
+    assert(frame.hdr10_active());
+    advertised_format = {VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
+    assert(!frame.recreate(physical, surface, {640, 360}, error));
+    assert(error.find("color space changed") != std::string::npos && frame.hdr10_active() &&
+        frame.hdr10_surface_available());
+    advertised_format = {VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_COLOR_SPACE_HDR10_ST2084_EXT};
+    assert(frame.recreate(physical, surface, {640, 360}, error) && frame.hdr10_active());
+    frame.destroy();
     assert(swapchain_creates == swapchain_destroys && fences_created == fences_destroyed &&
         semaphores_created == semaphores_destroyed && query_creates == query_destroys && timestamp_writes >= 4);
 }

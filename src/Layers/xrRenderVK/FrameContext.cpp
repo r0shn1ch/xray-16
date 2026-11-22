@@ -234,6 +234,7 @@ bool FrameContext::recreate(VkPhysicalDevice physical_device, VkSurfaceKHR surfa
 
     const VkFormat previous_format = m_format;
     const VkColorSpaceKHR previous_color_space = m_color_space;
+    const bool previous_hdr10_available = m_hdr10_surface_available;
     if (!m_commands.empty())
         m_vk.free_command_buffers(m_device, m_command_pool,
             static_cast<uint32_t>(m_commands.size()), m_commands.data());
@@ -261,6 +262,7 @@ failed:
     destroy_swapchain_resources();
     m_format = previous_format;
     m_color_space = previous_color_space;
+    m_hdr10_surface_available = previous_hdr10_available;
     return false;
 }
 
