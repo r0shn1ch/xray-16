@@ -10,7 +10,8 @@ bool GpuParticleBuffers::initialize(VkDevice device, const VkPhysicalDeviceLimit
     const Capacity& capacity, std::string& error, FrameBufferPool* pool)
 {
     destroy();
-    if (!capacity.particles || !capacity.emitters || !capacity.programs || capacity.programs > UINT32_MAX / 28 || !capacity.roots ||
+    if (!capacity.particles || capacity.particles >= 0x80000000u || capacity.action_states >= 0x80000000u ||
+        !capacity.emitters || !capacity.programs || capacity.programs > UINT32_MAX / 28 || !capacity.roots ||
         capacity.roots > capacity.emitters / 2 || capacity.collision_bytes < 48 || capacity.collision_bytes % 4 ||
         capacity.noise_values < 514)
     { error = "invalid GPU particle buffer capacity"; return false; }

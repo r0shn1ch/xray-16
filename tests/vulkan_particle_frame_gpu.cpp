@@ -1557,6 +1557,10 @@ int main(int argc, char** argv)
             uint32_t allocation_stamps[8]{};
             if (exhausted)
                 std::fill(std::begin(allocation_stamps), std::end(allocation_stamps), 8u);
+            else
+                // A concurrent allocator owns only cell 0 so far. Its pending
+                // end must not hide the free range beginning at cell 1.
+                allocation_stamps[0] = 0x80000008u;
             fg::GpuPapiCommand create{};
             create.generation = exhausted ? 2 : 3;
             create.serial = 1;

@@ -58,6 +58,9 @@ bool GpuCheckedProduct(uint count,uint stride,out uint product) {
 }
 // Every access to a live allocation stamp uses atomics because other workgroups
 // can probe it while a reservation is rolled back, split, or released.
+// A high bit denotes a tentative claim: its advertised end is not yet owned,
+// so other allocators may skip the occupied cell only, not the entire range.
+#define GPU_PAPI_TENTATIVE_ALLOCATION 0x80000000u
 void GpuSetAllocationStamp(uint index,bool stateRange,uint value) {
     uint previous;
     if (stateRange) InterlockedExchange(g_StateAllocation[index],value,previous);
@@ -75,11 +78,18 @@ uint GpuAllocateRange(uint count,bool stateRange,bool reportFailure) {
         uint occupiedEnd = first + 1;
         for (; acquired < count; ++acquired) {
             uint old;
-            if (stateRange) InterlockedCompareExchange(g_StateAllocation[first + acquired],0,first + count,old);
-            else InterlockedCompareExchange(g_ParticleAllocation[first + acquired],0,first + count,old);
-            if (old != 0) { occupiedEnd = old; break; }
+            uint tentative = GPU_PAPI_TENTATIVE_ALLOCATION | (first + count);
+            if (stateRange) InterlockedCompareExchange(g_StateAllocation[first + acquired],0,tentative,old);
+            else InterlockedCompareExchange(g_ParticleAllocation[first + acquired],0,tentative,old);
+            if (old != 0) {
+                occupiedEnd = (old & GPU_PAPI_TENTATIVE_ALLOCATION) != 0 ? first + acquired + 1 : old;
+                break;
+            }
         }
-        if (acquired == count) return first;
+        if (acquired == count) {
+            for (uint j = 0; j < count; ++j) GpuSetAllocationStamp(first + j,stateRange,first + count);
+            return first;
+        }
         for (uint j = 0; j < acquired; ++j) GpuSetAllocationStamp(first + j,stateRange,0);
         first = max(first + acquired + 1,occupiedEnd);
     }
