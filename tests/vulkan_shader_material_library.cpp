@@ -1,6 +1,7 @@
 #include "xrEngine/stdafx.h"
 #include "src/Layers/xrRenderVK/ShaderMaterialLibrary.h"
 #include "src/Layers/xrRenderVK/LevelPassGraph.h"
+#include "src/Layers/xrRenderVK/VisibilityMaterialAnimation.h"
 
 #undef NDEBUG
 #include <algorithm>
@@ -158,6 +159,22 @@ static void animated_texture_matrices()
     const auto second = moving.evaluate(2.f, nullptr);
     assert(first[0][0] == 2.f && first[1][1] == 3.f &&
         second[0][3] > first[0][3] && second[1][3] == first[1][3]);
+    std::vector<xray::render::visibility::DrawEntry> visibility_entries(4);
+    TextureMatrixSet both = library.find("mod\\moving_base")->matrices;
+    both.enabled[1] = true;
+    both.values[1] = library.find("mod\\moving_detail")->matrices.values[1];
+    std::vector<VisibilityMatrixRange> ranges{{1, 2, both}};
+    assert(update_visibility_material_matrices(visibility_entries, ranges, 1.f, nullptr));
+    assert(visibility_entries[0].base_u_x == 1.f && visibility_entries[1].base_u_x == first[0][0] &&
+        visibility_entries[1].base_u_offset == first[0][3] &&
+        visibility_entries[1].detail_u_offset == first[0][3] &&
+        visibility_entries[2].base_u_offset == first[0][3] && visibility_entries[3].base_u_x == 1.f);
+    assert(update_visibility_material_matrices(visibility_entries, ranges, 2.f, nullptr));
+    assert(visibility_entries[1].base_u_offset == second[0][3] &&
+        visibility_entries[1].detail_u_offset == second[0][3]);
+    ranges.push_back({3, 2, both});
+    assert(!update_visibility_material_matrices(visibility_entries, ranges, 1.f, nullptr) &&
+        visibility_entries[1].base_u_offset == second[0][3]);
     const float view[16]{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
     const auto reflection = library.find("mod\\moving_environment")->matrices.values[2].evaluate(2.f, view);
     assert(reflection[0][0] == .5f && reflection[0][3] == .5f &&

@@ -11,6 +11,7 @@
 #include "ClusterLodBuilder.h"
 #include "ClusterVisibility.h"
 #include "Layers/xrRenderGraph/VisibilityId.h"
+#include "VisibilityMaterialAnimation.h"
 #include "DetailGeneratePass.h"
 #include "DetailCellCullPass.h"
 #include "DetailBendPass.h"
@@ -313,11 +314,6 @@ class GpuLevel
     };
     std::vector<GeometryBatch> geometry_batches_;
     BufferResource visibility_draw_entries_;
-    struct VisibilityMatrixRange
-    {
-        uint32_t first, count;
-        TextureMatrixSet matrices;
-    };
     std::vector<VisibilityMatrixRange> visibility_matrix_ranges_;
     mutable std::vector<visibility::DrawEntry> visibility_dynamic_entries_;
     mutable std::array<BufferResource, FrameContext::FramesInFlight> visibility_frame_entries_;

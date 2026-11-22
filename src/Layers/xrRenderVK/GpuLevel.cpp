@@ -53,27 +53,11 @@ bool GpuLevel::visibility_draw_entries(uint32_t frame, VkDescriptorBufferInfo& r
         error = "invalid animated visibility frame";
         return false;
     }
-    const auto* view = reinterpret_cast<const float*>(&Device.mView);
-    for (const auto& range : visibility_matrix_ranges_)
+    if (!update_visibility_material_matrices(visibility_dynamic_entries_, visibility_matrix_ranges_,
+            Device.fTimeGlobal, reinterpret_cast<const float*>(&Device.mView)))
     {
-        if (range.first > visibility_dynamic_entries_.size() ||
-            range.count > visibility_dynamic_entries_.size() - range.first)
-        {
-            error = "invalid animated visibility draw range";
-            return false;
-        }
-        std::array<std::array<float, 4>, 3> base{{{{1, 0, 0, 0}}, {{0, 1, 0, 0}}, {{0, 0, 1, 0}}}};
-        auto detail = base;
-        if (range.matrices.enabled[0]) base = range.matrices.values[0].evaluate(Device.fTimeGlobal, view);
-        if (range.matrices.enabled[1]) detail = range.matrices.values[1].evaluate(Device.fTimeGlobal, view);
-        for (uint32_t i = 0; i < range.count; ++i)
-        {
-            auto& entry = visibility_dynamic_entries_[range.first + i];
-            entry.base_u_x = base[0][0]; entry.base_u_y = base[0][1]; entry.base_u_offset = base[0][3];
-            entry.base_v_x = base[1][0]; entry.base_v_y = base[1][1]; entry.base_v_offset = base[1][3];
-            entry.detail_u_x = detail[0][0]; entry.detail_u_y = detail[0][1]; entry.detail_u_offset = detail[0][3];
-            entry.detail_v_x = detail[1][0]; entry.detail_v_y = detail[1][1]; entry.detail_v_offset = detail[1][3];
-        }
+        error = "invalid animated visibility material transform";
+        return false;
     }
     auto& buffer = visibility_frame_entries_[frame];
     if (!buffer.write(0, visibility_dynamic_entries_.data(),
