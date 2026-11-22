@@ -15,7 +15,8 @@ bool read_vsm_static_jobs(const BufferResource& work, uint32_t axis, uint32_t le
     { error = "invalid VSM static job buffer dimensions"; return false; }
     uint32_t header[4]{};
     if (!work.read(0, header, sizeof(header), error)) return false;
-    if (header[1]) { error = "VSM static caster binning overflowed"; return false; }
+    // Publication skips this batch as well. The caller can still use cached pages.
+    if (header[1]) { error.clear(); return true; }
     const uint32_t count = std::min(header[0], budget);
     std::vector<std::array<uint32_t, 4>> entries(count);
     if (count && !work.read(16, entries.data(), entries.size() * sizeof(entries[0]), error)) return false;

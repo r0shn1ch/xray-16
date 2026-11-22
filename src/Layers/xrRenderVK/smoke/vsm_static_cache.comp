@@ -40,10 +40,8 @@ void main()
     if (refresh_phase ? wrong || params.config.z - uint(state.z) < params.config.w : !wrong) return;
     uint job = atomicAdd(work[0], 1u);
     if (job >= params.limits.x) return;
-    // A scheduled page may be overwritten; keep it unavailable until all
-    // caster pairs were generated and its completed draw is published.
-    table[index] = 0xffffffffu;
-    slots[slot].w = 0;
+    // Keep valid refreshes mapped if caster binning cancels the batch.
+    // A miss remains unmapped until the completed draw is published.
     uint offset = 4u + job * 4u;
     work[offset] = slot; work[offset + 1u] = index; work[offset + 2u] = wrong ? 1u : 2u; work[offset + 3u] = 0u;
 }
