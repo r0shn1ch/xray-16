@@ -73,6 +73,9 @@ int main()
     assert(graph.submit(late, [](FrameSubmissionGraph::Queue) { return uint64_t{17}; }, {}, error));
     assert(graph.prepare(consumer, wait, error));
     assert(shared_wait_count == 2);
+    assert(graph.remove_dependency_on_submission(consumer, FrameSubmissionGraph::Queue::Compute, 17, error));
+    assert(graph.prepare(consumer, wait, error));
+    assert(shared_wait_count == 2);
 
     FrameRecordingContext source{};
     source.command_buffer = handle<VkCommandBuffer>(101);

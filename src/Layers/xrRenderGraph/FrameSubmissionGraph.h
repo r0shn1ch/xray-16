@@ -174,9 +174,9 @@ public:
         }
         // A resource import and an in-graph dependency may refer to the
         // same producer submission. Queue the wait once for this consumer.
-        std::vector<std::pair<Queue, uint64_t>> queued_waits;
-        queued_waits.reserve(consumer_info.dependencies.size());
-        for (Dependency& dependency : consumer_info.dependencies)
+        auto& queued_waits = consumer_info.queued_waits;
+        queued_waits.reserve(queued_waits.size() + consumer_info.dependencies.size());
+        for (const Dependency& dependency : consumer_info.dependencies)
         {
             Queue source_queue = dependency.source_queue;
             uint64_t submission = dependency.submission;
@@ -188,11 +188,6 @@ public:
             if (source_queue == consumer_info.queue)
                 continue;
             const auto key = std::make_pair(source_queue, submission);
-            if (dependency.wait_queued)
-            {
-                queued_waits.push_back(key);
-                continue;
-            }
             if (std::find(queued_waits.begin(), queued_waits.end(), key) != queued_waits.end())
                 continue;
             if (!queue_wait)
@@ -203,7 +198,6 @@ public:
             try
             {
                 queue_wait(consumer_info.queue, source_queue, submission);
-                dependency.wait_queued = true;
                 queued_waits.push_back(key);
             }
             catch (const std::exception& exception)
@@ -300,7 +294,6 @@ private:
         Queue source_queue = Queue::Graphics;
         uint64_t submission{};
         bool external{};
-        bool wait_queued{};
     };
     struct PassInfo
     {
@@ -309,6 +302,7 @@ private:
         QueueFamily queue_family = InvalidQueueFamily;
         std::vector<Dependency> dependencies;
         uint64_t submission{};
+        std::vector<std::pair<Queue, uint64_t>> queued_waits;
     };
 
     bool valid(Pass pass) const { return pass < passes_.size(); }
