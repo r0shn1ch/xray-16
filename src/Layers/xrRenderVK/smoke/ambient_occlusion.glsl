@@ -4,11 +4,12 @@
 const int ao_ring_count = 2;
 const int maximum_ao_directions = 16;
 const int ao_ring_radii[ao_ring_count] = int[ao_ring_count](4, 12);
+// Every quality tier uses complete rotations around the center.
 const ivec2 ao_directions[maximum_ao_directions] = ivec2[maximum_ao_directions](
-    ivec2(1, 0), ivec2(1, 1), ivec2(0, 1), ivec2(-1, 1),
-    ivec2(-1, 0), ivec2(-1, -1), ivec2(0, -1), ivec2(1, -1),
-    ivec2(2, 1), ivec2(1, 2), ivec2(-1, 2), ivec2(-2, 1),
-    ivec2(-2, -1), ivec2(-1, -2), ivec2(1, -2), ivec2(2, -1));
+    ivec2(1, 0), ivec2(0, 1), ivec2(-1, 0), ivec2(0, -1),
+    ivec2(1, 1), ivec2(-1, 1), ivec2(-1, -1), ivec2(1, -1),
+    ivec2(2, 1), ivec2(-1, 2), ivec2(-2, -1), ivec2(1, -2),
+    ivec2(1, 2), ivec2(-2, 1), ivec2(-1, -2), ivec2(2, -1));
 
 vec3 ao_world_position(vec2 uv, float depth)
 {

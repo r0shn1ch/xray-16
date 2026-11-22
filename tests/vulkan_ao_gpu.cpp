@@ -198,7 +198,8 @@ int main(int argc, char** argv)
         vk.output, vk.output_view, vk.output_memory);
     vk.make_buffer(ImageBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vk.upload, vk.upload_memory);
     vk.make_buffer(ImageBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, vk.readback, vk.readback_memory);
-    vk.make_buffer(44 * sizeof(float), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, vk.constants, vk.constants_memory);
+    constexpr size_t uniform_floats = 48;
+    vk.make_buffer(uniform_floats * sizeof(float), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, vk.constants, vk.constants_memory);
     VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sampler_info.magFilter = sampler_info.minFilter = VK_FILTER_NEAREST;
     sampler_info.addressModeU = sampler_info.addressModeV = sampler_info.addressModeW =
@@ -230,7 +231,7 @@ int main(int argc, char** argv)
     check(vkAllocateDescriptorSets(vk.device, &set_info, &set));
     const VkDescriptorImageInfo depth_info{vk.sampler, vk.depth_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo output_info{VK_NULL_HANDLE, vk.output_view, VK_IMAGE_LAYOUT_GENERAL};
-    const VkDescriptorBufferInfo buffer_info{vk.constants, 0, 44 * sizeof(float)};
+    const VkDescriptorBufferInfo buffer_info{vk.constants, 0, uniform_floats * sizeof(float)};
     VkWriteDescriptorSet writes[3]{};
     for (auto& write : writes)
     {
@@ -264,10 +265,10 @@ int main(int argc, char** argv)
     pipeline_info.layout = vk.pipeline_layout;
     check(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &vk.pipeline));
 
-    std::array<float, 44> uniform{};
+    std::array<float, uniform_floats> uniform{};
     for (int i : {0, 5, 10, 15}) uniform[i] = 1.f;
     uniform[35] = 2.f;
-    std::array<float, 4> result{};
+    std::array<float, 8> result{};
     for (uint32_t iteration = 0; iteration < result.size(); ++iteration)
     {
         std::vector<float> input(Side * Side, iteration == 0 ? .5f : .8f);
@@ -275,6 +276,13 @@ int main(int argc, char** argv)
             for (uint32_t x = 31; x <= 33; ++x)
                 input[y * Side + x] = .5f;
         uniform[35] = iteration == 2 ? .75f : iteration == 3 ? 0.f : 2.f;
+        uniform[44] = iteration < 4 ? 16.f : iteration < 6 ? 4.f : 12.f;
+        if (iteration >= 4)
+        {
+            for (uint32_t y = 0; y < Side; ++y)
+                for (uint32_t x = 0; x < Side; ++x)
+                    input[y * Side + x] = (iteration % 2 ? x < 31 : x > 33) ? .8f : .5f;
+        }
         void* mapped{};
         check(vkMapMemory(vk.device, vk.upload_memory, 0, ImageBytes, 0, &mapped));
         std::memcpy(mapped, input.data(), ImageBytes);
@@ -323,5 +331,8 @@ int main(int argc, char** argv)
         throw std::runtime_error("AO GPU flat/strong/default/off mismatch: " +
             std::to_string(result[0]) + ", " + std::to_string(result[1]) + ", " +
             std::to_string(result[2]) + ", " + std::to_string(result[3]));
+    for (unsigned first : {4u, 6u})
+        if (result[first] >= .99f || std::abs(result[first] - result[first + 1]) > 1e-4f)
+            throw std::runtime_error("AO quality tier sampled opposite sides asymmetrically");
     return 0;
 }

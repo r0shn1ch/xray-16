@@ -1,13 +1,14 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 layout(local_size_x = 8, local_size_y = 8) in;
-layout(set = 0, binding = 2) uniform sampler2D depth_buffer;
+layout(set = 0, binding = 2) uniform sampler2D resolved_depth_buffer;
 layout(set = 0, binding = 4, std140) uniform ShadowConstants {
     mat4 inverse_view_projection;
     mat4 sun_view_projection;
     vec4 options;
     vec4 ambient_color;
     vec4 hemi_color;
+    vec4 ao_settings;
 } shadow;
 layout(set = 0, binding = 6, r32f) uniform writeonly image2D output_image;
 #include "../../src/Layers/xrRenderVK/smoke/ambient_occlusion.glsl"
@@ -24,6 +25,6 @@ void main()
         return;
     }
     vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
-    float depth = texelFetch(depth_buffer, pixel, 0).r;
+    float depth = texelFetch(resolved_depth_buffer, pixel, 0).r;
     imageStore(output_image, pixel, vec4(ambient_occlusion(depth, uv, vec3(0.0, 0.0, 1.0))));
 }
