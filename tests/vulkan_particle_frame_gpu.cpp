@@ -73,7 +73,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         limits.maxStorageBufferRange, limits.maxUniformBufferRange, VK_NULL_HANDLE,
         code.data(), shader.size(), error), error);
 
-    const visibility::DrawEntry entries[]{{0, 3, 0, 0, 0}, {3, 3, 0, 0, 1, 0}, {6, 3, 0, 0, 1},
+    const visibility::DrawEntry entries[]{{0, 3, 0, 0, 0}, {3, 3, 0, 0, 1, 0, 0.625f}, {6, 3, 0, 0, 1},
         {9, 3, 0, 0, 1}};
     const VkDrawIndexedIndirectCommand commands[]{{3, 1, 0, 0, 0}, {3, 1, 3, 0, 0}, {3, 1, 6, 0, 0},
         {3, 1, 9, 0, 0}};
@@ -110,7 +110,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     upload(mask, &visible_draws, sizeof(visible_draws), VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT);
     constexpr VkDeviceSize raster_bytes = 2 * 8 * 8 * sizeof(uint32_t);
     constexpr VkDeviceSize resolved_bytes = 8 * 8 * 4 * sizeof(uint16_t);
-    require(readback.initialize(device, raster_bytes + (bindless ? 2 * resolved_bytes : 0), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    require(readback.initialize(device, raster_bytes + (bindless ? 3 * resolved_bytes : 0), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         host, memory, vk, error), error);
 
     FrameImagePool images;
@@ -120,7 +120,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     {
         VkDevice device;
         VkBufferView mask{};
-        VkImageView images[5]{};
+        VkImageView images[6]{};
         VkSampler sampler{};
         ~Views()
         {
@@ -137,9 +137,9 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     require(vkCreateBufferView(device, &mask_info, nullptr, &views.mask) == VK_SUCCESS, "visibility mask view");
     FrameImageGraph graph;
     ImageStateTracker states;
-    VkImage targets[5]{};
-    FrameImageGraph::Resource resources[5];
-    const size_t target_count = bindless ? 5 : 2;
+    VkImage targets[6]{};
+    FrameImageGraph::Resource resources[6];
+    const size_t target_count = bindless ? 6 : 2;
     constexpr VkImageSubresourceRange color{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     for (size_t i = 0; i < target_count; ++i)
     {
@@ -172,7 +172,8 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
             VkClearColorValue material{{0.25f, 0.5f, 1.f, 1.f}};
             vkCmdClearColorImage(command, targets[2], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &color);
             vkCmdClearColorImage(command, targets[3], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &color);
-            vkCmdClearColorImage(command, targets[4], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &material, 1, &color);
+            vkCmdClearColorImage(command, targets[4], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &color);
+            vkCmdClearColorImage(command, targets[5], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &material, 1, &color);
         }
     });
     for (size_t i = 0; i < target_count; ++i)
@@ -211,7 +212,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         require(vkCreateSampler(device, &sampler_info, nullptr, &views.sampler) == VK_SUCCESS, "visibility test sampler");
         require(materials.initialize(device, vkGetDeviceProcAddr, 1, error) &&
-            materials.write(0, views.images[4], views.sampler, error, VK_IMAGE_LAYOUT_GENERAL), error);
+            materials.write(0, views.images[5], views.sampler, error, VK_IMAGE_LAYOUT_GENERAL), error);
         require(visibility_passes.initialize(device, vkGetDeviceProcAddr, limits, 1, 2, VK_NULL_HANDLE,
             materials, source, error), error);
         const auto resolve = graph.add_checked_command_pass("resolve visibility test", [&](VkCommandBuffer cb, std::string& why) {
@@ -226,19 +227,19 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
                 params.first_draw = batch;
                 params.draw_count = batch ? 3 : 1;
                 params.geometry_batch = batch;
-                if (!visibility_passes.resolve(cb, 0, batch, input, ids, materials, views.images[2], views.images[3],
+                if (!visibility_passes.resolve(cb, 0, batch, input, ids, materials, views.images[2], views.images[3], views.images[4],
                         {8, 8}, params, why))
                     return false;
             }
             return true;
         });
         require(graph.read(resolve, resources[0], ImageUse::ComputeSampled, error) &&
-            graph.read(resolve, resources[4], ImageUse::StorageRead, error), error);
-        for (size_t i = 2; i < 4; ++i)
+            graph.read(resolve, resources[5], ImageUse::StorageRead, error), error);
+        for (size_t i = 2; i < 5; ++i)
             require(graph.read_write(resolve, resources[i], resources[i], error), error);
     }
     const auto copy = graph.add_command_pass("read visibility test", [&](VkCommandBuffer cb) {
-        for (size_t i = 0; i < (bindless ? 4u : 2u); ++i)
+        for (size_t i = 0; i < (bindless ? 5u : 2u); ++i)
         {
             const auto offset = i < 2 ? i * 8 * 8 * sizeof(uint32_t) : raster_bytes + (i - 2) * resolved_bytes;
             VkBufferImageCopy region{offset, 0, 0,
@@ -251,7 +252,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &barrier,
             0, nullptr, 0, nullptr);
     });
-    for (size_t i = 0; i < (bindless ? 4u : 2u); ++i)
+    for (size_t i = 0; i < (bindless ? 5u : 2u); ++i)
         require(graph.read(copy, resources[i], ImageUse::TransferSource, error), error);
     VkCommandBuffer cb{};
     VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
@@ -281,7 +282,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         "far-plane triangle must retain its ID at an interior pixel");
     if (bindless)
     {
-        uint16_t output[2][64][4]{};
+        uint16_t output[3][64][4]{};
         require(readback.read(raster_bytes, output, sizeof(output), error), error);
         require(output[0][36][0] == 0x3400 && output[0][36][1] == 0x3800 && output[0][36][2] == 0x3c00,
             "visibility resolve material color");
@@ -289,6 +290,8 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
             output[1][36][3] == 0x3a00, "visibility resolve baked sunlight and hemisphere");
         require(output[0][20][3] == 0x3c00 && output[1][20][3] == 0x3c00,
             "visibility resolve unlightmapped material");
+        require(output[2][36][1] == 0x3900 && output[2][20][1] == 0x3555,
+            "visibility resolve material class");
         require(output[0][0][0] == 0 && output[1][0][3] == 0, "visibility resolve background");
     }
 }

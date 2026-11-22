@@ -631,6 +631,8 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
             mesh.lod_atlas = source.lod_atlas;
             mesh.terrain = source.terrain;
             mesh.surface = source.surface;
+            mesh.visibility_scalar_surface = source.visibility_scalar_surface;
+            mesh.visibility_material_class = source.visibility_material_class;
             mesh.single_detail = source.single_detail;
             mesh.environment = source.environment;
             mesh.laemb = source.laemb;
@@ -818,6 +820,11 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
               !metadata.parallax_texture.empty()) ||
              definition.emissive);
         mesh.surface = surface_roles;
+        mesh.visibility_scalar_surface = metadata.bump_mode < 2 && !metadata.normal &&
+            metadata.external_normal_texture.empty() && mesh.pbr_texture.empty() &&
+            mesh.metallic_texture.empty() && mesh.roughness_texture.empty() && mesh.ao_texture.empty() &&
+            mesh.parallax_texture.empty();
+        mesh.visibility_material_class = std::clamp((float(metadata.material) + metadata.material_weight) / 3.f, 0.f, 1.f);
         bool surface_ready = false;
         if (surface_roles)
         {
@@ -1319,7 +1326,8 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                 {
                     const auto& cluster = hierarchy.clusters[i];
                     entries[first_draw + i] = {first_index + cluster.first_index, cluster.index_count,
-                        static_cast<int32_t>(mesh.first_vertex), material_slot, mesh.geometry_batch, lightmap_slot};
+                        static_cast<int32_t>(mesh.first_vertex), material_slot, mesh.geometry_batch, lightmap_slot,
+                        mesh.visibility_material_class};
                 }
                 auto& range = prepared.visibility_draw_ranges_[mesh.geometry_batch];
                 if (!range.draw_count)
@@ -1340,7 +1348,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                         node.vertex == "vk\\level_lightmap.vs" && node.fragment == "vk\\level_lightmap.ps"
                     : node.textures == BaseRole && node.vertex == "vk\\level_opaque.vs" && node.fragment == "vk\\level_opaque.ps";
                 if (mesh.mode != SurfaceMode::Opaque || !mesh.packed_cluster_indices || mesh.secondary_opaque ||
-                    mesh.surface || mesh.terrain || mesh.single_detail || mesh.environment ||
+                    !mesh.visibility_scalar_surface || mesh.terrain || mesh.single_detail || mesh.environment ||
                     mesh.environment_constant || mesh.laemb || mesh.lod_atlas || mesh.tree || mesh.emissive ||
                     mesh.tessellation || mesh.fog || mesh.depth_proxy || !mesh.bump_texture.empty() || mesh.matrices.enabled[0] ||
                     mesh.pass_graph.count != 1 ||

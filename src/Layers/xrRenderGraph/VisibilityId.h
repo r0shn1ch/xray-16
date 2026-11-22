@@ -29,6 +29,7 @@ struct DrawEntry
     uint32_t material_slot;
     uint32_t geometry_batch;
     uint32_t lightmap_slot{UINT32_MAX};
+    float material_class{1.f / 3.f};
 };
 
 struct Viewport
@@ -61,7 +62,7 @@ struct MaterialResolveParameters
     uint32_t geometry_batch;
 };
 
-static_assert(sizeof(DrawEntry) == 24);
+static_assert(sizeof(DrawEntry) == 28);
 static_assert(sizeof(Viewport) == 16);
 static_assert(offsetof(Camera, viewport) == 64);
 static_assert(sizeof(Camera) == 80);

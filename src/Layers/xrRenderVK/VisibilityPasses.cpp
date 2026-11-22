@@ -56,7 +56,7 @@ bool VisibilityPasses::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, 
             sizeof(visibility::SoftwareRasterParameters), {{0, image}, {1, buffer}, {2, buffer},
                 {3, buffer}, {4, image}, {5, buffer}, {6, VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER}}, VK_NULL_HANDLE) ||
         !load(resolve_, "vk/visibility_material_resolve.cs.spv", batch_slots, sizeof(visibility::MaterialResolveParameters),
-            {{0, sampled}, {1, buffer}, {2, buffer}, {3, buffer}, {5, image}, {6, image}}, materials.layout()))
+            {{0, sampled}, {1, buffer}, {2, buffer}, {3, buffer}, {5, image}, {6, image}, {7, image}}, materials.layout()))
     {
         raster_.destroy();
         resolve_.destroy();
@@ -147,7 +147,7 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
         return true;
     };
     constexpr VkImageSubresourceRange full_color{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    FrameImageGraph::Resource ids, depth, base, normals;
+    FrameImageGraph::Resource ids, depth, base, normals, surface;
     VkImageCreateInfo id_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     id_info.imageType = VK_IMAGE_TYPE_2D;
     id_info.format = VK_FORMAT_R32_UINT;
@@ -161,7 +161,7 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
     };
     if (!graph.declare_image(id_info, VK_IMAGE_ASPECT_COLOR_BIT, ids, error) ||
         !import(targets.depth, depth) || !import(targets.base_color, base) ||
-        !import(targets.normals, normals))
+        !import(targets.normals, normals) || !import(targets.surface, surface))
         return false;
 
     const auto clear_pass = graph.add_command_pass("visibility buffer clear", [&](VkCommandBuffer command) {
@@ -169,14 +169,15 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
         VkClearColorValue far_depth{};
         far_depth.uint32[0] = 0x3f800000u;
         clear_(command, graph.image_handle(ids), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &full_color);
-        for (const auto target : {targets.base_color, targets.normals})
+        for (const auto target : {targets.base_color, targets.normals, targets.surface})
             clear_(command, target.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &full_color);
         clear_(command, targets.depth.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &far_depth, 1, &full_color);
     });
     const auto clear_resource = [&](FrameImageGraph::Resource& resource) {
         return graph.write(clear_pass, resource, ImageUse::TransferDestination, resource, error);
     };
-    if (!clear_resource(ids) || !clear_resource(depth) || !clear_resource(base) || !clear_resource(normals))
+    if (!clear_resource(ids) || !clear_resource(depth) || !clear_resource(base) || !clear_resource(normals) ||
+        !clear_resource(surface))
         return false;
 
     for (const auto phase : {RasterPhase::Depth, RasterPhase::Id})
@@ -212,16 +213,17 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
                 const visibility::MaterialResolveParameters params{camera, range.first_draw, range.draw_count,
                     static_cast<uint32_t>(level.visibility_textures().size()), range.geometry_batch};
                 if (!resolve(command, frame.frame_index, batch, geometry[batch], id_texture, materials,
-                        targets.base_color.view, targets.normals.view, targets.extent, params, reason))
+                        targets.base_color.view, targets.normals.view, targets.surface.view, targets.extent, params, reason))
                     return false;
             }
             return true;
         });
     if (!read_geometry(resolve_pass) || !graph.read(resolve_pass, ids, ImageUse::ComputeSampled, error) ||
-        !graph.read_write(resolve_pass, base, base, error) || !graph.read_write(resolve_pass, normals, normals, error))
+        !graph.read_write(resolve_pass, base, base, error) || !graph.read_write(resolve_pass, normals, normals, error) ||
+        !graph.read_write(resolve_pass, surface, surface, error))
         return false;
     const auto export_pass = graph.add_pass("visibility outputs ready", [] {});
-    for (const auto resource : {depth, base, normals})
+    for (const auto resource : {depth, base, normals, surface})
         if (!graph.read(export_pass, resource, ImageUse::SampledGraphicsCompute, error))
             return false;
     if (!graph.materialize_2d_image_views(pool, device_, create_view_, destroy_view_, error))
@@ -271,7 +273,7 @@ bool VisibilityPasses::rasterize(VkCommandBuffer command, uint32_t slot, uint32_
 
 bool VisibilityPasses::resolve(VkCommandBuffer command, uint32_t slot, uint32_t batch, const Geometry& geometry,
     const VkDescriptorImageInfo& ids, const BindlessTextureTable& materials, VkImageView base_color,
-    VkImageView normals, VkExtent2D extent, visibility::MaterialResolveParameters parameters, std::string& error) const
+    VkImageView normals, VkImageView surface, VkExtent2D extent, visibility::MaterialResolveParameters parameters, std::string& error) const
 {
     if (!extent.width || !extent.height)
     {
@@ -292,6 +294,7 @@ bool VisibilityPasses::resolve(VkCommandBuffer command, uint32_t slot, uint32_t 
     }
     return resolve_.record_mixed(command, slot * batch_count_ + batch, {geometry.entries, geometry.indices, geometry.vertices},
         {ids, {VK_NULL_HANDLE, base_color, VK_IMAGE_LAYOUT_GENERAL},
-            {VK_NULL_HANDLE, normals, VK_IMAGE_LAYOUT_GENERAL}}, &parameters, groups_x, groups_y, error, materials.set());
+            {VK_NULL_HANDLE, normals, VK_IMAGE_LAYOUT_GENERAL}, {VK_NULL_HANDLE, surface, VK_IMAGE_LAYOUT_GENERAL}},
+        &parameters, groups_x, groups_y, error, materials.set());
 }
 }

@@ -24,7 +24,7 @@ public:
     struct Target { VkImage image{}; VkImageView view{}; };
     struct Targets
     {
-        Target depth, base_color, normals;
+        Target depth, base_color, normals, surface;
         VkExtent2D extent{};
         VkSampler id_sampler{};
     };
@@ -55,7 +55,7 @@ public:
     // pixels retain their previous output values.
     bool resolve(VkCommandBuffer command, uint32_t slot, uint32_t batch, const Geometry& geometry,
         const VkDescriptorImageInfo& ids, const BindlessTextureTable& materials,
-        VkImageView base_color, VkImageView normals, VkExtent2D extent,
+        VkImageView base_color, VkImageView normals, VkImageView surface, VkExtent2D extent,
         visibility::MaterialResolveParameters parameters, std::string& error) const;
 
 private:

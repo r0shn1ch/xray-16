@@ -3206,7 +3206,7 @@ void VulkanGameDevice::set_level_visibility(const VisibilityPasses* passes, cons
 
 void VulkanGameDevice::release_visibility_targets(VisibilityPasses::Targets& targets)
 {
-    for (auto* target : {&targets.depth, &targets.base_color, &targets.normals})
+    for (auto* target : {&targets.depth, &targets.base_color, &targets.normals, &targets.surface})
     {
         if (target->view)
             frame_dispatch_.destroy_image_view(window_.device(), target->view, nullptr);
@@ -3277,7 +3277,8 @@ bool VulkanGameDevice::ensure_visibility_targets(uint32_t slot, VkExtent2D exten
         return false;
     };
     if (!create(targets.depth, VK_FORMAT_R32_UINT) ||
-        !create(targets.base_color, VK_FORMAT_R16G16B16A16_SFLOAT) || !create(targets.normals, VK_FORMAT_R16G16B16A16_SFLOAT))
+        !create(targets.base_color, VK_FORMAT_R16G16B16A16_SFLOAT) || !create(targets.normals, VK_FORMAT_R16G16B16A16_SFLOAT) ||
+        !create(targets.surface, VK_FORMAT_R16G16B16A16_SFLOAT))
     {
         release_visibility_targets(targets);
         return false;
@@ -3385,7 +3386,7 @@ bool VulkanGameDevice::initialize_visibility_gbuffer(std::string& error)
         release_visibility_gbuffer();
         return false;
     };
-    std::array<VkDescriptorSetLayoutBinding, 3> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 4> bindings{};
     for (uint32_t i = 0; i < bindings.size(); ++i)
         bindings[i] = {i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
     VkDescriptorSetLayoutCreateInfo layout{};
@@ -3396,7 +3397,7 @@ bool VulkanGameDevice::initialize_visibility_gbuffer(std::string& error)
         return fail("visibility G-buffer descriptor layout creation failed");
 
     constexpr uint32_t slots = FrameContext::FramesInFlight;
-    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, slots * 3};
+    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, slots * 4};
     VkDescriptorPoolCreateInfo pool{};
     pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool.maxSets = slots;
@@ -3449,8 +3450,9 @@ void VulkanGameDevice::draw_level_visibility(const FrameRecordingContext& frame,
     const VkDescriptorImageInfo images[]{
         {targets.id_sampler, targets.depth.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
         {targets.id_sampler, targets.base_color.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-        {targets.id_sampler, targets.normals.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
-    std::array<VkWriteDescriptorSet, 3> writes{};
+        {targets.id_sampler, targets.normals.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        {targets.id_sampler, targets.surface.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+    std::array<VkWriteDescriptorSet, 4> writes{};
     for (uint32_t i = 0; i < writes.size(); ++i)
     {
         auto& write = writes[i];
