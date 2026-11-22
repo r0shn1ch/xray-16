@@ -104,12 +104,15 @@ BufferUseInfo describe(BufferUse use)
     case BufferUse::HostRead: return {VK_ACCESS_HOST_READ_BIT, VK_PIPELINE_STAGE_HOST_BIT, false};
     case BufferUse::TransferSource: return {VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false};
     case BufferUse::TransferDestination: return {VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, true};
-    case BufferUse::ComputeRead: return {VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, false};
+    case BufferUse::ComputeRead: return {VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, false};
     case BufferUse::ComputeWrite: return {VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, true};
     case BufferUse::ComputeReadWrite: return {VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, true};
-    case BufferUse::VertexRead: return {VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, false};
-    case BufferUse::FragmentRead: return {VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false};
+    case BufferUse::VertexRead: return {VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT,
+        VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, false};
+    case BufferUse::FragmentRead: return {VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false};
     case BufferUse::IndirectRead: return {VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
         VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, false};
     case BufferUse::IndirectAndComputeRead: return {VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT,
@@ -1078,7 +1081,12 @@ bool FrameImageGraph::compile_resource_lifetimes(ResourceLifetimes& lifetimes, s
     {
         const auto usage = m_buffers[access.resource.index].transient_description.usage;
         const auto required = required_buffer_usage(access.use);
-        if (usage && (usage & required) != required)
+        const bool shader_read = access.use == BufferUse::ComputeRead || access.use == BufferUse::VertexRead ||
+            access.use == BufferUse::FragmentRead;
+        constexpr VkBufferUsageFlags shader_read_usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT |
+            VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT;
+        if (usage && ((usage & required) != required || (shader_read && !(usage & shader_read_usage))))
         {
             error = "Frame image graph: transient buffer usage does not support pass " + pass.name;
             return false;

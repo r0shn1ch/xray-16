@@ -493,12 +493,13 @@ int main()
     assert((buffer_order == std::vector<int>{1, 2}));
     assert(buffer_barriers.size() == before_buffers + 3);
     assert(buffer_barriers[before_buffers].srcAccessMask == VK_ACCESS_HOST_WRITE_BIT);
-    assert(buffer_barriers[before_buffers].dstAccessMask == VK_ACCESS_SHADER_READ_BIT);
+    const auto shader_read_access = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT;
+    assert(buffer_barriers[before_buffers].dstAccessMask == shader_read_access);
     assert(buffer_stages[before_buffers].first == VK_PIPELINE_STAGE_HOST_BIT);
-    assert(buffer_barriers[before_buffers + 1].srcAccessMask == VK_ACCESS_SHADER_READ_BIT);
+    assert(buffer_barriers[before_buffers + 1].srcAccessMask == shader_read_access);
     assert(buffer_barriers[before_buffers + 1].dstAccessMask == VK_ACCESS_SHADER_WRITE_BIT);
     assert(buffer_barriers[before_buffers + 2].srcAccessMask == VK_ACCESS_SHADER_WRITE_BIT);
-    assert(buffer_barriers[before_buffers + 2].dstAccessMask == VK_ACCESS_SHADER_READ_BIT);
+    assert(buffer_barriers[before_buffers + 2].dstAccessMask == shader_read_access);
 
     // Imports can carry the last queue submission that produced their initial version.
     FrameImageGraph external_graph;
