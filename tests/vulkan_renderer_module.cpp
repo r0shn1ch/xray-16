@@ -148,9 +148,15 @@ static void check_module()
         assert(cursor != groups.particles_group_begin());
     }
     auto* module = xray::render::vulkan::GetRendererModule();
+    char* saved_params = Core.Params;
+    char launch_params[] = "-vk-anisotropy 2";
+    Core.Params = launch_params;
     for (int i = 0; i < 2; ++i)
     {
         module->SetupEnv("renderer_vulkan");
+        int aniso_min = 0, aniso_max = 0;
+        assert(console.GetInteger("r__tf_aniso", aniso_min, aniso_max) == (i == 0 ? 2 : 12));
+        console.Execute("r__tf_aniso 12");
         console.Execute("r_vk_upscaler Cubic");
         assert(std::strcmp(console.GetToken("r_vk_upscaler"), "Cubic") == 0);
         console.Execute("r_vk_upscaler Temporal");
@@ -204,6 +210,7 @@ static void check_module()
         module->ClearEnv();
         assert(!GEnv.Render && !GEnv.RenderFactory && !GEnv.DU && !GEnv.UIRender && !GEnv.DRender);
     }
+    Core.Params = saved_params;
     Console = nullptr;
 }
 

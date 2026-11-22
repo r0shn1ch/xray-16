@@ -998,7 +998,14 @@ void register_vulkan_options(VulkanLevelRender& renderer)
     static VulkanReadonlyState frame_generation_support("r_vk_frame_generation_available",
         &frame_generation_available);
     static VulkanReadonlyState hdr10_support("r_vk_hdr10_available", &hdr10_output_available);
-    apply_vulkan_launch_settings(Core.Params);
+    // Launch arguments provide initial defaults. Rebinding the renderer must
+    // preserve settings already loaded from the config or changed in the UI.
+    static bool launch_settings_applied = false;
+    if (!launch_settings_applied)
+    {
+        apply_vulkan_launch_settings(Core.Params);
+        launch_settings_applied = true;
+    }
     IConsole_Command *options[]{&point_shadows, &spot_shadows, &ros_rays, &sky_scale,
                                 &light_scale,   &light_flow,   &smooth};
     for (auto *option : options)
