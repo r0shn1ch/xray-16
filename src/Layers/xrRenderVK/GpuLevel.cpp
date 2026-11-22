@@ -60,9 +60,14 @@ bool GpuLevel::visibility_draw_entries(uint32_t frame, VkDescriptorBufferInfo& r
         return false;
     }
     auto& buffer = visibility_frame_entries_[frame];
-    if (!buffer.write(0, visibility_dynamic_entries_.data(),
-            visibility_dynamic_entries_.size() * sizeof(visibility::DrawEntry), error))
-        return false;
+    for (const auto& range : visibility_matrix_ranges_)
+    {
+        if (!range.count) continue;
+        const VkDeviceSize offset = VkDeviceSize(range.first) * sizeof(visibility::DrawEntry);
+        if (!buffer.write(offset, visibility_dynamic_entries_.data() + range.first,
+                size_t(range.count) * sizeof(visibility::DrawEntry), error))
+            return false;
+    }
     result = {buffer.handle(), 0, buffer.size()};
     host_written = true;
     error.clear();
@@ -1474,7 +1479,9 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                 for (auto& frame_entries : prepared.visibility_frame_entries_)
                     if (!frame_entries.initialize(device, entry_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                            memory, upload.buffer, error))
+                            memory, upload.buffer, error) ||
+                        !frame_entries.write(0, prepared.visibility_dynamic_entries_.data(),
+                            static_cast<size_t>(entry_bytes), error))
                     {
                         Msg("! [renderer-vulkan] animated visibility materials unavailable: %s", error.c_str());
                         prepared.visibility_draw_ranges_.clear();
