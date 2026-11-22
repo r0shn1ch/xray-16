@@ -43,14 +43,16 @@ void GpuSyncEmitter(inout GpuPapiEmitter emitter,uint lane) {
     emitter = g_GroupEmitter;
     GroupMemoryBarrierWithGroupSync();
 }
+// These checks only bound the speculative batch. The per-spawn path reports
+// capacity failures if it actually runs out of resources.
 bool GpuCheckedAdd(inout uint total,uint count) {
-    if (count > 0x40000000u - total) { GpuAllocationError(16u); return false; }
+    if (count > 0x40000000u - total) return false;
     total += count;
     return true;
 }
 bool GpuCheckedProduct(uint count,uint stride,out uint product) {
     product = 0;
-    if (stride != 0 && count > 0x40000000u / stride) { GpuAllocationError(16u); return false; }
+    if (stride != 0 && count > 0x40000000u / stride) return false;
     product = count * stride;
     return true;
 }
@@ -164,7 +166,9 @@ bool GpuReserveChildProgram(uint program,uint count,inout uint particles,inout u
     uint particleCount,stateCount;
     if (!GpuCheckedProduct(count,definition.maxParticles,particleCount) ||
         !GpuCheckedProduct(count,definition.stateCount,stateCount)) return false;
-    return GpuCheckedAdd(particles,particleCount) && GpuCheckedAdd(states,stateCount) && GpuCheckedAdd(children,count);
+    return GpuCheckedAdd(particles,particleCount) && particles <= g_Papi.particleCapacity &&
+        GpuCheckedAdd(states,stateCount) && states <= g_Papi.actionStateCapacity &&
+        GpuCheckedAdd(children,count) && children <= g_Papi.emitterCapacity - g_Papi.phase;
 }
 uint GpuTickSteps(GpuPapiEmitter emitter,uint milliseconds) {
     return min(milliseconds / 33u + (emitter.memDT + milliseconds % 33u) / 33u,3u);
