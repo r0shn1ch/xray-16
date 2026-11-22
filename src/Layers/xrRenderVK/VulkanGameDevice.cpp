@@ -122,7 +122,7 @@ uint32_t rain_shadow_target_size(const VkPhysicalDeviceLimits& limits)
 }
 
 #if defined(XR_PLATFORM_ANDROID)
-bool set_android_buffer_extent(SDL_Window *window, VkExtent2D extent, std::string &error)
+ANativeWindow* reset_android_buffer_extent(SDL_Window *window, std::string &error)
 {
     SDL_SysWMinfo info{};
     SDL_VERSION(&info.version);
@@ -130,27 +130,24 @@ bool set_android_buffer_extent(SDL_Window *window, VkExtent2D extent, std::strin
         !info.info.android.window)
     {
         error = "Android Vulkan window has no native surface";
-        return false;
+        return nullptr;
     }
-    if (ANativeWindow_setBuffersGeometry(info.info.android.window, static_cast<int32_t>(extent.width),
-                                         static_cast<int32_t>(extent.height), 0) != 0)
+    auto* native = info.info.android.window;
+    if (ANativeWindow_setBuffersGeometry(native, 0, 0, 0) != 0)
     {
         error = "could not set Android Vulkan buffer resolution";
-        return false;
+        return nullptr;
     }
-    return true;
+    return native;
 }
 
 bool android_presentation_extent(SDL_Window *window, VkExtent2D &extent, std::string &error)
 {
-    if (!set_android_buffer_extent(window, {}, error))
+    auto* native = reset_android_buffer_extent(window, error);
+    if (!native)
         return false;
-    SDL_SysWMinfo info{};
-    SDL_VERSION(&info.version);
-    if (!SDL_GetWindowWMInfo(window, &info) || !info.info.android.window)
-        return false;
-    const int width = ANativeWindow_getWidth(info.info.android.window);
-    const int height = ANativeWindow_getHeight(info.info.android.window);
+    const int width = ANativeWindow_getWidth(native);
+    const int height = ANativeWindow_getHeight(native);
     if (width <= 0 || height <= 0)
     {
         error = "Android Vulkan surface has an invalid native resolution";
@@ -3606,7 +3603,7 @@ void VulkanGameDevice::destroy()
     if (scaled_android_window_)
     {
         std::string ignored;
-        if (!set_android_buffer_extent(scaled_android_window_, {}, ignored))
+        if (!reset_android_buffer_extent(scaled_android_window_, ignored))
             Msg("! [renderer-vulkan] restore Android buffer geometry: %s", ignored.c_str());
         scaled_android_window_ = nullptr;
     }
