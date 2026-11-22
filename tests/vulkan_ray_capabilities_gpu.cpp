@@ -1316,12 +1316,13 @@ static bool build_triangle_scene(VkPhysicalDevice physical, VkDevice device,
         resolve_params.axis = 2; resolve_params.levels = 2; resolve_params.page_size = 8;
         resolve_params.static_columns = 2; resolve_params.static_slots = 2; resolve_params.inverse_depth_range = 1.f;
         bool resolve_ok = true;
-        for (uint32_t scenario = 0; scenario < 8 && resolve_ok; ++scenario)
+        for (uint32_t scenario = 0; scenario < 9 && resolve_ok; ++scenario)
         {
             uint32_t mapping[8]; std::fill_n(mapping, 8, UINT32_MAX);
             if (scenario < 2) mapping[scenario == 0 ? 3 : 7] = 0;
             if (scenario >= 3 && scenario <= 5) mapping[3] = scenario == 3 ? 0 : 1;
-            if (scenario >= 6) { mapping[3] = 2; mapping[7] = 0; }
+            if (scenario == 6 || scenario == 7) { mapping[3] = 2; mapping[7] = 0; }
+            if (scenario == 8) { mapping[0] = mapping[1] = mapping[2] = 1; mapping[3] = 0; }
             const bool dynamic = (scenario >= 3 && scenario <= 5) || scenario == 7;
             const uint32_t declared_slots = scenario >= 6 ? 3 : 2;
             resolve_params.static_slots = dynamic ? 0 : declared_slots;
@@ -1354,7 +1355,8 @@ static bool build_triangle_scene(VkPhysicalDevice physical, VkDevice device,
             if (vkEndCommandBuffer(command) != VK_SUCCESS || vkQueueSubmit(queue, 1, &query_submit, fence) != VK_SUCCESS ||
                 vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS ||
                 !vsm_resolve_readback.read(0, &visible, sizeof(visible), error) ||
-                std::abs(visible - (scenario == 5 ? 128.f / 255.f : scenario == 2 || scenario == 4 ? 1.f : 0.f)) > .001f)
+                std::abs(visible - (scenario == 8 ? 5.f / 9.f : scenario == 5 ? 128.f / 255.f :
+                    scenario == 2 || scenario == 4 ? 1.f : 0.f)) > .001f)
             { resolve_ok = false; break; }
         }
         if (!resolve_ok) { if (error.empty()) error = "VSM visibility or parent-page fallback mismatch"; break; }

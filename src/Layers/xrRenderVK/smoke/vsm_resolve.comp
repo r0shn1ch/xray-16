@@ -16,19 +16,43 @@ layout(set = 0, binding = 5, std430) readonly buffer Parameters {
 layout(set = 0, binding = 6, r32f) uniform writeonly image2D visibility_image;
 layout(set = 0, binding = 7) uniform sampler2D ray_visibility;
 
-bool sample_page(sampler2D atlas, uint slot, uint columns, vec2 local_uv, float depth, float bias,
+bool tile_origin(uint slot, uint columns, int size, ivec2 atlas_size, out ivec2 origin)
+{
+    origin = ivec2(int(slot % columns), int(slot / columns)) * size;
+    return all(greaterThanEqual(origin, ivec2(0))) && all(lessThanEqual(origin + ivec2(size), atlas_size));
+}
+
+bool sample_page(sampler2D atlas, bool dynamic_layer, uint slot, uint columns, uint slots,
+    uint level, uvec2 page, vec2 local_uv, float depth, float bias,
     out float visibility)
 {
     int size = int(params.config.z);
-    ivec2 origin = ivec2(int(slot % columns), int(slot / columns)) * size;
     ivec2 atlas_size = textureSize(atlas, 0);
-    if (any(lessThan(origin, ivec2(0))) || any(greaterThan(origin + ivec2(size), atlas_size))) return false;
+    ivec2 origin;
+    if (!tile_origin(slot, columns, size, atlas_size, origin)) return false;
     ivec2 center = clamp(ivec2(local_uv * float(size)), ivec2(0), ivec2(size - 1));
     float visible = 0.0;
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x)
         {
-            ivec2 p = origin + clamp(center + ivec2(x, y), ivec2(0), ivec2(size - 1));
+            ivec2 tap = center + ivec2(x, y);
+            ivec2 p = origin + clamp(tap, ivec2(0), ivec2(size - 1));
+            if (any(lessThan(tap, ivec2(0))) || any(greaterThanEqual(tap, ivec2(size))))
+            {
+                ivec2 shift = ivec2(greaterThanEqual(tap, ivec2(size))) - ivec2(lessThan(tap, ivec2(0)));
+                ivec2 neighbor = ivec2(page) + shift;
+                uint axis = params.config.x;
+                if (all(greaterThanEqual(neighbor, ivec2(0))) && all(lessThan(neighbor, ivec2(int(axis)))))
+                {
+                    uint index = (level * axis + uint(neighbor.y)) * axis + uint(neighbor.x);
+                    uint neighbor_slot = 0xffffffffu;
+                    if (dynamic_layer && index < dynamic_pages.length()) neighbor_slot = dynamic_pages[index];
+                    if (!dynamic_layer && index < static_pages.length()) neighbor_slot = static_pages[index];
+                    ivec2 neighbor_origin;
+                    if (neighbor_slot < slots && tile_origin(neighbor_slot, columns, size, atlas_size, neighbor_origin))
+                        p = neighbor_origin + tap - shift * size;
+                }
+            }
             visible += depth <= texelFetch(atlas, p, 0).r + bias ? 1.0 : 0.0;
         }
     visibility = visible / 9.0;
@@ -64,7 +88,8 @@ void main()
                         uint slot = static_pages[index];
                         float sampled;
                         if (slot < params.dynamic_config.z &&
-                            sample_page(static_atlas, slot, params.config.w, fract(page_coord), depth, params.zparams.z, sampled))
+                            sample_page(static_atlas, false, slot, params.config.w, params.dynamic_config.z,
+                                i, page, fract(page_coord), depth, params.zparams.z, sampled))
                         {
                             result = min(result, sampled);
                             static_found = true;
@@ -75,7 +100,8 @@ void main()
                         uint slot = dynamic_pages[index];
                         float sampled;
                         if (slot < params.dynamic_config.w &&
-                            sample_page(dynamic_atlas, slot, params.dynamic_config.x, fract(page_coord), depth, params.zparams.z, sampled))
+                            sample_page(dynamic_atlas, true, slot, params.dynamic_config.x, params.dynamic_config.w,
+                                i, page, fract(page_coord), depth, params.zparams.z, sampled))
                         {
                             result = min(result, sampled);
                             dynamic_found = true;
