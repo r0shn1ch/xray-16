@@ -364,6 +364,15 @@ bool CScriptEngine::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
         script_log(LuaMessageType::Error, "Cannot open file \"%s\"", caScriptName);
         return false;
     }
+#if defined(XR_PLATFORM_ANDROID)
+    if (caNameSpaceName && (!xr_strcmp(caNameSpaceName, "ui_mm_opt_main") ||
+        !xr_strcmp(caNameSpaceName, "ui_mm_opt_video_adv")))
+    {
+        const auto* source = FS.GetFileDesc(caScriptName);
+        Msg("[android] options script VFS path: %s source=%s", caScriptName,
+            !source ? "unregistered" : source->vfs == size_t(-1) ? "file" : "archive");
+    }
+#endif
     strconcat(sizeof(l_caLuaFileName), l_caLuaFileName, "@", caScriptName);
     if (!load_buffer(lua(), static_cast<LPCSTR>(l_tpFileReader->pointer()), l_tpFileReader->length(),
         l_caLuaFileName, caNameSpaceName))
@@ -1016,14 +1025,6 @@ bool CScriptEngine::process_file_if_exists(LPCSTR file_name, bool warn_if_not_ex
     if (m_reload_modules || (*file_name && !namespace_loaded(file_name)))
     {
         FS.update_path(S, "$game_scripts$", strconcat(sizeof(S1), S1, file_name, ".script"));
-#if defined(XR_PLATFORM_ANDROID)
-        if (!xr_strcmp(file_name, "ui_mm_opt_main") || !xr_strcmp(file_name, "ui_mm_opt_video_adv"))
-        {
-            const auto* source = FS.GetFileDesc(S);
-            Msg("[android] options script VFS path: %s source=%s", S,
-                !source ? "unregistered" : source->vfs == size_t(-1) ? "file" : "archive");
-        }
-#endif
         if (!warn_if_not_exist && !FS.exist(S))
         {
 #ifdef DEBUG
