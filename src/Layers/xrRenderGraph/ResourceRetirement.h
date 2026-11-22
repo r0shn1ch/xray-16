@@ -22,6 +22,8 @@ class ResourceRetirement
     explicit ResourceRetirement(uint32_t slots) : slots_(std::min(slots, 32u))
     {
     }
+    ResourceRetirement(const ResourceRetirement&) = delete;
+    ResourceRetirement& operator=(const ResourceRetirement&) = delete;
     template <class T> void retire(std::unique_ptr<T> resource)
     {
         if (resource && slots_)
@@ -51,10 +53,15 @@ class ResourceRetirement
     {
         if (slot >= slots_)
             return;
+        const uint32_t completed_slot = 1u << slot;
         std::vector<std::shared_ptr<void>> completed;
+        // Allocate before changing any pending masks. Release callbacks can
+        // schedule new work, so run them after removing the completed entries.
+        completed.reserve(std::count_if(entries_.begin(), entries_.end(),
+            [completed_slot](const Entry& entry) { return entry.pending == completed_slot; }));
         for (auto& entry : entries_)
         {
-            entry.pending &= ~(1u << slot);
+            entry.pending &= ~completed_slot;
             if (!entry.pending)
                 completed.push_back(std::move(entry.resource));
         }
