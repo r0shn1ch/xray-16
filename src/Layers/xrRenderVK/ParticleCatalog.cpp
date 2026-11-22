@@ -8,6 +8,7 @@ namespace xray::render::vulkan
 {
 namespace
 {
+constexpr uint32_t effect_time_limited = 1u << 14;
 uint16_t get16(const uint8_t* p) { return uint16_t(p[0]) | (uint16_t(p[1]) << 8); }
 uint32_t get32(const uint8_t* p)
 {
@@ -127,7 +128,7 @@ bool effect(LevelBytes bytes, ParticleEffectDef& def, std::string& reason)
         def.frame_columns = columns;
         def.frame_count = count;
     }
-    if (def.flags & (1u << 14))
+    if (def.flags & effect_time_limited)
     {
         Cursor limit{find(parts, 8)};
         if (!limit.real(def.time_limit) || def.time_limit < 0.f)
@@ -309,11 +310,16 @@ bool parse_particle_catalog(LevelBytes bytes, ParticleCatalog& result, std::stri
     return true;
 }
 bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string& name,
-    uint32_t max_particles, std::string& error)
+    uint32_t max_particles, std::string& error, std::optional<float> time_limit)
 {
     if (!max_particles || max_particles > 65535 || name.empty())
     {
         error = "invalid effect name or particle limit";
+        return false;
+    }
+    if (time_limit && (!std::isfinite(*time_limit) || (*time_limit < 0.f && *time_limit != -1.f)))
+    {
+        error = "effect duration must be nonnegative, or -1 to disable it";
         return false;
     }
     const LevelBytes input{library.data(), library.size()};
@@ -332,6 +338,7 @@ bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string
         return false;
     }
     LevelBytes target{};
+    LevelBytes record{}, flags{}, duration{};
     for (const auto& entry : entries)
     {
         parts.clear();
@@ -346,6 +353,9 @@ bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string
             error = "ambiguous or invalid particle effect record: " + name;
             return false;
         }
+        record = entry.second;
+        flags = find(parts, 5);
+        duration = find(parts, 8);
     }
     if (!target.data)
     {
@@ -355,9 +365,55 @@ bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string
 
     // Updating the original chunk preserves fields and action opcodes that
     // the runtime does not interpret, including unknown legacy chunks.
-    const auto offset = static_cast<size_t>(target.data - input.data);
-    for (uint32_t i = 0; i < sizeof(uint32_t); ++i)
-        library[offset + i] = static_cast<uint8_t>(max_particles >> (i * 8));
+    const auto offset = [&](const uint8_t* field) { return static_cast<size_t>(field - input.data); };
+    const auto write = [](uint8_t* dest, uint32_t value)
+    {
+        for (unsigned i = 0; i < sizeof(value); ++i)
+            dest[i] = static_cast<uint8_t>(value >> (i * 8));
+    };
+    if (time_limit)
+    {
+        const bool enabled = *time_limit >= 0.f;
+        if ((flags.data && flags.size != 4) || (enabled && duration.data && duration.size < 4))
+        {
+            error = "invalid effect flags or duration chunk: " + name;
+            return false;
+        }
+        uint32_t bits{};
+        std::memcpy(&bits, &*time_limit, sizeof(bits));
+        const uint32_t old_flags = flags.data ? get32(flags.data) : 0;
+        const uint32_t new_flags = enabled ? old_flags | effect_time_limited : old_flags & ~effect_time_limited;
+        uint8_t added[24];
+        size_t added_size = 0;
+        const auto append = [&](uint32_t id, uint32_t value)
+        {
+            write(added + added_size, id);
+            write(added + added_size + 4, 4);
+            write(added + added_size + 8, value);
+            added_size += 12;
+        };
+        if (enabled && !flags.data) append(5, new_flags);
+        if (enabled && !duration.data) append(8, bits);
+        const auto table = find(root, 3);
+        if (added_size > UINT32_MAX - table.size)
+        {
+            error = "effect table exceeds the particle library format limit";
+            return false;
+        }
+        const auto table_offset = offset(table.data);
+        const auto record_offset = offset(record.data);
+        const auto target_offset = offset(target.data);
+        const auto flags_offset = flags.data ? offset(flags.data) : 0;
+        const auto duration_offset = duration.data ? offset(duration.data) : 0;
+        library.insert(library.begin() + record_offset + record.size, added, added + added_size);
+        write(library.data() + table_offset - 4, static_cast<uint32_t>(table.size + added_size));
+        write(library.data() + record_offset - 4, static_cast<uint32_t>(record.size + added_size));
+        if (flags_offset) write(library.data() + flags_offset, new_flags);
+        if (enabled && duration_offset) write(library.data() + duration_offset, bits);
+        write(library.data() + target_offset, max_particles);
+    }
+    else
+        write(library.data() + offset(target.data), max_particles);
     error.clear();
     return true;
 }

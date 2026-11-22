@@ -3,6 +3,7 @@
 #include "LevelModels.h"
 
 #include <array>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -47,5 +48,5 @@ struct ParticleCatalog
 
 bool parse_particle_catalog(LevelBytes bytes, ParticleCatalog& result, std::string& error);
 bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string& name,
-    uint32_t max_particles, std::string& error);
+    uint32_t max_particles, std::string& error, std::optional<float> time_limit = {});
 } // namespace xray::render::vulkan

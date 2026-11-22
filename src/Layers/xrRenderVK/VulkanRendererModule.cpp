@@ -257,6 +257,8 @@ public:
                                 preview_.reset();
                             selected_ = i;
                             limit_ = static_cast<int>(effect.max_particles);
+                            duration_enabled_ = effect.time_limit >= 0.f;
+                            duration_ = duration_enabled_ ? effect.time_limit : 1.f;
                         }
                         ImGui::PopID();
                     }
@@ -268,11 +270,20 @@ public:
                     ImGui::Text("Shader: %s", effect.shader.c_str());
                     ImGui::Text("Texture: %s", effect.texture.c_str());
                     ImGui::InputInt("Particle limit", &limit_);
-                    ImGui::BeginDisabled(limit_ < 1 || limit_ > 65535 || uint32_t(limit_) == effect.max_particles);
+                    ImGui::Checkbox("Limit emission duration", &duration_enabled_);
+                    ImGui::BeginDisabled(!duration_enabled_);
+                    ImGui::InputFloat("Emission duration (s)", &duration_, 0.1f, 1.f, "%.3f");
+                    ImGui::EndDisabled();
+                    const float duration = duration_enabled_ ? duration_ : -1.f;
+                    ImGui::BeginDisabled(limit_ < 1 || limit_ > 65535 ||
+                        (duration_enabled_ && (!std::isfinite(duration_) || duration_ < 0.f)) ||
+                        (uint32_t(limit_) == effect.max_particles && duration == effect.time_limit));
                     if (ImGui::Button("Apply to draft") &&
-                        edit_particle_effect_limit(library_, effect.name, static_cast<uint32_t>(limit_), message_))
+                        edit_particle_effect_limit(library_, effect.name, static_cast<uint32_t>(limit_), message_,
+                            duration == effect.time_limit ? std::nullopt : std::optional<float>{duration}))
                     {
                         effect.max_particles = static_cast<uint32_t>(limit_);
+                        effect.time_limit = duration;
                         preview_.reset();
                         dirty_ = true;
                     }
@@ -356,6 +367,8 @@ private:
     float preview_zoom_{32.f};
     size_t selected_{SIZE_MAX};
     int limit_{};
+    float duration_{1.f};
+    bool duration_enabled_{};
     bool dirty_{};
 };
 
