@@ -21,6 +21,27 @@ template <typename T> T handle(uintptr_t value)
 int main()
 {
     {
+        FrameSubmissionGraph frame;
+        const auto scene = frame.add_pass("scene", FrameSubmissionGraph::Queue::Graphics);
+        const auto post = frame.add_pass("postprocess", FrameSubmissionGraph::Queue::Compute);
+        const auto final = frame.add_pass("final", FrameSubmissionGraph::Queue::Graphics);
+        std::string why;
+        assert(frame.depends_on(post, scene, why) && frame.depends_on(final, post, why));
+        std::vector<uint64_t> waits;
+        const auto wait = [&](FrameSubmissionGraph::Queue, FrameSubmissionGraph::Queue, uint64_t token) {
+            waits.push_back(token);
+        };
+        assert(frame.submit(scene, [](auto) { return uint64_t{11}; }, wait, why));
+        assert(frame.submit(post, [](auto) { return uint64_t{21}; }, wait, why));
+        assert(frame.submit(final, [](auto) { return uint64_t{12}; }, wait, why));
+        FrameSubmissionGraph next;
+        const auto next_compute = next.add_pass("next compute", FrameSubmissionGraph::Queue::Compute);
+        assert(next.depends_on_submission(next_compute, FrameSubmissionGraph::Queue::Graphics,
+            frame.submission(final), why));
+        assert(next.prepare(next_compute, wait, why));
+        assert((waits == std::vector<uint64_t>{11, 21, 12}));
+    }
+    {
         using xray::render::framegraph::sort_passes;
         std::vector<std::set<uint32_t>> edges{{1}, {}};
         std::vector<uint32_t> order{77};

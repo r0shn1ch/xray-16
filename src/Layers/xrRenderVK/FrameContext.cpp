@@ -3567,7 +3567,10 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
                     m_device_lost = true;
                     return false;
                 }
-                graphics_submission = async_submissions.submission(graphics_continuation_pass);
+                // The final graphics pass can follow asynchronous postprocess
+                // work and consume resources after the scene continuation.
+                // Next frame's compute must wait for that last submission.
+                graphics_submission = async_submissions.submission(final_graphics_pass);
             }
             else
                 graphics_submission = m_nvrhi_device->executeCommandList(command_list);
