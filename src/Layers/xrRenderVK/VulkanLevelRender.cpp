@@ -819,6 +819,14 @@ bool VulkanLevelRender::start_benchmark(uint32_t frames)
             << "], \"presentation_extent\": [" << presentation.width << ", " << presentation.height
             << "], \"quality_preset\": " << quality_preset << ", \"texture_lod\": " << psTextureLOD
             << ", \"anisotropy\": " << texture_anisotropy << ", \"fxaa\": " << antialiasing
+            << ", \"msaa_requested\": " << gbuffer_msaa_samples
+            << ", \"scene_samples\": " << static_cast<uint32_t>(window.frame().scene_samples())
+            << ", \"upscaler\": " << spatial_upscaler
+            << ", \"render_scale_percent\": " << render_scale_percent
+            << ", \"ao_strength\": " << ao_strength << ", \"ao_directions_override\": " << ao_directions_override
+            << ", \"sun_shafts_strength\": " << sun_shafts_strength
+            << ", \"sun_shaft_samples_override\": " << sun_shaft_samples_override
+            << ", \"motion_blur_strength\": " << motion_blur_strength << ", \"dof_strength\": " << dof_strength
             << ", \"detail_radius\": " << detail_radius << ", \"detail_spacing\": " << detail_spacing
             << ", \"point_shadows\": " << point_shadow_budget << ", \"spot_shadows\": " << spot_shadow_budget << '}';
     benchmark_context_ = context.str();
