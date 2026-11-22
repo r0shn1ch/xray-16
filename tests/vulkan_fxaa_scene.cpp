@@ -16,6 +16,7 @@ using glm::min;
 using glm::max;
 using glm::abs;
 using glm::clamp;
+using std::sqrt;
 constexpr int Width = 96, Height = 64;
 std::vector<vec3> source(Width * Height);
 unsigned samples;

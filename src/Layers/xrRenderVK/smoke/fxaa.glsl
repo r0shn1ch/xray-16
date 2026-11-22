@@ -4,7 +4,9 @@
 // This file is also executed by the software scene regression test.
 float aa_luma(vec3 color)
 {
-    return dot(color, vec3(0.299f, 0.587f, 0.114f));
+    // Edge thresholds operate on perceptual brightness. The source is
+    // linear, and may contain highlights above reference white.
+    return sqrt(max(dot(color, vec3(0.2126f, 0.7152f, 0.0722f)), 0.0f));
 }
 
 vec3 fxaa(vec2 uv, vec2 pixel, float enabled)
