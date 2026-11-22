@@ -49,6 +49,7 @@ public:
         if (!active_) return;
         history_frame_id_ = frame_id_;
         history_valid_ = true;
+        interpolation_history_valid_ = interpolation_prepared_;
     }
     void set_frame(uint64_t frame_id, float delta_ms, float camera_near, float camera_far,
         float camera_fov_vertical);
@@ -133,6 +134,8 @@ private:
     bool frame_generation_context_{};
     bool frame_generation_frame_enabled_{};
     bool frame_generation_config_valid_{};
+    bool interpolation_prepared_{};
+    bool interpolation_history_valid_{};
     VkSwapchainKHR frame_interpolation_swapchain_ = VK_NULL_HANDLE;
     bool active_{};
     bool history_valid_{};

@@ -281,6 +281,7 @@ void Fsr3Upscaler::set_frame(uint64_t frame_id, float delta_ms, float camera_nea
 {
     if (history_valid_ && frame_id - history_frame_id_ != 1)
         reset_history();
+    interpolation_prepared_ = false;
     frame_id_ = frame_id;
     delta_ms_ = std::isfinite(delta_ms) ? std::clamp(delta_ms, 0.1f, 1000.f) : 16.67f;
     camera_near_ = std::isfinite(camera_near) && camera_near > 0.f ? camera_near : .1f;
@@ -289,7 +290,8 @@ void Fsr3Upscaler::set_frame(uint64_t frame_id, float delta_ms, float camera_nea
         camera_fov_vertical < 3.13f ? camera_fov_vertical : 1.04719755f;
 #if defined(XRAY_HAS_FSR3_ANDROID)
     if (frame_generation_context_ && frame_interpolation_swapchain_)
-        configure_frame_generation(active_ && frame_generation_requested_ && history_valid_);
+        configure_frame_generation(active_ && frame_generation_requested_ && history_valid_ &&
+            interpolation_history_valid_);
 #endif
 }
 
@@ -514,7 +516,7 @@ bool Fsr3Upscaler::record(const FrameRecordingContext& frame, std::string& error
         if (frame_generation_frame_enabled_) configure_frame_generation(false);
         return false;
     }
-    if (frame_generation_frame_enabled_)
+    if (frame_generation_context_ && frame_generation_requested_)
     {
         FfxFsr3DispatchFrameGenerationPrepareDescription prepare{};
         prepare.commandList = ffxGetCommandListVK(frame.command_buffer);
@@ -531,6 +533,7 @@ bool Fsr3Upscaler::record(const FrameRecordingContext& frame, std::string& error
         prepare.frameID = frame_id_;
         const FfxErrorCode prepare_result =
             ffxFsr3ContextDispatchFrameGenerationPrepare(&context_, &prepare);
+        interpolation_prepared_ = prepare_result == FFX_OK;
         if (prepare_result != FFX_OK)
         {
             Msg("! [renderer-vulkan][FSR3] frame-generation prepare failed with code %d",
