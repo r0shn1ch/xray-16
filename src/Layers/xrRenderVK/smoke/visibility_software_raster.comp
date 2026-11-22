@@ -134,10 +134,15 @@ void rasterizeTriangle(vec4 a, vec4 b, vec4 c, uint id)
     }
 }
 
-bool insideFrustum(vec4 vertex)
+uint outsideFrustumPlanes(vec4 vertex)
 {
-    return vertex.w >= 1e-7 && vertex.z >= 0.0 && vertex.z <= vertex.w &&
-        all(lessThanEqual(abs(vertex.xy), vec2(vertex.w)));
+    return (vertex.w < 1e-7 ? 1u : 0u) |
+        (vertex.z < 0.0 ? 2u : 0u) |
+        (vertex.z > vertex.w ? 4u : 0u) |
+        (vertex.x < -vertex.w ? 8u : 0u) |
+        (vertex.x > vertex.w ? 16u : 0u) |
+        (vertex.y < -vertex.w ? 32u : 0u) |
+        (vertex.y > vertex.w ? 64u : 0u);
 }
 
 void rasterizeDrawTriangle(DrawEntry entry, uint triangle, uint id)
@@ -152,7 +157,13 @@ void rasterizeDrawTriangle(DrawEntry entry, uint triangle, uint id)
     if (!finiteClipPosition(polygon[0]) || !finiteClipPosition(polygon[1]) ||
         !finiteClipPosition(polygon[2]))
         return;
-    if (insideFrustum(polygon[0]) && insideFrustum(polygon[1]) && insideFrustum(polygon[2]))
+    uint outside0 = outsideFrustumPlanes(polygon[0]);
+    uint outside1 = outsideFrustumPlanes(polygon[1]);
+    uint outside2 = outsideFrustumPlanes(polygon[2]);
+    if ((outside0 & outside1 & outside2) != 0u)
+        return;
+    uint planesToClip = outside0 | outside1 | outside2;
+    if (planesToClip == 0u)
     {
         rasterizeTriangle(polygon[0], polygon[1], polygon[2], id);
         return;
@@ -162,6 +173,8 @@ void rasterizeDrawTriangle(DrawEntry entry, uint triangle, uint id)
     // original ID across the entire clipped fan for material interpolation.
     for (uint plane = 0u; plane < 7u; ++plane)
     {
+        if ((planesToClip & (1u << plane)) == 0u)
+            continue;
         vec4 clipped[10];
         uint clippedCount = 0u;
         vec4 previous = polygon[vertexCount - 1u];
