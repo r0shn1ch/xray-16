@@ -693,6 +693,51 @@ int main(int argc, char** argv)
         require(result.statuses[0].generation == 1 && result.statuses[0].serial == 1 && result.errors == 0, "simulation status");
         require(commands.acknowledge(result.statuses, error) && commands.snapshot(batch, error) && batch.commands.empty(), error);
         for (size_t i = 0; i < 28; ++i) require(draw_words[i * 4] == 6 && draw_words[i * 4 + 1] == 0, "draw arguments");
+        {
+            // The parent is full, and neither child slot is available. A source-only
+            // tick cannot spawn anything, so it must keep the parent alive.
+            fg::GpuPapiEmitter full_emitters[4]{};
+            auto& root = full_emitters[0];
+            root.active = root.generation = 1;
+            root.completedSerial = 1;
+            root.flags = GPU_PAPI_PLAYING;
+            root.count = root.capacity = 2;
+            root.childBirth = 0;
+            root.childPlay = root.childDead = root.pad0 = GPU_PAPI_INVALID;
+            full_emitters[1].active = full_emitters[3].active = 1;
+            fg::GpuPapiProgram source_program = program;
+            source_program.actionCount = 1;
+            fg::GpuPapiAction source_action{};
+            source_action.type = 21;
+            source_action.stateIndex = GPU_PAPI_INVALID;
+            source_action.p0.y = 100.f;
+            fg::GpuPapiCommand tick{};
+            tick.type = 6;
+            tick.generation = 1;
+            tick.serial = 2;
+            tick.p0 = 33;
+            const uint32_t tick_range[]{0, 1};
+            const std::vector<GpuParticleUpload::Update> tick_updates{
+                {&buffers.get(GpuParticleBuffers::Programs), 0, &source_program, sizeof(source_program)},
+                {&buffers.get(GpuParticleBuffers::Actions), 0, &source_action, sizeof(source_action)},
+                {&buffers.get(GpuParticleBuffers::Emitters), 0, full_emitters, sizeof(full_emitters)},
+                {&buffers.get(GpuParticleBuffers::Commands), 0, &tick, sizeof(tick)},
+                {&buffers.get(GpuParticleBuffers::RootCommands), 0, tick_range, sizeof(tick_range)}};
+            require(vkAllocateCommandBuffers(f.device, &ai, &cb) == VK_SUCCESS &&
+                vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS, "full emitter tick begin");
+            require(upload.record(cb, tick_updates, VK_QUEUE_TRANSFER_BIT, error,
+                FrameSubmissionGraph::Queue::Copy), error);
+            uniforms.reset();
+            require(frame.record(cb, compute, buffers, uniforms, 0, constants, 1, 0, planes, false, error), error);
+            require(readback.record(cb, buffers, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT, error), error);
+            submit.pCommandBuffers = &cb;
+            require(vkEndCommandBuffer(cb) == VK_SUCCESS &&
+                vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS &&
+                vkQueueWaitIdle(queue) == VK_SUCCESS, "full emitter tick submit");
+            require(readback.read(result, error), error);
+            require(result.statuses[0].serial == 2 && !result.statuses[0].retired && result.errors == 0,
+                "a full emitter reserved unused child slots and was retired");
+        }
         uniforms.reset();
         require(buffers.resize_draw_buckets(f.device, 112, props.limits.maxStorageBufferRange, memory, vk, error), error);
         fg::GpuPapiEmitter emitters[3]{}; emitters[0].active = 1; emitters[0].flags = GPU_PAPI_HUD;

@@ -154,6 +154,10 @@ bool GpuReserveTick(GpuPapiEmitter emitter,uint milliseconds) {
         uint totalBirths;
         if (!GpuCheckedProduct(births,steps,totalBirths)) return false;
         births = totalBirths;
+        // Without a deletion action no source can reuse a filled particle slot,
+        // even when several sources or fixed steps run in this tick.
+        if (!deletion)
+            births = min(births,emitter.capacity - emitter.count);
         if (deletion) {
             deaths = emitter.count;
             if (!GpuCheckedAdd(deaths,births)) return false;
