@@ -32,7 +32,13 @@ layout(push_constant) uniform RasterParameters
     uint writeIds;
     uint geometryBatch;
     uint materialCount;
+    vec4 eyeAndSteep;
 } parameters;
+
+#ifdef VISIBILITY_ALPHA_TEST
+bool finiteUv(vec2 value) { return !any(isnan(value)) && !any(isinf(value)); }
+#include "visibility_parallax.glsl"
+#endif
 
 // Coordinates increase downwards. For positive-area triangles rasterize the
 // left and top edges, so adjacent triangles don't both own the shared edge.
@@ -82,7 +88,7 @@ bool finiteClipPosition(vec4 vertex)
 }
 
 void rasterizeTriangle(vec4 a, vec4 b, vec4 c, uint id, DrawEntry entry,
-    vec4 originalA, vec4 originalB, vec4 originalC, mat3x2 texcoords)
+    vec4 originalA, vec4 originalB, vec4 originalC, PackedVertex vertexA, PackedVertex vertexB, PackedVertex vertexC)
 {
     vec2 p0 = visibilityScreenPosition(a, parameters.viewportOrigin, parameters.viewportExtent);
     vec2 p1 = visibilityScreenPosition(b, parameters.viewportOrigin, parameters.viewportExtent);
@@ -131,10 +137,14 @@ void rasterizeTriangle(vec4 a, vec4 b, vec4 c, uint id, DrawEntry entry,
                 VisibilityBarycentrics barycentrics;
                 if (!resolveVisibilityBarycentrics(originalA, originalB, originalC, ndc, ndcPerPixel, barycentrics))
                     continue;
+                mat3x2 texcoords = mat3x2(vertexA.normalYZUv.zw, vertexB.normalYZUv.zw, vertexC.normalYZUv.zw);
                 vec2 uv = texcoords * barycentrics.weights;
                 vec2 dx = texcoords * barycentrics.dx, dy = texcoords * barycentrics.dy;
                 if (any(isnan(uv)) || any(isinf(uv)) || any(isnan(dx)) || any(isinf(dx)) ||
                     any(isnan(dy)) || any(isinf(dy))) continue;
+                if (!visibilityMaterialUv(vertexA, vertexB, vertexC, entry, barycentrics, ivec2(x, y), ndc,
+                    ndcPerPixel, parameters.viewProjection, parameters.eyeAndSteep, parameters.materialCount,
+                    uv, dx, dy)) continue;
                 float alpha = textureGrad(baseColorTextures[nonuniformEXT(entry.materialSlot)], uv, dx, dy).a;
                 if (alpha < entry.alphaCutoff) continue;
             }
@@ -181,8 +191,8 @@ void rasterizeDrawTriangle(DrawEntry entry, uint triangle, uint id)
         !finiteClipPosition(polygon[2]))
         return;
     vec4 originalA = polygon[0], originalB = polygon[1], originalC = polygon[2];
-    mat3x2 texcoords = mat3x2(vertices[verticesOfTriangle.x].normalYZUv.zw,
-        vertices[verticesOfTriangle.y].normalYZUv.zw, vertices[verticesOfTriangle.z].normalYZUv.zw);
+    PackedVertex vertexA = vertices[verticesOfTriangle.x], vertexB = vertices[verticesOfTriangle.y],
+        vertexC = vertices[verticesOfTriangle.z];
     uint outside0 = outsideFrustumPlanes(polygon[0]);
     uint outside1 = outsideFrustumPlanes(polygon[1]);
     uint outside2 = outsideFrustumPlanes(polygon[2]);
@@ -191,7 +201,7 @@ void rasterizeDrawTriangle(DrawEntry entry, uint triangle, uint id)
     uint planesToClip = outside0 | outside1 | outside2;
     if (planesToClip == 0u)
     {
-        rasterizeTriangle(polygon[0], polygon[1], polygon[2], id, entry, originalA, originalB, originalC, texcoords);
+        rasterizeTriangle(polygon[0], polygon[1], polygon[2], id, entry, originalA, originalB, originalC, vertexA, vertexB, vertexC);
         return;
     }
     uint vertexCount = 3u;
@@ -232,7 +242,7 @@ void rasterizeDrawTriangle(DrawEntry entry, uint triangle, uint id)
             polygon[i] = clipped[i];
     }
     for (uint i = 1u; i + 1u < vertexCount; ++i)
-        rasterizeTriangle(polygon[0], polygon[i], polygon[i + 1u], id, entry, originalA, originalB, originalC, texcoords);
+        rasterizeTriangle(polygon[0], polygon[i], polygon[i + 1u], id, entry, originalA, originalB, originalC, vertexA, vertexB, vertexC);
 }
 
 void main()

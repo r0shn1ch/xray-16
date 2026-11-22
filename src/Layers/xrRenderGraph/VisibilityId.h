@@ -62,6 +62,8 @@ struct SoftwareRasterParameters
     uint32_t write_ids;
     uint32_t geometry_batch;
     uint32_t material_count{};
+    uint32_t padding[3]{};
+    float eye_and_steep[4]{};
 };
 
 struct MaterialResolveParameters
@@ -78,7 +80,7 @@ static_assert(sizeof(DrawEntry) == 68);
 static_assert(sizeof(Viewport) == 16);
 static_assert(offsetof(Camera, viewport) == 64);
 static_assert(sizeof(Camera) == 80);
-static_assert(sizeof(SoftwareRasterParameters) == 100);
+static_assert(sizeof(SoftwareRasterParameters) == 128);
 static_assert(sizeof(MaterialResolveParameters) == 112);
 
 static_assert(pack_id(0, 0) == 128);

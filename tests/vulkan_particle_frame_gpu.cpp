@@ -57,7 +57,7 @@ static void require(bool condition, const std::string& message)
 static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommandPool pool,
     const VkPhysicalDeviceLimits& limits, const VkPhysicalDeviceMemoryProperties& memory,
     const BufferResourceDispatch& vk, const VisibilityPasses::Source& source, bool bindless, bool steep = false,
-    float alpha_cutoff = -1.f)
+    float alpha_cutoff = -1.f, bool parallax_cutout = false, bool shift_cutout = true)
 {
     std::string error;
     std::vector<uint8_t> shader;
@@ -80,6 +80,12 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         {6, 3, 0, 0, 1},
         {9, 3, 0, 0, 1}};
     entries[1].alpha_cutoff = alpha_cutoff;
+    if (parallax_cutout)
+    {
+        entries[1].material_slot = 1;
+        entries[1].bump_height = 0.3f;
+        entries[1].parallax_slot = shift_cutout ? 0 : UINT32_MAX;
+    }
     const VkDrawIndexedIndirectCommand commands[]{{3, 1, 0, 0, 0}, {3, 1, 3, 0, 0}, {3, 1, 6, 0, 0},
         {3, 1, 9, 0, 0}};
     const uint32_t indices[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
@@ -106,6 +112,8 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         vertex.tangent[0] = 127; vertex.bitangent[2] = 127;
         vertex.uv[0] = vertex.uv[1] = .5f;
     }
+    if (parallax_cutout)
+        for (uint32_t vertex = 3; vertex < 6; ++vertex) vertices[vertex].uv[0] = .54f;
     constexpr uint32_t visible_draws = 0b1011u;
     constexpr auto host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
     BufferResource geometry[4], mask, readback, gradient;
@@ -123,7 +131,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         {
             constexpr uint16_t red[]{0, 0x3000, 0x3400, 0x3600, 0x3800, 0x3900, 0x3a00, 0x3b00};
             gradient_pixels[(y * 8 + x) * 4] = red[x];
-            gradient_pixels[(y * 8 + x) * 4 + 3] = 0x3c00;
+            gradient_pixels[(y * 8 + x) * 4 + 3] = parallax_cutout ? (x < 4 ? 0x3400 : 0x3a00) : 0x3c00;
         }
     if (bindless) upload(gradient, gradient_pixels, sizeof(gradient_pixels), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     constexpr VkDeviceSize raster_bytes = 2 * 8 * 8 * sizeof(uint32_t);
@@ -224,6 +232,8 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
             for (size_t i = 0; i < 16; i += 5) params.camera.view_projection[i] = 1.f;
             params.camera.viewport.extent[0] = params.camera.viewport.extent[1] = 8.f;
             params.write_ids = phase;
+            params.eye_and_steep[0] = params.eye_and_steep[1] = 5.f;
+            params.eye_and_steep[3] = steep ? 1.f : 0.f;
             for (uint32_t batch = 0; batch < 2; ++batch)
             {
                 params.first_draw = batch;
@@ -245,7 +255,8 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         for (size_t i = 0; i < 2; ++i)
             require(graph.read_write(pass, resources[i], resources[i], error), error);
         if (alpha_cutoff >= 0.f)
-            require(graph.read(pass, resources[5], ImageUse::StorageRead, error), error);
+            require(graph.read(pass, resources[5], ImageUse::StorageRead, error) &&
+                graph.read(pass, resources[6], ImageUse::StorageRead, error), error);
     }
     if (bindless)
     {
@@ -310,8 +321,11 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     vkFreeCommandBuffers(device, pool, 1, &cb);
     uint32_t pixels[2][64]{};
     require(readback.read(0, pixels, sizeof(pixels), error), error);
-    const bool rejected = alpha_cutoff > 0.5f;
-    require(pixels[0][36] == visibility::pack_id(rejected ? 0 : 1, 0), "alpha test must select the correct visible triangle");
+    const bool rejected = alpha_cutoff > 0.5f || (parallax_cutout && shift_cutout);
+    require(pixels[0][36] == visibility::pack_id(rejected ? 0 : 1, 0),
+        "alpha visibility: id=" + std::to_string(pixels[0][36]) + " cutoff=" + std::to_string(alpha_cutoff) +
+        " parallax=" + std::to_string(parallax_cutout) + " shift=" + std::to_string(shift_cutout) +
+        " steep=" + std::to_string(steep));
     float depth{};
     std::memcpy(&depth, &pixels[1][36], sizeof(depth));
     require(std::abs(depth - (rejected ? 0.75f : 0.1875f)) < 1e-6f, "visibility depth after alpha test and near clipping");
@@ -1290,6 +1304,9 @@ int main(int argc, char** argv)
             exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source, true, true);
             exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source, true, false, 0.75f);
             exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source, true, false, 0.5f);
+            exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source, true, false, 0.5f, true, false);
+            exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source, true, false, 0.5f, true, true);
+            exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source, true, true, 0.5f, true, true);
         }
         std::cout << "Visibility material resolve " << (bindless ? "passed" : "skipped (no descriptor indexing)") << '\n';
         require(compute.initialize_from_source(f.device, vkGetDeviceProcAddr, props.limits, 3, VK_NULL_HANDLE, source, error), error);

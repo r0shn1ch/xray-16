@@ -135,6 +135,7 @@ target_sources(xrRenderVK PRIVATE
     smoke/detail_generate.comp
     smoke/detail_cell_cull.comp
     smoke/visibility_common.glsl
+    smoke/visibility_parallax.glsl
     smoke/visibility_geometry.glsl
     smoke/visibility_material_resolve.comp
     smoke/visibility_software_raster.comp

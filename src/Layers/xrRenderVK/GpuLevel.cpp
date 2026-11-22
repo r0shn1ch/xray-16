@@ -1363,7 +1363,6 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                     !mesh.visibility_material_supported || mesh.terrain || mesh.single_detail || mesh.environment ||
                     mesh.environment_constant || mesh.laemb || mesh.lod_atlas || mesh.tree || mesh.emissive ||
                     mesh.tessellation || mesh.fog || mesh.depth_proxy || mesh.matrices.enabled[0] ||
-                    (cutout && !mesh.parallax_texture.empty()) ||
                     mesh.pass_graph.count != 1 ||
                     !simple_shader ||
                     mesh.material_id >= models.materials.size())

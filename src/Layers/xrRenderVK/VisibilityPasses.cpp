@@ -189,8 +189,9 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
                 for (uint32_t batch = 0; batch < batches.size(); ++batch)
                 {
                     const auto& range = batches[batch];
-                    const visibility::SoftwareRasterParameters params{camera, range.first_draw,
+                    visibility::SoftwareRasterParameters params{camera, range.first_draw,
                         range.draw_count, 0, range.geometry_batch, static_cast<uint32_t>(level.visibility_textures().size())};
+                    std::copy_n(eye_and_steep, 4, params.eye_and_steep);
                     if (!rasterize(command, frame.frame_index, batch, phase, geometry[batch], commands, draw_mask_view, materials,
                             params, graph.image_view(ids), targets.depth.view, reason))
                         return false;
