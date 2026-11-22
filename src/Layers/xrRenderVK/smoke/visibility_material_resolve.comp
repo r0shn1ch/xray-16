@@ -78,6 +78,7 @@ void main()
     vec3 normal = finiteNormal(mat3(normalA, normalB, normalC) * barycentrics.weights);
     float hemi = dot(clamp(0.5 + 0.5 * vec3(normalA.y, normalB.y, normalC.y), 0.0, 1.0), barycentrics.weights);
     float normalAlpha = 0.875 + 0.125 * clamp(hemi, 0.0, 1.0);
+    float bakedHemi = 0.0;
     if (entry.lightmapSlot < parameters.materialCount)
     {
         mat3x2 lightmapUv = mat3x2(a.lightmapUvBakedRG.xy, b.lightmapUvBakedRG.xy, c.lightmapUvBakedRG.xy);
@@ -89,10 +90,29 @@ void main()
             vec4 baked = textureGrad(baseColorTextures[nonuniformEXT(entry.lightmapSlot)],
                 bakedUv, bakedDx, bakedDy);
             color.a = baked.g;
-            normalAlpha = baked.a * 0.75;
+            bakedHemi = baked.a;
+            normalAlpha = bakedHemi * 0.75;
         }
+    }
+    bool hasPbr = entry.pbrSlot < parameters.materialCount || entry.metallicSlot < parameters.materialCount ||
+        entry.roughnessSlot < parameters.materialCount || entry.aoSlot < parameters.materialCount;
+    vec4 surface = vec4(0.0, entry.materialClass, 0.0, 0.0);
+    if (hasPbr)
+    {
+        vec3 pbr = vec3(0.0, 1.0, 1.0);
+        if (entry.pbrSlot < parameters.materialCount)
+            pbr = textureGrad(baseColorTextures[nonuniformEXT(entry.pbrSlot)], uv, uvDx, uvDy).rgb;
+        if (entry.metallicSlot < parameters.materialCount)
+            pbr.r = textureGrad(baseColorTextures[nonuniformEXT(entry.metallicSlot)], uv, uvDx, uvDy).r;
+        if (entry.roughnessSlot < parameters.materialCount)
+            pbr.g = textureGrad(baseColorTextures[nonuniformEXT(entry.roughnessSlot)], uv, uvDx, uvDy).r;
+        if (entry.aoSlot < parameters.materialCount)
+            pbr.b = textureGrad(baseColorTextures[nonuniformEXT(entry.aoSlot)], uv, uvDx, uvDy).r;
+        surface = vec4(clamp(pbr.g, 0.0, 1.0), clamp(pbr.r, 0.0, 1.0), clamp(pbr.b, 0.0, 1.0), 0.0);
+        normalAlpha = entry.lightmapSlot < parameters.materialCount
+            ? 0.76 + 0.05 * clamp(bakedHemi, 0.0, 1.0) : 0.82 + 0.05 * clamp(hemi, 0.0, 1.0);
     }
     imageStore(baseColorImage, pixel, color);
     imageStore(normalImage, pixel, vec4(normal, normalAlpha));
-    imageStore(surfaceImage, pixel, vec4(0.0, entry.materialClass, 0.0, 0.0));
+    imageStore(surfaceImage, pixel, surface);
 }

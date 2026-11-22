@@ -10,6 +10,10 @@ struct DrawEntry
     uint geometryBatch;
     uint lightmapSlot;
     float materialClass;
+    uint pbrSlot;
+    uint metallicSlot;
+    uint roughnessSlot;
+    uint aoSlot;
 };
 
 // Matches the static LevelVertex stream, including attributes unused here.

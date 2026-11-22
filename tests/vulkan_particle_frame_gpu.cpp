@@ -73,7 +73,8 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         limits.maxStorageBufferRange, limits.maxUniformBufferRange, VK_NULL_HANDLE,
         code.data(), shader.size(), error), error);
 
-    const visibility::DrawEntry entries[]{{0, 3, 0, 0, 0}, {3, 3, 0, 0, 1, 0, 0.625f}, {6, 3, 0, 0, 1},
+    const visibility::DrawEntry entries[]{{0, 3, 0, 0, 0, UINT32_MAX, 1.f / 3.f, 0, UINT32_MAX, 0},
+        {3, 3, 0, 0, 1, 0, 0.625f}, {6, 3, 0, 0, 1},
         {9, 3, 0, 0, 1}};
     const VkDrawIndexedIndirectCommand commands[]{{3, 1, 0, 0, 0}, {3, 1, 3, 0, 0}, {3, 1, 6, 0, 0},
         {3, 1, 9, 0, 0}};
@@ -288,10 +289,11 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
             "visibility resolve material color");
         require(output[0][36][3] == 0x3800 && output[1][36][0] == 0 && output[1][36][1] == 0x3c00 &&
             output[1][36][3] == 0x3a00, "visibility resolve baked sunlight and hemisphere");
-        require(output[0][20][3] == 0x3c00 && output[1][20][3] == 0x3c00,
-            "visibility resolve unlightmapped material");
-        require(output[2][36][1] == 0x3900 && output[2][20][1] == 0x3555,
-            "visibility resolve material class");
+        require(output[0][20][3] == 0x3c00 && (output[1][20][3] == 0x3af6 || output[1][20][3] == 0x3af5),
+            "visibility resolve unlightmapped PBR hemisphere");
+        require(output[2][36][1] == 0x3900 && output[2][20][0] == 0x3400 &&
+            output[2][20][1] == 0x3400 && output[2][20][2] == 0x3c00,
+            "visibility resolve material class and PBR channel override");
         require(output[0][0][0] == 0 && output[1][0][3] == 0, "visibility resolve background");
     }
 }

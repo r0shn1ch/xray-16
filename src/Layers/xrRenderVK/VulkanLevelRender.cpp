@@ -2109,7 +2109,7 @@ bool VulkanLevelRender::prepare_visibility_materials(const VulkanWindowDevice& w
     {
         VkImageView view{};
         const auto& texture = names[slot];
-        if (!textures_->projection_texture(texture.name, view, error))
+        if (!textures_->projection_texture(texture.name, view, error, texture.linear))
         {
             ready = false;
             break;

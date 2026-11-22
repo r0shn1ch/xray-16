@@ -41,7 +41,7 @@ class GpuLevel
         uint32_t draw_count;
     };
     const std::vector<VisibilityDrawRange>& visibility_draw_ranges() const { return visibility_draw_ranges_; }
-    struct VisibilityTexture { std::string name; bool lightmap; };
+    struct VisibilityTexture { std::string name; bool lightmap; bool linear; };
     const std::vector<VisibilityTexture>& visibility_textures() const { return visibility_textures_; }
     VkDescriptorBufferInfo visibility_draw_entries() const
     { return {visibility_draw_entries_.handle(), 0, visibility_draw_entries_.size()}; }
@@ -202,7 +202,7 @@ class GpuLevel
         VkBuffer packed_vertices{}, packed_indices{};
         uint32_t geometry_batch{UINT32_MAX};
         bool visibility_rasterizable{};
-        bool visibility_scalar_surface{};
+        bool visibility_material_supported{};
         float visibility_material_class{1.f / 3.f};
         float detail_radius{}, detail_wind_extent{};
         uint32_t first_vertex{}, first_index{};
