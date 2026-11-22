@@ -334,8 +334,8 @@ public:
             ImGui::EndDisabled();
             ImGui::SameLine();
             ImGui::BeginDisabled(!dirty_);
-            if (ImGui::Button("Discard draft changes") && load_draft(saved_library_))
-                message_ = "Draft restored";
+            if (ImGui::Button("Discard draft changes"))
+                discard_draft();
             ImGui::EndDisabled();
             if (!message_.empty())
                 ImGui::TextWrapped("%s", message_.c_str());
@@ -363,17 +363,7 @@ public:
                         ImGui::PushID(&group);
                         const auto label = group.name + " (group)";
                         if (ImGui::Selectable(label.c_str(), selected_group_ == i))
-                        {
-                            if (selected_group_ != i)
-                            {
-                                preview_.reset();
-                                group_item_ = SIZE_MAX;
-                                adding_group_item_ = false;
-                                group_duration_ = std::max(0.f, group.authored_time_limit);
-                            }
-                            selected_ = SIZE_MAX;
-                            selected_group_ = i;
-                        }
+                            select_group(i);
                         ImGui::PopID();
                     }
                     ImGui::EndListBox();
@@ -463,6 +453,32 @@ public:
     }
 
 private:
+    void select_group(size_t index)
+    {
+        if (selected_group_ != index)
+        {
+            preview_.reset();
+            group_item_ = SIZE_MAX;
+            adding_group_item_ = false;
+            group_duration_ = std::max(0.f, catalog_.groups[index].authored_time_limit);
+        }
+        selected_ = SIZE_MAX;
+        selected_group_ = index;
+    }
+
+    void discard_draft()
+    {
+        const std::string effect_name = selected_ < catalog_.effects.size() ? catalog_.effects[selected_].name : "";
+        const std::string group_name = selected_group_ < catalog_.groups.size() ? catalog_.groups[selected_group_].name : "";
+        if (!load_draft(saved_library_))
+            return;
+        if (const auto* effect = effect_name.empty() ? nullptr : catalog_.effect(effect_name))
+            select_effect(static_cast<size_t>(effect - catalog_.effects.data()));
+        else if (const auto* group = group_name.empty() ? nullptr : catalog_.group(group_name))
+            select_group(static_cast<size_t>(group - catalog_.groups.data()));
+        message_ = "Draft restored";
+    }
+
     void select_effect(size_t index)
     {
         if (selected_ != index) preview_.reset();
