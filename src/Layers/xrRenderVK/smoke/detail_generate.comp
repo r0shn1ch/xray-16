@@ -74,7 +74,8 @@ void main()
         weights[model] = mix(mix(palette.x, palette.y, uv.x), mix(palette.z, palette.w, uv.x), uv.y);
     }
     float sum = dot(weights, vec4(1.0));
-    if (sum <= 0.0 || float(seed & 255u) / 255.0 > settings.density * min(1.0, sum / 15.0))
+    float probability = clamp(settings.density * min(1.0, sum / 15.0), 0.0, 1.0);
+    if (sum <= 0.0 || !(float(seed & 255u) / 256.0 < probability))
         return;
     float choice = float((seed >> 8u) & 65535u) / 65536.0 * sum;
     uint model = 0u;

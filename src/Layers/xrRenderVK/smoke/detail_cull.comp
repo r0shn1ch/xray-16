@@ -32,7 +32,8 @@ bool visible(vec3 position, float radius)
 void main()
 {
     uint index = gl_GlobalInvocationID.x;
-    if (index >= settings.placement_count || index >= placements.length() / settings.source_stride)
+    if ((settings.source_stride != 5u && settings.source_stride != 8u) ||
+        index >= settings.placement_count || index >= placements.length() / settings.source_stride)
         return;
 
     uint source = index * settings.source_stride;
@@ -41,6 +42,10 @@ void main()
         return;
     vec3 position = uintBitsToFloat(uvec3(placements[source], placements[source + 1u], placements[source + 2u]));
     float scale = uintBitsToFloat(placements[source + (generated ? 3u : 4u)]);
+    float yaw = uintBitsToFloat(placements[source + (generated ? 4u : 3u)]);
+    vec4 transform = vec4(position, scale);
+    if (any(isnan(transform)) || any(isinf(transform)) || isnan(yaw) || isinf(yaw))
+        return;
     if (!visible(position, settings.radius * abs(scale)))
         return;
 
@@ -56,7 +61,6 @@ void main()
         destination = previous;
     }
     uint output_offset = destination * 6u;
-    float yaw = uintBitsToFloat(placements[source + (generated ? 4u : 3u)]);
     instances[output_offset] = position.x;
     instances[output_offset + 1u] = position.y;
     instances[output_offset + 2u] = position.z;
