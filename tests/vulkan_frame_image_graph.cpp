@@ -73,6 +73,38 @@ int main()
         assert(error.find("transient buffer usage does not support pass read transfer-only buffer") != std::string::npos);
     }
     {
+        FrameImageGraph imported;
+        VkImage image = reinterpret_cast<VkImage>(uintptr_t(1001));
+        VkBuffer buffer = reinterpret_cast<VkBuffer>(uintptr_t(1002));
+        auto* texture = reinterpret_cast<nvrhi::ITexture*>(uintptr_t(1003));
+        auto* nbuffer = reinterpret_cast<nvrhi::IBuffer*>(uintptr_t(1004));
+        VkImageSubresourceRange first{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        auto second = first; second.baseMipLevel = 1;
+        FrameImageGraph::Resource a, b, duplicate;
+        FrameImageGraph::BufferResource x, y, duplicate_buffer;
+        const auto image_import = [&](VkImageSubresourceRange range, FrameImageGraph::Resource& output,
+                                      nvrhi::ITexture* native) {
+            return imported.import_image(image, range, output, error, FrameSubmissionGraph::Queue::Graphics, 0,
+                VK_SHARING_MODE_EXCLUSIVE, {}, ImageUse::Undefined, FrameSubmissionGraph::InvalidPass, native);
+        };
+        const auto buffer_import = [&](VkDeviceSize offset, FrameImageGraph::BufferResource& output,
+                                       nvrhi::IBuffer* native) {
+            return imported.import_buffer(buffer, offset, 64, BufferUse::Undefined, output, error,
+                FrameSubmissionGraph::Queue::Graphics, 0, VK_SHARING_MODE_EXCLUSIVE, {},
+                FrameSubmissionGraph::InvalidPass, native);
+        };
+        assert(image_import(first, a, nullptr) && image_import(second, b, texture));
+        assert(imported.nvrhi_texture(a) == texture && imported.nvrhi_texture(b) == texture);
+        assert(image_import(first, duplicate, nullptr) && duplicate == a);
+        assert(!image_import(first, duplicate, reinterpret_cast<nvrhi::ITexture*>(uintptr_t(1005))));
+        assert(imported.nvrhi_texture(a) == texture);
+        assert(buffer_import(0, x, nullptr) && buffer_import(64, y, nbuffer));
+        assert(imported.nvrhi_buffer(x) == nbuffer && imported.nvrhi_buffer(y) == nbuffer);
+        assert(buffer_import(0, duplicate_buffer, nullptr) && duplicate_buffer == x);
+        assert(!buffer_import(0, duplicate_buffer, reinterpret_cast<nvrhi::IBuffer*>(uintptr_t(1006))));
+        assert(imported.nvrhi_buffer(x) == nbuffer);
+    }
+    {
         FrameImageGraph virtual_graph;
         FrameImageGraph::Resource image;
         FrameImageGraph::BufferResource buffer;
@@ -152,11 +184,16 @@ int main()
         FrameImageGraph::ResourceLifetimes lifetimes;
         assert(!virtual_graph.compile_resource_lifetimes(lifetimes, error));
         assert(error.find("transient image usage does not support pass copy unflagged image") != std::string::npos);
+        FrameImageGraph::BufferResource buffer_alias;
+        assert(virtual_graph.import_buffer(virtual_graph.buffer_handle(written_buffer), 16, 32,
+            BufferUse::Undefined, buffer_alias, error));
+        assert(virtual_graph.nvrhi_buffer(buffer_alias) == virtual_graph.nvrhi_buffer(written_buffer));
         xray::render::framegraph::ResourceRetirement retirement(2);
         virtual_graph.retire_allocations(retirement, 3);
         assert(retirement.size() == 1 && !staged_buffer.expired());
         assert(!virtual_graph.buffer_handle(written_buffer) && !virtual_graph.image_view(written_image));
         assert(!virtual_graph.nvrhi_buffer(written_buffer) && !virtual_graph.nvrhi_texture(written_image));
+        assert(!virtual_graph.buffer_handle(buffer_alias) && !virtual_graph.nvrhi_buffer(buffer_alias));
         retirement.complete(0);
         assert(!staged_buffer.expired());
         retirement.complete(1);

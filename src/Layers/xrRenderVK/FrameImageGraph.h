@@ -101,6 +101,8 @@ public:
         ImageStateTracker transient_images;
     };
 
+    // Optional NVRHI handles are borrowed: the caller keeps them alive until
+    // every graph submission using the imported resource has completed.
     bool import_image(VkImage image, const VkImageSubresourceRange& range,
         Resource& resource, std::string& error,
         FrameSubmissionGraph::Queue initial_queue = FrameSubmissionGraph::Queue::Graphics,
@@ -108,14 +110,16 @@ public:
         VkSharingMode sharing_mode = VK_SHARING_MODE_EXCLUSIVE,
         std::vector<uint32_t> sharing_queue_families = {},
         ImageUse initial_use = ImageUse::Undefined,
-        FrameSubmissionGraph::Pass initial_producer_pass = FrameSubmissionGraph::InvalidPass);
+        FrameSubmissionGraph::Pass initial_producer_pass = FrameSubmissionGraph::InvalidPass,
+        nvrhi::ITexture* nvrhi_texture = nullptr);
     bool import_buffer(VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size,
         BufferUse initial_use, BufferResource& resource, std::string& error,
         FrameSubmissionGraph::Queue initial_queue = FrameSubmissionGraph::Queue::Graphics,
         uint64_t initial_submission = 0,
         VkSharingMode sharing_mode = VK_SHARING_MODE_EXCLUSIVE,
         std::vector<uint32_t> sharing_queue_families = {},
-        FrameSubmissionGraph::Pass initial_producer_pass = FrameSubmissionGraph::InvalidPass);
+        FrameSubmissionGraph::Pass initial_producer_pass = FrameSubmissionGraph::InvalidPass,
+        nvrhi::IBuffer* nvrhi_buffer = nullptr);
     struct TransientBuffer
     {
         VkBuffer handle{};

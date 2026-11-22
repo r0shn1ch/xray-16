@@ -87,7 +87,7 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
             !graph.import_buffer(buffer.handle(), 0, buffer.size(), BufferUse::AllCommandsReadWrite,
                 resources[i], error, FrameSubmissionGraph::Queue::Graphics,
                 previous_graphics_submission, buffer.sharing_mode(),
-                buffer.sharing_queue_families()))
+                buffer.sharing_queue_families(), FrameSubmissionGraph::InvalidPass, buffer.nvrhi_buffer()))
         {
             if (error.empty()) error = "GPU particle frame buffer unavailable";
             return false;

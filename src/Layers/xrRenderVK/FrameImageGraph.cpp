@@ -153,7 +153,7 @@ bool FrameImageGraph::import_buffer(VkBuffer buffer, VkDeviceSize offset, VkDevi
     BufferUse initial_use, BufferResource& resource, std::string& error,
     FrameSubmissionGraph::Queue initial_queue, uint64_t initial_submission,
     VkSharingMode sharing_mode, std::vector<uint32_t> sharing_queue_families,
-    FrameSubmissionGraph::Pass initial_producer_pass)
+    FrameSubmissionGraph::Pass initial_producer_pass, nvrhi::IBuffer* native_buffer)
 {
     if (initial_submission && initial_producer_pass != FrameSubmissionGraph::InvalidPass)
     {
@@ -175,10 +175,14 @@ bool FrameImageGraph::import_buffer(VkBuffer buffer, VkDeviceSize offset, VkDevi
         error = "Frame image graph: invalid imported buffer range or state";
         return false;
     }
+    size_t repeated = m_buffers.size();
     for (const Buffer& existing : m_buffers)
     {
         if (existing.buffer != buffer)
             continue;
+        if (existing.nvrhi_buffer && native_buffer && existing.nvrhi_buffer != native_buffer)
+        { error = "Frame image graph: conflicting NVRHI handles for buffer"; return false; }
+        if (existing.nvrhi_buffer) native_buffer = existing.nvrhi_buffer;
         if (existing.sharing_mode != sharing_mode ||
             existing.sharing_queue_families != sharing_queue_families)
         {
@@ -195,15 +199,19 @@ bool FrameImageGraph::import_buffer(VkBuffer buffer, VkDeviceSize offset, VkDevi
             return false;
         }
         if (existing.offset == offset && existing.size == size)
-        {
-            resource = {uint32_t(&existing - m_buffers.data()), uint32_t(existing.versions.size() - 1), generation_};
-            error.clear();
-            return true;
-        }
+            repeated = size_t(&existing - m_buffers.data());
+    }
+    for (Buffer& existing : m_buffers)
+        if (existing.buffer == buffer) existing.nvrhi_buffer = native_buffer;
+    if (repeated != m_buffers.size())
+    {
+        resource = {uint32_t(repeated), uint32_t(m_buffers[repeated].versions.size() - 1), generation_};
+        error.clear(); return true;
     }
     resource = {uint32_t(m_buffers.size()), 0, generation_};
     m_buffers.push_back({buffer, offset, size, initial_use, initial_queue, initial_submission,
         initial_producer_pass, sharing_mode, std::move(sharing_queue_families), framegraph::ResourceVersionSequence{true}});
+    m_buffers.back().nvrhi_buffer = native_buffer;
     error.clear();
     return true;
 }
@@ -300,23 +308,25 @@ nvrhi::IBuffer* FrameImageGraph::nvrhi_buffer(BufferResource resource) const
 void FrameImageGraph::retire_allocations(framegraph::ResourceRetirement& retirement, uint32_t slots)
 {
     std::vector<std::shared_ptr<void>> owners;
+    std::vector<VkBuffer> retired_buffers;
+    std::vector<VkImage> retired_images;
     for (const auto& buffer : m_buffers)
-        if (buffer.allocation) owners.push_back(buffer.allocation);
+        if (buffer.allocation) { owners.push_back(buffer.allocation); retired_buffers.push_back(buffer.buffer); }
     for (const auto& image : m_images)
-        if (image.allocation) owners.push_back(image.allocation);
+        if (image.allocation) { owners.push_back(image.allocation); retired_images.push_back(image.image); }
     if (owners.empty())
         return;
     retirement.defer_for_slots(slots, [owners = std::move(owners)]() mutable { owners.clear(); });
 
     for (auto& buffer : m_buffers)
-        if (buffer.allocation)
+        if (std::find(retired_buffers.begin(), retired_buffers.end(), buffer.buffer) != retired_buffers.end())
         {
             buffer.buffer = VK_NULL_HANDLE;
             buffer.nvrhi_buffer = nullptr;
             buffer.allocation.reset();
         }
     for (auto& image : m_images)
-        if (image.allocation)
+        if (std::find(retired_images.begin(), retired_images.end(), image.image) != retired_images.end())
         {
             image.image = VK_NULL_HANDLE;
             image.view = VK_NULL_HANDLE;
@@ -532,7 +542,7 @@ bool FrameImageGraph::import_image(VkImage image, const VkImageSubresourceRange&
     Resource& resource, std::string& error, FrameSubmissionGraph::Queue initial_queue,
     uint64_t initial_submission, VkSharingMode sharing_mode,
     std::vector<uint32_t> sharing_queue_families, ImageUse initial_use,
-    FrameSubmissionGraph::Pass initial_producer_pass)
+    FrameSubmissionGraph::Pass initial_producer_pass, nvrhi::ITexture* native_texture)
 {
     if (initial_submission && initial_producer_pass != FrameSubmissionGraph::InvalidPass)
     {
@@ -555,10 +565,14 @@ bool FrameImageGraph::import_image(VkImage image, const VkImageSubresourceRange&
         error = "Frame image graph: invalid imported image range";
         return false;
     }
+    size_t repeated = m_images.size();
     for (const Image& existing : m_images)
     {
         if (existing.image != image)
             continue;
+        if (existing.nvrhi_texture && native_texture && existing.nvrhi_texture != native_texture)
+        { error = "Frame image graph: conflicting NVRHI handles for image"; return false; }
+        if (existing.nvrhi_texture) native_texture = existing.nvrhi_texture;
         if (existing.sharing_mode != sharing_mode ||
             existing.sharing_queue_families != sharing_queue_families)
         {
@@ -573,9 +587,7 @@ bool FrameImageGraph::import_image(VkImage image, const VkImageSubresourceRange&
                 error = "Frame image graph: repeated image import has different producer metadata";
                 return false;
             }
-            resource = {uint32_t(&existing - m_images.data()), uint32_t(existing.versions.size() - 1), generation_};
-            error.clear();
-            return true;
+            repeated = size_t(&existing - m_images.data());
         }
         if (image_subresources_overlap(existing.range, range) &&
             (existing.initial_submission != initial_submission || existing.initial_queue != initial_queue ||
@@ -585,9 +597,17 @@ bool FrameImageGraph::import_image(VkImage image, const VkImageSubresourceRange&
             return false;
         }
     }
+    for (Image& existing : m_images)
+        if (existing.image == image) existing.nvrhi_texture = native_texture;
+    if (repeated != m_images.size())
+    {
+        resource = {uint32_t(repeated), uint32_t(m_images[repeated].versions.size() - 1), generation_};
+        error.clear(); return true;
+    }
     resource = {uint32_t(m_images.size()), 0, generation_};
     m_images.push_back({image, range, initial_queue, initial_use, initial_submission,
         initial_producer_pass, sharing_mode, std::move(sharing_queue_families), framegraph::ResourceVersionSequence{true}});
+    m_images.back().nvrhi_texture = native_texture;
     error.clear();
     return true;
 }
