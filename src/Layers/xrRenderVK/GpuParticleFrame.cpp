@@ -172,6 +172,14 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
             !write(initialize, B::StateAllocation, BufferUse::ComputeWrite) ||
             !write(initialize, B::Errors, BufferUse::ComputeWrite)) return false;
     }
+    else if (pending_roots || readback_record)
+    {
+        const auto clear_errors = graph.add_command_pass("clear GPU particle frame errors",
+            [&](VkCommandBuffer recording_command) {
+                fill_(recording_command, buffers.get(B::Errors).handle(), 0, sizeof(uint32_t), 0);
+            });
+        if (!write(clear_errors, B::Errors, BufferUse::TransferDestination)) return false;
+    }
 
     if (pending_roots || visible_roots)
     {
@@ -188,13 +196,6 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
 
     if (pending_roots)
     {
-        params.phase = 1;
-        const auto prepare_roots = graph.add_checked_command_pass("prepare GPU particle roots",
-            [&, dispatch_params = params](VkCommandBuffer recording_command, std::string& pass_error) {
-            return dispatch(recording_command, P::Initialize, base + 1, dispatch_params, {}, 1, pass_error);
-        });
-        if (!read_write(prepare_roots, B::Errors)) return false;
-
         // Simulation uses phase for the total root pool size, while rootCapacity
         // is the number of command groups dispatched for this frame.
         params.phase = capacities.rootCapacity;
