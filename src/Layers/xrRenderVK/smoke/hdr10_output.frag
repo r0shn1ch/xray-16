@@ -32,8 +32,21 @@ void main()
     float black = clamp(calibration.black_nits, 0.0, white - 1.0);
     if (calibration.test_pattern > 0.5)
     {
-        // Three neutral reference patches for black, paper white and peak.
-        float level = texcoord.x < 1.0 / 3.0 ? black : texcoord.x < 2.0 / 3.0 ? white : peak;
+        // Keep the three reference patches above near-black and highlight steps.
+        float x = clamp(texcoord.x, 0.0, 0.999999);
+        float level;
+        if (texcoord.y < 0.5)
+            level = x < 1.0 / 3.0 ? black : x < 2.0 / 3.0 ? white : peak;
+        else if (texcoord.y < 0.75)
+        {
+            float step_index = floor(x * 8.0);
+            level = min(white, black + step_index * 0.1);
+        }
+        else
+        {
+            float step_fraction = floor(x * 8.0) / 7.0;
+            level = mix(max(white, peak * 0.8), peak, step_fraction);
+        }
         pixel_color = vec4(encode_pq(vec3(level)), 1.0);
         return;
     }
