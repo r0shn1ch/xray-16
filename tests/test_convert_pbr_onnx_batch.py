@@ -23,11 +23,21 @@ spec.loader.exec_module(converter)
 
 
 class BatchConversionTest(unittest.TestCase):
+    def test_default_normal_features_match_openxray_flat_normal_contract(self):
+        normal = np.zeros((1, 3, 32, 48), dtype=np.float32)
+        normal[:, 2] = 1
+        features = converter.normal_features(normal)
+        # OpenXRay's Poisson input is normalized twice and its Gaussian
+        # output leaves a seven-texel border at zero before mapping to [-1,1].
+        np.testing.assert_allclose(features[0, :, 0, 0], [-1, -1], atol=1e-6)
+        self.assertGreater(float(features[0, 1, 16, 24]), .99)
+        self.assertLess(float(converter.normal_features_corrected(normal)[0, 1, 16, 24]), -.99)
+
     def test_flat_signed_normals_have_no_artificial_curvature_or_relief(self):
         for height, width in ((1, 1), (2, 7), (32, 48)):
             normal = np.zeros((1, 3, height, width), dtype=np.float32)
             normal[:, 2] = 1
-            features = converter.normal_features(normal)
+            features = converter.normal_features_corrected(normal)
             self.assertEqual(features.shape, (1, 2, height, width))
             np.testing.assert_allclose(features, -1, atol=1e-6)
 
@@ -35,7 +45,7 @@ class BatchConversionTest(unittest.TestCase):
         normal = np.zeros((1, 3, 32, 48), dtype=np.float32)
         normal[:, 0] = .25
         normal[:, 2] = np.sqrt(1 - .25 ** 2)
-        features = converter.normal_features(normal)[0]
+        features = converter.normal_features_corrected(normal)[0]
         self.assertTrue(np.isfinite(features).all())
         np.testing.assert_allclose(features[0], -1, atol=1e-5)
         self.assertGreater(float(features[1, :, -1].mean()), .5)

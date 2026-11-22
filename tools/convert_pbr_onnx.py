@@ -76,7 +76,47 @@ def pack_pbr(packed):
     return Image.fromarray(rgb8)
 
 
+# Preserve the preprocessing used by the original OpenXRay model pipeline.
 def normal_features(normal):
+    height, width = normal.shape[-2:]
+    blurred = np.zeros_like(normal[0])
+    if min(height, width) >= 3:
+        neighborhoods = np.lib.stride_tricks.sliding_window_view(normal[0], (3, 3), axis=(1, 2))
+        blurred[:, 1:-1, 1:-1] = np.median(neighborhoods, axis=(-2, -1))
+    curvature = np.zeros((height, width), dtype=np.float32)
+    if min(height, width) >= 3:
+        nx, ny = np.lib.stride_tricks.sliding_window_view(blurred[:2], (3, 3), axis=(1, 2))
+        sobel = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32)
+        divergence = np.einsum('...ij,ij->...', nx, sobel) + np.einsum('...ij,ij->...', ny, sobel.T)
+        curvature[1:-1, 1:-1] = np.abs(0.5 * divergence)
+    rank99 = min(curvature.size - 1, int(curvature.size * 0.99))
+    upper = max(np.partition(curvature.ravel(), rank99)[rank99], 1e-6)
+    curvature = np.clip(curvature / upper, 0, 1) * 2 - 1
+
+    x, y, z = blurred * 2 - 1
+    gradients = np.clip(np.stack((x, y)) / np.maximum(z, 1e-3), -10, 10)
+    relief = np.zeros_like(curvature)
+    for row in range(1, height):
+        relief[row, 0] = (relief[row - 1, 0] + gradients[1, row, 0]) * 0.5
+    for col in range(1, width):
+        relief[:, col] = (relief[:, col - 1] + gradients[0, :, col]) * 0.5
+    span = np.ptp(relief)
+    if span > 1e-6:
+        relief = (relief - relief.min()) / span
+    ranks = (int(relief.size * 0.01), rank99)
+    low, high = np.partition(relief.ravel(), ranks)[list(ranks)]
+    relief = (np.clip(relief, low, high) - low) / (high - low + 1e-6)
+    smooth = np.zeros_like(relief)
+    if min(height, width) >= 15:
+        kernel = np.exp(-np.arange(-7, 8, dtype=np.float32) ** 2 / 50)
+        kernel /= kernel.sum()
+        horizontal = np.einsum('...i,i->...', np.lib.stride_tricks.sliding_window_view(relief, 15, axis=1), kernel)
+        smooth[7:-7, 7:-7] = np.einsum('...i,i->...',
+            np.lib.stride_tricks.sliding_window_view(horizontal, 15, axis=0), kernel)
+    return np.stack((curvature, smooth * 2 - 1))[None]
+
+
+def normal_features_corrected(normal):
     height, width = normal.shape[-2:]
     # Input is already a signed tangent-space normal. Extend the edge rather
     # than inserting zero normals, which create false relief along every seam.
@@ -126,7 +166,7 @@ def resize_mask(mask, height, width):
     return top * (1 - uy) + bottom * uy
 
 
-def run_openxray_models(directory, diffuse, normal, sessions=None):
+def run_openxray_models(directory, diffuse, normal, sessions=None, corrected_normal_features=False):
     if normal is None:
         raise ValueError("the OpenXRay model set requires --normal with an RGB tangent-space normal map")
     rgb, normals = read_rgb(diffuse), read_rgb(normal)
@@ -160,7 +200,8 @@ def run_openxray_models(directory, diffuse, normal, sessions=None):
     mask = np.exp(logits - logits.max(axis=1, keepdims=True))
     mask /= mask.sum(axis=1, keepdims=True)
     appearance = np.concatenate(((albedo - mean) / std, normal_nchw, resize_mask(mask, height, width)), axis=1)
-    geometry = np.concatenate((normal_nchw, normal_features(normal_nchw)), axis=1)
+    features_fn = normal_features_corrected if corrected_normal_features else normal_features
+    geometry = np.concatenate((normal_nchw, features_fn(normal_nchw)), axis=1)
 
     channels = []
     for name, inputs in (("metallic", appearance), ("roughness", appearance), ("ao", geometry), ("parallax", geometry)):
@@ -284,6 +325,8 @@ def main():
     parser.add_argument("--parallax-output", type=Path, help="use <material>_parallax.dds for engine discovery")
     parser.add_argument("--export-albedo", action="store_true", help="write <material>_albedo.dds next to each diffuse input")
     parser.add_argument("--export-parallax", action="store_true", help="write <material>_parallax.dds next to each diffuse input")
+    parser.add_argument("--correct-normal-features", action="store_true",
+                        help="use physically corrected normal features instead of OpenXRay-compatible preprocessing")
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
     model_set = args.model.is_dir()
@@ -304,6 +347,8 @@ def main():
         ))
     if model_set and args.output_name is not None:
         parser.error("--output-name applies to single-model conversion")
+    if not model_set and args.correct_normal_features:
+        parser.error("--correct-normal-features requires a model directory")
     if not model_set and (args.albedo_output or args.parallax_output or args.export_albedo or args.export_parallax):
         parser.error("separate albedo and parallax exports require a model directory")
     paths = [path for outputs in destinations for path in outputs if path is not None]
@@ -328,7 +373,8 @@ def main():
         # a whole batch without keeping every uncompressed texture in memory.
         for diffuse, normal, (destination, albedo_path, parallax_path) in zip(args.diffuse, normals, destinations):
             if model_set:
-                packed, albedo, parallax = run_openxray_models(args.model, diffuse, normal, sessions)
+                packed, albedo, parallax = run_openxray_models(
+                    args.model, diffuse, normal, sessions, args.correct_normal_features)
                 if albedo_path:
                     yield albedo_path, albedo, True
                 if parallax_path:
