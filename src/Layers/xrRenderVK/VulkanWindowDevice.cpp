@@ -305,12 +305,18 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
     nvrhi_desc.device = m_device;
     nvrhi_desc.graphicsQueue = m_queue;
     nvrhi_desc.graphicsQueueIndex = static_cast<int>(m_physical.graphics_present_family);
-    if (m_compute_queue)
+    // NVRHI tracks submissions independently for each advertised queue.
+    // A shared VkQueue must have one owner; the frame graph records its
+    // synchronous compute work on the graphics command list.
+    const bool separate_compute = m_compute_queue && m_compute_queue != m_queue;
+    const bool separate_transfer = m_transfer_queue && m_transfer_queue != m_queue &&
+        m_transfer_queue != m_compute_queue;
+    if (separate_compute)
     {
         nvrhi_desc.computeQueue = m_compute_queue;
         nvrhi_desc.computeQueueIndex = static_cast<int>(m_physical.compute_queue_family);
     }
-    if (m_transfer_queue)
+    if (separate_transfer)
     {
         nvrhi_desc.transferQueue = m_transfer_queue;
         nvrhi_desc.transferQueueIndex = static_cast<int>(m_physical.transfer_queue_family);
@@ -420,13 +426,11 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
             m_physical.graphics_present_family, extent, frame_dispatch, error,
             allow_readback, use_depth, preserve_prepass_depth, postprocess,
             m_physical.properties.limits.timestampPeriod, timestamp_bits, scene_extent,
-            m_nvrhi_device, m_compute_queue &&
-                (m_physical.compute_queue_family != m_physical.graphics_present_family ||
-                    m_physical.compute_queue_index > 0),
+            m_nvrhi_device, separate_compute,
             m_physical.graphics_queue_flags, m_physical.compute_queue_flags,
             swapchain_context.physical_device ? &swapchain_context : nullptr,
             swapchain_create, swapchain_destroyed, swapchain_data,
-            m_transfer_queue && m_transfer_queue != m_queue && m_transfer_queue != m_compute_queue,
+            separate_transfer,
             m_physical.transfer_queue_flags, m_physical.compute_queue_family,
             m_physical.transfer_queue_family, linear_scene && std::strcmp(linear_scene, "1") == 0,
             hdr10 && std::strcmp(hdr10, "1") == 0))
