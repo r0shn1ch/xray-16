@@ -2048,6 +2048,8 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
             far_plane, Device.fFOV * (3.14159265358979323846f / 180.f));
     }
     const auto discard_frame_history = [&] {
+        // Shadow faces can be marked cached while recording the frame.
+        local_shadows_.invalidate_cache();
         hiz_.reset_history();
         hiz_unsupported_dynamic_previous_ = false;
         object_motion_.reset();
