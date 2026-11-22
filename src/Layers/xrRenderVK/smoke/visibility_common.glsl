@@ -46,12 +46,14 @@ bool resolveVisibilityBarycentrics(vec4 a, vec4 b, vec4 c, vec2 ndc, vec2 ndcPer
     vec3 qdx = cross(y, w);
     vec3 qdy = cross(w, x);
     float denominator = q.x + q.y + q.z;
-    if (!(abs(denominator) > 1e-20))
+    if (!(abs(denominator) > 1e-20) || isinf(denominator))
         return false;
     barycentrics.weights = q / denominator;
     barycentrics.dx = (qdx - barycentrics.weights * (qdx.x + qdx.y + qdx.z)) * ndcPerPixel.x / denominator;
     barycentrics.dy = (qdy - barycentrics.weights * (qdy.x + qdy.y + qdy.z)) * ndcPerPixel.y / denominator;
-    return true;
+    return !any(isnan(barycentrics.weights)) && !any(isinf(barycentrics.weights)) &&
+        !any(isnan(barycentrics.dx)) && !any(isinf(barycentrics.dx)) &&
+        !any(isnan(barycentrics.dy)) && !any(isinf(barycentrics.dy));
 }
 
 #endif
