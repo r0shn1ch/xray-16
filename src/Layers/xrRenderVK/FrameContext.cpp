@@ -523,6 +523,25 @@ bool FrameContext::create_swapchain(VkPhysicalDevice physical_device, VkSurfaceK
     }
 
     m_extent = m_requested_scene_extent.width ? m_requested_scene_extent : m_presentation_extent;
+#if defined(XR_PLATFORM_ANDROID)
+    if (m_requested_scene_extent.width && requested_extent.width && requested_extent.height &&
+        (requested_extent.width != m_presentation_extent.width ||
+            requested_extent.height != m_presentation_extent.height))
+    {
+        // A resumed surface can report a different extent than the native
+        // window queried before swapchain creation. Preserve the scene scale.
+        const auto rescale = [](uint32_t scene, uint32_t requested, uint32_t actual) {
+            if (scene == requested || actual < 2)
+                return actual;
+            const auto scaled = uint64_t(scene) * actual / requested;
+            return static_cast<uint32_t>(std::clamp<uint64_t>(scaled & ~uint64_t(1), 2, actual));
+        };
+        m_extent = {rescale(m_extent.width, requested_extent.width, m_presentation_extent.width),
+            rescale(m_extent.height, requested_extent.height, m_presentation_extent.height)};
+        // Subsequent same-surface retries use the negotiated presentation size.
+        m_requested_scene_extent = m_extent;
+    }
+#endif
 
     VkCompositeAlphaFlagBitsKHR composite_alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     if (!(capabilities.supportedCompositeAlpha & composite_alpha))
