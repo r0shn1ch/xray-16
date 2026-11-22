@@ -17,12 +17,17 @@ inline bool sample_sky_probes(const framegraph::SkyProbeLayout& layout,
     std::array<float, 3> fraction{};
     for (unsigned axis = 0; axis < 3; ++axis)
     {
-        const float coordinate = (position[axis] - layout.origin[axis]) / layout.spacing;
         const uint32_t last = layout.dimensions[axis] - 1;
-        if (!std::isfinite(coordinate) || coordinate < 0.f || coordinate > float(last))
+        const double end = double(layout.origin[axis]) + double(layout.spacing) * last;
+        if (!std::isfinite(position[axis]) || position[axis] < layout.origin[axis] ||
+            position[axis] > static_cast<float>(end))
             return false;
+        // The last baked position is rounded to float and can lie just past
+        // the mathematical endpoint. Accept it as the final grid sample.
+        const double coordinate = position[axis] == static_cast<float>(end) ? double(last) :
+            (double(position[axis]) - layout.origin[axis]) / layout.spacing;
         base[axis] = std::min(static_cast<uint32_t>(coordinate), last - 1);
-        fraction[axis] = coordinate - float(base[axis]);
+        fraction[axis] = static_cast<float>(coordinate - base[axis]);
     }
     faces.fill(0.f);
     for (unsigned corner = 0; corner < 8; ++corner)

@@ -435,6 +435,11 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
     require(sample_sky_probes(layout, grid, {1.f, 3.f, 5.f}, sampled) &&
         sampled == std::array<float, 6>{.5f, .5f, .5f, .5f, .5f, .5f} &&
         !sample_sky_probes(layout, grid, {-1.f, 3.f, 5.f}, sampled), "sky probe interpolation");
+    xray::render::framegraph::SkyProbeLayout translated_grid;
+    std::array<float, 3> endpoint{};
+    require(translated_grid.initialize({1000000.f, 2.f, 4.f}, {1000000.f, 2.f, 4.f}, .3f, 8) &&
+        translated_grid.position(7, endpoint) && sample_sky_probes(translated_grid, grid, endpoint, sampled) &&
+        sampled == grid.back().faces, "sky probe interpolation at a rounded grid endpoint");
     for (size_t i = 0; i < generated_rays.size(); ++i)
     {
         const auto& ray = generated_rays[i];

@@ -209,7 +209,7 @@ void VulkanObjectSpecific::update(const float *ambient, const float *hemi, const
     }
     const VulkanObjectLighting lighting =
         evaluate_object_lighting(position, ambient, hemi, sun, mode_, lighting_sources_,
-                                 ray_budget ? &sky_faces : nullptr, hemi_light_scale, hemi_light_flow);
+                                 (has_probe || ray_budget) ? &sky_faces : nullptr, hemi_light_scale, hemi_light_flow);
     const float blend = lighting_initialized_ ? std::clamp(Device.fTimeDelta * elapsed * hemi_smooth, 0.f, 1.f) : 1.f;
     luminocity_ = lighting.luminocity;
     hemi_luminocity_ += blend * (lighting.hemi_luminocity - hemi_luminocity_);
