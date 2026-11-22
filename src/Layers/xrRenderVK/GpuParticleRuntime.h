@@ -33,7 +33,8 @@ public:
         uint32_t copy_queue_family = VK_QUEUE_FAMILY_IGNORED,
         FrameSubmissionGraph::Queue recording_queue = FrameSubmissionGraph::Queue::Graphics,
         VkQueueFlags graphics_queue_flags = VK_QUEUE_GRAPHICS_BIT,
-        GpuParticleFrame::RequestSubmissionCommandBuffer request_submission_command_buffer = {});
+        GpuParticleFrame::RequestSubmissionCommandBuffer request_submission_command_buffer = {},
+        GpuParticleFrame::ResolveNvrhiCommandList resolve_nvrhi_command_list = {});
     // Call submitted only after vkQueueSubmit succeeds; otherwise cancel.
     bool submitted(uint32_t slot, std::string& error);
     bool cancel(uint32_t slot, std::string& error);

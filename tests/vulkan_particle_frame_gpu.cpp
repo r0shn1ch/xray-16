@@ -35,6 +35,7 @@
 #include "src/Layers/xrRenderVK/GpuParticleUniforms.h"
 #include "src/Layers/xrRenderVK/GpuParticleUpload.h"
 #include <vulkan/vulkan.h>
+#include <nvrhi/vulkan.h>
 #include <algorithm>
 #include <fstream>
 #include <iostream>
@@ -42,6 +43,11 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+namespace xray::render::vulkan
+{
+nvrhi::vulkan::DeviceHandle create_nvrhi_vulkan_device(const nvrhi::vulkan::DeviceDesc&, PFN_vkGetInstanceProcAddr);
+}
 
 using namespace xray::render;
 using namespace xray::render::vulkan;
@@ -1365,16 +1371,20 @@ int main(int argc, char** argv)
         q.queueFamilyIndex = family; q.queueCount = 1; q.pQueuePriorities = &priority;
         VkDeviceCreateInfo di{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO}; di.queueCreateInfoCount = 1; di.pQueueCreateInfos = &q;
         VkPhysicalDeviceDescriptorIndexingFeatures indexing{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES};
+        VkPhysicalDeviceTimelineSemaphoreFeatures timeline{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
         bool bindless = false;
+        bool timeline_available = false;
         if (app.apiVersion >= VK_API_VERSION_1_2 && props.apiVersion >= VK_API_VERSION_1_2)
         {
             VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
-            features.pNext = &indexing;
+            features.pNext = &timeline;
+            timeline.pNext = &indexing;
             vkGetPhysicalDeviceFeatures2(physical, &features);
+            timeline_available = timeline.timelineSemaphore;
             bindless = indexing.runtimeDescriptorArray && indexing.shaderSampledImageArrayNonUniformIndexing &&
                 indexing.descriptorBindingSampledImageUpdateAfterBind && indexing.descriptorBindingPartiallyBound;
-            if (bindless)
-                di.pNext = &indexing;
+            timeline.pNext = bindless ? &indexing : nullptr;
+            di.pNext = timeline_available ? static_cast<void*>(&timeline) : bindless ? static_cast<void*>(&indexing) : nullptr;
         }
         require(vkCreateDevice(physical, &di, nullptr, &f.device) == VK_SUCCESS, "device");
         VkQueue queue{}; vkGetDeviceQueue(f.device, family, 0, &queue);
@@ -1498,6 +1508,59 @@ int main(int argc, char** argv)
         require(result.statuses[0].generation == 1 && result.statuses[0].serial == 1 && result.errors == 0, "simulation status");
         require(commands.acknowledge(result.statuses, error) && commands.snapshot(batch, error) && batch.commands.empty(), error);
         for (size_t i = 0; i < 28; ++i) require(draw_words[i * 4] == 6 && draw_words[i * 4 + 1] == 0, "draw arguments");
+        if (timeline_available)
+        {
+            // Exercise the real NVRHI clear on the same software Vulkan device,
+            // then consume its result through the existing native graph path.
+            nvrhi::vulkan::DeviceDesc description{};
+            description.instance = f.instance; description.physicalDevice = physical; description.device = f.device;
+            description.graphicsQueue = queue; description.graphicsQueueIndex = static_cast<int>(family);
+            auto device = create_nvrhi_vulkan_device(description, vkGetInstanceProcAddr);
+            require(bool(device), "NVRHI particle test device");
+            auto nvrhi_dispatch = vk;
+            nvrhi_dispatch.nvrhi_device = device.Get();
+            nvrhi_dispatch.graphics_queue_family = nvrhi_dispatch.compute_queue_family =
+                nvrhi_dispatch.transfer_queue_family = family;
+            GpuParticleBuffers nvrhi_buffers;
+            require(nvrhi_buffers.initialize(f.device, props.limits, memory, nvrhi_dispatch, capacity, error), error);
+            require(nvrhi_buffers.get(GpuParticleBuffers::Status).nvrhi_buffer(), "NVRHI status buffer");
+            GpuParticleReadback nvrhi_readback;
+            require(nvrhi_readback.initialize(f.device, vkGetDeviceProcAddr, 2, memory, vk, error), error);
+            auto list = device->createCommandList();
+            require(bool(list), "NVRHI particle test command list");
+            list->open();
+            auto native = static_cast<VkCommandBuffer>(list->getNativeObject(nvrhi::ObjectTypes::VK_CommandBuffer).pointer);
+            require(native != VK_NULL_HANDLE, "NVRHI particle native command buffer");
+            vkCmdFillBuffer(native, nvrhi_buffers.get(GpuParticleBuffers::Status).handle(), 0,
+                nvrhi_buffers.get(GpuParticleBuffers::Status).size(), 0xffffffffu);
+            uint32_t resolved = 0;
+            const auto resolve = [&](VkCommandBuffer candidate) -> nvrhi::ICommandList* {
+                if (candidate != native) return nullptr;
+                ++resolved;
+                return list.Get();
+            };
+            uniforms.reset();
+            auto nvrhi_constants = constants;
+            nvrhi_constants.commandCount = 0;
+            require(frame.record(native, compute, nvrhi_buffers, uniforms, 0, nvrhi_constants, 0, 0, planes,
+                true, error, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT, false, nullptr,
+                FrameSubmissionGraph::InvalidPass, FrameSubmissionGraph::InvalidPass, 0,
+                VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
+                FrameSubmissionGraph::Queue::Graphics, VK_QUEUE_GRAPHICS_BIT, {}, {}, nullptr, nullptr,
+                false, resolve), error);
+            require(resolved > 0, "NVRHI particle clear was not recorded");
+            require(nvrhi_readback.record(native, nvrhi_buffers, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT, error), error);
+            list->close();
+            device->executeCommandList(list);
+            require(device->waitForIdle(), "NVRHI particle clear completion");
+            require(nvrhi_readback.read(result, error) && result.errors == 0 && result.statuses[0].count == 0,
+                "NVRHI particle clear/readback");
+            list = nullptr;
+            nvrhi_buffers.destroy();
+            device->runGarbageCollection();
+            std::cout << "NVRHI particle buffer clear and native readback passed\n";
+        }
+        else std::cout << "NVRHI particle buffer clear skipped (timeline semaphore unavailable)\n";
         {
             // Exercise more than two workgroup-width batches, both predicate
             // directions, and the swap-with-last order used by removal.

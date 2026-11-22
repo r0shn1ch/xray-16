@@ -6,6 +6,8 @@
 #include "gpu_particles/gpu_particle_types.h"
 #include <functional>
 
+namespace nvrhi { class ICommandList; }
+
 namespace xray::render::vulkan
 {
 // Records initialization, simulation and the three compaction phases.
@@ -17,6 +19,7 @@ public:
     using RequestSubmissionCommandBuffer = std::function<bool(FrameSubmissionGraph::Pass,
         FrameSubmissionGraph::Queue, VkCommandBuffer&, std::string&)>;
     using ReadbackRecord = std::function<bool(VkCommandBuffer, std::string&)>;
+    using ResolveNvrhiCommandList = std::function<nvrhi::ICommandList*(VkCommandBuffer)>;
     bool initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, std::string& error);
     bool record(VkCommandBuffer command, GpuParticleCompute& compute, const GpuParticleBuffers& buffers,
         GpuParticleUniforms& uniforms, uint32_t base, const fg::GpuPapiConstants& capacities,
@@ -37,7 +40,8 @@ public:
         ReadbackRecord readback_record = {},
         GpuParticleUpload* upload = nullptr,
         const std::vector<GpuParticleUpload::Update>* upload_updates = nullptr,
-        bool use_copy_queue = false) const;
+        bool use_copy_queue = false,
+        ResolveNvrhiCommandList resolve_nvrhi_command_list = {}) const;
 private:
     PFN_vkCmdFillBuffer fill_{};
     PFN_vkCmdPipelineBarrier barrier_{};

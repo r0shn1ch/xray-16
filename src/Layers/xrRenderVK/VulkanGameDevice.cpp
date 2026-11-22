@@ -295,7 +295,7 @@ bool VulkanGameDevice::record_gpu_particles(const FrameRecordingContext& frame, 
             frame.previous_graphics_submission, frame.asynchronous_copy_available,
             frame.graphics_queue_family, frame.compute_queue_family, frame.copy_queue_family,
             frame.command_queue, frame.graphics_queue_flags,
-            frame.request_submission_command_buffer))
+            frame.request_submission_command_buffer, frame.resolve_nvrhi_command_list))
     {
         Msg("! [renderer-vulkan] GPU particle simulation disabled: %s", error.c_str());
         owner.disable_gpu_particles(); error.clear(); return true;

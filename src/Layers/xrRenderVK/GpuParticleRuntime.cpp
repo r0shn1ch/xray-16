@@ -43,7 +43,8 @@ bool GpuParticleRuntime::record(uint32_t index, VkCommandBuffer command, const s
     uint32_t graphics_queue_family,
     uint32_t compute_queue_family, uint32_t copy_queue_family,
     FrameSubmissionGraph::Queue recording_queue, VkQueueFlags graphics_queue_flags,
-    GpuParticleFrame::RequestSubmissionCommandBuffer request_submission_command_buffer)
+    GpuParticleFrame::RequestSubmissionCommandBuffer request_submission_command_buffer,
+    GpuParticleFrame::ResolveNvrhiCommandList resolve_nvrhi_command_list)
 {
     if (!commands_ || index >= slots_.size() || slots_[index]->recorded || slots_[index]->inflight ||
         (!initialized_ && (initial_recorded_ || !collision)))
@@ -72,7 +73,7 @@ bool GpuParticleRuntime::record(uint32_t index, VkCommandBuffer command, const s
             previous_graphics_submission, graphics_queue_family,
             compute_queue_family, copy_queue_family, recording_queue, graphics_queue_flags,
             std::move(request_submission_command_buffer), readback_record,
-            &slot.upload, &inputs.uploads, copy_queue_available))
+            &slot.upload, &inputs.uploads, copy_queue_available, std::move(resolve_nvrhi_command_list)))
         return false;
     slot.recorded = true; slot.initializes = !initialized_; slot.uploaded_programs = inputs.uploaded_programs;
     slot.visible_roots = visible; slot.draw_program_count = inputs.program_count;

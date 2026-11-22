@@ -1,6 +1,7 @@
 #include "xrEngine/stdafx.h"
 #include "GpuParticleFrame.h"
 #include "FrameImageGraph.h"
+#include <nvrhi/nvrhi.h>
 #include <algorithm>
 #include <array>
 #include <utility>
@@ -27,7 +28,7 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
     RequestSubmissionCommandBuffer request_submission_command_buffer,
     ReadbackRecord readback_record, GpuParticleUpload* upload,
     const std::vector<GpuParticleUpload::Update>* upload_updates,
-    bool use_copy_queue) const
+    bool use_copy_queue, ResolveNvrhiCommandList resolve_nvrhi_command_list) const
 {
     using B = GpuParticleBuffers;
     using P = GpuParticleCompute::Pass;
@@ -59,6 +60,26 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
     const uint64_t groups = (largest + 63) / 64;
     if (initialize_buffers && groups > 65535)
     { error = "GPU particle initialization exceeds dispatch limit"; return false; }
+    const auto clear = [&](VkCommandBuffer recording_command, B::Resource resource, VkDeviceSize bytes,
+                           std::string& clear_error) {
+        const auto& buffer = buffers.get(resource);
+        nvrhi::ICommandList* list = resolve_nvrhi_command_list ? resolve_nvrhi_command_list(recording_command) : nullptr;
+        if (list && buffer.nvrhi_buffer() && bytes == buffer.size())
+        {
+            try
+            {
+                // The frame graph has already emitted the native transition to
+                // transfer destination; synchronize NVRHI's tracker with it.
+                list->beginTrackingBufferState(buffer.nvrhi_buffer(), nvrhi::ResourceStates::CopyDest);
+                list->clearBufferUInt(buffer.nvrhi_buffer(), 0);
+            }
+            catch (const std::exception& exception)
+            { clear_error = std::string("NVRHI particle buffer clear failed: ") + exception.what(); return false; }
+        }
+        else
+            fill_(recording_command, buffer.handle(), 0, bytes, 0);
+        clear_error.clear(); return true;
+    };
     auto dispatch = [&](VkCommandBuffer recording_command, P pass, uint32_t slot,
                         fg::GpuPapiConstants params,
                         VkDescriptorBufferInfo visibility, uint32_t count, std::string& dispatch_error) {
@@ -156,8 +177,8 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
     if (initialize_buffers)
     {
         if (!buffers.get(B::Status).handle()) { error = "GPU particle status buffer unavailable"; return false; }
-        const auto clear_status = graph.add_command_pass("clear GPU particle status", [&](VkCommandBuffer recording_command) {
-            fill_(recording_command, buffers.get(B::Status).handle(), 0, buffers.get(B::Status).size(), 0);
+        const auto clear_status = graph.add_checked_command_pass("clear GPU particle status", [&](VkCommandBuffer recording_command, std::string& clear_error) {
+            return clear(recording_command, B::Status, buffers.get(B::Status).size(), clear_error);
         });
         if (!write(clear_status, B::Status, BufferUse::TransferDestination)) return false;
 
@@ -174,9 +195,9 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
     }
     else if (pending_roots || readback_record)
     {
-        const auto clear_errors = graph.add_command_pass("clear GPU particle frame errors",
-            [&](VkCommandBuffer recording_command) {
-                fill_(recording_command, buffers.get(B::Errors).handle(), 0, sizeof(uint32_t), 0);
+        const auto clear_errors = graph.add_checked_command_pass("clear GPU particle frame errors",
+            [&](VkCommandBuffer recording_command, std::string& clear_error) {
+                return clear(recording_command, B::Errors, sizeof(uint32_t), clear_error);
             });
         if (!write(clear_errors, B::Errors, BufferUse::TransferDestination)) return false;
     }
@@ -217,9 +238,9 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
 
     if (visible_roots)
     {
-        const auto clear_arguments = graph.add_command_pass("clear GPU particle draw arguments",
-            [&](VkCommandBuffer recording_command) {
-            fill_(recording_command, buffers.get(B::DrawArguments).handle(), 0, bucket_count * 16, 0);
+        const auto clear_arguments = graph.add_checked_command_pass("clear GPU particle draw arguments",
+            [&](VkCommandBuffer recording_command, std::string& clear_error) {
+            return clear(recording_command, B::DrawArguments, bucket_count * 16, clear_error);
         });
         if (!write(clear_arguments, B::DrawArguments, BufferUse::TransferDestination)) return false;
 
