@@ -36,6 +36,7 @@ public:
     void destroy();
     VkDevice device() const { return m_device; }
     nvrhi::IDevice* nvrhi_device() const { return m_nvrhi_device.Get(); }
+    bool buffer_device_address_enabled() const { return m_buffer_device_address_enabled; }
     VkInstance instance() const { return m_instance; }
     VkQueue queue() const { return m_queue; }
     VkQueue compute_queue() const { return m_compute_queue; }
@@ -62,6 +63,7 @@ private:
     VkSurfaceKHR m_surface = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
     nvrhi::vulkan::DeviceHandle m_nvrhi_device;
+    bool m_buffer_device_address_enabled{};
     VkQueue m_queue = VK_NULL_HANDLE;
     VkQueue m_compute_queue = VK_NULL_HANDLE;
     VkQueue m_transfer_queue = VK_NULL_HANDLE;

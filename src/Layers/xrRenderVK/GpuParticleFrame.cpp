@@ -148,13 +148,15 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
             FrameSubmissionGraph::Queue::Copy : recording_queue;
         FrameImageGraph::BufferResource staging_resource;
         if (!graph.import_buffer(upload->staging_buffer(), 0, staging_bytes, BufferUse::HostWrite,
-                staging_resource, error, upload_queue))
+                staging_resource, error, upload_queue, 0, VK_SHARING_MODE_EXCLUSIVE, {},
+                FrameSubmissionGraph::InvalidPass, upload->nvrhi_staging_buffer()))
             return false;
         const auto uploads = *upload_updates;
         const auto upload_pass = graph.add_checked_command_pass("upload GPU particle inputs",
-            upload_queue, [upload, uploads](VkCommandBuffer recording_command,
+            upload_queue, [upload, uploads, &resolve_nvrhi_command_list](VkCommandBuffer recording_command,
                 std::string& pass_error) {
-                return upload->record_copy(recording_command, uploads, pass_error);
+                auto* list = resolve_nvrhi_command_list ? resolve_nvrhi_command_list(recording_command) : nullptr;
+                return upload->record_copy(recording_command, uploads, pass_error, list);
             });
         if (!graph.read_buffer(upload_pass, staging_resource, BufferUse::TransferSource, error))
             return false;
