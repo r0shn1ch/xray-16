@@ -214,6 +214,10 @@ int main(int argc, char** argv) try
             {vk.input_view[0]}, {vk.input_view[1]}, {vk.input_view[2]}, vk.memory, dispatch,
             VK_NULL_HANDLE, error, nullptr, true)) throw std::runtime_error(error);
     temporal.set_active(true);
+    const auto initial_output_slot = temporal.output_slot();
+    temporal.commit_frame();
+    if (temporal.history_valid() || temporal.output_slot() != initial_output_slot)
+        throw std::runtime_error("Unrecorded temporal pass advanced the history");
     TemporalResolve indirect_temporal;
     if (!indirect_temporal.initialize(vk.physical, vk.device, vkGetDeviceProcAddr, {1, 1},
             {vk.input_view[0]}, {vk.input_view[1]}, {vk.input_view[2]}, vk.memory, dispatch,

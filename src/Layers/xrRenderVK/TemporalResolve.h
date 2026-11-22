@@ -25,16 +25,23 @@ public:
         VkPipelineCache cache, std::string& error, FrameImagePool* image_pool = nullptr,
         bool reprojected_depth = false, bool indirect = false, bool upscale = false,
         FrameImageSharing sharing = {});
-    bool record(const FrameRecordingContext& frame) const;
+    bool record(const FrameRecordingContext& frame);
     // Standalone mode owns history-image transitions; commit after submission.
-    bool record_standalone(const FrameRecordingContext& frame) const;
-    void commit_standalone() { layouts_initialized_ = true; commit_frame(); }
+    bool record_standalone(const FrameRecordingContext& frame);
+    void commit_standalone() { layouts_initialized_ |= recorded_; commit_frame(); }
     static void record_callback(const FrameRecordingContext& frame, void* user);
     static bool history_valid_callback(void* user);
     static bool active_callback(void* user);
     static uint32_t output_slot_callback(void* user);
-    void commit_frame() { history_valid_ = true; previous_jitter_ = current_jitter_; output_slot_ ^= 1; }
-    void reset_history() { history_valid_ = false; }
+    void commit_frame()
+    {
+        history_valid_ = recorded_;
+        if (!recorded_) return;
+        recorded_ = false;
+        previous_jitter_ = current_jitter_;
+        output_slot_ ^= 1;
+    }
+    void reset_history() { history_valid_ = recorded_ = false; }
     void set_active(bool active) { if (!active) reset_history(); active_ = active; }
     void set_history_weight(float weight);
     void set_jitter(float x, float y);
@@ -63,6 +70,7 @@ private:
     std::vector<VkDescriptorSet> sets_;
     uint32_t output_slot_{};
     bool history_valid_{};
+    bool recorded_{};
     bool active_{};
     bool reprojected_depth_{};
     bool indirect_{};

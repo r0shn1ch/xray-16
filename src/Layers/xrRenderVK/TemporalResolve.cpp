@@ -205,7 +205,7 @@ void TemporalResolve::set_history_weight(float weight)
 void TemporalResolve::set_jitter(float x, float y)
 { current_jitter_ = {std::isfinite(x) ? x : 0.f, std::isfinite(y) ? y : 0.f}; }
 
-bool TemporalResolve::record(const FrameRecordingContext& frame) const
+bool TemporalResolve::record(const FrameRecordingContext& frame)
 {
     if (!ready() || !active_ || !frame.command_buffer || frame.image_index * 2 + output_slot_ >= sets_.size())
         return false;
@@ -217,10 +217,11 @@ bool TemporalResolve::record(const FrameRecordingContext& frame) const
     bind_sets_(frame.command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, layout_, 0, 1, &set, 0, nullptr);
     push_constants_(frame.command_buffer, layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(params), &params);
     dispatch_(frame.command_buffer, (extent_.width + 7) / 8, (extent_.height + 7) / 8, 1);
+    recorded_ = true;
     return true;
 }
 
-bool TemporalResolve::record_standalone(const FrameRecordingContext& frame) const
+bool TemporalResolve::record_standalone(const FrameRecordingContext& frame)
 {
     if (!ready() || !active_ || !frame.command_buffer || frame.image_index * 2 + output_slot_ >= sets_.size())
         return false;
