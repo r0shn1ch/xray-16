@@ -424,6 +424,7 @@ int main()
         result.models[0].indices.size() == 6 && !result.models[0].fast);
     assert(load_level_models(input(shaders), input(vb), input(progressive_ib), input(fast_visuals),
         result, error, input(vb), input(progressive_ib)));
+    const Bytes valid_fast_visual = fast_visual;
     fast_chunks.pop_back(); // Bad optional SWI must not reject valid primary geometry.
     fast_visual = progressive_visual;
     fast_visuals.clear();
@@ -435,17 +436,18 @@ int main()
     assert(error.empty() && skipped_fast_geometry && result.models.size() == 1 &&
         !result.models[0].fast && result.models[0].windows.size() == 2);
     assert(fallback_reason.find("optional FASTPATH rejected: level OGF visual id=0 type=2") == 0);
-    // Failure after a valid mesh was appended must not duplicate it on retry.
+    // An invalid proxy must preserve the valid proxy on a different visual.
     // Include the reported visual ID to exercise diagnostics past the first mesh.
     Bytes mixed;
-    for (unsigned id=0; id<91; ++id) part(mixed,id,progressive_visual);
+    part(mixed,0,valid_fast_visual);
+    for (unsigned id=1; id<91; ++id) part(mixed,id,progressive_visual);
     part(mixed,91,fast_visual);
     assert(load_level_models(input(shaders),input(vb),input(progressive_ib),input(mixed),
         result,error,input(positions_only),input(progressive_ib),{},
         &skipped_fast_geometry,&fallback_reason));
     assert(result.models.size()==92 && result.visuals.size()==92 && result.roots.size()==92);
     assert(fallback_reason.find("visual id=91 type=2")!=std::string::npos);
-    for(size_t id=0;id<92;++id) assert(result.visuals[id].mesh==int32_t(id) && !result.models[id].fast);
+    for(size_t id=0;id<92;++id) assert(result.visuals[id].mesh==int32_t(id) && bool(result.models[id].fast)==(id==0));
     // A missing fast SWI or an invalid fast container also uses primary geometry.
     for(bool bad_container : {false,true}) {
         Bytes optional, bad_visual=progressive_visual, table;

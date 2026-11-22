@@ -480,7 +480,7 @@ bool decode_visual(LevelBytes visual, const std::vector<VertexBuffer> &vertices,
                    const std::vector<std::vector<uint16_t>> &indices, size_t material_count,
                    std::vector<LevelModel> &models, std::vector<LevelVisual> &nodes, size_t node_index, unsigned depth,
                    const std::vector<VertexBuffer> *fast_vertices = nullptr,
-                   const std::vector<std::vector<uint16_t>> *fast_indices = nullptr, LevelBytes tree_windows = {})
+                   const std::vector<std::vector<uint16_t>> *fast_indices = nullptr, LevelBytes tree_windows = {}, std::string* fast_rejection = nullptr)
 {
     if (depth > 32 || node_index >= nodes.size())
         return false;
@@ -547,7 +547,7 @@ bool decode_visual(LevelBytes visual, const std::vector<VertexBuffer> &vertices,
                 nodes.emplace_back();
                 nodes[node_index].children.push_back(static_cast<uint32_t>(index));
                 if (!decode_visual(child, vertices, indices, material_count, models, nodes, index, depth + 1,
-                                   fast_vertices, fast_indices, tree_windows))
+                                   fast_vertices, fast_indices, tree_windows, fast_rejection))
                     return false;
             }
         }
@@ -626,22 +626,26 @@ bool decode_visual(LevelBytes visual, const std::vector<VertexBuffer> &vertices,
         LevelBytes fast;
         if (fast_vertices && fast_indices && chunk(visual, ogf_fastpath, fast))
         {
-            if (fast.size > 64 * 1024 * 1024)
-                return false;
-            std::vector<uint8_t> combined;
-            combined.reserve(8 + header.size + fast.size);
-            for (uint32_t word : {ogf_header, static_cast<uint32_t>(header.size)})
-                for (unsigned byte = 0; byte < 4; ++byte)
-                    combined.push_back(static_cast<uint8_t>(word >> (byte * 8)));
-            combined.insert(combined.end(), header.data, header.data + header.size);
-            combined.insert(combined.end(), fast.data, fast.data + fast.size);
-            std::vector<LevelVisual> fast_nodes(1);
             std::vector<LevelModel> fast_models;
-            if (!decode_visual({combined.data(), combined.size()}, *fast_vertices, *fast_indices, material_count,
-                               fast_models, fast_nodes, 0, depth + 1) ||
-                fast_models.size() != 1)
-                return false;
-            model.fast = std::make_shared<LevelModel>(std::move(fast_models.front()));
+            if (fast.size <= 64 * 1024 * 1024)
+            {
+                std::vector<uint8_t> combined;
+                combined.reserve(8 + header.size + fast.size);
+                for (uint32_t word : {ogf_header, static_cast<uint32_t>(header.size)})
+                    for (unsigned byte = 0; byte < 4; ++byte)
+                        combined.push_back(static_cast<uint8_t>(word >> (byte * 8)));
+                combined.insert(combined.end(), header.data, header.data + header.size);
+                combined.insert(combined.end(), fast.data, fast.data + fast.size);
+                std::vector<LevelVisual> fast_nodes(1);
+                if (!decode_visual({combined.data(), combined.size()}, *fast_vertices, *fast_indices,
+                        material_count, fast_models, fast_nodes, 0, depth + 1))
+                    fast_models.clear();
+            }
+            if (fast_models.size() == 1)
+                model.fast = std::make_shared<LevelModel>(std::move(fast_models.front()));
+            else if (fast_rejection && fast_rejection->empty())
+                *fast_rejection = "optional FASTPATH rejected: level OGF visual id=" +
+                    std::to_string(node_index) + " type=" + std::to_string(type);
         }
     }
     // The level header's sphere is occasionally stale (notably on tree and
@@ -694,7 +698,8 @@ bool decode_visual(LevelBytes visual, const std::vector<VertexBuffer> &vertices,
 bool read_visuals(LevelBytes bytes, const std::vector<VertexBuffer> &vertices,
                   const std::vector<std::vector<uint16_t>> &indices, size_t material_count, LevelModelData &loaded,
                   const std::vector<VertexBuffer> *fast_vertices,
-                  const std::vector<std::vector<uint16_t>> *fast_indices, LevelBytes tree_windows, std::string &error)
+                  const std::vector<std::vector<uint16_t>> *fast_indices, LevelBytes tree_windows, std::string &error,
+                  std::string* fast_rejection)
 {
     Cursor c{bytes};
     std::vector<LevelBytes> records;
@@ -710,7 +715,7 @@ bool read_visuals(LevelBytes bytes, const std::vector<VertexBuffer> &vertices,
     loaded.visuals.resize(records.size());
     for (size_t i = 0; i < records.size(); ++i)
         if (!decode_visual(records[i], vertices, indices, material_count, loaded.models, loaded.visuals, i, 0,
-                           fast_vertices, fast_indices, tree_windows))
+                           fast_vertices, fast_indices, tree_windows, fast_rejection))
         {
             LevelBytes header;
             error = "level OGF visual id=" + std::to_string(i);
@@ -805,30 +810,17 @@ bool load_level_models(LevelBytes shaders, LevelBytes vertex_buffers, LevelBytes
             fast_indices.clear();
             error.clear();
         }
-        bool valid_visuals =
+        std::string fast_rejection;
+        const bool valid_visuals =
             read_visuals(visuals, vertices, indices, loaded.materials.size(), loaded,
-                         has_fast ? &fast_vertices : nullptr, has_fast ? &fast_indices : nullptr, tree_windows, error);
-        if (!valid_visuals && has_fast)
+                         has_fast ? &fast_vertices : nullptr, has_fast ? &fast_indices : nullptr,
+                         tree_windows, error, &fast_rejection);
+        if (valid_visuals && !fast_rejection.empty())
         {
-            // A valid geomX buffer table does not guarantee that every visual's
-            // optional FASTPATH container/SWI is supported. Validate the entire
-            // primary scene independently before accepting a fallback. Rebuild
-            // transactionally: the failed pass may already have appended meshes,
-            // embedded children and LOD facets.
-            const std::string fast_error = error;
-            LevelModelData primary;
-            primary.materials = std::move(loaded.materials);
-            error.clear();
-            valid_visuals = read_visuals(visuals, vertices, indices, primary.materials.size(), primary, nullptr,
-                                         nullptr, tree_windows, error);
-            if (valid_visuals)
-            {
-                loaded = std::move(primary);
-                if (skipped_fast_geometry)
-                    *skipped_fast_geometry = true;
-                if (fast_fallback_reason)
-                    *fast_fallback_reason = "optional FASTPATH rejected: " + fast_error;
-            }
+            if (skipped_fast_geometry)
+                *skipped_fast_geometry = true;
+            if (fast_fallback_reason)
+                *fast_fallback_reason = std::move(fast_rejection);
         }
         if (!valid_visuals)
         {
