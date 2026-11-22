@@ -149,10 +149,11 @@ bool occludedByPreviousDepth(vec4 sphere)
     if (max(pixel_shift.x, pixel_shift.y) > 2.0 || abs(current_nearest - previous_nearest) > 0.005)
         return false;
 
-    // Inflate the previous footprint to cover small camera motion and jitter.
+    // Camera rotation or a projection change can move the edges without
+    // moving the projected center. Require coverage of both footprints.
     vec2 padding = 2.0 / vec2(base_size);
-    vec2 uv_minimum = clamp(previous_minimum * 0.5 + 0.5 - padding, 0.0, 1.0);
-    vec2 uv_maximum = clamp(previous_maximum * 0.5 + 0.5 + padding, 0.0, 1.0);
+    vec2 uv_minimum = clamp(min(previous_minimum, current_minimum) * 0.5 + 0.5 - padding, 0.0, 1.0);
+    vec2 uv_maximum = clamp(max(previous_maximum, current_maximum) * 0.5 + 0.5 + padding, 0.0, 1.0);
     vec2 pixel_extent = max((uv_maximum - uv_minimum) * vec2(base_size), vec2(1.0));
     int mip_count = textureQueryLevels(previous_hiz);
     int mip = int(clamp(floor(log2(max(pixel_extent.x, pixel_extent.y))),
