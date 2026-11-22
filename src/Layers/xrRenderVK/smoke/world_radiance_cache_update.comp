@@ -53,7 +53,7 @@ struct Ray { vec4 origin_min; vec4 direction_max; };
 layout(set = 0, binding = 0, std430) readonly buffer Surfaces { Surface surfaces[]; };
 layout(set = 0, binding = 1, std430) readonly buffer Radiance { vec4 radiance[]; };
 layout(set = 0, binding = 2, std430) readonly buffer PrimaryRays { Ray rays[]; };
-layout(set = 0, binding = 3, std430) buffer WorldRadianceCache { WorldRadianceCacheCell cells[]; };
+layout(set = 0, binding = 3, std430) coherent buffer WorldRadianceCache { WorldRadianceCacheCell cells[]; };
 layout(push_constant) uniform Parameters { uint count; uint groups_x; uint frame; uint reserved; } parameters;
 
 const uint WORLD_CACHE_EMPTY = 0u;
@@ -131,7 +131,7 @@ void update_cache_cell(ivec3 cell, uint normal_class, uint level, vec3 radiance_
     for (uint probe = 0u; probe < min(WORLD_CACHE_PROBES, capacity); ++probe)
     {
         uint slot = (start + probe) % capacity;
-        uint state = cells[slot].state;
+        uint state = atomicAdd(cells[slot].state, 0u);
         if (state == WORLD_CACHE_EMPTY)
         {
             if (atomicCompSwap(cells[slot].state, WORLD_CACHE_EMPTY, WORLD_CACHE_WRITING) == WORLD_CACHE_EMPTY)
@@ -174,13 +174,21 @@ void update_cache_cell(ivec3 cell, uint normal_class, uint level, vec3 radiance_
             return;
         if (state != WORLD_CACHE_VALID)
             continue;
+        if (atomicCompSwap(cells[slot].state, WORLD_CACHE_VALID, WORLD_CACHE_UPDATING) != WORLD_CACHE_VALID)
+            return;
+        // Inspect the key and age only while holding the slot. A different
+        // workgroup may have replaced it since the initial state read.
+        memoryBarrierBuffer();
         bool same_cell = cells[slot].cell_x == cell.x && cells[slot].cell_y == cell.y &&
             cells[slot].cell_z == cell.z && cells[slot].normal_class == normal_class &&
             cells[slot].cell_level == level;
         bool expired = parameters.frame - cells[slot].last_frame > WORLD_CACHE_CELL_TTL;
-        if (!same_cell && !expired) continue;
-        if (atomicCompSwap(cells[slot].state, WORLD_CACHE_VALID, WORLD_CACHE_UPDATING) != WORLD_CACHE_VALID)
-            return;
+        if (!same_cell && !expired)
+        {
+            memoryBarrierBuffer();
+            atomicExchange(cells[slot].state, WORLD_CACHE_VALID);
+            continue;
+        }
         if (!same_cell || expired)
         {
             cells[slot].cell_x = cell.x;
