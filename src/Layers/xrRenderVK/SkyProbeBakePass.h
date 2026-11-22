@@ -62,12 +62,9 @@ inline bool generate_sky_probe_rays(const framegraph::SkyProbeLayout& layout, ui
         return false;
     rays.clear();
     rays.reserve(size_t(count) * 6 * SkyProbeRaysPerFace);
-    constexpr float golden_angle = 2.39996323f;
-    for (uint32_t probe = first; probe < first + count; ++probe)
-    {
-        std::array<float, 3> origin{};
-        if (!layout.position(probe, origin))
-            return false;
+    static const auto directions = [] {
+        std::array<std::array<float, 3>, 6 * SkyProbeRaysPerFace> result{};
+        constexpr float golden_angle = 2.39996323f;
         for (unsigned face = 0; face < 6; ++face)
         {
             const unsigned axis = face / 2;
@@ -75,15 +72,27 @@ inline bool generate_sky_probe_rays(const framegraph::SkyProbeLayout& layout, ui
             {
                 const float radius = .7f * std::sqrt((float(ray) + .5f) / SkyProbeRaysPerFace);
                 const float angle = ray * golden_angle;
-                RayQueryInput value{};
-                std::copy(origin.begin(), origin.end(), value.origin_min);
-                value.origin_min[3] = .05f;
-                value.direction_max[axis] = ((face & 1) ? -1.f : 1.f) * std::sqrt(1.f - radius * radius);
-                value.direction_max[(axis + 1) % 3] = radius * std::cos(angle);
-                value.direction_max[(axis + 2) % 3] = radius * std::sin(angle);
-                value.direction_max[3] = distance;
-                rays.push_back(value);
+                auto& direction = result[face * SkyProbeRaysPerFace + ray];
+                direction[axis] = ((face & 1) ? -1.f : 1.f) * std::sqrt(1.f - radius * radius);
+                direction[(axis + 1) % 3] = radius * std::cos(angle);
+                direction[(axis + 2) % 3] = radius * std::sin(angle);
             }
+        }
+        return result;
+    }();
+    for (uint32_t probe = first; probe < first + count; ++probe)
+    {
+        std::array<float, 3> origin{};
+        if (!layout.position(probe, origin))
+            return false;
+        for (const auto& direction : directions)
+        {
+            RayQueryInput value{};
+            std::copy(origin.begin(), origin.end(), value.origin_min);
+            value.origin_min[3] = .05f;
+            std::copy(direction.begin(), direction.end(), value.direction_max);
+            value.direction_max[3] = distance;
+            rays.push_back(value);
         }
     }
     return true;
