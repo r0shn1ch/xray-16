@@ -131,7 +131,7 @@ float3 GpuPapiBounce(GpuPapiDomain domain, float3 position, float3 velocity, flo
 
 bool GpuPapiSerialAction(uint type)
 {
-    return type == 7u || type == 9u || type == 10u || type == 11u ||
+    return type == 7u || type == 9u || type == 11u ||
         type == 15u || type == 16u || type == 17u || type == 19u || type == 20u || type == 21u;
 }
 
@@ -280,19 +280,13 @@ void GpuPapiExecuteAction(inout GpuPapiEmitter emitter, uint actionDataIndex,
         }
         return;
     }
-    if (type == 10u || type == 19u || type == 20u)
+    if (type == 19u || type == 20u)
     {
-        if (type == 10u)
-            killOldTime = p0.x;
         for (uint ordinal = emitter.count; ordinal > 0u; --ordinal)
         {
             GpuPapiParticle particle = g_Particles[GpuParticleIndex(emitter, ordinal - 1u)];
-            bool remove;
-            if (type == 10u)
-                remove = (particle.age < p0.x) == (p0.y != 0.0);
-            else
-                remove = GpuPapiWithin(domain, type == 19u ? particle.position : particle.velocity, emitter.rng) ==
-                    (p0.x != 0.0);
+            bool remove = GpuPapiWithin(domain, type == 19u ? particle.position : particle.velocity, emitter.rng) ==
+                (p0.x != 0.0);
             if (remove)
                 GpuRemoveParticle(emitter, ordinal - 1u);
         }

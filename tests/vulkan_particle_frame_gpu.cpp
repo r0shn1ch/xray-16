@@ -1498,6 +1498,81 @@ int main(int argc, char** argv)
         require(result.statuses[0].generation == 1 && result.statuses[0].serial == 1 && result.errors == 0, "simulation status");
         require(commands.acknowledge(result.statuses, error) && commands.snapshot(batch, error) && batch.commands.empty(), error);
         for (size_t i = 0; i < 28; ++i) require(draw_words[i * 4] == 6 && draw_words[i * 4 + 1] == 0, "draw arguments");
+        {
+            // Exercise more than two workgroup-width batches, both age
+            // predicates, and the swap-with-last order used by removal.
+            constexpr uint32_t count = 130;
+            GpuParticleBuffers age_buffers;
+            GpuParticleBuffers::Capacity age_capacity{count, 2, 1, 1, 1, 1, 1, 514, 48};
+            require(age_buffers.initialize(f.device, props.limits, memory, vk, age_capacity, error), error);
+            GpuParticleUpload age_upload;
+            require(age_upload.initialize(f.device, vkGetDeviceProcAddr, 65536, memory, vk, error), error);
+            GpuParticleReadback age_readback;
+            require(age_readback.initialize(f.device, vkGetDeviceProcAddr, 1, memory, vk, error), error);
+            BufferResource particle_copy;
+            require(particle_copy.initialize(f.device, count * sizeof(fg::GpuPapiParticle),
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, memory, vk, error), error);
+            for (uint32_t young : {0u, 1u})
+            {
+                std::vector<fg::GpuPapiParticle> particles(count);
+                for (uint32_t i = 0; i < count; ++i)
+                {
+                    particles[i].age = float(i % 3);
+                    particles[i].position.x = float(i);
+                    particles[i].child = GPU_PAPI_INVALID;
+                }
+                auto expected = particles;
+                for (size_t i = expected.size(); i > 0; --i)
+                    if ((expected[i - 1].age < 1.f) == (young != 0))
+                    {
+                        expected[i - 1] = expected.back();
+                        expected.pop_back();
+                    }
+                fg::GpuPapiEmitter root{};
+                root.active = root.generation = 1; root.completedSerial = 1;
+                root.flags = GPU_PAPI_PLAYING; root.capacity = root.count = count;
+                root.childBirth = root.childPlay = root.childDead = root.pad0 = GPU_PAPI_INVALID;
+                fg::GpuPapiProgram age_program{}; age_program.maxParticles = count; age_program.actionCount = 1;
+                fg::GpuPapiAction action{}; action.type = 10; action.p0.x = 1.f; action.p0.y = float(young);
+                fg::GpuPapiCommand tick{}; tick.type = 6; tick.generation = 1; tick.serial = 2; tick.p0 = 33;
+                const uint32_t range[]{0, 1};
+                const std::vector<GpuParticleUpload::Update> updates{
+                    {&age_buffers.get(GpuParticleBuffers::Programs), 0, &age_program, sizeof(age_program)},
+                    {&age_buffers.get(GpuParticleBuffers::Actions), 0, &action, sizeof(action)},
+                    {&age_buffers.get(GpuParticleBuffers::Emitters), 0, &root, sizeof(root)},
+                    {&age_buffers.get(GpuParticleBuffers::Particles), 0, particles.data(), particles.size() * sizeof(particles[0])},
+                    {&age_buffers.get(GpuParticleBuffers::Commands), 0, &tick, sizeof(tick)},
+                    {&age_buffers.get(GpuParticleBuffers::RootCommands), 0, range, sizeof(range)}};
+                require(vkAllocateCommandBuffers(f.device, &ai, &cb) == VK_SUCCESS &&
+                    vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS, "particle age tick begin");
+                require(age_upload.record(cb, updates, VK_QUEUE_TRANSFER_BIT, error,
+                    FrameSubmissionGraph::Queue::Copy), error);
+                auto age_constants = constants;
+                age_constants.particleCapacity = count; age_constants.emitterCapacity = 2;
+                age_constants.rootCapacity = age_constants.actionStateCapacity = 1;
+                uniforms.reset();
+                require(frame.record(cb, compute, age_buffers, uniforms, 0, age_constants, 1, 0, planes, false, error), error);
+                require(age_readback.record(cb, age_buffers, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT, error), error);
+                VkMemoryBarrier copy_barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+                copy_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; copy_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0, 1, &copy_barrier, 0, nullptr, 0, nullptr);
+                VkBufferCopy particle_region{0, 0, count * sizeof(fg::GpuPapiParticle)};
+                vkCmdCopyBuffer(cb, age_buffers.get(GpuParticleBuffers::Particles).handle(), particle_copy.handle(), 1, &particle_region);
+                vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+                    0, 1, &barrier, 0, nullptr, 0, nullptr);
+                submit.pCommandBuffers = &cb;
+                require(vkEndCommandBuffer(cb) == VK_SUCCESS && vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS &&
+                    vkQueueWaitIdle(queue) == VK_SUCCESS, "particle age tick submit");
+                require(age_readback.read(result, error) && particle_copy.read(0, particles.data(),
+                    particles.size() * sizeof(particles[0]), error), error);
+                require(result.statuses[0].count == expected.size() && result.errors == 0, "particle age count");
+                for (size_t i = 0; i < expected.size(); ++i)
+                    require(particles[i].position.x == expected[i].position.x, "particle age removal order");
+                vkFreeCommandBuffers(f.device, f.pool, 1, &cb);
+            }
+        }
         for (const uint32_t scenario : {0u, 1u, 2u})
         {
             // Test a full parent, then a parent that can emit two particles

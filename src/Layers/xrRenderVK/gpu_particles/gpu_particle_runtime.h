@@ -436,6 +436,29 @@ void GpuAdvanceEmitter(inout GpuPapiEmitter emitter,uint milliseconds,uint lane)
         for (uint actionIndex = 0; actionIndex < program.actionCount;) {
             uint actionDataIndex = program.actionFirst + actionIndex;
             uint type = g_Actions[actionDataIndex].type;
+            if (type == 10u) {
+                // Classify in parallel, then remove in the same descending
+                // order as PAPI. Removal moves the last survivor and can
+                // detach or spawn child emitters, so it remains serialized.
+                float4 params = g_Actions[actionDataIndex].p0;
+                killOldTime = params.x;
+                uint remaining = emitter.count;
+                while (remaining > 0u) {
+                    uint batch = min(remaining,64u);
+                    if (lane < batch) {
+                        uint index = GpuParticleIndex(emitter,remaining - 1u - lane);
+                        g_GroupDead[lane] = ((g_Particles[index].age < params.x) == (params.y != 0.0)) ? 1u : 0u;
+                    }
+                    AllMemoryBarrierWithGroupSync();
+                    if (lane == 0)
+                        for (uint offset = 0u; offset < batch; ++offset)
+                            if (g_GroupDead[offset] != 0u) GpuRemoveParticle(emitter,remaining - 1u - offset);
+                    GpuSyncEmitter(emitter,lane);
+                    remaining -= batch;
+                }
+                ++actionIndex;
+                continue;
+            }
             if (GpuPapiLocalAction(type)) {
                 uint segmentCount = 1;
                 while (segmentCount < 16u && actionIndex + segmentCount < program.actionCount) {
