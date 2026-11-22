@@ -20,7 +20,7 @@ void main()
     ivec2 extent = textureSize(depth_image, 0);
     if (any(greaterThanEqual(pixel, extent))) return;
     float depth = texelFetch(depth_image, pixel, 0).r;
-    if (!(depth >= 0.0 && depth < 0.99999)) return;
+    if (!(depth >= 0.0 && depth < 1.0)) return;
     vec2 uv = (vec2(pixel) + 0.5) / vec2(extent);
     vec4 world = params.inverse_view_projection * vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
     if (abs(world.w) < 1e-8) return;
@@ -36,7 +36,7 @@ void main()
     for (uint i = first; i < levels; ++i)
     {
         vec2 coord = (light_xy - params.level[i].xy) / params.level[i].z;
-        if (any(lessThan(coord, vec2(0.0))) || any(greaterThanEqual(coord, vec2(1.0)))) continue;
+        if (!all(greaterThanEqual(coord, vec2(0.0))) || !all(lessThan(coord, vec2(1.0)))) continue;
         vec2 page_coord = coord * float(axis);
         uvec2 page = min(uvec2(page_coord), uvec2(axis - 1u));
         request_page(i, page, axis, 1u);

@@ -64,7 +64,7 @@ void main()
     if (any(greaterThanEqual(pixel, extent))) return;
     float z = texelFetch(scene_depth, pixel, 0).r;
     float result = 1.0;
-    if (z >= 0.0 && z < 0.99999)
+    if (z >= 0.0 && z < 1.0)
     {
         vec2 uv = (vec2(pixel) + 0.5) / vec2(extent);
         vec4 world = params.inverse_view_projection * vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, z, 1.0);
