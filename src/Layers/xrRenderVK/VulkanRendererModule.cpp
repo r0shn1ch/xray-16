@@ -384,6 +384,20 @@ public:
                         }
                     }
                     ImGui::EndDisabled();
+                    ImGui::InputText("New effect name", effect_copy_name_, sizeof(effect_copy_name_));
+                    ImGui::BeginDisabled(!effect_copy_name_[0]);
+                    if (ImGui::Button("Duplicate effect"))
+                    {
+                        auto candidate = library_;
+                        if (duplicate_particle_effect(candidate, effect.name, effect_copy_name_, message_) &&
+                            load_draft(candidate))
+                        {
+                            dirty_ = true;
+                            effect_copy_name_[0] = '\0';
+                            message_ = "Effect copied to draft";
+                        }
+                    }
+                    ImGui::EndDisabled();
                     draw_preview();
                 }
                 else if (selected_group_ < catalog_.groups.size())
@@ -706,6 +720,7 @@ private:
     ParticleCatalog catalog_;
     std::string message_;
     char copy_name_[64]{"particles_edited"};
+    char effect_copy_name_[256]{};
     char shader_[256]{}, texture_[256]{};
     ImGuiTextFilter filter_;
     std::unique_ptr<IParticleCustom> preview_;

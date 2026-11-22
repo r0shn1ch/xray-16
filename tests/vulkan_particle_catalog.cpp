@@ -142,6 +142,16 @@ int main()
     IReader compressed_input(compressed.pointer(), compressed.size());
     assert(editable_particle_library_bytes(compressed_input, edited, error) && edited == library);
     assert(edit_particle_effect_limit(edited, "campfire", 512, error));
+    auto duplicated = edited;
+    assert(duplicate_particle_effect(duplicated, "campfire", "campfire_copy", error));
+    ParticleCatalog copied;
+    assert(parse_particle_catalog({duplicated.data(), duplicated.size()}, copied, error));
+    assert(copied.effect("campfire") && copied.effect("campfire_copy"));
+    assert(copied.effect("campfire_copy")->max_particles == 512 &&
+        copied.effect("campfire_copy")->actions == copied.effect("campfire")->actions);
+    const auto before_duplicate = duplicated;
+    assert(!duplicate_particle_effect(duplicated, "campfire", "campfire_copy", error) &&
+        duplicated == before_duplicate);
     assert(parse_particle_catalog({edited.data(), edited.size()}, catalog, error));
     assert(catalog.effect("campfire")->max_particles == 512);
     const Bytes before_invalid_edit = edited;

@@ -330,6 +330,68 @@ bool parse_particle_catalog(LevelBytes bytes, ParticleCatalog& result, std::stri
         "legacy defaults applied: velocity_scale=" + std::to_string(defaulted_velocity_scales) : std::string{};
     return true;
 }
+bool duplicate_particle_effect(std::vector<uint8_t>& library, const std::string& source,
+    const std::string& name, std::string& error)
+{
+    if (name.empty() || name.size() > 255 || name.find('\0') != std::string::npos)
+    {
+        error = "Invalid effect copy name";
+        return false;
+    }
+    const LevelBytes input{library.data(), library.size()};
+    ParticleCatalog catalog;
+    if (!parse_particle_catalog(input, catalog, error)) return false;
+    if (!catalog.effect(source) || catalog.group(name))
+    {
+        error = "Source effect missing or copy name already used by a group";
+        return false;
+    }
+    std::vector<std::pair<uint32_t, LevelBytes>> root, entries, fields;
+    chunks(input, root);
+    const auto table = find(root, 3);
+    chunks(table, entries);
+    LevelBytes record{}, old_name{};
+    for (const auto& entry : entries)
+    {
+        fields.clear();
+        if (!chunks(entry.second, fields)) continue;
+        const auto field = find(fields, 2);
+        Cursor cursor{field};
+        std::string candidate;
+        if (!cursor.name(candidate)) continue;
+        if (candidate == name || (candidate == source && (record.data || !unique_chunks(fields))))
+        {
+            error = "Duplicate copy name or ambiguous source effect";
+            return false;
+        }
+        if (candidate == source) { record = entry.second; old_name = field; }
+    }
+    if (!record.data || entries.size() >= 100000)
+    {
+        error = "Effect table cannot accept a copy";
+        return false;
+    }
+    const size_t name_size = name.size() + 1;
+    const size_t copied_size = record.size - old_name.size + name_size;
+    if (library.size() + copied_size + 8 > 64 * 1024 * 1024)
+    {
+        error = "Effect copy exceeds the particle library size limit";
+        return false;
+    }
+    std::vector<uint8_t> copy(8);
+    put32(copy.data(), static_cast<uint32_t>(entries.size()));
+    put32(copy.data() + 4, static_cast<uint32_t>(copied_size));
+    copy.insert(copy.end(), record.data, old_name.data);
+    put32(copy.data() + copy.size() - 4, static_cast<uint32_t>(name_size));
+    copy.insert(copy.end(), name.c_str(), name.c_str() + name_size);
+    copy.insert(copy.end(), old_name.data + old_name.size, record.data + record.size);
+    const size_t table_offset = static_cast<size_t>(table.data - input.data);
+    library.insert(library.begin() + table_offset + table.size, copy.begin(), copy.end());
+    put32(library.data() + table_offset - 4, static_cast<uint32_t>(table.size + copy.size()));
+    error.clear();
+    return true;
+}
+
 bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string& name,
     uint32_t max_particles, std::string& error, std::optional<float> time_limit,
     const ParticleSpriteMaterial* material)

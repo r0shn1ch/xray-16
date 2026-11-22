@@ -48,6 +48,8 @@ struct ParticleCatalog
 };
 
 bool parse_particle_catalog(LevelBytes bytes, ParticleCatalog& result, std::string& error);
+bool duplicate_particle_effect(std::vector<uint8_t>& library, const std::string& source,
+    const std::string& name, std::string& error);
 struct ParticleSpriteMaterial
 {
     std::string shader, texture;
