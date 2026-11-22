@@ -6,7 +6,7 @@ uint GpuPrepareCommand(inout GpuPapiEmitter emitter,GpuPapiCommand command,uint 
     if (command.type == 0) {
         if (emitter.active != 0 || command.p0 >= g_Papi.programCount) { GpuAllocationError(8u); return 2; }
         GpuPapiProgram program = g_Programs[command.p0];
-        if (!GpuReserveResources(program.maxParticles,program.stateCount,0,true)) return 2;
+        if (!GpuReserveResources(program.maxParticles,program.stateCount,0,index,true)) return 2;
         GpuInitializeEmitter(emitter,command.p0,index,command.generation,index,g_Reservation.particleFirst,g_Reservation.stateFirst);
         g_Reservation.particleUsed = program.maxParticles;
         g_Reservation.stateUsed = program.stateCount;

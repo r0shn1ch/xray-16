@@ -101,7 +101,7 @@ void GpuReleaseReservation() {
     }
     g_Reservation.childFirst = GPU_PAPI_INVALID;
 }
-bool GpuReserveResources(uint particles,uint states,uint children,bool reportFailure) {
+bool GpuReserveResources(uint particles,uint states,uint children,uint root,bool reportFailure) {
     g_Reservation = (GpuPapiReservation)0;
     g_Reservation.particleFirst = GPU_PAPI_INVALID;
     g_Reservation.stateFirst = GPU_PAPI_INVALID;
@@ -123,8 +123,11 @@ bool GpuReserveResources(uint particles,uint states,uint children,bool reportFai
     uint acquired = 0;
     // Root command indices remain even. Beyond the root range, every slot
     // belongs to the child pool.
-    for (uint slot = 0; acquired < children && slot < childCapacity; ++slot) {
+    // Start at the odd slot beside this root to spread concurrent child claims.
+    uint slot = root / 2u;
+    for (uint visited = 0; acquired < children && visited < childCapacity; ++visited) {
         uint index = slot < rootSlots ? slot * 2u + 1u : slot + rootSlots;
+        slot = slot + 1u == childCapacity ? 0u : slot + 1u;
         uint previous;
         InterlockedCompareExchange(g_Emitters[index].active,0,2,previous);
         if (previous != 0) continue;
@@ -162,7 +165,7 @@ uint GpuTickSteps(GpuPapiEmitter emitter,uint milliseconds) {
 bool GpuReserveTick(GpuPapiEmitter emitter,uint milliseconds) {
     uint births = 0,deaths = 0,particles = 0,states = 0,children = 0;
     if (emitter.childBirth == GPU_PAPI_INVALID && emitter.childPlay == GPU_PAPI_INVALID && emitter.childDead == GPU_PAPI_INVALID)
-        return GpuReserveResources(0,0,0,false);
+        return GpuReserveResources(0,0,0,emitter.root,false);
     uint steps = GpuTickSteps(emitter,milliseconds);
     if ((emitter.flags & GPU_PAPI_PLAYING) != 0 && steps != 0) {
         GpuPapiProgram program = g_Programs[emitter.program];
@@ -196,7 +199,7 @@ bool GpuReserveTick(GpuPapiEmitter emitter,uint milliseconds) {
         !GpuReserveChildProgram(emitter.childDead,deaths,particles,states,children)) return false;
     // A bulk reservation is speculative. Only an actual spawn that runs out
     // of resources should publish a capacity failure.
-    return GpuReserveResources(particles,states,children,false);
+    return GpuReserveResources(particles,states,children,emitter.root,false);
 }
 void GpuReleaseEmitter(inout GpuPapiEmitter emitter) {
     DeviceMemoryBarrier();
@@ -303,7 +306,7 @@ uint GpuSpawnChild(inout GpuPapiEmitter parent,uint program,GpuPapiParticle part
         g_ReserveChildrenOnDemand = true;
     }
     if (g_ReserveChildrenOnDemand &&
-        !GpuReserveResources(definition.maxParticles,definition.stateCount,1,true))
+        !GpuReserveResources(definition.maxParticles,definition.stateCount,1,parent.root,true))
         return GPU_PAPI_INVALID;
     uint index = g_Reservation.childFirst;
     if (index == GPU_PAPI_INVALID || definition.maxParticles > g_Reservation.particleCount - g_Reservation.particleUsed ||
