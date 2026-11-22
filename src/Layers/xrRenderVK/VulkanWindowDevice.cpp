@@ -365,6 +365,12 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
         m_physical.properties.deviceName, m_physical.properties.vendorID, m_physical.properties.deviceID,
         m_physical.properties.driverVersion, VK_VERSION_MAJOR(m_physical.properties.apiVersion),
         VK_VERSION_MINOR(m_physical.properties.apiVersion), m_physical.graphics_present_family);
+    SDL_Log("[renderer-vulkan] gpu.limits samplers-stage=%u sampled-images-stage=%u samplers-set=%u sampled-images-set=%u resources-stage=%u",
+        m_physical.properties.limits.maxPerStageDescriptorSamplers,
+        m_physical.properties.limits.maxPerStageDescriptorSampledImages,
+        m_physical.properties.limits.maxDescriptorSetSamplers,
+        m_physical.properties.limits.maxDescriptorSetSampledImages,
+        m_physical.properties.limits.maxPerStageResources);
     SDL_Log("[renderer-vulkan] gpu.ray_tracing advertised acceleration=%d query=%d pipeline=%d enabled=%d",
         int(m_physical.ray_tracing.acceleration_structure), int(m_physical.ray_tracing.ray_query),
         int(m_physical.ray_tracing.ray_tracing_pipeline), int(m_ray_tracing_enabled));

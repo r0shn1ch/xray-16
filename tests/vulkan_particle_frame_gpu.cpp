@@ -1,6 +1,12 @@
 #include "xrEngine/stdafx.h"
 #include "src/Layers/xrRenderVK/FrameImageGraph.h"
 #include "src/Layers/xrRenderVK/FrameImagePool.h"
+#include "src/Layers/xrRenderVK/DeferredShaders.h"
+#include "src/Layers/xrRenderVK/DeferredPass.h"
+#include "src/Layers/xrRenderVK/ShaderModule.h"
+#include "src/Layers/xrRenderVK/DeferredAlphaTestShaders.h"
+#include "src/Layers/xrRenderVK/VulkanGameShaders.h"
+#include "src/Layers/xrRenderVK/WeatherShaders.h"
 #include "src/Layers/xrRenderVK/VisibilityPasses.h"
 #include "src/Layers/xrRenderVK/LevelModels.h"
 #include "src/Layers/xrRenderVK/SkyProbeReducePass.h"
@@ -643,6 +649,58 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
     std::cout << "GPU smoke trail, cell selection, indirect detail generation and culling passed\n";
 }
 
+void exercise_deferred_startup(VkDevice device, const VkPhysicalDeviceLimits& limits)
+{
+    if (limits.maxPushConstantsSize < 256) return;
+    std::string error;
+    ScenePassDispatch dispatch;
+    require(load_scene_pass_dispatch(device, vkGetDeviceProcAddr, dispatch, error), error);
+    std::array<VkAttachmentDescription, 4> attachments{};
+    for (size_t i = 0; i < attachments.size(); ++i)
+    {
+        attachments[i].format = i == 3 ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+        attachments[i].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[i].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachments[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[i].finalLayout = i == 3 ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL :
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
+    const VkAttachmentReference colors[]{{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+        {1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+    VkAttachmentReference depth{3, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 3; subpass.pColorAttachments = colors;
+    subpass.pDepthStencilAttachment = &depth;
+    VkRenderPassCreateInfo info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    info.attachmentCount = 4; info.pAttachments = attachments.data();
+    info.subpassCount = 1; info.pSubpasses = &subpass;
+    VkRenderPass geometry{}, forward{};
+    require(vkCreateRenderPass(device, &info, nullptr, &geometry) == VK_SUCCESS, "startup G-buffer pass");
+    attachments[1] = attachments[3];
+    depth.attachment = 1; subpass.colorAttachmentCount = 1; info.attachmentCount = 2;
+    require(vkCreateRenderPass(device, &info, nullptr, &forward) == VK_SUCCESS, "startup forward pass");
+    {
+        std::array<ShaderModule, 7> shaders;
+        const ShaderModuleDispatch modules{vkCreateShaderModule, vkDestroyShaderModule};
+        const auto load = [&](size_t index, const auto& words) {
+            return shaders[index].initialize(device, modules, words, sizeof(words), error);
+        };
+        require(load(0, deferred_shaders::GBufferVertex) && load(1, deferred_shaders::GBufferFragment) &&
+            load(2, deferred_shaders::GBufferAlphaTestFragment) && load(3, game_shaders::TransparentFragment) &&
+            load(4, deferred_shaders::LightVertex) && load(5, deferred_shaders::LightFragment) &&
+            load(6, weather_shaders::Fragment), error);
+        DeferredPass pass;
+        require(pass.initialize(device, geometry, forward, shaders[0].handle(), shaders[1].handle(),
+            shaders[2].handle(), shaders[3].handle(), shaders[4].handle(), shaders[5].handle(),
+            shaders[6].handle(), dispatch, error), error);
+    }
+    vkDestroyRenderPass(device, forward, nullptr);
+    vkDestroyRenderPass(device, geometry, nullptr);
+    std::cout << "Deferred startup geometry/alpha/transparent/HUD/lighting/weather pipelines passed\n";
+}
+
 int main(int argc, char** argv)
 {
     if (argc < 2) { std::cerr << "shader directory is required\n"; return 1; }
@@ -728,6 +786,7 @@ int main(int argc, char** argv)
         VkPhysicalDeviceMemoryProperties memory{}; vkGetPhysicalDeviceMemoryProperties(physical, &memory);
         BufferResourceDispatch vk{vkCreateBuffer, vkDestroyBuffer, vkGetBufferMemoryRequirements, vkAllocateMemory,
             vkFreeMemory, vkBindBufferMemory, vkMapMemory, vkUnmapMemory};
+        exercise_deferred_startup(f.device, props.limits);
         if (collision_shader) exercise_collision_shader(physical, f.device, queue, f.pool, props.limits, memory, vk, collision_shader);
         std::string error;
         GpuParticleCompute compute;

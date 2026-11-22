@@ -32,6 +32,11 @@ def shader_interface(header, name, storage):
 
 
 class VulkanAlphaTestShaderTest(unittest.TestCase):
+    def test_deferred_transparent_stage_interface(self):
+        vertex = shader_interface(ROOT / "src/Layers/xrRenderVK/DeferredShaders.h", "GBufferVertex", 3)
+        fragment = shader_interface(ROOT / "src/Layers/xrRenderVK/VulkanGameShaders.h", "TransparentFragment", 1)
+        self.assertTrue(fragment <= vertex, f"Unproduced transparent fragment inputs: {sorted(fragment - vertex)}")
+
     def test_deferred_cutout_stage_interface(self):
         vertex = shader_interface(ROOT / "src/Layers/xrRenderVK/DeferredShaders.h", "GBufferVertex", 3)
         fragment = shader_interface(OUTPUT, "GBufferAlphaTestFragment", 1)
