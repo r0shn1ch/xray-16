@@ -23,6 +23,8 @@ std::map<VkImage, VkFormat> allocated_formats;
 std::map<VkImageView, VkImage> viewed_images;
 unsigned allocated_memory{}, freed_memory{};
 unsigned created_frame_color_images{};
+bool fail_multisample_image{};
+unsigned multisample_images_created{};
 unsigned blit_count{};
 VkOffset3D temporal_source_extent{}, temporal_destination_extent{};
 int fail_image_after = -1;
@@ -153,6 +155,12 @@ void VKAPI_PTR memory_types(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties *
 { *out = {}; out->memoryTypeCount = 1; out->memoryTypes[0].propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT; }
 VkResult VKAPI_PTR depth_image(VkDevice, const VkImageCreateInfo *info, const VkAllocationCallbacks *, VkImage *out)
 {
+    if (info->samples != VK_SAMPLE_COUNT_1_BIT)
+    {
+        if (fail_multisample_image)
+            return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        ++multisample_images_created;
+    }
     if (fail_image_after == 0) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     if (fail_image_after > 0) --fail_image_after;
     *out = handle<VkImage>(++next_handle);
@@ -649,6 +657,27 @@ int main()
     expected_upsample_pass=frame.bloom_upsample_render_pass();
     assert(frame.render_frame(clear,status,error,scaled_scene,nullptr,scaled_readback,nullptr,
         nullptr,nullptr,false,scaled_output));
+    frame.destroy();
+    assert(allocated_images.empty() && viewed_images.empty() && allocated_memory == freed_memory);
+    const VkExtent2D extent_before_msaa{640, 360};
+    assert(frame.initialize(physical, device, surface, queue, 0, extent_before_msaa, world_dispatch, error,
+        true, true, false, true, 0.f, 0, {320, 180}));
+    assert(frame.request_scene_samples(VK_SAMPLE_COUNT_4_BIT, error));
+    fail_multisample_image = true;
+    assert(!frame.recreate(physical, surface, extent_before_msaa, error));
+    fail_multisample_image = false;
+    assert(frame.request_scene_samples(VK_SAMPLE_COUNT_1_BIT, error));
+    assert(frame.recreate(physical, surface, extent_before_msaa, error));
+    const auto multisample_count = multisample_images_created;
+    assert(frame.request_scene_samples(VK_SAMPLE_COUNT_2_BIT, error));
+    assert(frame.recreate(physical, surface, extent_before_msaa, error));
+    assert(frame.scene_samples() == VK_SAMPLE_COUNT_2_BIT && multisample_images_created > multisample_count);
+    assert(frame.request_scene_samples(VK_SAMPLE_COUNT_4_BIT, error));
+    assert(frame.recreate(physical, surface, extent_before_msaa, error));
+    assert(frame.scene_samples() == VK_SAMPLE_COUNT_4_BIT);
+    assert(frame.request_scene_samples(VK_SAMPLE_COUNT_1_BIT, error));
+    assert(frame.recreate(physical, surface, extent_before_msaa, error));
+    assert(frame.scene_samples() == VK_SAMPLE_COUNT_1_BIT);
     frame.destroy();
     assert(allocated_images.empty() && viewed_images.empty() && allocated_memory==freed_memory);
     // Frame-generation UI is registered only after the display graph declares
