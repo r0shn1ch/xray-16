@@ -25,8 +25,8 @@ bool requested_hdr10()
 }
 }
 #if defined(XRAY_HAS_NVRHI_VULKAN)
-void initialize_nvrhi_vulkan_dispatch(VkInstance instance, PFN_vkGetInstanceProcAddr get_instance_proc,
-    VkDevice device);
+nvrhi::vulkan::DeviceHandle create_nvrhi_vulkan_device(const nvrhi::vulkan::DeviceDesc& description,
+    PFN_vkGetInstanceProcAddr get_instance_proc);
 #endif
 
 namespace
@@ -309,7 +309,6 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
             false, &enabled_device_info, &m_compute_queue, frame_generation_queues,
             &m_transfer_queue)) return fail();
 #if defined(XRAY_HAS_NVRHI_VULKAN)
-    initialize_nvrhi_vulkan_dispatch(m_instance, m_instance_proc, m_device);
     nvrhi::vulkan::DeviceDesc nvrhi_desc{};
     nvrhi_desc.instance = m_instance;
     nvrhi_desc.physicalDevice = m_physical.handle;
@@ -343,7 +342,7 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
     {
         try
         {
-            m_nvrhi_device = nvrhi::vulkan::createDevice(nvrhi_desc);
+            m_nvrhi_device = create_nvrhi_vulkan_device(nvrhi_desc, m_instance_proc);
         }
         catch (const std::exception& exception)
         {
