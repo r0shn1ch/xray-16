@@ -732,7 +732,7 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
         auto runtime = std::make_unique<GpuParticleRuntime>();
         constexpr uint32_t root_slots = 512;
         constexpr uint32_t child_slots = 1024;
-        const GpuParticleBuffers::Capacity capacity{32768, 2 * std::max(root_slots, child_slots),
+        const GpuParticleBuffers::Capacity capacity{32768, root_slots + child_slots,
             8192, 512, 8192, 8192, root_slots, 514, 48};
         if (runtime->initialize(device, get, physical.properties.limits, physical.memory, buffer_upload_.buffer,
                 capacity, FrameContext::FramesInFlight, 8 * 1024 * 1024, pipeline_cache_.handle(),

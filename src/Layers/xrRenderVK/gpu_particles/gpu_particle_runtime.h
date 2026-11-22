@@ -107,11 +107,16 @@ bool GpuReserveResources(uint particles,uint states,uint children) {
     g_Reservation.stateCount = states;
     if (particles > g_Papi.particleCapacity) { GpuAllocationError(1u); return false; }
     if (states > g_Papi.actionStateCapacity) { GpuAllocationError(4u); return false; }
-    if (children > g_Papi.emitterCapacity / 2u) { GpuAllocationError(2u); return false; }
+    uint rootSlots = g_Papi.phase;
+    uint childCapacity = g_Papi.emitterCapacity - rootSlots;
+    if (children > childCapacity) { GpuAllocationError(2u); return false; }
     // Under child-slot pressure, avoid reserving and clearing entire particle
     // ranges for events that cannot acquire an emitter.
     uint acquired = 0;
-    for (uint index = 1; acquired < children && index < g_Papi.emitterCapacity; index += 2) {
+    // Root command indices remain even. Beyond the root range, every slot
+    // belongs to the child pool.
+    for (uint slot = 0; acquired < children && slot < childCapacity; ++slot) {
+        uint index = slot < rootSlots ? slot * 2u + 1u : slot + rootSlots;
         uint previous;
         InterlockedCompareExchange(g_Emitters[index].active,0,2,previous);
         if (previous != 0) continue;

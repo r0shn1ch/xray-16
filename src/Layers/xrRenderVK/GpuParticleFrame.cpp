@@ -38,7 +38,8 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
         !capacities.particleCapacity || !capacities.emitterCapacity || !capacities.programCount ||
         bucket_count > UINT32_MAX ||
         pending_roots > 65535 || visible_roots > 65535 ||
-        pending_roots > capacities.emitterCapacity / 2 || visible_roots > capacities.emitterCapacity / 2 ||
+        !capacities.rootCapacity || capacities.rootCapacity > capacities.emitterCapacity / 2 ||
+        pending_roots > capacities.rootCapacity || visible_roots > capacities.rootCapacity ||
         !fits(B::Particles, uint64_t(capacities.particleCapacity) * sizeof(fg::GpuPapiParticle)) ||
         !fits(B::Emitters, uint64_t(capacities.emitterCapacity) * sizeof(fg::GpuPapiEmitter)) ||
         !fits(B::ActionState, uint64_t(capacities.actionStateCapacity) * 16) ||
@@ -192,7 +193,10 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
         });
         if (!read_write(prepare_roots, B::Errors)) return false;
 
-        params.phase = 0; params.rootCapacity = pending_roots;
+        // Simulation uses phase for the total root pool size, while rootCapacity
+        // is the number of command groups dispatched for this frame.
+        params.phase = capacities.rootCapacity;
+        params.rootCapacity = pending_roots;
         const auto simulate = graph.add_checked_command_pass("simulate GPU particles",
             [&, dispatch_params = params](VkCommandBuffer recording_command, std::string& pass_error) {
             return dispatch(recording_command, P::Simulate, base, dispatch_params, {}, pending_roots, pass_error);

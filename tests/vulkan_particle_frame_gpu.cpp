@@ -650,7 +650,7 @@ int main(int argc, char** argv)
         std::cout << "Visibility material resolve " << (bindless ? "passed" : "skipped (no descriptor indexing)") << '\n';
         require(compute.initialize_from_source(f.device, vkGetDeviceProcAddr, props.limits, 3, VK_NULL_HANDLE, source, error), error);
         GpuParticleBuffers buffers;
-        GpuParticleBuffers::Capacity capacity{8, 4, 1, 2, 1, 1, 2, 514, 48};
+        GpuParticleBuffers::Capacity capacity{8, 5, 1, 2, 1, 1, 2, 514, 48};
         require(buffers.initialize(f.device, props.limits, memory, vk, capacity, error), error);
         GpuParticleUniforms uniforms;
         require(uniforms.initialize(f.device, props.limits, memory, vk, 8, error), error);
@@ -690,7 +690,8 @@ int main(int argc, char** argv)
             true, true, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT, inputs, error,
             VK_NULL_HANDLE, 0, FrameSubmissionGraph::Queue::Compute,
             FrameSubmissionGraph::Queue::Copy, true), error);
-        fg::GpuPapiConstants constants{}; constants.particleCapacity = 8; constants.emitterCapacity = 4;
+        fg::GpuPapiConstants constants{}; constants.particleCapacity = 8; constants.emitterCapacity = capacity.emitters;
+        constants.rootCapacity = capacity.roots;
         constants.actionStateCapacity = 1; constants.commandCount = inputs.command_count;
         constants.programCount = inputs.program_count;
         const float planes[24]{};
@@ -720,8 +721,8 @@ int main(int argc, char** argv)
         for (const uint32_t scenario : {0u, 1u, 2u})
         {
             // Test a full parent, then a parent that can emit two particles
-            // with zero and one free child slots respectively.
-            fg::GpuPapiEmitter full_emitters[4]{};
+            // with zero free child slots and a single free slot beyond the root range.
+            fg::GpuPapiEmitter full_emitters[5]{};
             auto& root = full_emitters[0];
             root.active = root.generation = 1;
             root.completedSerial = 1;
@@ -731,7 +732,8 @@ int main(int argc, char** argv)
             root.childBirth = 0;
             root.childPlay = root.childDead = root.pad0 = GPU_PAPI_INVALID;
             full_emitters[1].active = 1;
-            full_emitters[3].active = scenario == 2 ? 0 : 1;
+            full_emitters[3].active = 1;
+            full_emitters[4].active = scenario == 2 ? 0 : 1;
             fg::GpuPapiProgram source_program = program;
             source_program.actionCount = 1;
             fg::GpuPapiAction source_action{};

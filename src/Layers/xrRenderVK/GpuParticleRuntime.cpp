@@ -57,6 +57,7 @@ bool GpuParticleRuntime::record(uint32_t index, VkCommandBuffer command, const s
         return false;
     fg::GpuPapiConstants params{};
     params.particleCapacity = capacity_.particles; params.emitterCapacity = capacity_.emitters;
+    params.rootCapacity = capacity_.roots;
     params.actionStateCapacity = capacity_.action_states; params.commandCount = inputs.command_count;
     params.programCount = inputs.program_count;
     const auto readback_record = [&](VkCommandBuffer readback_command, std::string& readback_error) {
