@@ -108,7 +108,28 @@ public:
             error = "Frame submission graph: invalid external dependency removal";
             return false;
         }
+        if (passes_[consumer].submission)
+        {
+            error = "Frame submission graph: cannot remove a dependency from a submitted pass";
+            return false;
+        }
         auto& dependencies = passes_[consumer].dependencies;
+        const auto index = static_cast<size_t>(source_queue);
+        if (index >= passes_[consumer].queued_waits.size())
+        {
+            error = "Frame submission graph: invalid dependency queue";
+            return false;
+        }
+        const auto matching = std::find_if(dependencies.begin(), dependencies.end(),
+            [source_queue, submission](const Dependency& dependency) {
+                return dependency.external && dependency.source_queue == source_queue &&
+                    dependency.submission == submission;
+            });
+        if (matching != dependencies.end() && passes_[consumer].queued_waits[index] >= submission)
+        {
+            error = "Frame submission graph: cannot remove a dependency after its queue wait was prepared";
+            return false;
+        }
         dependencies.erase(std::remove_if(dependencies.begin(), dependencies.end(),
             [source_queue, submission](const Dependency& dependency) {
                 return dependency.external && dependency.source_queue == source_queue &&

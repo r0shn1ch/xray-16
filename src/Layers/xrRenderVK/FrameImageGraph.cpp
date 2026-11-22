@@ -129,11 +129,12 @@ bool supported_on_queue(BufferUse use, VkQueueFlags flags)
     {
     case BufferUse::VertexRead:
     case BufferUse::FragmentRead:
-    case BufferUse::IndirectRead:
         return (flags & VK_QUEUE_GRAPHICS_BIT) != 0;
+    case BufferUse::IndirectRead:
+        // DRAW_INDIRECT also covers vkCmdDispatchIndirect on compute queues.
+        return (flags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) != 0;
     case BufferUse::IndirectAndComputeRead:
-        return (flags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) ==
-            (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT);
+        return (flags & VK_QUEUE_COMPUTE_BIT) != 0;
     case BufferUse::ComputeRead:
     case BufferUse::ComputeWrite:
     case BufferUse::ComputeReadWrite:

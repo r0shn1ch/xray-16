@@ -33,6 +33,29 @@ int main()
     const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     std::string error;
     {
+        // A dedicated compute queue supports both dispatch-indirect and a
+        // simultaneous compute read of the indirect argument buffer.
+        FrameImageGraph graph(FrameSubmissionGraph::Queue::Compute);
+        FrameImageGraph::BufferResource indirect, combined;
+        assert(graph.import_buffer(reinterpret_cast<VkBuffer>(uintptr_t(901)), 0, 64,
+            BufferUse::HostWrite, indirect, error, FrameSubmissionGraph::Queue::Compute));
+        assert(graph.import_buffer(reinterpret_cast<VkBuffer>(uintptr_t(902)), 0, 64,
+            BufferUse::HostWrite, combined, error, FrameSubmissionGraph::Queue::Compute));
+        const auto dispatch = graph.add_pass("compute indirect dispatch", [] {});
+        assert(graph.read_buffer(dispatch, indirect, BufferUse::IndirectRead, error));
+        assert(graph.read_buffer(dispatch, combined, BufferUse::IndirectAndComputeRead, error));
+        ImageStateTracker states;
+        const size_t first_barrier = buffer_barriers.size();
+        assert(graph.execute(command, states, {capture}, error, VK_QUEUE_COMPUTE_BIT, false,
+            FrameSubmissionGraph::Queue::Compute));
+        assert(buffer_barriers.size() == first_barrier + 2);
+        assert((buffer_barriers[first_barrier].dstAccessMask & VK_ACCESS_INDIRECT_COMMAND_READ_BIT) != 0);
+        assert((buffer_barriers[first_barrier + 1].dstAccessMask &
+            (VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT)) ==
+            (VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT));
+        buffer_barriers.clear(); buffer_stages.clear();
+    }
+    {
         FrameImageGraph graph;
         FrameImageGraph::BufferResource buffer;
         assert(graph.declare_buffer(64, VK_BUFFER_USAGE_TRANSFER_DST_BIT, buffer, error));

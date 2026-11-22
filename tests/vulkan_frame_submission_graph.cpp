@@ -76,8 +76,16 @@ int main()
     assert(shared_wait_count == 2);
     assert(!graph.depends_on(external, late, error));
     assert(!graph.depends_on_submission(external, FrameSubmissionGraph::Queue::Compute, 18, error));
-    assert(graph.remove_dependency_on_submission(consumer, FrameSubmissionGraph::Queue::Compute, 17, error));
+    assert(!graph.remove_dependency_on_submission(consumer, FrameSubmissionGraph::Queue::Compute, 17, error));
+    assert(error.find("queue wait was prepared") != std::string::npos);
     assert(graph.prepare(consumer, wait, error));
+    assert(shared_wait_count == 2);
+    assert(!graph.remove_dependency_on_submission(external, FrameSubmissionGraph::Queue::Compute, 17, error));
+    assert(error.find("submitted pass") != std::string::npos);
+    const auto removable = graph.add_pass("unprepared wait", FrameSubmissionGraph::Queue::Graphics);
+    assert(graph.depends_on_submission(removable, FrameSubmissionGraph::Queue::Compute, 17, error));
+    assert(graph.remove_dependency_on_submission(removable, FrameSubmissionGraph::Queue::Compute, 17, error));
+    assert(graph.prepare(removable, wait, error));
     assert(shared_wait_count == 2);
 
     FrameRecordingContext source{};
