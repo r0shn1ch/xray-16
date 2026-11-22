@@ -36,6 +36,27 @@ bool ownsEdge(vec2 a, vec2 b)
     return a.y > b.y || (a.y == b.y && a.x < b.x);
 }
 
+struct RasterEdge
+{
+    vec2 origin;
+    vec2 segment;
+    float direction;
+};
+
+RasterEdge makeRasterEdge(vec2 a, vec2 b)
+{
+    // Evaluate a shared edge from the same endpoint regardless of winding.
+    if (a.y > b.y || (a.y == b.y && a.x > b.x))
+        return RasterEdge(b, a - b, -1.0);
+    return RasterEdge(a, b - a, 1.0);
+}
+
+float evaluateEdge(RasterEdge edge, vec2 samplePosition)
+{
+    vec2 offset = samplePosition - edge.origin;
+    return (edge.segment.x * offset.y - edge.segment.y * offset.x) * edge.direction;
+}
+
 float clipDistance(vec4 vertex, uint plane)
 {
     switch (plane)
@@ -74,21 +95,28 @@ void rasterizeTriangle(vec4 a, vec4 b, vec4 c, uint id)
     if (any(greaterThan(first, last)))
         return;
     bvec3 sharedEdge = bvec3(ownsEdge(p1, p2), ownsEdge(p2, p0), ownsEdge(p0, p1));
+    RasterEdge edge0 = makeRasterEdge(p1, p2);
+    RasterEdge edge1 = makeRasterEdge(p2, p0);
+    RasterEdge edge2 = makeRasterEdge(p0, p1);
     vec3 depth = vec3(a.z, b.z, c.z) / vec3(a.w, b.w, c.w);
+    vec2 depthDelta = depth.yz - depth.xx;
     for (int y = int(first.y); y <= int(last.y); ++y)
     {
         for (int x = int(first.x) + int(gl_LocalInvocationID.x); x <= int(last.x); x += int(gl_WorkGroupSize.x))
         {
             vec2 samplePosition = vec2(x, y) + 0.5;
-            vec3 edges = vec3(visibilityEdge(p1, p2, samplePosition), visibilityEdge(p2, p0, samplePosition),
-                visibilityEdge(p0, p1, samplePosition));
+            vec3 edges = vec3(evaluateEdge(edge0, samplePosition), evaluateEdge(edge1, samplePosition),
+                evaluateEdge(edge2, samplePosition));
             if (any(lessThan(edges, vec3(0.0))) ||
                 (edges.x == 0.0 && !sharedEdge.x) || (edges.y == 0.0 && !sharedEdge.y) ||
                 (edges.z == 0.0 && !sharedEdge.z))
                 continue;
-            float z = dot(edges / area, depth);
-            if (!(z >= 0.0 && z <= 1.0))
+            // Interpolate relative to one vertex to preserve constant depth
+            // exactly, including at the near and far clip planes.
+            float z = depth.x + dot(edges.yz / area, depthDelta);
+            if (isnan(z) || isinf(z))
                 continue;
+            z = clamp(z, 0.0, 1.0);
             uint encodedDepth = z == 0.0 ? 0u : floatBitsToUint(z);
             ivec2 pixel = ivec2(x, y);
             // Dispatch all depth batches first. After a shader-write to

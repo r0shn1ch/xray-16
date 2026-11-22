@@ -61,10 +61,12 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         limits.maxStorageBufferRange, limits.maxUniformBufferRange, VK_NULL_HANDLE,
         code.data(), shader.size(), error), error);
 
-    const visibility::DrawEntry entries[]{{0, 3, 0, 0, 0}, {3, 3, 0, 0, 1, 0}, {6, 3, 0, 0, 1}};
-    const VkDrawIndexedIndirectCommand commands[]{{3, 1, 0, 0, 0}, {3, 1, 3, 0, 0}, {3, 1, 6, 0, 0}};
-    const uint32_t indices[]{0, 1, 2, 3, 4, 5, 6, 7, 8};
-    LevelVertex vertices[9]{};
+    const visibility::DrawEntry entries[]{{0, 3, 0, 0, 0}, {3, 3, 0, 0, 1, 0}, {6, 3, 0, 0, 1},
+        {9, 3, 0, 0, 1}};
+    const VkDrawIndexedIndirectCommand commands[]{{3, 1, 0, 0, 0}, {3, 1, 3, 0, 0}, {3, 1, 6, 0, 0},
+        {3, 1, 9, 0, 0}};
+    const uint32_t indices[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    LevelVertex vertices[12]{};
     for (uint32_t draw = 0; draw < 3; ++draw)
     {
         const float depths[]{0.75f, 0.5f, 0.0625f};
@@ -77,7 +79,13 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
             vertices[3 * draw + vertex].normal[1] = 1.f;
         }
     }
-    constexpr uint32_t visible_draws = 0b011u;
+    const float far_points[][3]{{.5f, -.9f, 1.f}, {.89f, -.85f, 1.f}, {.91f, .5f, 1.f}};
+    for (uint32_t vertex = 0; vertex < 3; ++vertex)
+    {
+        std::copy_n(far_points[vertex], 3, vertices[9 + vertex].position);
+        vertices[9 + vertex].normal[1] = 1.f;
+    }
+    constexpr uint32_t visible_draws = 0b1011u;
     constexpr auto host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
     BufferResource geometry[4], mask, readback;
     const auto upload = [&](BufferResource& buffer, const void* data, size_t bytes, VkBufferUsageFlags usage) {
@@ -173,7 +181,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
             for (uint32_t batch = 0; batch < 2; ++batch)
             {
                 params.first_draw = batch;
-                params.draw_count = 1 + batch;
+                params.draw_count = batch ? 3 : 1;
                 params.geometry_batch = batch;
                 if (!raster.record_mixed(cb, 2 * phase + batch, buffers, descriptors, &params, params.draw_count, 1,
                         why, VK_NULL_HANDLE, views.mask))
@@ -204,7 +212,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
             for (uint32_t batch = 0; batch < 2; ++batch)
             {
                 params.first_draw = batch;
-                params.draw_count = 1 + batch;
+                params.draw_count = batch ? 3 : 1;
                 params.geometry_batch = batch;
                 if (!visibility_passes.resolve(cb, 0, batch, input, ids, materials, views.images[2], views.images[3],
                         {8, 8}, params, why))
@@ -257,6 +265,8 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     require(std::abs(depth - 0.1875f) < 1e-6f, "visibility depth after near clipping");
     require(pixels[0][20] == visibility::pack_id(0, 0), "near clipping must expose the triangle behind it");
     require(pixels[0][0] == visibility::Background && pixels[1][0] == 0x3f800000u, "visibility background clear");
+    require(pixels[0][23] == visibility::pack_id(3, 0) && pixels[1][23] == 0x3f800000u,
+        "far-plane triangle must retain its ID at an interior pixel");
     if (bindless)
     {
         uint16_t output[2][64][4]{};
