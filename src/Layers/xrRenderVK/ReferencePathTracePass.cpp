@@ -57,7 +57,7 @@ bool ReferencePathTracePass::initialize(VkDevice device, PFN_vkGetDeviceProcAddr
         !create_pipeline || !destroy_pipeline_ || !bind_pipeline_ || !bind_sets_ || !push_constants_ || !dispatch_)
         return fail("reference path trace Vulkan procedures unavailable");
 
-    VkDescriptorSetLayoutBinding bindings[12]{};
+    VkDescriptorSetLayoutBinding bindings[11]{};
     bindings[0] = {0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1,
         VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
     for (uint32_t i = 1; i < 10; ++i)
@@ -69,10 +69,8 @@ bool ReferencePathTracePass::initialize(VkDevice device, PFN_vkGetDeviceProcAddr
     }
     bindings[10] = {10, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
         VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
-    bindings[11] = {11, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-        VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
     VkDescriptorSetLayoutCreateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    set_info.bindingCount = 12;
+    set_info.bindingCount = 11;
     set_info.pBindings = bindings;
     if (create_set_layout(device, &set_info, nullptr, &set_layout_) != VK_SUCCESS)
         return fail("reference path trace descriptor layout creation failed");
@@ -88,7 +86,7 @@ bool ReferencePathTracePass::initialize(VkDevice device, PFN_vkGetDeviceProcAddr
         return fail("reference path trace pipeline layout creation failed");
 
     const VkDescriptorPoolSize pool_sizes[]{{VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, frame_slots},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, frame_slots * 10},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, frame_slots * 9},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, frame_slots}};
     VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pool_info.maxSets = frame_slots;
@@ -126,7 +124,7 @@ bool ReferencePathTracePass::record(VkCommandBuffer command, uint32_t frame_slot
     const LevelRayScene& scene, const BufferResource& primary_rays,
     const BufferResource& primary_surfaces, const BufferResource& previous_history,
     const BufferResource& next_history, const BufferResource& local_lights,
-    const BufferResource& world_radiance_cache, VkDescriptorSet projection_set,
+    VkDescriptorSet projection_set,
     VkImageView motion_view, VkSampler motion_sampler,
     const BufferResource& radiance,
     const ReferencePathTraceParameters& parameters, std::string& error) const
@@ -137,7 +135,6 @@ bool ReferencePathTracePass::record(VkCommandBuffer command, uint32_t frame_slot
         !primary_surfaces.handle() || !radiance.handle() || !scene.hit_batch_buffer().handle() ||
         !scene.hit_geometry_buffer().handle() || !scene.texture_transform_buffer(frame_slot).handle() ||
         !previous_history.handle() || !next_history.handle() || !local_lights.handle() ||
-        !world_radiance_cache.handle() ||
         !motion_view || !motion_sampler ||
         parameters.dimensions[2] != texture_capacity_ || parameters.dimensions[1] == 0 ||
         VkDeviceSize(count) * sizeof(RayQueryInput) > primary_rays.size() ||
@@ -166,11 +163,10 @@ bool ReferencePathTracePass::record(VkCommandBuffer command, uint32_t frame_slot
         {radiance.handle(), 0, VkDeviceSize(count) * sizeof(float) * 4},
         {previous_history.handle(), 0, VkDeviceSize(count) * sizeof(ReferencePathTraceHistoryCell)},
         {next_history.handle(), 0, VkDeviceSize(count) * sizeof(ReferencePathTraceHistoryCell)},
-        {local_lights.handle(), 0, local_lights.size()},
-        {world_radiance_cache.handle(), 0, world_radiance_cache.size()}};
+        {local_lights.handle(), 0, local_lights.size()}};
     VkDescriptorImageInfo motion_info{motion_sampler, motion_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    VkWriteDescriptorSet writes[12]{};
-    for (uint32_t i = 0; i < 12; ++i)
+    VkWriteDescriptorSet writes[11]{};
+    for (uint32_t i = 0; i < 11; ++i)
     {
         writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[i].dstSet = sets_[frame_slot];
@@ -188,11 +184,7 @@ bool ReferencePathTracePass::record(VkCommandBuffer command, uint32_t frame_slot
     }
     writes[10].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[10].pImageInfo = &motion_info;
-    if (!infos[9].buffer || !infos[9].range || infos[9].range > max_storage_range_)
-    { error = "reference path trace cache descriptor exceeds storage buffer limits"; return false; }
-    writes[11].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    writes[11].pBufferInfo = &infos[9];
-    update_sets_(device_, 12, writes, 0, nullptr);
+    update_sets_(device_, 11, writes, 0, nullptr);
     bind_pipeline_(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
     const VkDescriptorSet descriptor_sets[]{sets_[frame_slot], texture_set_,
         projection_set ? projection_set : projection_fallback_.set()};

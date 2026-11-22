@@ -39,7 +39,7 @@ public:
     bool record(VkCommandBuffer command, uint32_t frame_slot, const LevelRayScene& scene,
         const BufferResource& primary_rays, const BufferResource& primary_surfaces,
         const BufferResource& previous_history, const BufferResource& next_history,
-        const BufferResource& local_lights, const BufferResource& world_radiance_cache,
+        const BufferResource& local_lights,
         VkDescriptorSet projection_set,
         VkImageView motion_view, VkSampler motion_sampler, const BufferResource& radiance,
         const ReferencePathTraceParameters& parameters,

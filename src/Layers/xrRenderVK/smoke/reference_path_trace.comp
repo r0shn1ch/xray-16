@@ -5,8 +5,6 @@
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_GOOGLE_include_directive : require
 
-#define WORLD_CACHE_BINDING 11
-#include "world_radiance_cache.glsl"
 
 layout(local_size_x = 64) in;
 const uint RAY_MATERIAL_EMISSIVE = 1u;
@@ -812,16 +810,6 @@ void main()
         if (!reconstruct_surface(hit, direction, hit_position, hit_normal, hit_albedo,
                 hit_metallic, hit_roughness, hit_ao, hit_is_pbr, hit_is_emissive))
             break;
-        vec3 cached_outgoing = world_cache_sample(hit_position, hit_normal, origin,
-            parameters.dimensions.w);
-        if (any(greaterThan(cached_outgoing, vec3(1e-4))))
-        {
-            // The segment from the previous path vertex is already ray-visible.
-            // Evaluate the cache in that exact receiver direction and terminate
-            // this sample's remaining bounces to avoid double counting them.
-            path_radiance += throughput * cached_outgoing;
-            break;
-        }
         if (hit_is_emissive)
             path_radiance += throughput * hit_albedo;
         float sun_cosine = max(dot(hit_normal, sun_direction), 0.0);

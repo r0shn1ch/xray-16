@@ -714,7 +714,7 @@ bool IndirectRayFrames::record(const FrameRecordingContext& frame, const LevelRa
         const auto path_trace = graph.add_checked_pass("diffuse reference path trace", [&](std::string& pass_error) {
             return reference_path_trace_pass_.record(recording_frame.command_buffer, frame.frame_index, scene,
                 rays, surfaces_[frame.image_index], path_trace_history_[reservoir_input_index],
-                path_trace_history_[reservoir_output_index_], light_buffer, world_radiance_cache_, projection_set,
+                path_trace_history_[reservoir_output_index_], light_buffer, projection_set,
                 motion_view, projection_sampler, radiance_[frame.image_index], path_trace_parameters, pass_error);
         });
         FrameImageGraph::BufferResource written_path_trace_history;
@@ -729,7 +729,6 @@ bool IndirectRayFrames::record(const FrameRecordingContext& frame, const LevelRa
                 ImageUse::SampledGraphicsCompute, error)) ||
             (!local_lights.empty() && !graph.read_buffer(path_trace, light_resource,
                 BufferUse::ComputeRead, error)) ||
-            !graph.read_buffer(path_trace, world_cache_resource, BufferUse::ComputeRead, error) ||
             !graph.read_write_buffer(path_trace, evaluated_radiance, BufferUse::ComputeReadWrite,
                 path_traced_radiance, error))
             return false;
