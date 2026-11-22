@@ -42,6 +42,12 @@ private:
                 memory_properties == other.memory_properties && pooled_memory == other.pooled_memory &&
                 shared_queue_flags == other.shared_queue_flags;
         }
+        bool supports(const Descriptor& request) const
+        {
+            return size == request.size && (usage & request.usage) == request.usage &&
+                memory_properties == request.memory_properties && pooled_memory == request.pooled_memory &&
+                shared_queue_flags == request.shared_queue_flags;
+        }
     };
     VkDevice device_{};
     VkPhysicalDeviceMemoryProperties memory_{};

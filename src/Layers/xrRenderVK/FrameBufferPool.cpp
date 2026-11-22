@@ -30,7 +30,9 @@ bool FrameBufferPool::acquire(VkDeviceSize size, VkBufferUsageFlags usage,
     }
     const Descriptor descriptor{size, usage, required_memory_properties, pooled_memory,
         shared_queue_flags};
-    buffer = resources_.acquire(descriptor, [&]() -> std::unique_ptr<BufferResource> {
+    buffer = resources_.acquire(descriptor, [](const Descriptor& existing, const Descriptor& request) {
+        return existing.supports(request);
+    }, [&]() -> std::unique_ptr<BufferResource> {
         auto resource = std::make_unique<BufferResource>();
         if (!resource->initialize(device_, size, usage, required_memory_properties,
                 memory_, dispatch_, error, pooled_memory, shared_queue_flags))

@@ -741,6 +741,21 @@ int main(int argc, char** argv)
         require(index_values[0] == 0 && index_values[1] == 2 && index_values[2] == 1, "root and child particle indices");
         FrameBufferPool buffer_pool;
         require(buffer_pool.initialize(f.device, memory, vk), "particle frame buffer pool");
+        {
+            constexpr auto memory_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+            BufferResource* broad{};
+            BufferResource* narrow{};
+            const auto broad_usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            require(buffer_pool.acquire(256, broad_usage, memory_flags, false, broad, error), error);
+            require(buffer_pool.acquire(256, VK_BUFFER_USAGE_TRANSFER_DST_BIT, memory_flags, false, narrow, error), error);
+            require(broad != narrow && buffer_pool.release(broad) && buffer_pool.release(narrow), "pool releases");
+            BufferResource* reused{};
+            require(buffer_pool.acquire(256, VK_BUFFER_USAGE_TRANSFER_DST_BIT, memory_flags, false, reused, error), error);
+            require(reused == narrow, "pool prefers exact usage");
+            require(buffer_pool.acquire(256, VK_BUFFER_USAGE_TRANSFER_DST_BIT, memory_flags, false, reused, error), error);
+            require(reused == broad, "pool reuses available compatible usage");
+            require(buffer_pool.release(narrow) && buffer_pool.release(broad), "pool releases reused buffers");
+        }
         GpuParticleRuntime runtime;
         require(runtime.initialize(f.device, vkGetDeviceProcAddr, props.limits, memory, vk, capacity,
             1, 16384, VK_NULL_HANDLE, source, error, &buffer_pool), error);

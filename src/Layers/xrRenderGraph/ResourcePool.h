@@ -12,16 +12,26 @@ template <typename Descriptor, typename Resource>
 class ResourcePool
 {
 public:
-    template <typename Create>
-    Resource* acquire(const Descriptor& descriptor, Create&& create)
+    template <typename Compatible, typename Create>
+    Resource* acquire(const Descriptor& descriptor, Compatible&& compatible, Create&& create)
     {
+        Entry* fallback = nullptr;
         for (auto& entry : entries_)
         {
-            if (!entry.in_use && entry.descriptor == descriptor)
+            if (entry.in_use)
+                continue;
+            if (entry.descriptor == descriptor)
             {
                 entry.in_use = true;
                 return entry.resource.get();
             }
+            if (!fallback && compatible(entry.descriptor, descriptor))
+                fallback = &entry;
+        }
+        if (fallback)
+        {
+            fallback->in_use = true;
+            return fallback->resource.get();
         }
 
         auto resource = create();
