@@ -2043,9 +2043,21 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
     frame_.set_hiz_dynamic_mask_enabled(hiz_dynamic_mask_enabled);
     if (fsr3_upscaler_.ready())
     {
-        const float far_plane = g_pGamePersistent ? g_pGamePersistent->Environment().CurrentEnv.far_plane : 500.f;
-        fsr3_upscaler_.set_frame(Device.dwFrame, Device.fTimeDelta * 1000.f, VIEWPORT_NEAR,
-            far_plane, Device.fFOV * (3.14159265358979323846f / 180.f));
+        float near_plane = VIEWPORT_NEAR;
+        float far_plane = g_pGamePersistent ? g_pGamePersistent->Environment().CurrentEnv.far_plane : 500.f;
+        float vertical_fov = deg2rad(Device.fFOV);
+        const auto& projection = Device.mProject;
+        if (projection._34 == 1.f && projection._44 == 0.f &&
+            std::isfinite(projection._33) && std::isfinite(projection._43) &&
+            projection._33 > 1.f && projection._43 < 0.f)
+        {
+            near_plane = -projection._43 / projection._33;
+            far_plane = -projection._43 / (projection._33 - 1.f);
+            if (std::isfinite(projection._22) && projection._22 > 0.f)
+                vertical_fov = 2.f * std::atan(1.f / projection._22);
+        }
+        fsr3_upscaler_.set_frame(Device.dwFrame, Device.fTimeDelta * 1000.f,
+            near_plane, far_plane, vertical_fov);
     }
     const auto discard_frame_history = [&] {
         // Shadow faces can be marked cached while recording the frame.
