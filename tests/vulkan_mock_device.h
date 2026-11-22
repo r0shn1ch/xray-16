@@ -20,6 +20,9 @@ template <class T> T handle(uintptr_t n)
 uintptr_t next_handle = 100;
 uint32_t draws{}, total_indices{}, buffers_destroyed{}, images_destroyed{}, submits{}, descriptor_frees{};
 int32_t last_vertex_base{};
+struct IndexedDraw { VkBuffer indices; uint32_t count, first_index; int32_t vertex_base; };
+VkBuffer bound_indices{};
+std::vector<IndexedDraw> indexed_draws;
 std::array<float, 28> last_texture_rows{};
 std::unordered_map<VkBuffer, VkDeviceSize> buffers;
 std::unordered_map<VkBuffer, VkBufferUsageFlags> buffer_usages;
@@ -109,6 +112,7 @@ void VKAPI_PTR bind_vertices(VkCommandBuffer, uint32_t, uint32_t, const VkBuffer
 void VKAPI_PTR bind_indices(VkCommandBuffer, VkBuffer b, VkDeviceSize, VkIndexType type)
 {
     assert(buffers.count(b) && type == VK_INDEX_TYPE_UINT32);
+    bound_indices = b;
 }
 void VKAPI_PTR push(VkCommandBuffer, VkPipelineLayout, VkShaderStageFlags, uint32_t offset, uint32_t size, const void *data)
 {
@@ -116,12 +120,13 @@ void VKAPI_PTR push(VkCommandBuffer, VkPipelineLayout, VkShaderStageFlags, uint3
     if (offset == 128 && size == sizeof(last_texture_rows))
         std::memcpy(last_texture_rows.data(), data, size);
 }
-void VKAPI_PTR draw(VkCommandBuffer, uint32_t count, uint32_t instances, uint32_t, int32_t vertex_base, uint32_t)
+void VKAPI_PTR draw(VkCommandBuffer, uint32_t count, uint32_t instances, uint32_t first_index, int32_t vertex_base, uint32_t)
 {
     assert(instances == 1 && count % 3 == 0);
     ++draws;
     last_vertex_base=vertex_base;
     total_indices += count;
+    indexed_draws.push_back({bound_indices, count, first_index, vertex_base});
 }
 VkResult VKAPI_PTR descriptor_layout(VkDevice, const VkDescriptorSetLayoutCreateInfo *, const VkAllocationCallbacks *, VkDescriptorSetLayout *out)
 {

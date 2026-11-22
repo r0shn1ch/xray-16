@@ -1,6 +1,7 @@
 #include "xrEngine/stdafx.h"
 #include "src/Layers/xrRenderVK/EngineLevelModels.h"
 #include "src/Layers/xrRenderVK/GpuModel.h"
+#include "src/Layers/xrRenderVK/ObjectVelocityPass.h"
 #include "src/Layers/xrRenderVK/VsmPageRender.h"
 #include "src/Layers/xrRenderVK/VulkanModelVisual.h"
 #include "src/Layers/xrRenderVK/ShaderAssetFingerprint.h"
@@ -23,6 +24,43 @@
 using namespace xray::render::vulkan;
 namespace
 {
+template <typename Handle, typename Info>
+VkResult VKAPI_PTR create_velocity_object(VkDevice, const Info*, const VkAllocationCallbacks*, Handle* result)
+{
+    *result = vk_mock::handle<Handle>(vk_mock::next_handle++);
+    return VK_SUCCESS;
+}
+template <typename Handle>
+void VKAPI_PTR destroy_velocity_object(VkDevice, Handle, const VkAllocationCallbacks*) {}
+void VKAPI_PTR begin_velocity_pass(VkCommandBuffer, const VkRenderPassBeginInfo*, VkSubpassContents) {}
+void VKAPI_PTR end_velocity_pass(VkCommandBuffer) {}
+PFN_vkVoidFunction VKAPI_PTR velocity_proc(VkDevice, const char* name)
+{
+#define VELOCITY_PROC(api, function) if (std::strcmp(name, #api) == 0) return reinterpret_cast<PFN_vkVoidFunction>(function)
+    VELOCITY_PROC(vkCreateRenderPass, (create_velocity_object<VkRenderPass, VkRenderPassCreateInfo>));
+    VELOCITY_PROC(vkDestroyRenderPass, destroy_velocity_object<VkRenderPass>);
+    VELOCITY_PROC(vkCreateFramebuffer, (create_velocity_object<VkFramebuffer, VkFramebufferCreateInfo>));
+    VELOCITY_PROC(vkDestroyFramebuffer, destroy_velocity_object<VkFramebuffer>);
+    VELOCITY_PROC(vkCreateShaderModule, (create_velocity_object<VkShaderModule, VkShaderModuleCreateInfo>));
+    VELOCITY_PROC(vkDestroyShaderModule, destroy_velocity_object<VkShaderModule>);
+    VELOCITY_PROC(vkCreatePipelineLayout, vk_mock::layout);
+    VELOCITY_PROC(vkDestroyPipelineLayout, vk_mock::destroy_layout);
+    VELOCITY_PROC(vkCreateGraphicsPipelines, vk_mock::pipeline);
+    VELOCITY_PROC(vkDestroyPipeline, vk_mock::destroy_pipeline);
+    VELOCITY_PROC(vkCmdBeginRenderPass, begin_velocity_pass);
+    VELOCITY_PROC(vkCmdEndRenderPass, end_velocity_pass);
+    VELOCITY_PROC(vkCmdBindPipeline, vk_mock::bind_pipeline);
+    VELOCITY_PROC(vkCmdBindDescriptorSets, vk_mock::bind_descriptor);
+    VELOCITY_PROC(vkCmdSetViewport, vk_mock::viewport);
+    VELOCITY_PROC(vkCmdSetScissor, vk_mock::scissor);
+    VELOCITY_PROC(vkCmdBindVertexBuffers, vk_mock::bind_vertices);
+    VELOCITY_PROC(vkCmdBindIndexBuffer, vk_mock::bind_indices);
+    VELOCITY_PROC(vkCmdPushConstants, vk_mock::push);
+    VELOCITY_PROC(vkCmdDrawIndexed, vk_mock::draw);
+    VELOCITY_PROC(vkCmdDrawIndexedIndirect, vk_mock::draw_indexed_indirect);
+#undef VELOCITY_PROC
+    return nullptr;
+}
 unsigned model_ray_builds{}, model_ray_updates{}, model_ray_destroyed{};
 VkResult VKAPI_PTR create_model_as(VkDevice, const VkAccelerationStructureCreateInfoKHR*,
     const VkAllocationCallbacks*, VkAccelerationStructureKHR* out)
@@ -683,6 +721,109 @@ int main()
         assert(gpu.visual_count() == 1 && gpu.record(frame, pass, mvp));
         gpu.destroy();
         assert(buffers.empty() && allocations.empty() && images.empty());
+    }
+    {
+        // Exercise the real GpuLevel upload/packing/selection path. The CPU
+        // cluster index vectors have already been released when velocity runs.
+        ShadowOfChernobylMode = true;
+        ClearSkyMode = CallOfPripyatMode = false;
+        constexpr unsigned cells = 24, side = cells + 1;
+        constexpr unsigned vertex_count = side * side, index_count = cells * cells * 6;
+        Bytes vb, ib, geom, shaders, container;
+        put32(vb, 1);
+        for (auto declaration : {std::array<uint8_t, 8>{0, 0, 0, 0, 2, 0, 0, 0},
+                std::array<uint8_t, 8>{0, 0, 12, 0, 2, 0, 3, 0},
+                std::array<uint8_t, 8>{0, 0, 24, 0, 1, 0, 5, 0},
+                std::array<uint8_t, 8>{0xff, 0, 0, 0, 17, 0, 0, 0}})
+            vb.insert(vb.end(), declaration.begin(), declaration.end());
+        put32(vb, vertex_count);
+        for (unsigned y = 0; y < side; ++y)
+            for (unsigned x = 0; x < side; ++x)
+            {
+                const float u = float(x) / cells, v = float(y) / cells;
+                for (float value : {-0.8f + 1.6f * u, -0.8f + 1.6f * v,
+                        0.5f + 0.15f * std::sin(u * 6.2831853f) * std::cos(v * 6.2831853f),
+                        0.f, 0.f, 1.f, u, v})
+                    putfloat(vb, value);
+            }
+        put32(ib, 1); put32(ib, index_count);
+        for (unsigned y = 0; y < cells; ++y)
+            for (unsigned x = 0; x < cells; ++x)
+            {
+                const unsigned a = y * side + x, b = a + 1, c = a + side, d = c + 1;
+                for (unsigned index : {a, b, c, b, d, c}) put16(ib, static_cast<uint16_t>(index));
+            }
+        chunk(geom, 9, vb); chunk(geom, 10, ib);
+        save(directory / "level.geom", geom);
+        FS.rescan_path(FS.get_path("$level$")->m_Path, false);
+        put32(shaders, 1);
+        const char material[] = "default/fixture";
+        shaders.insert(shaders.end(), material, material + sizeof(material));
+        for (unsigned value : {0u, 0u, vertex_count, 0u, 0u, index_count}) put32(container, value);
+        ObjectVelocityPass velocity;
+        assert(velocity.initialize(device, velocity_proc, frame.extent, VK_FORMAT_D32_SFLOAT,
+            {handle<VkImageView>(41)}, {handle<VkImageView>(42)}, VK_NULL_HANDLE, error));
+        const auto old_camera = Device.vCameraPosition;
+        const float old_fov = Device.fFOV;
+        Device.vCameraPosition.set(0.f, 0.f, -2.f);
+        Device.fFOV = 60.f;
+        for (uint8_t type : {uint8_t(0), uint8_t(2)})
+        {
+            Bytes header(44, 0), visual, visuals, level;
+            header[0] = 4; header[1] = type;
+            chunk(visual, 1, header); chunk(visual, 21, container);
+            if (type == 2)
+            {
+                Bytes windows(16, 0);
+                put32(windows, 2);
+                put32(windows, 0); put16(windows, index_count / 3); put16(windows, vertex_count);
+                put32(windows, 0); put16(windows, 0); put16(windows, 2);
+                chunk(visual, 6, windows);
+            }
+            chunk(visuals, 0, visual);
+            chunk(level, 1, Bytes{14, 0, 1, 0});
+            chunk(level, 2, shaders); chunk(level, 3, visuals);
+            IReader reader(level.data(), level.size());
+            GpuLevel gpu;
+            char cluster_flag[] = "-vk-cluster-dag";
+            char* old_params = Core.Params;
+            Core.Params = cluster_flag;
+            const bool loaded = gpu.load(reader, device, queue, pool_handle, memory, upload_dispatch(), textures, pass, error);
+            Core.Params = old_params;
+            assert(loaded && gpu.retire_completed_uploads() && !gpu.has_cluster_visibility());
+            indexed_draws.clear();
+            assert(gpu.record_visual(0, frame, pass, mvp, GeometryPhase::OpaqueAndAlphaTest, 1.f, false));
+            const auto shaded_draws = indexed_draws;
+            assert(shaded_draws.size() > 1); // Confirm actual cluster selection.
+            indexed_draws.clear();
+            assert(velocity.begin(frame));
+            assert(gpu.record_object_velocity_visual(0, frame, velocity, mvp, mvp));
+            velocity.end(frame);
+            assert(indexed_draws.size() == shaded_draws.size());
+            for (size_t i = 0; i < shaded_draws.size(); ++i)
+            {
+                assert(indexed_draws[i].indices == shaded_draws[i].indices);
+                assert(indexed_draws[i].count == shaded_draws[i].count);
+                assert(indexed_draws[i].first_index == shaded_draws[i].first_index);
+                assert(indexed_draws[i].vertex_base == shaded_draws[i].vertex_base);
+            }
+            if (type == 2)
+            {
+                indexed_draws.clear();
+                assert(gpu.record_visual(0, frame, pass, mvp, GeometryPhase::OpaqueAndAlphaTest, 0.f, false));
+                assert(gpu.record_hud_visual(0, frame, pass, mvp, 0.f));
+                assert(velocity.begin(frame));
+                assert(gpu.record_object_velocity_visual(0, frame, velocity, mvp, mvp, 0.f));
+                velocity.end(frame);
+                assert(indexed_draws.empty());
+            }
+            gpu.destroy();
+            assert(buffers.empty() && allocations.empty() && images.empty());
+        }
+        Device.vCameraPosition = old_camera;
+        Device.fFOV = old_fov;
+        CallOfPripyatMode = true;
+        ShadowOfChernobylMode = false;
     }
     for (unsigned type = 0; type <= 5; ++type)
         for (unsigned weights = 1; weights <= (type >= 3 ? 4u : 1u); ++weights)
