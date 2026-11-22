@@ -799,6 +799,13 @@ void CGamePersistent::SetPickableEffectorDOF(bool bSet)
 }
 
 void CGamePersistent::GetCurrentDof(Fvector3& dof) { dof = m_dof[1]; }
+bool CGamePersistent::GetDofFocusOverride(float& focus) const
+{
+    if (!m_bPickableDOF && m_dof[1].similar(m_dof[3]))
+        return false;
+    focus = m_dof[1].y;
+    return true;
+}
 void CGamePersistent::SetBaseDof(const Fvector3& dof) { m_dof[0] = m_dof[1] = m_dof[2] = m_dof[3] = dof; }
 void CGamePersistent::SetEffectorDOF(const Fvector& needed_dof)
 {

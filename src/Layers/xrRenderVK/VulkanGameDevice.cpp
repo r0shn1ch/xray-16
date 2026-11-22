@@ -1609,8 +1609,13 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
     {
         Fmatrix projection;
         std::memcpy(&projection, render_mvp, sizeof(projection));
+        float focus_distance = dof_focus;
+        float gameplay_focus{};
+        if (g_pGamePersistent && g_pGamePersistent->GetDofFocusOverride(gameplay_focus) &&
+            std::isfinite(gameplay_focus))
+            focus_distance = gameplay_focus;
         Fvector focus_point;
-        focus_point.mad(Device.vCameraPosition, Device.vCameraDirection, std::max(dof_focus, .2f));
+        focus_point.mad(Device.vCameraPosition, Device.vCameraDirection, std::max(focus_distance, .2f));
         Fvector4 projected;
         projection.transform(projected, focus_point);
         frame_postprocess.tint[3] = std::clamp(projected.z, 0.f, 1.f);
