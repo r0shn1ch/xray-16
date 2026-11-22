@@ -77,15 +77,16 @@ void main()
         weights[model] = mix(mix(palette.x, palette.y, uv.x), mix(palette.z, palette.w, uv.x), uv.y);
     }
     float sum = dot(weights, vec4(1.0));
-    float probability = clamp(settings.density * min(1.0, sum / 15.0), 0.0, 1.0);
-    if (sum <= 0.0 || !(float(seed & 255u) / 256.0 < probability))
+    // Match CPU placement for cells that also contain transparent details.
+    float probability = settings.density * min(1.0, sum / 15.0);
+    if (sum <= 0.0 || float(seed & 255u) / 255.0 > probability)
         return;
     float choice = float((seed >> 8u) & 65535u) / 65536.0 * sum;
     uint model = 0u;
     for (; model < 3u && choice >= weights[model]; ++model)
         choice -= weights[model];
     uint id = (slot.data.y >> (8u * model)) & 255u;
-    if (id >= scale_range.length())
+    if (id >= 63u || id >= scale_range.length())
         return;
 
     vec2 jitter = vec2(uvec2(seed >> 16u, seed >> 20u) & 15u) / 16.0 - .5;
