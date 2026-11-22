@@ -703,6 +703,13 @@ int run_test(int argc, char** argv)
     motion.set_view(nullptr, identity.data());
     motion.commit_view();
     if (motion.history_valid()) throw std::runtime_error("invalid camera history was published");
+    std::array<float, 16> singular{};
+    motion.set_view(identity.data(), singular.data());
+    motion.commit_view();
+    if (motion.history_valid()) throw std::runtime_error("singular inverse camera history was published");
+    motion.set_view(identity.data(), shifted_inverse.data());
+    motion.commit_view();
+    if (motion.history_valid()) throw std::runtime_error("mismatched inverse camera history was published");
     motion.destroy();
     if (!motion.initialize(vk.physical, vk.device, vkGetDeviceProcAddr, {2, 2}, {vk.depth_view}, {vk.depth},
             vk.memory, dispatch, VK_NULL_HANDLE, !fallback, error, &image_pool,

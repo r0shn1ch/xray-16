@@ -50,6 +50,27 @@ bool camera_cut(const std::array<float, 16>& previous,
     }
     return false;
 }
+
+bool inverse_pair(const float* matrix, const float* inverse)
+{
+    // Use double accumulation and a scale-aware tolerance: large world-space
+    // translations can cancel in the product even for a valid float inverse.
+    for (unsigned row = 0; row < 4; ++row)
+        for (unsigned column = 0; column < 4; ++column)
+        {
+            double sum = 0.0, magnitude = 0.0;
+            for (unsigned k = 0; k < 4; ++k)
+            {
+                const double term = double(matrix[k * 4 + row]) * inverse[column * 4 + k];
+                sum += term;
+                magnitude += std::abs(term);
+            }
+            const double expected = row == column ? 1.0 : 0.0;
+            if (!std::isfinite(sum) || std::abs(sum - expected) > 1e-3 * std::max(1.0, magnitude))
+                return false;
+        }
+    return true;
+}
 }
 
 bool MotionVectors::initialize(VkPhysicalDevice physical, VkDevice device, PFN_vkGetDeviceProcAddr get,
@@ -300,7 +321,8 @@ void MotionVectors::set_view(const float* view_projection, const float* inverse_
     const auto finite = [](const float* matrix) {
         return matrix && std::all_of(matrix, matrix + 16, [](float value) { return std::isfinite(value); });
     };
-    current_view_valid_ = finite(view_projection) && finite(inverse_view_projection);
+    current_view_valid_ = finite(view_projection) && finite(inverse_view_projection) &&
+        inverse_pair(view_projection, inverse_view_projection);
     if (!current_view_valid_)
     {
         current_inverse_.fill(0.f);
