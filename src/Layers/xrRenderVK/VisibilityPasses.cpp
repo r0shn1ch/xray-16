@@ -202,7 +202,7 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
     for (const auto resource : {depth, base, normals})
         if (!graph.read(export_pass, resource, ImageUse::SampledGraphicsCompute, error))
             return false;
-    if (!graph.materialize_color_2d_images(pool, device_, create_view_, destroy_view_, error))
+    if (!graph.materialize_2d_image_views(pool, device_, create_view_, destroy_view_, error))
         return false;
     const bool recorded = graph.execute(frame.command_buffer, states, {barrier_}, error, frame.command_queue_flags,
         frame.semaphore_handoff, FrameSubmissionGraph::Queue::Graphics);

@@ -624,7 +624,7 @@ bool FrameImageGraph::allocate_images(const AllocateImage& allocate,
         info.pQueueFamilyIndices = image.sharing_queue_families.empty()
             ? nullptr : image.sharing_queue_families.data();
         TransientImage physical;
-        if (!allocate || !try_allocate_transient([&] { return allocate(info, physical, error); }, error) ||
+        if (!allocate || !try_allocate_transient([&] { return allocate(info, image.range, physical, error); }, error) ||
             !physical.handle || !physical.owner)
         {
             if (error.empty())

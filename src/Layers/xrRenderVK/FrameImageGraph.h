@@ -146,12 +146,13 @@ public:
         std::shared_ptr<void> owner;
         VkImageView view{};
     };
-    using AllocateImage = std::function<bool(const VkImageCreateInfo&, TransientImage&, std::string&)>;
+    using AllocateImage = std::function<bool(const VkImageCreateInfo&, const VkImageSubresourceRange&,
+        TransientImage&, std::string&)>;
     bool declare_image(const VkImageCreateInfo& info, VkImageAspectFlags aspects,
         Resource& resource, std::string& error);
     bool materialize_images(const AllocateImage& allocate, std::string& error);
     bool materialize_images(FrameImagePool& pool, std::string& error);
-    bool materialize_color_2d_images(FrameImagePool& pool, VkDevice device, PFN_vkCreateImageView create_view,
+    bool materialize_2d_image_views(FrameImagePool& pool, VkDevice device, PFN_vkCreateImageView create_view,
         PFN_vkDestroyImageView destroy_view, std::string& error);
     VkImageView image_view(Resource resource) const;
     bool materialize_resources(const AllocateBuffer& allocate_buffer, const AllocateImage& allocate_image,
