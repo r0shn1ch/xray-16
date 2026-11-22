@@ -242,14 +242,26 @@ void main()
                 ++candidate_id;
                 continue;
             }
-            vec3 incoming = max(input_radiance.values[candidate_index].rgb, vec3(0.0));
+            vec3 incoming = input_radiance.values[candidate_index].rgb;
+            if (any(isnan(incoming)) || any(isinf(incoming)))
+            {
+                ++candidate_id;
+                continue;
+            }
+            incoming = max(incoming, vec3(0.0));
             vec3 contribution = diffuse_contribution(center, incoming, direction);
             float target = luminance(contribution);
             float weight = target / source_pdf;
-            ++reservoir.sample_count;
-            if (weight > 1e-8 && !isnan(weight) && !isinf(weight))
+            float combined_weight = reservoir.weight_sum + weight;
+            if (!(weight >= 0.0) || isinf(combined_weight))
             {
-                reservoir.weight_sum += weight;
+                ++candidate_id;
+                continue;
+            }
+            ++reservoir.sample_count;
+            if (weight > 0.0)
+            {
+                reservoir.weight_sum = combined_weight;
                 if (random_value(random_seed ^ (candidate_id * 0x9e3779b9u)) * reservoir.weight_sum < weight)
                 {
                     reservoir.radiance = vec4(incoming, 1.0);
@@ -262,6 +274,7 @@ void main()
         }
     }
 
+    const uint max_history = 32u;
     // Re-evaluate the selected temporal sample with the current receiver diffuse BSDF.
     if (parameters.dimensions_seed_history.w != 0u)
     {
@@ -293,14 +306,20 @@ void main()
                 float previous_target = previous.target;
                 float reuse_weight = previous_target > 1e-8 ?
                     previous.weight_sum * current_target / previous_target : 0.0;
-                if (previous.sample_count > 0u && previous.weight_sum > 0.0 &&
-                    previous.proposal_pdf > 0.0 && previous_target > 1e-8 &&
+                float combined_weight = reservoir.weight_sum + reuse_weight;
+                if (previous.sample_count > 0u && previous.sample_count <= max_history &&
+                    previous.weight_sum > 0.0 && !isinf(previous.weight_sum) &&
+                    !any(isnan(previous.radiance.rgb)) && !any(isinf(previous.radiance.rgb)) &&
+                    previous.proposal_pdf > 0.0 && !isinf(previous.proposal_pdf) &&
+                    previous_target > 1e-8 && !isinf(previous_target) &&
+                    reuse_weight >= 0.0 && !isinf(combined_weight) &&
                     previous_surface.w < 1.0 && normal_similarity >= 0.9 && depth_difference <= depth_tolerance)
                 {
+                    // Valid zero-contribution candidates still count toward
+                    // normalization. Invalid history contributes neither count nor weight.
                     reservoir.sample_count += previous.sample_count;
-                    if (reuse_weight > 1e-8 && !isnan(reuse_weight) && !isinf(reuse_weight))
+                    if (reuse_weight > 0.0)
                     {
-                        float combined_weight = reservoir.weight_sum + reuse_weight;
                         if (random_value(random_seed ^ 0xa511e9b3u) * combined_weight < reuse_weight)
                         {
                             reservoir.radiance = previous.radiance;
@@ -316,7 +335,6 @@ void main()
         }
     }
 
-    const uint max_history = 32u;
     if (reservoir.sample_count > max_history)
     {
         reservoir.weight_sum *= float(max_history) / float(reservoir.sample_count);
