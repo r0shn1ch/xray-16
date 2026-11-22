@@ -172,6 +172,7 @@ class GpuLevel
         VkBuffer packed_vertices{}, packed_indices{};
         uint32_t geometry_batch{UINT32_MAX};
         bool visibility_rasterizable{};
+        float detail_radius{};
         uint32_t first_vertex{}, first_index{};
         uint64_t vertex_bytes{}, index_bytes{};
         uint64_t cluster_index_bytes{};

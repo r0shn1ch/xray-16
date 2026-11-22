@@ -472,7 +472,7 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
     DetailCullPass grass;
     require(grass.initialize(device, vkGetDeviceProcAddr, limits, 1, VK_NULL_HANDLE, source, error), error);
     BufferResource placements, instances, detail_args;
-    const std::array<DetailCullInput, 2> planted{{{0, 0, .5f, 0, 2}, {40, 0, .5f, 0, 1}}};
+    const std::array<DetailCullInput, 2> planted{{{2.5f, 0, .5f, 0, 2}, {3.5f, 0, .5f, 0, 1}}};
     require(placements.initialize(device, sizeof(planted), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         host_memory, memory, vk, error) &&
         instances.initialize(device, 2 * sizeof(DetailInstance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
@@ -483,7 +483,7 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
     const float identity[16]{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     require(vkAllocateCommandBuffers(device, &ai, &cb) == VK_SUCCESS &&
         vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS &&
-        grass.record(cb, 0, placements, instances, detail_args, identity, 2, 12, error), error);
+        grass.record(cb, 0, placements, instances, detail_args, identity, 2, 12, 1.f, error), error);
     probe_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &probe_barrier, 0, nullptr, 0, nullptr);
@@ -515,7 +515,7 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
             host_memory, memory, vk, error), error);
     require(vkAllocateCommandBuffers(device, &ai, &cb) == VK_SUCCESS && vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS &&
         generate.record(cb, 0, cell_data, ground, prototype, generated, {2, 1, 2.f, 1.f}, error), error);
-    require(grass.record(cb, 0, generated, instances, detail_args, identity, 2, 12, error, 0), error);
+    require(grass.record(cb, 0, generated, instances, detail_args, identity, 2, 12, 1.f, error, 0), error);
     probe_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_HOST_BIT,

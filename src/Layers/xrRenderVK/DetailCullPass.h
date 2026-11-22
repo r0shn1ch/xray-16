@@ -41,7 +41,8 @@ public:
     // Keep each slot fenced, and use one descriptor slot per prototype dispatch.
     bool record(VkCommandBuffer command, uint32_t slot, const BufferResource& input,
         const BufferResource& output, const BufferResource& args, const float (&mvp)[16],
-        uint32_t count, uint32_t index_count, std::string& error, uint32_t generated_model = UINT32_MAX,
+        uint32_t count, uint32_t index_count, float model_radius, std::string& error,
+        uint32_t generated_model = UINT32_MAX,
         uint32_t capacity = 0) const
     {
         const uint64_t groups = (uint64_t(count) + 63) / 64;
@@ -70,7 +71,7 @@ public:
         std::memcpy(constants.view_projection, mvp, sizeof(mvp));
         constants.placement_count = count;
         constants.instance_capacity = capacity;
-        constants.radius = 6.f;
+        constants.radius = model_radius;
         constants.source_stride = source_stride;
         constants.model = generated_model;
         if (!compute_.record(command, slot, {{input.handle(), 0, input_bytes},

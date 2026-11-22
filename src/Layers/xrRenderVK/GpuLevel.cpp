@@ -1430,6 +1430,9 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
         }
         prepared.detail_meshes_.emplace_back();
         Mesh &mesh = prepared.detail_meshes_.back();
+        for (const auto& vertex : prototype.vertices)
+            mesh.detail_radius = std::max(mesh.detail_radius, std::hypot(
+                vertex.position[0], vertex.position[1], vertex.position[2]));
         MaterialDefinition detail_definition;
         if (!textures.surface_mode(prototype.shader, prototype.texture, mesh.mode, error, &mesh.alpha_ref, nullptr,
                                    false, false, true, false, nullptr, nullptr, &detail_definition))
@@ -2215,7 +2218,7 @@ bool GpuLevel::record_generated_details(const FrameRecordingContext& frame, cons
                 storage | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, local) ||
             !detail_cull_->record(frame.command_buffer, static_cast<uint32_t>(frame.frame_index * batches.size() + model),
                 data.placed, batch.instances, batch.arguments, mvp, candidates, detail_meshes_[model].index_count,
-                error, static_cast<uint32_t>(model), batch.count))
+                detail_meshes_[model].detail_radius, error, static_cast<uint32_t>(model), batch.count))
             return false;
     }
     return true;
@@ -2277,7 +2280,8 @@ bool GpuLevel::record_detail_cull(const FrameRecordingContext& frame, const floa
                 storage | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, local) ||
             !batch.placements.write(0, inputs.data(), inputs.size() * sizeof(DetailCullInput), error) ||
             !detail_cull_->record(frame.command_buffer, static_cast<uint32_t>(slot * grouped.size() + model),
-                batch.placements, batch.instances, batch.arguments, mvp, batch.count, detail_meshes_[model].index_count, error))
+                batch.placements, batch.instances, batch.arguments, mvp, batch.count, detail_meshes_[model].index_count,
+                detail_meshes_[model].detail_radius, error))
             return false;
     }
     gpu_detail_recorded_[slot] = true;

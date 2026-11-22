@@ -21,13 +21,13 @@ layout(push_constant) uniform DetailCull
     uint model;
 } settings;
 
-bool visible(vec3 position)
+bool visible(vec3 position, float radius)
 {
     mat4 m = transpose(settings.view_projection);
     vec4 planes[6] = vec4[6](m[3] + m[0], m[3] - m[0], m[3] + m[1],
         m[3] - m[1], m[2], m[3] - m[2]);
     for (int i = 0; i < 6; ++i)
-        if (dot(planes[i], vec4(position, 1.0)) < -settings.radius * length(planes[i].xyz))
+        if (dot(planes[i], vec4(position, 1.0)) < -radius * length(planes[i].xyz))
             return false;
     return true;
 }
@@ -43,7 +43,8 @@ void main()
     if (generated && placements[source + 5u] != settings.model)
         return;
     vec3 position = uintBitsToFloat(uvec3(placements[source], placements[source + 1u], placements[source + 2u]));
-    if (!visible(position))
+    float scale = uintBitsToFloat(placements[source + (generated ? 3u : 4u)]);
+    if (!visible(position, settings.radius * abs(scale)))
         return;
 
     uint capacity = min(settings.instance_capacity, uint(instances.length()) / 6u);
@@ -62,7 +63,7 @@ void main()
     instances[output_offset] = position.x;
     instances[output_offset + 1u] = position.y;
     instances[output_offset + 2u] = position.z;
-    instances[output_offset + 3u] = uintBitsToFloat(placements[source + (generated ? 3u : 4u)]);
+    instances[output_offset + 3u] = scale;
     instances[output_offset + 4u] = cos(yaw);
     instances[output_offset + 5u] = sin(yaw);
 }
