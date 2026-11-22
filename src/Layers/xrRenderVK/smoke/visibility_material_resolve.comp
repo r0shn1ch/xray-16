@@ -80,6 +80,7 @@ void main()
     vec2 uv = texcoords * barycentrics.weights;
     vec2 uvDx = texcoords * barycentrics.dx;
     vec2 uvDy = texcoords * barycentrics.dy;
+    vec2 baseUv = uv, baseDx = uvDx, baseDy = uvDy;
     if (!finiteUv(uv) || !finiteUv(uvDx) || !finiteUv(uvDy)) return;
     vec3 normalA = finiteNormal(visibilityNormal(a));
     vec3 normalB = finiteNormal(visibilityNormal(b));
@@ -117,20 +118,41 @@ void main()
     vec4 surface = vec4(0.0, entry.materialClass, 0.0, 0.0);
     bool hasBump = entry.bumpSlot < parameters.materialCount && entry.bumpAuxSlot < parameters.materialCount;
     bool hasNormal = entry.normalSlot < parameters.materialCount;
-    if (hasBump || hasNormal)
+    bool hasDetail = entry.detailSlot < parameters.materialCount;
+    bool hasDetailNormal = hasDetail && entry.detailMode != 0u &&
+        entry.detailBumpSlot < parameters.materialCount && entry.detailBumpAuxSlot < parameters.materialCount;
+    vec3 mapped = vec3(0.0, 0.0, 1.0);
+    float gloss = hasDetailNormal ? 1.0 : 0.0;
+    if (hasBump)
     {
-        vec3 mapped = vec3(0.0, 0.0, 1.0);
-        if (hasBump)
+        vec4 bump = textureGrad(baseColorTextures[nonuniformEXT(entry.bumpSlot)], uv, uvDx, uvDy);
+        vec4 aux = textureGrad(baseColorTextures[nonuniformEXT(entry.bumpAuxSlot)], uv, uvDx, uvDy);
+        mapped = finiteTangentNormal(bump.wzy + aux.xyz - 1.0);
+        gloss = bump.r * bump.r;
+        surface.a = aux.z * entry.bumpHeight;
+    }
+    if (hasNormal)
+        mapped = finiteTangentNormal(textureGrad(baseColorTextures[nonuniformEXT(entry.normalSlot)],
+            uv, uvDx, uvDy).xyz * 2.0 - 1.0);
+    if (hasDetail)
+    {
+        vec2 detailUv = baseUv * entry.detailScale + (uv - baseUv);
+        vec2 detailDx = baseDx * entry.detailScale + (uvDx - baseDx);
+        vec2 detailDy = baseDy * entry.detailScale + (uvDy - baseDy);
+        vec4 detail = textureGrad(baseColorTextures[nonuniformEXT(entry.detailSlot)], detailUv, detailDx, detailDy);
+        if (entry.detailMode != 1u) color.rgb *= 2.0 * detail.rgb;
+        if (hasDetailNormal)
         {
-            vec4 bump = textureGrad(baseColorTextures[nonuniformEXT(entry.bumpSlot)], uv, uvDx, uvDy);
-            vec4 aux = textureGrad(baseColorTextures[nonuniformEXT(entry.bumpAuxSlot)], uv, uvDx, uvDy);
-            mapped = finiteTangentNormal(bump.wzy + aux.xyz - 1.0);
-            surface.r = clamp(bump.r * bump.r, 0.0, 1.0);
-            surface.a = aux.z * entry.bumpHeight;
+            vec4 detailBump = textureGrad(baseColorTextures[nonuniformEXT(entry.detailBumpSlot)], detailUv, detailDx, detailDy);
+            vec4 detailAux = textureGrad(baseColorTextures[nonuniformEXT(entry.detailBumpAuxSlot)], detailUv, detailDx, detailDy);
+            mapped = finiteTangentNormal(mapped + finiteTangentNormal(detailBump.wzy + detailAux.xyz - 1.0) - vec3(0, 0, 1));
+            gloss *= detailBump.r * 2.0;
         }
-        if (hasNormal)
-            mapped = finiteTangentNormal(textureGrad(baseColorTextures[nonuniformEXT(entry.normalSlot)],
-                uv, uvDx, uvDy).xyz * 2.0 - 1.0);
+        else gloss *= detail.a * 2.0;
+    }
+    surface.r = clamp(gloss, 0.0, 1.0);
+    if (hasBump || hasNormal || hasDetailNormal)
+    {
         tangent -= normal * dot(normal, tangent);
         bitangent -= normal * dot(normal, bitangent);
         float t2 = dot(tangent, tangent), b2 = dot(bitangent, bitangent);

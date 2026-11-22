@@ -57,7 +57,8 @@ static void require(bool condition, const std::string& message)
 static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommandPool pool,
     const VkPhysicalDeviceLimits& limits, const VkPhysicalDeviceMemoryProperties& memory,
     const BufferResourceDispatch& vk, const VisibilityPasses::Source& source, bool bindless, bool steep = false,
-    float alpha_cutoff = -1.f, bool parallax_cutout = false, bool shift_cutout = true)
+    float alpha_cutoff = -1.f, bool parallax_cutout = false, bool shift_cutout = true,
+    uint32_t detail_mode = UINT32_MAX, bool detail_scale_test = false)
 {
     std::string error;
     std::vector<uint8_t> shader;
@@ -80,6 +81,14 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         {6, 3, 0, 0, 1},
         {9, 3, 0, 0, 1}};
     entries[1].alpha_cutoff = alpha_cutoff;
+    if (detail_mode != UINT32_MAX)
+    {
+        entries[1].detail_slot = detail_scale_test ? 1 : 0;
+        entries[1].detail_scale = detail_scale_test ? 1.4f : 1.f;
+        entries[1].detail_mode = detail_mode;
+        if (detail_mode)
+            entries[1].detail_bump_slot = entries[1].detail_bump_aux_slot = 0;
+    }
     if (parallax_cutout)
     {
         entries[1].material_slot = 1;
@@ -337,16 +346,22 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     {
         uint16_t output[3][64][4]{};
         require(readback.read(raster_bytes, output, sizeof(output), error), error);
-        require(output[0][36][0] == 0x3400 && output[0][36][1] == 0x3800 && output[0][36][2] == 0x3c00,
+        const bool detail_color = detail_mode == 0 || detail_mode == 2;
+        require(output[0][36][0] == (detail_scale_test ? 0x3500 : detail_color ? 0x3000 : 0x3400) &&
+            output[0][36][1] == (detail_scale_test ? 0 : 0x3800) &&
+            output[0][36][2] == (detail_scale_test ? 0 : detail_color ? 0x4000 : 0x3c00),
             "visibility resolve material color");
-        require(output[0][36][3] == 0x3800 && output[1][36][0] >= 0x3554 && output[1][36][0] <= 0x3556 &&
-            output[1][36][1] >= 0x3954 && output[1][36][1] <= 0x3956 &&
+        const uint16_t normal_x = detail_mode == 1 || detail_mode == 2 ? 0x36fc : 0x3555;
+        const uint16_t normal_y = detail_mode == 1 || detail_mode == 2 ? 0x32fc : 0x3955;
+        require(output[0][36][3] == 0x3800 && output[1][36][0] >= normal_x - 1 && output[1][36][0] <= normal_x + 1 &&
+            output[1][36][1] >= normal_y - 1 && output[1][36][1] <= normal_y + 1 &&
             output[1][36][3] == 0x3a00, "visibility resolve baked sunlight and hemisphere");
         require(output[0][20][3] == 0x3c00 && (output[1][20][3] == 0x3af6 || output[1][20][3] == 0x3af5),
             "visibility resolve unlightmapped PBR hemisphere");
         require(output[0][20][0] < 0x3800, "visibility parallax must shift sampled color: " +
             std::to_string(output[0][20][0]) + (steep ? " steep" : " regular"));
-        require(output[2][36][0] == 0x2c00 && output[2][36][1] == 0x3900 &&
+        const uint16_t gloss = detail_mode == 0 ? 0x3000 : detail_mode == 1 || detail_mode == 2 ? 0x2800 : 0x2c00;
+        require(output[2][36][0] == gloss && output[2][36][1] == 0x3900 &&
             output[1][20][0] >= 0xb727 && output[1][20][0] <= 0xb729 &&
             output[2][20][0] == 0x3400 &&
             output[2][20][1] == 0x3400 && output[2][20][2] == 0x3c00,
@@ -1307,6 +1322,11 @@ int main(int argc, char** argv)
             exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source, true, false, 0.5f, true, false);
             exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source, true, false, 0.5f, true, true);
             exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source, true, true, 0.5f, true, true);
+            for (uint32_t detail_mode = 0; detail_mode < 3; ++detail_mode)
+                exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source,
+                    true, false, -1.f, false, true, detail_mode);
+            exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source,
+                true, false, -1.f, false, true, 0, true);
         }
         std::cout << "Visibility material resolve " << (bindless ? "passed" : "skipped (no descriptor indexing)") << '\n';
         require(compute.initialize_from_source(f.device, vkGetDeviceProcAddr, props.limits, 3, VK_NULL_HANDLE, source, error), error);

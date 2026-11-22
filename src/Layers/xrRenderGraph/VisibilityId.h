@@ -40,6 +40,11 @@ struct DrawEntry
     float bump_height{};
     uint32_t parallax_slot{UINT32_MAX};
     float alpha_cutoff{-1.f};
+    uint32_t detail_slot{UINT32_MAX};
+    uint32_t detail_bump_slot{UINT32_MAX};
+    uint32_t detail_bump_aux_slot{UINT32_MAX};
+    float detail_scale{1.f};
+    uint32_t detail_mode{};
 };
 
 struct Viewport
@@ -76,7 +81,7 @@ struct MaterialResolveParameters
     float eye_and_steep[4]{};
 };
 
-static_assert(sizeof(DrawEntry) == 68);
+static_assert(sizeof(DrawEntry) == 88);
 static_assert(sizeof(Viewport) == 16);
 static_assert(offsetof(Camera, viewport) == 64);
 static_assert(sizeof(Camera) == 80);

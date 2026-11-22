@@ -20,6 +20,11 @@ struct DrawEntry
     float bumpHeight;
     uint parallaxSlot;
     float alphaCutoff;
+    uint detailSlot;
+    uint detailBumpSlot;
+    uint detailBumpAuxSlot;
+    float detailScale;
+    uint detailMode;
 };
 
 // Matches the static LevelVertex stream, including attributes unused here.
