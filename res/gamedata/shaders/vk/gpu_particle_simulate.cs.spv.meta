@@ -1,5 +1,5 @@
 XRAY_VULKAN_SHADER_METADATA_V1
-source=src/Layers/xrRenderVK/gpu_particles/gpu_particle_simulate.cs
+source=vk/../../../../src/Layers/xrRenderVK/gpu_particles/gpu_particle_simulate.cs
 stage=cs
 entry=main
 defines=
