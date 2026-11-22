@@ -21,11 +21,26 @@ struct ResourceLifetime
 
     void record_use(uint32_t execution_index)
     {
-        if (first_use == INVALID_INDEX)
+        if (first_use == INVALID_INDEX || execution_index < first_use)
             first_use = execution_index;
-        last_use = execution_index;
+        if (last_use == INVALID_INDEX || execution_index > last_use)
+            last_use = execution_index;
     }
 };
+
+inline ResourceLifetime resource_lifetime(const std::vector<ResourceVersion>& versions,
+    const std::vector<uint32_t>& execution_indices)
+{
+    ResourceLifetime lifetime;
+    for (const auto& version : versions)
+    {
+        if (version.producer != INVALID_INDEX)
+            lifetime.record_use(execution_indices[version.producer]);
+        for (uint32_t reader : version.readers)
+            lifetime.record_use(execution_indices[reader]);
+    }
+    return lifetime;
+}
 
 template <typename AddEdge>
 void add_resource_dependencies(const std::vector<ResourceVersion>& versions, AddEdge&& add_edge)

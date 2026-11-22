@@ -1041,9 +1041,7 @@ bool FrameImageGraph::compile_resource_lifetimes(ResourceLifetimes& lifetimes, s
     if (!build_pass_graph(edges, compiled.pass_order, error))
         return false;
 
-    compiled.images.resize(m_images.size());
-    compiled.buffers.resize(m_buffers.size());
-    const auto record_image = [&](const Access& access, uint32_t index)
+    const auto validate_image = [&](const Access& access, const PassInfo& pass)
     {
         const auto usage = m_images[access.resource.index].transient_info.usage;
         const auto required = required_image_usage(access.use) | required_image_usage(access.final_use) |
@@ -1051,38 +1049,43 @@ bool FrameImageGraph::compile_resource_lifetimes(ResourceLifetimes& lifetimes, s
         if (usage && ((usage & required) != required || access.use == ImageUse::Present ||
                 access.final_use == ImageUse::Present))
         {
-            error = "Frame image graph: transient image usage does not support pass " +
-                m_passes[compiled.pass_order[index]].name;
+            error = "Frame image graph: transient image usage does not support pass " + pass.name;
             return false;
         }
-        compiled.images[access.resource.index].record_use(index);
         return true;
     };
-    const auto record_buffer = [&](const BufferAccess& access, uint32_t index)
+    const auto validate_buffer = [&](const BufferAccess& access, const PassInfo& pass)
     {
         const auto usage = m_buffers[access.resource.index].transient_description.usage;
         const auto required = required_buffer_usage(access.use);
         if (usage && (usage & required) != required)
         {
-            error = "Frame image graph: transient buffer usage does not support pass " +
-                m_passes[compiled.pass_order[index]].name;
+            error = "Frame image graph: transient buffer usage does not support pass " + pass.name;
             return false;
         }
-        compiled.buffers[access.resource.index].record_use(index);
         return true;
     };
+    std::vector<uint32_t> execution_indices(compiled.pass_order.size());
     for (uint32_t index = 0; index < compiled.pass_order.size(); ++index)
     {
-        const PassInfo& pass = m_passes[compiled.pass_order[index]];
+        const Pass id = compiled.pass_order[index];
+        execution_indices[id] = index;
+        const PassInfo& pass = m_passes[id];
         for (const auto& access : pass.reads)
-            if (!record_image(access, index)) return false;
+            if (!validate_image(access, pass)) return false;
         for (const auto& access : pass.writes)
-            if (!record_image(access, index)) return false;
+            if (!validate_image(access, pass)) return false;
         for (const auto& access : pass.buffer_reads)
-            if (!record_buffer(access, index)) return false;
+            if (!validate_buffer(access, pass)) return false;
         for (const auto& access : pass.buffer_writes)
-            if (!record_buffer(access, index)) return false;
+            if (!validate_buffer(access, pass)) return false;
     }
+    compiled.images.reserve(m_images.size());
+    for (const auto& image : m_images)
+        compiled.images.push_back(framegraph::resource_lifetime(image.versions, execution_indices));
+    compiled.buffers.reserve(m_buffers.size());
+    for (const auto& buffer : m_buffers)
+        compiled.buffers.push_back(framegraph::resource_lifetime(buffer.versions, execution_indices));
     lifetimes = std::move(compiled);
     return true;
 }
