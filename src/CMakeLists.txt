@@ -161,7 +161,8 @@ if (XRAY_BUILD_VULKAN_TESTS)
         "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include")
     xray_add_vulkan_state_test(vulkan_frame_submission_graph_test tests/vulkan_frame_submission_graph.cpp)
     target_include_directories(vulkan_frame_submission_graph_test PRIVATE
-        "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include")
+        "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include"
+        "${XRAY_NVRHI_INCLUDE_DIRS}")
     xray_add_vulkan_state_test(vulkan_frame_image_pool_test tests/vulkan_frame_image_pool.cpp)
     target_sources(vulkan_frame_image_pool_test PRIVATE
         "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/FrameImagePool.cpp")

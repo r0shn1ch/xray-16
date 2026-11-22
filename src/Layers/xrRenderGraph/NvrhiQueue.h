@@ -1,6 +1,7 @@
 #pragma once
 
 #include "FrameSubmissionGraph.h"
+#include "NvrhiResourceState.h"
 #include <nvrhi/nvrhi.h>
 #include <stdexcept>
 

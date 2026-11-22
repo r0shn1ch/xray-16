@@ -1,5 +1,6 @@
 #include "src/Layers/xrRenderVK/FrameContext.h"
 #include "src/Layers/xrRenderGraph/ResourceDependencies.h"
+#include "src/Layers/xrRenderGraph/NvrhiResourceState.h"
 
 #include <cassert>
 #include <cstdint>
@@ -16,10 +17,42 @@ template <typename T> T handle(uintptr_t value)
     if constexpr (std::is_pointer_v<T>) return reinterpret_cast<T>(value);
     else return static_cast<T>(value);
 }
+
+struct FakeNvrhiTransitions
+{
+    uint32_t calls{};
+    nvrhi::ResourceStates last{};
+    void setTextureState(nvrhi::ITexture*, nvrhi::TextureSubresourceSet, nvrhi::ResourceStates state)
+    { ++calls; last = state; }
+    void setBufferState(nvrhi::IBuffer*, nvrhi::ResourceStates state) { ++calls; last = state; }
+    void setAccelStructState(nvrhi::rt::IAccelStruct*, nvrhi::ResourceStates state) { ++calls; last = state; }
+};
 }
 
 int main()
 {
+    {
+        using namespace xray::render::framegraph;
+        FakeNvrhiTransitions commands;
+        auto* texture = handle<nvrhi::ITexture*>(1);
+        auto* buffer = handle<nvrhi::IBuffer*>(2);
+        auto* accel = handle<nvrhi::rt::IAccelStruct*>(3);
+        assert(transition_nvrhi_texture(commands, texture, nvrhi::AllSubresources,
+            ResourceState::DepthStencilReadShaderResource));
+        assert(commands.last == (nvrhi::ResourceStates::DepthRead | nvrhi::ResourceStates::ShaderResource));
+        assert(transition_nvrhi_buffer(commands, buffer, ResourceState::AccelStructBuildInput));
+        assert(commands.last == nvrhi::ResourceStates::AccelStructBuildInput);
+        assert(transition_nvrhi_acceleration_structure(commands, accel, ResourceState::AccelStructBuildBlas));
+        assert(commands.last == nvrhi::ResourceStates::AccelStructBuildBlas);
+        assert(!transition_nvrhi_texture(commands, texture, nvrhi::AllSubresources, ResourceState::IndexBuffer));
+        assert(!transition_nvrhi_buffer(commands, buffer, ResourceState::Present));
+        assert(!transition_nvrhi_acceleration_structure(commands, accel, ResourceState::ShaderResource));
+        assert(!transition_nvrhi_buffer(commands, nullptr, ResourceState::CopySource));
+        assert(commands.calls == 3);
+        nvrhi::ResourceStates unchanged = nvrhi::ResourceStates::Present;
+        assert(!to_nvrhi_resource_state(static_cast<ResourceState>(255), unchanged));
+        assert(unchanged == nvrhi::ResourceStates::Present);
+    }
     {
         FrameSubmissionGraph frame;
         const auto scene = frame.add_pass("scene", FrameSubmissionGraph::Queue::Graphics);
