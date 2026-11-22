@@ -16,12 +16,13 @@ layout(set = 0, binding = 5, std430) readonly buffer Parameters {
 layout(set = 0, binding = 6, r32f) uniform writeonly image2D visibility_image;
 layout(set = 0, binding = 7) uniform sampler2D ray_visibility;
 
-float sample_page(sampler2D atlas, uint slot, uint columns, vec2 local_uv, float depth, float bias)
+bool sample_page(sampler2D atlas, uint slot, uint columns, vec2 local_uv, float depth, float bias,
+    out float visibility)
 {
     int size = int(params.config.z);
     ivec2 origin = ivec2(int(slot % columns), int(slot / columns)) * size;
     ivec2 atlas_size = textureSize(atlas, 0);
-    if (any(lessThan(origin, ivec2(0))) || any(greaterThan(origin + ivec2(size), atlas_size))) return 1.0;
+    if (any(lessThan(origin, ivec2(0))) || any(greaterThan(origin + ivec2(size), atlas_size))) return false;
     ivec2 center = clamp(ivec2(local_uv * float(size)), ivec2(0), ivec2(size - 1));
     float visible = 0.0;
     for (int y = -1; y <= 1; ++y)
@@ -30,7 +31,8 @@ float sample_page(sampler2D atlas, uint slot, uint columns, vec2 local_uv, float
             ivec2 p = origin + clamp(center + ivec2(x, y), ivec2(0), ivec2(size - 1));
             visible += depth <= texelFetch(atlas, p, 0).r + bias ? 1.0 : 0.0;
         }
-    return visible / 9.0;
+    visibility = visible / 9.0;
+    return true;
 }
 void main()
 {
@@ -60,18 +62,22 @@ void main()
                     if (!static_found && index < static_pages.length())
                     {
                         uint slot = static_pages[index];
-                        if (slot < params.dynamic_config.z)
+                        float sampled;
+                        if (slot < params.dynamic_config.z &&
+                            sample_page(static_atlas, slot, params.config.w, fract(page_coord), depth, params.zparams.z, sampled))
                         {
-                            result = min(result, sample_page(static_atlas, slot, params.config.w, fract(page_coord), depth, params.zparams.z));
+                            result = min(result, sampled);
                             static_found = true;
                         }
                     }
                     if (!dynamic_found && index < dynamic_pages.length())
                     {
                         uint slot = dynamic_pages[index];
-                        if (slot < params.dynamic_config.w)
+                        float sampled;
+                        if (slot < params.dynamic_config.w &&
+                            sample_page(dynamic_atlas, slot, params.dynamic_config.x, fract(page_coord), depth, params.zparams.z, sampled))
                         {
-                            result = min(result, sample_page(dynamic_atlas, slot, params.dynamic_config.x, fract(page_coord), depth, params.zparams.z));
+                            result = min(result, sampled);
                             dynamic_found = true;
                         }
                     }

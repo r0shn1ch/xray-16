@@ -1316,15 +1316,18 @@ static bool build_triangle_scene(VkPhysicalDevice physical, VkDevice device,
         resolve_params.axis = 2; resolve_params.levels = 2; resolve_params.page_size = 8;
         resolve_params.static_columns = 2; resolve_params.static_slots = 2; resolve_params.inverse_depth_range = 1.f;
         bool resolve_ok = true;
-        for (uint32_t scenario = 0; scenario < 6 && resolve_ok; ++scenario)
+        for (uint32_t scenario = 0; scenario < 8 && resolve_ok; ++scenario)
         {
             uint32_t mapping[8]; std::fill_n(mapping, 8, UINT32_MAX);
             if (scenario < 2) mapping[scenario == 0 ? 3 : 7] = 0;
-            if (scenario >= 3) mapping[3] = scenario == 3 ? 0 : 1;
-            resolve_params.static_slots = scenario >= 3 ? 0 : 2;
-            resolve_params.dynamic_enabled = scenario >= 3 ? 1 : 0;
-            resolve_params.dynamic_columns = 2; resolve_params.dynamic_slots = 2;
-            BufferResource& resolve_mapping = scenario >= 3 ? vsm_table : vsm_resolve_table;
+            if (scenario >= 3 && scenario <= 5) mapping[3] = scenario == 3 ? 0 : 1;
+            if (scenario >= 6) { mapping[3] = 2; mapping[7] = 0; }
+            const bool dynamic = (scenario >= 3 && scenario <= 5) || scenario == 7;
+            const uint32_t declared_slots = scenario >= 6 ? 3 : 2;
+            resolve_params.static_slots = dynamic ? 0 : declared_slots;
+            resolve_params.dynamic_enabled = dynamic ? 1 : 0;
+            resolve_params.dynamic_columns = 2; resolve_params.dynamic_slots = declared_slots;
+            BufferResource& resolve_mapping = dynamic ? vsm_table : vsm_resolve_table;
             if (!resolve_mapping.write(0, mapping, sizeof(mapping), error) ||
                 vkResetFences(device, 1, &fence) != VK_SUCCESS || vkResetCommandBuffer(command, 0) != VK_SUCCESS ||
                 vkBeginCommandBuffer(command, &query_begin) != VK_SUCCESS ||
