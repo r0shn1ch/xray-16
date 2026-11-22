@@ -58,8 +58,16 @@ vec3 current_at(ivec2 pixel, ivec2 extent, float target_depth)
             texelFetch(current_color, c, 0).rgb * accepted.z + texelFetch(current_color, d, 0).rgb * accepted.w) / total;
 }
 
+bool valid_history_tap(vec4 tap, float expected_depth, float tolerance)
+{
+    return abs(tap.a - expected_depth) <= tolerance &&
+        !any(isnan(tap.rgb)) && !any(isinf(tap.rgb));
+}
+
 vec4 sample_history(vec2 uv, ivec2 extent, float expected_depth)
 {
+    if (!(expected_depth >= 0.0 && expected_depth <= 1.0))
+        return vec4(0.0);
     vec2 position = uv * vec2(extent) - 0.5;
     ivec2 base = ivec2(floor(position));
     vec2 fraction = fract(position);
@@ -70,13 +78,19 @@ vec4 sample_history(vec2 uv, ivec2 extent, float expected_depth)
     vec4 weights = vec4((1.0 - fraction.x) * (1.0 - fraction.y), fraction.x * (1.0 - fraction.y),
         (1.0 - fraction.x) * fraction.y, fraction.x * fraction.y);
     float tolerance = max(0.001, 0.02 * expected_depth);
-    weights *= vec4(abs(a.a - expected_depth) <= tolerance ? 1.0 : 0.0,
-                    abs(b.a - expected_depth) <= tolerance ? 1.0 : 0.0,
-                    abs(c.a - expected_depth) <= tolerance ? 1.0 : 0.0,
-                    abs(d.a - expected_depth) <= tolerance ? 1.0 : 0.0);
+    bvec4 accepted = bvec4(valid_history_tap(a, expected_depth, tolerance),
+        valid_history_tap(b, expected_depth, tolerance), valid_history_tap(c, expected_depth, tolerance),
+        valid_history_tap(d, expected_depth, tolerance));
+    weights = mix(vec4(0.0), weights, accepted);
     float total = dot(weights, vec4(1.0));
-    return total > 1e-5 ? vec4((a.rgb * weights.x + b.rgb * weights.y +
-        c.rgb * weights.z + d.rgb * weights.w) / total, total) : vec4(0.0);
+    if (total <= 1e-5)
+        return vec4(0.0);
+    // A rejected NaN or infinity must be removed before multiplication.
+    vec3 color = (accepted.x ? a.rgb * weights.x : vec3(0.0)) +
+        (accepted.y ? b.rgb * weights.y : vec3(0.0)) +
+        (accepted.z ? c.rgb * weights.z : vec3(0.0)) +
+        (accepted.w ? d.rgb * weights.w : vec3(0.0));
+    return vec4(color / total, total);
 }
 
 void main()
@@ -159,9 +173,6 @@ void main()
             // Reduce history confidence when only part of the bilinear
             // footprint belongs to the reprojected surface.
             weight *= clamp(history.a, 0.0, 1.0);
-            if (expected_previous_depth < 0.0 || expected_previous_depth > 1.0 ||
-                history.a <= 1e-5)
-                weight = 0.0;
             result = mix(current, history_color, weight);
         }
     }

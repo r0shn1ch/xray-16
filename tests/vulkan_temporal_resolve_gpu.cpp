@@ -248,6 +248,8 @@ int main(int argc, char** argv) try
                 (iteration == 5 ? (pixel == 0 ? 0x3c00 : 0) : (pixel % 2 ? 0x3c00 : 0));
             words[pixel * 4] = red;
             words[pixel * 4 + 1] = words[pixel * 4 + 2] = 0;
+            if (iteration == 0 && pixel == 3)
+                words[pixel * 4 + 1] = 0x7c00; // An infinite channel in a zero-weight history tap.
             words[pixel * 4 + 3] = 0x3c00;
         }
         std::memcpy(words + 16, motion.data(), 32);
@@ -415,6 +417,8 @@ int main(int argc, char** argv) try
         if (iteration == 9 && std::abs(half_to_float(values[4])) > .01f)
             throw std::runtime_error("temporal resolve reused history for a changing LOD billboard facet");
         const float red = half_to_float(values[0]);
+        if (iteration == 1 && half_to_float(values[1]) != 0.f)
+            throw std::runtime_error("non-finite temporal history contaminated a neighboring pixel");
         // At the depth edge only one of two equal-weight history taps survives.
         const float expected = iteration == 0 ? .25f : iteration == 1 ? .225f :
             iteration == 3 ? .9f : iteration == 6 ? 1.f / 3.f :
