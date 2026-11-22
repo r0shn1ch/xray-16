@@ -127,11 +127,10 @@ vec3 world_cache_sample(vec3 position, vec3 normal, vec3 receiver_position, uint
     float normal_length2 = dot(normal, normal);
     if (!(normal_length2 > 1e-10) || isnan(normal_length2) || isinf(normal_length2))
         return vec3(0.0);
+    if (any(isnan(position)) || any(isinf(position)) ||
+        any(isnan(receiver_position)) || any(isinf(receiver_position))) return vec3(0.0);
     normal *= inversesqrt(normal_length2);
     uint normal_class = world_cache_normal_class(normal);
-    vec3 tangent = abs(normal.z) < 0.999 ? normalize(cross(normal, vec3(0.0, 0.0, 1.0))) :
-        normalize(cross(normal, vec3(0.0, 1.0, 0.0)));
-    vec3 bitangent = cross(normal, tangent);
     vec3 fine_sum = vec3(0.0);
     float fine_weight_sum = 0.0;
     vec3 coarse_sum = vec3(0.0);
@@ -140,20 +139,25 @@ vec3 world_cache_sample(vec3 position, vec3 normal, vec3 receiver_position, uint
     {
         float cell_size = level == WORLD_CACHE_FINE_LEVEL ? WORLD_CACHE_FINE_CELL_SIZE :
             WORLD_CACHE_COARSE_CELL_SIZE;
-        vec3 center = position + normal * (cell_size * 0.75);
-        vec3 offsets[5] = vec3[5](vec3(0.0), tangent, -tangent, bitangent, -bitangent);
-        for (uint i = 0u; i < 5u; ++i)
+        // The update pass hashes the unshifted surface position. Interpolate around
+        // cell centers so that the cell containing the surface always contributes.
+        vec3 coordinates = position / cell_size - vec3(0.5);
+        vec3 base = floor(coordinates);
+        if (any(lessThan(base, vec3(-2147483648.0))) ||
+            any(greaterThanEqual(base, vec3(2147483648.0)))) continue;
+        vec3 fraction = fract(coordinates);
+        for (int i = 0; i < 8; ++i)
         {
-            ivec3 cell = ivec3(floor((center + offsets[i] * cell_size * 0.45) / cell_size));
+            ivec3 offset = ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+            vec3 axis_weights = mix(vec3(1.0) - fraction, fraction, vec3(offset));
+            float spatial_weight = axis_weights.x * axis_weights.y * axis_weights.z;
+            if (spatial_weight <= 0.0) continue;
+            ivec3 cell = ivec3(base) + offset;
             vec3 sample_radiance;
             float normal_weight;
             if (world_cache_lookup_cell(cell, normal_class, level, receiver_position, normal, frame,
                     sample_radiance, normal_weight))
             {
-                vec3 cell_center = (vec3(cell) + vec3(0.5)) * cell_size;
-                vec3 cell_delta = position - cell_center;
-                float spatial_weight = 1.0 / (1.0 + dot(cell_delta, cell_delta) /
-                    (cell_size * cell_size * 2.0));
                 float weight = spatial_weight * normal_weight;
                 if (level == WORLD_CACHE_FINE_LEVEL)
                 {
@@ -170,8 +174,10 @@ vec3 world_cache_sample(vec3 position, vec3 normal, vec3 receiver_position, uint
     }
     // Prefer local detail; use broad cells only when the fine level has too
     // little coherent history to provide a stable estimate.
-    if (fine_weight_sum >= 0.5)
-        return fine_sum / fine_weight_sum;
-    return coarse_weight_sum > 0.0 ? coarse_sum / coarse_weight_sum :
-        (fine_weight_sum > 0.0 ? fine_sum / fine_weight_sum : vec3(0.0));
+    if (fine_weight_sum >= 0.5 || coarse_weight_sum <= 0.0)
+        return fine_weight_sum > 0.0 ? fine_sum / fine_weight_sum : vec3(0.0);
+    if (fine_weight_sum <= 0.0)
+        return coarse_sum / coarse_weight_sum;
+    return mix(coarse_sum / coarse_weight_sum, fine_sum / fine_weight_sum,
+        smoothstep(0.0, 0.5, fine_weight_sum));
 }
