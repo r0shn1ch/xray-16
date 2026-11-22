@@ -1,6 +1,7 @@
 #include "FrameContext.h"
 #include "FrameImageGraph.h"
 #include "FrameSubmissionGraph.h"
+#include "Layers/xrRenderGraph/NvrhiQueue.h"
 #if defined(XR_PLATFORM_ANDROID)
 #include "xrEngine/x_ray.h"
 #endif
@@ -2022,26 +2023,11 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
     std::array<size_t, 3> generated_group_cursors{};
     bool generated_frame_graph_groups = false;
     bool acquire_wait_queued = false;
-    const auto to_nvrhi_queue = [](FrameSubmissionGraph::Queue queue) {
-        switch (queue)
-        {
-        case FrameSubmissionGraph::Queue::Graphics: return nvrhi::CommandQueue::Graphics;
-        case FrameSubmissionGraph::Queue::Compute: return nvrhi::CommandQueue::Compute;
-        case FrameSubmissionGraph::Queue::Copy: return nvrhi::CommandQueue::Copy;
-        }
-        return nvrhi::CommandQueue::Graphics;
-    };
-    const FrameSubmissionGraph::QueueWait queue_wait = [this, &to_nvrhi_queue](
-        FrameSubmissionGraph::Queue destination, FrameSubmissionGraph::Queue source,
-        uint64_t submission) {
-        if (!m_nvrhi_device)
-            throw std::runtime_error("NVRHI device is unavailable");
-        m_nvrhi_device->queueWaitForCommandList(to_nvrhi_queue(destination),
-            to_nvrhi_queue(source), submission);
-    };
+    using framegraph::to_nvrhi_queue;
+    const auto queue_wait = framegraph::nvrhi_queue_wait(m_nvrhi_device.Get());
     const auto request_submission_command_buffer = [this, &async_submissions,
         &group_executors, &generated_group_passes, &generated_group_cursors,
-        &submission_guard, &to_nvrhi_queue, &generated_frame_graph_groups,
+        &submission_guard, &generated_frame_graph_groups,
         record_async_compute, record_async_copy, &compute_submission_pass,
         &graphics_prepass_pass](FrameSubmissionGraph::Pass pass,
             FrameSubmissionGraph::Queue queue, VkCommandBuffer& command_buffer,
@@ -2112,7 +2098,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
                 return false;
             }
             group_executors.emplace_back(pass,
-                [this, &submission_guard, &to_nvrhi_queue, list](FrameSubmissionGraph::Queue submitted_queue) {
+                [this, &submission_guard, list](FrameSubmissionGraph::Queue submitted_queue) {
                     list->close();
                     submission_guard.mark_generated_closed(list);
                     return m_nvrhi_device->executeCommandList(list, to_nvrhi_queue(submitted_queue));
@@ -2293,7 +2279,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
         std::vector<FrameSubmissionGraph::Pass> deferred_groups{graphics_continuation_pass};
         if (compute_submission_pass != FrameSubmissionGraph::InvalidPass)
             group_executors.emplace_back(compute_submission_pass,
-                [this, &submission_guard, &to_nvrhi_queue](FrameSubmissionGraph::Queue queue) {
+                [this, &submission_guard](FrameSubmissionGraph::Queue queue) {
                     submission_guard.compute_command_list->close();
                     submission_guard.compute_command_list_open = false;
                     return m_nvrhi_device->executeCommandList(
@@ -2301,7 +2287,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
                 });
         if (graphics_prepass_pass != FrameSubmissionGraph::InvalidPass)
             group_executors.emplace_back(graphics_prepass_pass,
-                [this, &submission_guard, &to_nvrhi_queue](FrameSubmissionGraph::Queue queue) {
+                [this, &submission_guard](FrameSubmissionGraph::Queue queue) {
                     submission_guard.command_list->close();
                     submission_guard.command_list_open = false;
                     return m_nvrhi_device->executeCommandList(
@@ -3083,7 +3069,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
                 return false;
             }
             if (!async_submissions.submit(graphics_continuation_pass,
-                    [this, scene_list, &to_nvrhi_queue](FrameSubmissionGraph::Queue queue) {
+                    [this, scene_list](FrameSubmissionGraph::Queue queue) {
                         return m_nvrhi_device->executeCommandList(scene_list, to_nvrhi_queue(queue));
                     }, queue_wait, error))
             {
@@ -3527,7 +3513,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
                     return false;
                 }
                 if (!async_submissions.submit(final_graphics_pass,
-                        [this, command_list, &to_nvrhi_queue](FrameSubmissionGraph::Queue queue) {
+                        [this, command_list](FrameSubmissionGraph::Queue queue) {
                             return m_nvrhi_device->executeCommandList(command_list,
                                 to_nvrhi_queue(queue));
                         }, queue_wait, error))
