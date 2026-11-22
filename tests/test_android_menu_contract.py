@@ -50,6 +50,18 @@ class AndroidMenuContractTest(unittest.TestCase):
             self.assertEqual(msaa.get('list_length'), '3')
             self.assertEqual(msaa.find('options_item').attrib,
                              {'entry': 'r_vk_msaa', 'group': 'mm_opt_video_adv', 'depend': 'vid'})
+            for setting, entry, dependency, choices in (
+                ('render_scale', 'r_vk_render_scale', 'vid', '6'),
+                ('framegen', 'r_vk_frame_generation', 'restart', '2'),
+            ):
+                tag = f'combo_vk_{setting}'
+                start = text.index(f'<{tag} ')
+                closing = f'</{tag}>'
+                end = text.index(closing, start) + len(closing)
+                control = ET.fromstring(text[start:end])
+                self.assertEqual(control.get('list_length'), choices)
+                self.assertEqual(control.find('options_item').attrib,
+                                 {'entry': entry, 'group': 'mm_opt_video_adv', 'depend': dependency})
             start = text.index('<combo_vk_ao_quality ')
             end = text.index('</combo_vk_ao_quality>', start) + len('</combo_vk_ao_quality>')
             ao_quality = ET.fromstring(text[start:end])
@@ -80,6 +92,7 @@ class AndroidMenuContractTest(unittest.TestCase):
             found += 1
         self.assertGreaterEqual(found, 4)
         self.assertIn('get_integer("r_vk_hdr10_available")==1', script)
+        self.assertIn('get_integer("r_vk_frame_generation_available")==1', script)
 
     def test_launcher_retains_display_controls_and_leaves_quality_to_the_game(self):
         launcher = (JAVA / "LauncherActivity.java").read_text()
