@@ -70,6 +70,7 @@ inline float legacy_bloom_kernel_b = .7f;
 inline float legacy_bloom_kernel_scale = .7f;
 inline float legacy_bloom_speed = 100.f;
 inline float ao_strength = 0.75f;
+inline uint32_t ao_directions_override = 0;
 inline float dof_strength = 0.f;
 inline float dof_focus = 2.5f;
 inline float motion_blur_strength = 0.f;

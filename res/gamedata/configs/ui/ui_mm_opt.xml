@@ -289,6 +289,18 @@
             <options_item entry="r_vk_ao_strength" group="mm_opt_video_adv"/>
         </track_vk_ao>
 
+        <cap_vk_ao_quality x="20" y="3" width="135" height="24">
+            <text r="170" g="170" b="170" font="letterica16" align="r" vert_align="c">AO quality</text>
+        </cap_vk_ao_quality>
+        <combo_vk_ao_quality x="180" y="0" width="235" height="20" list_length="5" always_show_scroll="0">
+            <options_item entry="r_vk_ao_quality" group="mm_opt_video_adv"/>
+            <list_font r="170" g="170" b="170" font="letterica16"/>
+            <text_color>
+                <e r="170" g="170" b="170"/>
+                <d r="70" g="70" b="70"/>
+            </text_color>
+        </combo_vk_ao_quality>
+
         <cap_vk_rtgi x="20" y="3" width="135" height="24">
             <text r="170" g="170" b="170" font="letterica16" align="r" vert_align="c">RTGI</text>
         </cap_vk_rtgi>

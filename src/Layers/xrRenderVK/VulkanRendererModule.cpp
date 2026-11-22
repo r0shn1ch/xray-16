@@ -32,6 +32,8 @@ namespace
 const xr_token quality_tokens[]{{"Minimum", 0}, {"Low", 1}, {"Default", 2}, {"High", 3}, {"Extreme", 4}, {nullptr, 0}};
 const xr_token aa_tokens[]{{"off", 0}, {"FXAA", 1}, {"TAA", 2}, {nullptr, 0}};
 const xr_token msaa_tokens[]{{"1x", 1}, {"2x", 2}, {"4x", 4}, {nullptr, 0}};
+const xr_token ao_quality_tokens[]{{"Auto", 0}, {"Low", 4}, {"Medium", 8}, {"High", 12},
+    {"Ultra", 16}, {nullptr, 0}};
 
 class VulkanMsaaOption final : public CCC_Token
 {
@@ -824,6 +826,7 @@ void register_vulkan_options(VulkanLevelRender& renderer)
     static CCC_Float legacy_bloom_speed_command("r2_ls_bloom_speed", &legacy_bloom_speed, 0.f, 100.f);
     static VulkanSwitch legacy_bloom_fast("r2_ls_bloom_fast", &bloom_fast);
     static CCC_Float ao("r_vk_ao_strength", &ao_strength, 0.f, 2.f);
+    static CCC_Token ao_quality("r_vk_ao_quality", &ao_directions_override, ao_quality_tokens);
     static CCC_Float dof("r_vk_dof_strength", &dof_strength, 0.f, 1.f);
     static CCC_Float focus("r_vk_dof_focus", &dof_focus, .2f, 100.f);
     static CCC_Float motion_blur("r_vk_motion_blur", &motion_blur_strength, 0.f, 1.f);
@@ -839,6 +842,7 @@ void register_vulkan_options(VulkanLevelRender& renderer)
         Console->AddCommand(option);
     Console->AddCommand(&preset);
     Console->AddCommand(&ao);
+    Console->AddCommand(&ao_quality);
     Console->AddCommand(&dof);
     Console->AddCommand(&motion_blur);
     Console->AddCommand(&sun_shafts);

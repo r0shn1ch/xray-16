@@ -1774,7 +1774,8 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
     sun_uniform.options[3] = render_world ? ao_strength : 0.f;
     const uint32_t ao_quality = std::min<uint32_t>(quality_preset,
         static_cast<uint32_t>(std::size(PresetAODirections) - 1));
-    sun_uniform.ao_settings[0] = static_cast<float>(PresetAODirections[ao_quality]);
+    sun_uniform.ao_settings[0] = static_cast<float>(ao_directions_override ?
+        ao_directions_override : PresetAODirections[ao_quality]);
     if (render_world && Core.Params)
     {
         // The old argument remains accepted for existing custom launchers.
