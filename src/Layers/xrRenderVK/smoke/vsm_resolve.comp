@@ -18,8 +18,13 @@ layout(set = 0, binding = 7) uniform sampler2D ray_visibility;
 
 bool tile_origin(uint slot, uint columns, int size, ivec2 atlas_size, out ivec2 origin)
 {
-    origin = ivec2(int(slot % columns), int(slot / columns)) * size;
-    return all(greaterThanEqual(origin, ivec2(0))) && all(lessThanEqual(origin + ivec2(size), atlas_size));
+    if (columns == 0u || size <= 0)
+        return false;
+    uvec2 tile = uvec2(slot % columns, slot / columns);
+    if (any(greaterThanEqual(tile, uvec2(atlas_size / size))))
+        return false;
+    origin = ivec2(tile) * size;
+    return true;
 }
 
 bool sample_page(sampler2D atlas, bool dynamic_layer, uint slot, uint columns, uint slots,
@@ -79,9 +84,10 @@ void main()
                 for (uint i = 0u; i < params.config.y && !(static_found && dynamic_found); ++i)
                 {
                     vec2 coord = (light.xy - params.level[i].xy) / params.level[i].z;
-                    if (any(lessThan(coord, vec2(0.0))) || any(greaterThanEqual(coord, vec2(1.0)))) continue;
+                    if (!all(greaterThanEqual(coord, vec2(0.0))) || !all(lessThan(coord, vec2(1.0)))) continue;
                     vec2 page_coord = coord * float(axis);
-                    uvec2 page = uvec2(page_coord);
+                    uvec2 page = min(uvec2(page_coord), uvec2(axis - 1u));
+                    vec2 local_uv = page_coord - vec2(page);
                     uint index = i * axis * axis + page.y * axis + page.x;
                     if (!static_found && index < static_pages.length())
                     {
@@ -89,7 +95,7 @@ void main()
                         float sampled;
                         if (slot < params.dynamic_config.z &&
                             sample_page(static_atlas, false, slot, params.config.w, params.dynamic_config.z,
-                                i, page, fract(page_coord), depth, params.zparams.z, sampled))
+                                i, page, local_uv, depth, params.zparams.z, sampled))
                         {
                             result = min(result, sampled);
                             static_found = true;
@@ -101,7 +107,7 @@ void main()
                         float sampled;
                         if (slot < params.dynamic_config.w &&
                             sample_page(dynamic_atlas, true, slot, params.dynamic_config.x, params.dynamic_config.w,
-                                i, page, fract(page_coord), depth, params.zparams.z, sampled))
+                                i, page, local_uv, depth, params.zparams.z, sampled))
                         {
                             result = min(result, sampled);
                             dynamic_found = true;
