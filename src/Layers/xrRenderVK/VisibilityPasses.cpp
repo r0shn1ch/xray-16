@@ -92,6 +92,20 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
         error = "invalid visibility frame inputs";
         return false;
     }
+    const auto draw_capacity = std::min<VkDeviceSize>({commands.range / sizeof(VkDrawIndexedIndirectCommand),
+        entries.range / sizeof(visibility::DrawEntry), visibility::EntryCountLimit});
+    const auto dispatch_capacity = uint64_t(max_dispatch_.width) * max_dispatch_.height;
+    const auto mask_capacity = draw_mask.size() / sizeof(uint32_t);
+    for (const auto& batch : batches)
+    {
+        const uint64_t end = uint64_t(batch.first_draw) + batch.draw_count;
+        if (!draw_mask_view || end > draw_capacity || batch.draw_count > dispatch_capacity ||
+            (batch.draw_count && (end + 31) / 32 > mask_capacity))
+        {
+            error = "visibility batch exceeds draw, mask, or dispatch capacity";
+            return false;
+        }
+    }
     std::vector<Geometry> geometry(batches.size());
     for (size_t i = 0; i < batches.size(); ++i)
     {
