@@ -25,6 +25,18 @@ inline unsigned detail_grid_size(float spacing)
     return static_cast<unsigned>(std::ceil(2.f / std::clamp(spacing, .25f, 1.f)));
 }
 
+// Keep a small streaming apron around the exact GPU distance test. This
+// excludes the corners and distant floors of the rectangular search without
+// removing a cell that can contribute to the current frame.
+inline bool detail_streaming_cell(float distance_squared, float vertical_distance,
+    float cell_height, float max_distance)
+{
+    constexpr float apron = 4.f;
+    const float radius = max_distance + apron;
+    return distance_squared <= radius * radius &&
+        vertical_distance <= radius + cell_height;
+}
+
 inline uint32_t local_shadow_resolution(float distance_squared, float range, float projection_y,
     uint32_t viewport_height, uint32_t maximum)
 {

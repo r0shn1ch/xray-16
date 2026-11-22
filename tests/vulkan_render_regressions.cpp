@@ -205,6 +205,12 @@ int main()
     assert(std::memcmp(frame_vertices.data(), valid_frames.data(), frame_vertices.size() * sizeof(LevelVertex)) ==
            0);
     assert(detail_grid_size(.25f) == 8 && detail_grid_size(.5f) == 4 && detail_grid_size(1.f) == 2);
+    // The streaming apron contains every cell accepted by the GPU distance
+    // test, including the exact horizontal and vertical boundaries.
+    assert(detail_streaming_cell(80.f * 80.f, 82.f, 2.f, 80.f));
+    assert(detail_streaming_cell(83.f * 83.f, 85.f, 2.f, 80.f));
+    assert(!detail_streaming_cell(85.f * 85.f, 0.f, 2.f, 80.f));
+    assert(!detail_streaming_cell(0.f, 87.f, 2.f, 80.f));
     assert(!tessellation_enabled && !legacy_level_lights);
     assert(is_water_contact_effect("hit_fx\\effects\\hit_water_hit_distort_big"));
     assert(!is_water_contact_effect("hit_fx\\effects\\hit_water_hit_splash"));

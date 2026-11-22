@@ -2065,10 +2065,11 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
             const float distance_squared = dx * dx + dz * dz;
             const size_t index = size_t(z) * details_.width + x;
             const auto& cell = details_.cells[index];
-            // CPU work streams a coarse rectangular neighborhood. Exact range
-            // and frustum selection for the generated path happens on GPU.
-            if ((gpu_generation || (distance_squared <= max_distance_squared &&
-                std::abs(cell.ground - camera.y) <= max_distance + cell.height)) &&
+            // Stream an apron around the GPU's range test. The GPU still
+            // makes the exact distance and frustum selection each frame.
+            const float vertical_distance = std::abs(cell.ground - camera.y);
+            if ((gpu_generation ? detail_streaming_cell(distance_squared, vertical_distance, cell.height, max_distance) :
+                (distance_squared <= max_distance_squared && vertical_distance <= max_distance + cell.height)) &&
                 std::any_of(cell.ids.begin(), cell.ids.end(), [](uint8_t id) { return id != 63; }))
             {
                 cells.push_back(index);
