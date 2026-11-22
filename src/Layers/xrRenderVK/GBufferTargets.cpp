@@ -17,18 +17,24 @@ bool negotiate_gbuffer_msaa(VkPhysicalDevice physical, const VkPhysicalDevicePro
     if (!physical || !image_properties || !create_render_pass || !(count & allowed) || (count & (count - 1)) ||
         color_format == VK_FORMAT_UNDEFINED || depth_format == VK_FORMAT_UNDEFINED)
     { error = "invalid MSAA capability request"; return false; }
-    VkImageFormatProperties color{}, depth{}, scene_color{};
+    VkImageFormatProperties color{}, depth{}, scene_color{}, scene_depth{};
     if (image_properties(physical, color_format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 0, &color) != VK_SUCCESS ||
         image_properties(physical, depth_format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                VK_IMAGE_USAGE_TRANSFER_SRC_BIT, 0, &depth) != VK_SUCCESS)
+                VK_IMAGE_USAGE_TRANSFER_SRC_BIT, 0, &depth) != VK_SUCCESS ||
+        image_properties(physical, depth_format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            0, &scene_depth) != VK_SUCCESS)
     { error = "MSAA attachment formats or usages are unsupported"; return false; }
     if (scene_color_format != VK_FORMAT_UNDEFINED &&
         image_properties(physical, scene_color_format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0, &scene_color) != VK_SUCCESS)
     { error = "MSAA scene color format or usage is unsupported"; return false; }
-    const VkSampleCountFlags supported = color.sampleCounts & depth.sampleCounts &
+    const bool stencil = depth_format == VK_FORMAT_D16_UNORM_S8_UINT || depth_format == VK_FORMAT_D24_UNORM_S8_UINT ||
+        depth_format == VK_FORMAT_D32_SFLOAT_S8_UINT;
+    const VkSampleCountFlags supported = color.sampleCounts & depth.sampleCounts & scene_depth.sampleCounts &
+        (stencil ? properties.limits.framebufferStencilSampleCounts : ~VkSampleCountFlags{0}) &
         (scene_color_format == VK_FORMAT_UNDEFINED ? ~VkSampleCountFlags{0} : scene_color.sampleCounts) &
         properties.limits.framebufferColorSampleCounts & properties.limits.framebufferDepthSampleCounts;
     VkSampleCountFlagBits selected = VK_SAMPLE_COUNT_1_BIT;
@@ -36,8 +42,6 @@ bool negotiate_gbuffer_msaa(VkPhysicalDevice physical, const VkPhysicalDevicePro
         if (supported & candidate) { selected = static_cast<VkSampleCountFlagBits>(candidate); break; }
     if (selected == VK_SAMPLE_COUNT_1_BIT)
     { error = "no supported multisample count for color and depth"; return false; }
-    const bool stencil = depth_format == VK_FORMAT_D16_UNORM_S8_UINT || depth_format == VK_FORMAT_D24_UNORM_S8_UINT ||
-        depth_format == VK_FORMAT_D32_SFLOAT_S8_UINT;
     VkResolveModeFlags depth_modes = resolve_properties.supportedDepthResolveModes;
     const bool independent_none = resolve_properties.independentResolve || resolve_properties.independentResolveNone;
     if (stencil && !independent_none) depth_modes &= resolve_properties.supportedStencilResolveModes;

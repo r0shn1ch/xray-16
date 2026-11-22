@@ -80,6 +80,7 @@ VkResult VKAPI_PTR fake_create_render_pass2(VkDevice, const VkRenderPassCreateIn
 void test_msaa_policy()
 {
     VkPhysicalDeviceProperties properties{};
+    properties.limits.framebufferStencilSampleCounts = VK_SAMPLE_COUNT_2_BIT;
     properties.limits.framebufferColorSampleCounts = properties.limits.framebufferDepthSampleCounts =
         VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT;
     VkPhysicalDeviceDepthStencilResolveProperties resolve{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES};
