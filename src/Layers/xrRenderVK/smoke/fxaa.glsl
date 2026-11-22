@@ -40,13 +40,16 @@ vec3 fxaa(vec2 uv, vec2 pixel, float enabled)
     vec2 across = along_x ? vec2(0.0f, pixel.y) : vec2(pixel.x, 0.0f);
     if (pair_negative) across = -across;
     vec2 along = along_x ? vec2(pixel.x, 0.0f) : vec2(0.0f, pixel.y);
-    vec2 origin = uv + across * 0.5f;
-    vec2 end_negative = origin - along;
-    vec2 end_positive = origin + along;
+    vec2 lower = pixel * 0.5f;
+    vec2 upper = vec2(1.0f) - lower;
+    vec2 origin = clamp(uv + across * 0.5f, lower, upper);
+    vec2 end_negative = max(origin - along, lower);
+    vec2 end_positive = min(origin + along, upper);
     float delta_negative = aa_luma(aa_sample(end_negative)) - average;
     float delta_positive = aa_luma(aa_sample(end_positive)) - average;
-    bool done_negative = abs(delta_negative) >= gradient;
-    bool done_positive = abs(delta_positive) >= gradient;
+    int axis = along_x ? 0 : 1;
+    bool done_negative = abs(delta_negative) >= gradient || end_negative[axis] <= lower[axis];
+    bool done_positive = abs(delta_positive) >= gradient || end_positive[axis] >= upper[axis];
     // Bounded span search: no dynamic allocation or shader variants.
     for (int step = 0; step < 6; ++step)
     {
@@ -55,21 +58,22 @@ vec3 fxaa(vec2 uv, vec2 pixel, float enabled)
             step < 4 ? 2.0f : step == 4 ? 4.0f : 8.0f;
         if (!done_negative)
         {
-            end_negative -= along * distance_step;
+            end_negative = max(end_negative - along * distance_step, lower);
             delta_negative = aa_luma(aa_sample(end_negative)) - average;
-            done_negative = abs(delta_negative) >= gradient;
+            done_negative = abs(delta_negative) >= gradient || end_negative[axis] <= lower[axis];
         }
         if (!done_positive)
         {
-            end_positive += along * distance_step;
+            end_positive = min(end_positive + along * distance_step, upper);
             delta_positive = aa_luma(aa_sample(end_positive)) - average;
-            done_positive = abs(delta_positive) >= gradient;
+            done_positive = abs(delta_positive) >= gradient || end_positive[axis] >= upper[axis];
         }
     }
-    float dn = along_x ? uv.x - end_negative.x : uv.y - end_negative.y;
-    float dp = along_x ? end_positive.x - uv.x : end_positive.y - uv.y;
+    float dn = origin[axis] - end_negative[axis];
+    float dp = end_positive[axis] - origin[axis];
     float closest_delta = dn < dp ? delta_negative : delta_positive;
-    bool valid_span = (closest_delta < 0.0f) != (lm - average < 0.0f);
+    bool valid_span = abs(closest_delta) >= gradient &&
+        ((closest_delta < 0.0f) != (lm - average < 0.0f));
     float edge_offset = valid_span ? 0.5f - min(dn, dp) / max(dn + dp, 1e-6f) : 0.0f;
     float subpixel = abs((2.0f * (ln + ls + lw + le) + lnw + lne + lsw + lse) / 12.0f - lm) / range;
     subpixel = clamp(subpixel, 0.0f, 1.0f);
