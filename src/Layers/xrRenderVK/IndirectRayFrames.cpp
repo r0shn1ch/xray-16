@@ -528,35 +528,30 @@ bool IndirectRayFrames::record(const FrameRecordingContext& frame, const LevelRa
          !import_device_buffer(local_hits_[frame.image_index], local_hits_resource)))
         return false;
 
+    const auto import_geometry_image = [&](VkImage image, VkImageSubresourceRange range,
+                                           FrameSubmissionGraph::Pass producer, FrameImageGraph::Resource& resource) {
+        const uint64_t prior_submission = producer == FrameSubmissionGraph::InvalidPass ?
+            frame.previous_graphics_submission : 0;
+        return image_states.register_image(image, range, ImageUse::SampledGraphicsCompute, error) &&
+            graph.import_image(image, range, resource, error, FrameSubmissionGraph::Queue::Graphics,
+                prior_submission, sharing_.mode, sharing_.queue_families, ImageUse::SampledGraphicsCompute, producer);
+    };
     FrameImageGraph::Resource depth_resource{}, normal_resource{}, motion_resource{};
     const bool have_primary_images = !depth_images_.empty() && !normal_images_.empty();
     if (have_primary_images)
     {
         const VkImageSubresourceRange depth_range{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
         const VkImageSubresourceRange normal_range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        if (!image_states.register_image(depth_images_[frame.image_index], depth_range,
-                ImageUse::SampledGraphicsCompute, error) ||
-            !image_states.register_image(normal_images_[frame.image_index], normal_range,
-                ImageUse::SampledGraphicsCompute, error) ||
-            !graph.import_image(depth_images_[frame.image_index], depth_range, depth_resource, error,
-                FrameSubmissionGraph::Queue::Graphics, frame.previous_graphics_submission,
-                sharing_.mode, sharing_.queue_families, ImageUse::SampledGraphicsCompute,
-                frame.graphics_prepass_pass) ||
-            !graph.import_image(normal_images_[frame.image_index], normal_range, normal_resource, error,
-                FrameSubmissionGraph::Queue::Graphics, frame.previous_graphics_submission,
-                sharing_.mode, sharing_.queue_families, ImageUse::SampledGraphicsCompute,
-                frame.graphics_prepass_pass))
+        if (!import_geometry_image(depth_images_[frame.image_index], depth_range,
+                frame.graphics_prepass_pass, depth_resource) ||
+            !import_geometry_image(normal_images_[frame.image_index], normal_range,
+                frame.graphics_prepass_pass, normal_resource))
             return false;
     }
     if (motion_image != VK_NULL_HANDLE)
     {
         const VkImageSubresourceRange motion_range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        if (!image_states.register_image(motion_image, motion_range,
-                ImageUse::SampledGraphicsCompute, error) ||
-            !graph.import_image(motion_image, motion_range, motion_resource, error,
-                FrameSubmissionGraph::Queue::Graphics, frame.previous_graphics_submission,
-                sharing_.mode, sharing_.queue_families, ImageUse::SampledGraphicsCompute,
-                frame.geometry_motion_submission_pass))
+        if (!import_geometry_image(motion_image, motion_range, frame.geometry_motion_submission_pass, motion_resource))
             return false;
     }
     const bool material_inputs_valid = !albedo_views_.empty() && !surface_views_.empty() &&
@@ -565,18 +560,10 @@ bool IndirectRayFrames::record(const FrameRecordingContext& frame, const LevelRa
     if (material_inputs_valid)
     {
         const VkImageSubresourceRange color_range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        if (!image_states.register_image(albedo_images_[frame.image_index], color_range,
-                ImageUse::SampledGraphicsCompute, error) ||
-            !image_states.register_image(surface_images_[frame.image_index], color_range,
-                ImageUse::SampledGraphicsCompute, error) ||
-            !graph.import_image(albedo_images_[frame.image_index], color_range, albedo_resource, error,
-                FrameSubmissionGraph::Queue::Graphics, frame.previous_graphics_submission,
-                sharing_.mode, sharing_.queue_families, ImageUse::SampledGraphicsCompute,
-                frame.graphics_prepass_pass) ||
-            !graph.import_image(surface_images_[frame.image_index], color_range,
-                gbuffer_surface_resource, error, FrameSubmissionGraph::Queue::Graphics,
-                frame.previous_graphics_submission, sharing_.mode, sharing_.queue_families,
-                ImageUse::SampledGraphicsCompute, frame.graphics_prepass_pass))
+        if (!import_geometry_image(albedo_images_[frame.image_index], color_range,
+                frame.graphics_prepass_pass, albedo_resource) ||
+            !import_geometry_image(surface_images_[frame.image_index], color_range,
+                frame.graphics_prepass_pass, gbuffer_surface_resource))
             return false;
     }
 
