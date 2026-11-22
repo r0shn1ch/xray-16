@@ -1166,6 +1166,17 @@ static bool build_triangle_scene(VkPhysicalDevice physical, VkDevice device,
         }
         if (!error.empty() || !seen[0] || !seen[1] || !seen[2])
         { if (error.empty()) error = "VSM physical allocation incomplete"; break; }
+        std::vector<VsmPageJob> overflow_jobs;
+        if (!read_vsm_dynamic_jobs(vsm_counters, vsm_pages, 2, 2, 3, overflow_jobs, error) ||
+            overflow_jobs.size() != 3)
+        { if (error.empty()) error = "VSM overflow did not produce three renderable jobs"; break; }
+        const uint32_t inconsistent_counts[]{6, 0, 0};
+        std::string readback_error;
+        if (!vsm_counters.write(0, inconsistent_counts, sizeof(inconsistent_counts), error) ||
+            read_vsm_dynamic_jobs(vsm_counters, vsm_pages, 2, 2, 3, overflow_jobs, readback_error) ||
+            !overflow_jobs.empty() || readback_error != "inconsistent VSM dynamic page counters" ||
+            !vsm_counters.write(0, page_counts, sizeof(page_counts), error))
+        { if (error.empty()) error = "VSM readback accepted inconsistent overflow counters"; break; }
         RaySurface bump_result[4]{};
         if (!bump_surfaces.read(0, bump_result, sizeof(bump_result), error)) break;
         const float bump_component = 1.f / std::sqrt(3.f);

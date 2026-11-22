@@ -41,18 +41,32 @@ bool read_vsm_dynamic_jobs(const BufferResource& counters, const BufferResource&
     if (!axis || axis > 65535 || !levels || levels > 65535 || count > UINT32_MAX ||
         counters.size() < (uint64_t(levels) + 1) * 4 || pages.size() < uint64_t(atlas_slots) * 16)
     { error = "invalid VSM dynamic job buffer dimensions"; return false; }
-    uint32_t requested = 0;
-    if (!counters.read(0, &requested, sizeof(requested), error)) return false;
-    const uint32_t accepted = std::min(requested, atlas_slots);
+    std::vector<uint32_t> counts(size_t(levels) + 1);
+    if (!counters.read(0, counts.data(), counts.size() * sizeof(counts[0]), error)) return false;
+    const uint32_t accepted = std::min(counts[0], atlas_slots);
+    uint64_t counted = 0;
+    for (uint32_t level = 0; level < levels; ++level)
+        counted += counts[level + 1];
+    if (counts[0] > count || counted != accepted)
+    { error = "inconsistent VSM dynamic page counters"; return false; }
     std::vector<std::array<uint32_t, 4>> entries(accepted);
     if (accepted && !pages.read(0, entries.data(), entries.size() * sizeof(entries[0]), error)) return false;
+    std::vector<uint32_t> virtual_pages;
+    virtual_pages.reserve(accepted);
     for (uint32_t slot = 0; slot < accepted; ++slot)
     {
         const auto& entry = entries[slot];
-        if (entry[0] >= levels || entry[1] >= axis || entry[2] >= axis)
-        { jobs.clear(); error = "invalid VSM dynamic page job"; return false; }
-        jobs.push_back({slot, entry[0], entry[1], entry[2]});
+        if (entry[0] >= levels || entry[1] >= axis || entry[2] >= axis || !counts[entry[0] + 1])
+        { error = "invalid VSM dynamic page job"; return false; }
+        --counts[entry[0] + 1];
+        virtual_pages.push_back((entry[0] * axis + entry[2]) * axis + entry[1]);
     }
+    std::sort(virtual_pages.begin(), virtual_pages.end());
+    if (std::adjacent_find(virtual_pages.begin(), virtual_pages.end()) != virtual_pages.end())
+    { error = "duplicate VSM dynamic page job"; return false; }
+    jobs.reserve(accepted);
+    for (uint32_t slot = 0; slot < accepted; ++slot)
+        jobs.push_back({slot, entries[slot][0], entries[slot][1], entries[slot][2]});
     error.clear(); return true;
 }
 
