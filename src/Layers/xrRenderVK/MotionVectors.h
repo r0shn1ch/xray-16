@@ -63,6 +63,7 @@ private:
     std::array<float, 16> current_vp_{};
     std::array<float, 16> current_inverse_{};
     std::array<float, 16> previous_vp_{};
+    bool current_view_valid_{};
     bool history_valid_{};
     VkSampler sampler_{};
     VkDescriptorSetLayout set_layout_{};

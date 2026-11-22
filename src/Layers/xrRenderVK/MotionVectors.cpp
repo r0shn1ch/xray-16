@@ -295,7 +295,16 @@ bool MotionVectors::create_target(Target& target, std::string& error)
 
 void MotionVectors::set_view(const float* view_projection, const float* inverse_view_projection)
 {
-    if (!view_projection || !inverse_view_projection) return;
+    const auto finite = [](const float* matrix) {
+        return matrix && std::all_of(matrix, matrix + 16, [](float value) { return std::isfinite(value); });
+    };
+    current_view_valid_ = finite(view_projection) && finite(inverse_view_projection);
+    if (!current_view_valid_)
+    {
+        current_inverse_.fill(0.f);
+        reset_history();
+        return;
+    }
     std::copy_n(view_projection, 16, current_vp_.begin());
     std::copy_n(inverse_view_projection, 16, current_inverse_.begin());
     if (history_valid_ && camera_cut(previous_vp_, current_inverse_))
@@ -304,6 +313,7 @@ void MotionVectors::set_view(const float* view_projection, const float* inverse_
 
 void MotionVectors::commit_view()
 {
+    if (!current_view_valid_) return;
     previous_vp_ = current_vp_;
     history_valid_ = true;
 }
@@ -415,6 +425,7 @@ void MotionVectors::destroy()
     sampler_ = VK_NULL_HANDLE;
     image_pool_ = nullptr;
     sharing_ = {};
+    current_view_valid_ = false;
     reset_history();
 }
 } // namespace xray::render::vulkan

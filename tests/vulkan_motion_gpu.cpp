@@ -590,6 +590,12 @@ int run_test(int argc, char** argv)
     check(vkDeviceWaitIdle(vk.device));
     object_pass.destroy();
     const VkImage reused_image = motion.image(0);
+    motion.set_view(identity.data(), identity.data());
+    motion.commit_view();
+    if (!motion.history_valid()) throw std::runtime_error("valid camera history was not published");
+    motion.set_view(nullptr, identity.data());
+    motion.commit_view();
+    if (motion.history_valid()) throw std::runtime_error("invalid camera history was published");
     motion.destroy();
     if (!motion.initialize(vk.physical, vk.device, vkGetDeviceProcAddr, {2, 2}, {vk.depth_view}, {vk.depth},
             vk.memory, dispatch, VK_NULL_HANDLE, !fallback, error, &image_pool,
