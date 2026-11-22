@@ -23,6 +23,32 @@ spec.loader.exec_module(converter)
 
 
 class BatchConversionTest(unittest.TestCase):
+    def test_model_set_exports_engine_parallax_map_by_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            models = root / "models"
+            models.mkdir()
+            diffuse, normal = root / "wall_d.png", root / "wall_normal.png"
+            Image.new("RGBA", (2, 2), (10, 20, 30, 40)).save(diffuse)
+            Image.new("RGB", (2, 2), (128, 128, 255)).save(normal)
+            packed = Image.new("RGBA", (2, 2), (1, 2, 3, 42))
+            albedo = Image.new("RGBA", (2, 2), (10, 20, 30, 40))
+            parallax = packed.getchannel("A").convert("RGBA")
+            command = [str(SCRIPT), str(models), str(diffuse), "--normal", str(normal)]
+            with mock.patch.object(converter, "run_openxray_models", return_value=(packed, albedo, parallax)), \
+                    mock.patch.object(sys, "argv", command):
+                converter.main()
+            self.assertTrue((root / "wall_pbr.dds").is_file())
+            with Image.open(root / "wall_parallax.dds") as height:
+                self.assertEqual(height.convert("RGBA").getpixel((0, 0)), (42, 42, 42, 255))
+            (root / "wall_pbr.dds").unlink()
+            (root / "wall_parallax.dds").unlink()
+            with mock.patch.object(converter, "run_openxray_models", return_value=(packed, albedo, parallax)), \
+                    mock.patch.object(sys, "argv", command + ["--no-export-parallax"]):
+                converter.main()
+            self.assertTrue((root / "wall_pbr.dds").is_file())
+            self.assertFalse((root / "wall_parallax.dds").exists())
+
     def test_openxray_packing_truncates_model_outputs(self):
         channels = np.array([0.5, 0.999, 0.0], dtype=np.float32).reshape(1, 3, 1, 1)
         self.assertEqual(converter.pack_pbr(channels, round_to_nearest=False).getpixel((0, 0)), (127, 254, 0, 255))

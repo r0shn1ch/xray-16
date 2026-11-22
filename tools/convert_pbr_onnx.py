@@ -7,7 +7,8 @@ roughness, ambient occlusion order. Inputs and outputs use the range [0,1].
 Requires numpy, Pillow and onnxruntime.
 
 Alternatively pass the OpenXRay ONNX model directory and an RGB normal map.
-This mode packs parallax into alpha and can export albedo and parallax separately.
+This mode packs parallax into alpha and exports a separate parallax map by
+default, as required by the engine. Albedo can also be exported separately.
 Pass several diffuse images to reuse the loaded models and write one PBR DDS per image.
 """
 
@@ -343,12 +344,18 @@ def main():
     parser.add_argument("--albedo-output", type=Path)
     parser.add_argument("--parallax-output", type=Path, help="use <material>_parallax.dds for engine discovery")
     parser.add_argument("--export-albedo", action="store_true", help="write <material>_albedo.dds next to each diffuse input")
-    parser.add_argument("--export-parallax", action="store_true", help="write <material>_parallax.dds next to each diffuse input")
+    parallax_export = parser.add_mutually_exclusive_group()
+    parallax_export.add_argument("--export-parallax", dest="export_parallax", action="store_true",
+                                 help="write <material>_parallax.dds next to each diffuse input (default for model sets)")
+    parallax_export.add_argument("--no-export-parallax", dest="export_parallax", action="store_false",
+                                 help="write only the packed PBR texture")
+    parser.set_defaults(export_parallax=None)
     parser.add_argument("--correct-normal-features", action="store_true",
                         help="use physically corrected normal features instead of OpenXRay-compatible preprocessing")
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
     model_set = args.model.is_dir()
+    export_parallax = model_set if args.export_parallax is None else args.export_parallax
     if len(args.diffuse) > 1 and (args.output or args.albedo_output or args.parallax_output):
         parser.error("explicit output paths require a single diffuse input")
     if (model_set or args.normal) and len(args.normal or []) != len(args.diffuse):
@@ -362,7 +369,7 @@ def main():
         destinations.append((
             args.output or diffuse.with_name(base + "_pbr.dds"),
             args.albedo_output or (diffuse.with_name(base + "_albedo.dds") if args.export_albedo else None),
-            args.parallax_output or (diffuse.with_name(base + "_parallax.dds") if args.export_parallax else None),
+            args.parallax_output or (diffuse.with_name(base + "_parallax.dds") if export_parallax else None),
         ))
     if model_set and args.output_name is not None:
         parser.error("--output-name applies to single-model conversion")
