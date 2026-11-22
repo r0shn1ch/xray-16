@@ -11,6 +11,43 @@ namespace xray::render::vulkan
 {
 namespace
 {
+VkImageUsageFlags required_image_usage(ImageUse use)
+{
+    switch (use)
+    {
+    case ImageUse::TransferSource: return VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    case ImageUse::ColorAttachmentWriteTransferSource:
+        return VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    case ImageUse::TransferDestination:
+    case ImageUse::TransferDestinationGeneral: return VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    case ImageUse::Sampled:
+    case ImageUse::ComputeSampled:
+    case ImageUse::SampledGraphicsCompute: return VK_IMAGE_USAGE_SAMPLED_BIT;
+    case ImageUse::StorageRead:
+    case ImageUse::StorageWrite:
+    case ImageUse::StorageReadWrite: return VK_IMAGE_USAGE_STORAGE_BIT;
+    case ImageUse::ColorAttachment: return VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    case ImageUse::DepthStencilAttachment:
+    case ImageUse::DepthStencilProduced:
+    case ImageUse::DepthStencilReadOnly: return VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    default: return 0;
+    }
+}
+
+VkBufferUsageFlags required_buffer_usage(BufferUse use)
+{
+    switch (use)
+    {
+    case BufferUse::TransferSource: return VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    case BufferUse::TransferDestination: return VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    case BufferUse::IndirectRead: return VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    case BufferUse::IndirectAndComputeRead: return VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    case BufferUse::ComputeWrite:
+    case BufferUse::ComputeReadWrite: return VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    default: return 0;
+    }
+}
+
 template <typename Allocate>
 bool try_allocate_transient(Allocate&& allocate, std::string& error)
 {
@@ -953,17 +990,44 @@ bool FrameImageGraph::compile_resource_lifetimes(ResourceLifetimes& lifetimes, s
 
     compiled.images.resize(m_images.size());
     compiled.buffers.resize(m_buffers.size());
+    const auto record_image = [&](const Access& access, uint32_t index)
+    {
+        const auto usage = m_images[access.resource.index].transient_info.usage;
+        const auto required = required_image_usage(access.use) | required_image_usage(access.final_use);
+        if (usage && ((usage & required) != required || access.use == ImageUse::Present ||
+                access.final_use == ImageUse::Present))
+        {
+            error = "Frame image graph: transient image usage does not support pass " +
+                m_passes[compiled.pass_order[index]].name;
+            return false;
+        }
+        compiled.images[access.resource.index].record_use(index);
+        return true;
+    };
+    const auto record_buffer = [&](const BufferAccess& access, uint32_t index)
+    {
+        const auto usage = m_buffers[access.resource.index].transient_usage;
+        const auto required = required_buffer_usage(access.use);
+        if (usage && (usage & required) != required)
+        {
+            error = "Frame image graph: transient buffer usage does not support pass " +
+                m_passes[compiled.pass_order[index]].name;
+            return false;
+        }
+        compiled.buffers[access.resource.index].record_use(index);
+        return true;
+    };
     for (uint32_t index = 0; index < compiled.pass_order.size(); ++index)
     {
         const PassInfo& pass = m_passes[compiled.pass_order[index]];
         for (const auto& access : pass.reads)
-            compiled.images[access.resource.index].record_use(index);
+            if (!record_image(access, index)) return false;
         for (const auto& access : pass.writes)
-            compiled.images[access.resource.index].record_use(index);
+            if (!record_image(access, index)) return false;
         for (const auto& access : pass.buffer_reads)
-            compiled.buffers[access.resource.index].record_use(index);
+            if (!record_buffer(access, index)) return false;
         for (const auto& access : pass.buffer_writes)
-            compiled.buffers[access.resource.index].record_use(index);
+            if (!record_buffer(access, index)) return false;
     }
     lifetimes = std::move(compiled);
     return true;

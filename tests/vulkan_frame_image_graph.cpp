@@ -77,6 +77,11 @@ int main()
         assert(error.find("allocation interrupted") != std::string::npos);
         assert(virtual_graph.materialize_buffers(allocate, error));
         assert(virtual_graph.buffer_handle(written_buffer) && virtual_graph.buffer_handle(second_buffer));
+        const auto copy = virtual_graph.add_pass("copy unflagged image", [] { return true; });
+        assert(virtual_graph.read(copy, written_image, ImageUse::TransferSource, error));
+        FrameImageGraph::ResourceLifetimes lifetimes;
+        assert(!virtual_graph.compile_resource_lifetimes(lifetimes, error));
+        assert(error.find("transient image usage does not support pass copy unflagged image") != std::string::npos);
     }
     ImageStateTracker states;
     assert(states.register_image(image, range, ImageUse::Undefined, error));
