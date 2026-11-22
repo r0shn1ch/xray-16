@@ -693,6 +693,13 @@ int run_test(int argc, char** argv)
     motion.set_view(identity.data(), identity.data());
     motion.commit_view();
     if (!motion.history_valid()) throw std::runtime_error("valid camera history was not published");
+    auto forward = identity, forward_inverse = identity;
+    forward[14] = -.2f;
+    forward_inverse[14] = .2f;
+    motion.set_view(forward.data(), forward_inverse.data());
+    if (motion.history_valid()) throw std::runtime_error("depth-only camera cut retained motion history");
+    motion.set_view(identity.data(), identity.data());
+    motion.commit_view();
     motion.set_view(nullptr, identity.data());
     motion.commit_view();
     if (motion.history_valid()) throw std::runtime_error("invalid camera history was published");

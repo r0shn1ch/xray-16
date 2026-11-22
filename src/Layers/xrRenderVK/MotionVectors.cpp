@@ -42,7 +42,9 @@ bool camera_cut(const std::array<float, 16>& previous,
         if (!std::isfinite(projected[3]) || projected[3] <= 1e-6f) return true;
         const float dx = projected[0] / projected[3] - xy[0];
         const float dy = projected[1] / projected[3] - xy[1];
-        if (!std::isfinite(dx) || !std::isfinite(dy) ||
+        const float previous_depth = projected[2] / projected[3];
+        if (!std::isfinite(dx) || !std::isfinite(dy) || !std::isfinite(previous_depth) ||
+            previous_depth < 0.f || previous_depth > 1.f ||
             std::abs(dx) > 1.f || std::abs(dy) > 1.f)
             return true;
     }
