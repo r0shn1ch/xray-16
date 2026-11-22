@@ -67,7 +67,8 @@ bool visibilityMaterialUv(PackedVertex a, PackedVertex b, PackedVertex c, DrawEn
         if (!resolveVisibilityBarycentrics(visibilityClipPosition(a, viewProjection),
             visibilityClipPosition(b, viewProjection), visibilityClipPosition(c, viewProjection),
             neighborNdc, ndcPerPixel, neighbor)) continue;
-        vec2 neighborUv = parallaxUv(texcoords * neighbor.weights, texcoords * neighbor.dx, texcoords * neighbor.dy,
+        vec2 neighborUv = parallaxUv(visibilityBaseUv(entry, texcoords * neighbor.weights, 1.0),
+            visibilityBaseUv(entry, texcoords * neighbor.dx, 0.0), visibilityBaseUv(entry, texcoords * neighbor.dy, 0.0),
             entry.parallaxSlot, entry.bumpHeight, positions * neighbor.weights,
             finiteDirection(normals * neighbor.weights, vec3(0,1,0)), tangents * neighbor.weights,
             bitangents * neighbor.weights, eyeAndSteep);

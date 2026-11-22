@@ -140,6 +140,9 @@ void rasterizeTriangle(vec4 a, vec4 b, vec4 c, uint id, DrawEntry entry,
                 mat3x2 texcoords = mat3x2(vertexA.normalYZUv.zw, vertexB.normalYZUv.zw, vertexC.normalYZUv.zw);
                 vec2 uv = texcoords * barycentrics.weights;
                 vec2 dx = texcoords * barycentrics.dx, dy = texcoords * barycentrics.dy;
+                uv = visibilityBaseUv(entry, uv, 1.0);
+                dx = visibilityBaseUv(entry, dx, 0.0);
+                dy = visibilityBaseUv(entry, dy, 0.0);
                 if (any(isnan(uv)) || any(isinf(uv)) || any(isnan(dx)) || any(isinf(dx)) ||
                     any(isnan(dy)) || any(isinf(dy))) continue;
                 if (!visibilityMaterialUv(vertexA, vertexB, vertexC, entry, barycentrics, ivec2(x, y), ndc,

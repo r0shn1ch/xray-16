@@ -26,7 +26,23 @@ struct DrawEntry
     float detailScale;
     uint detailMode;
     float emission;
+    float baseUX, baseUY, baseUOffset;
+    float baseVX, baseVY, baseVOffset;
+    float detailUX, detailUY, detailUOffset;
+    float detailVX, detailVY, detailVOffset;
 };
+
+vec2 visibilityBaseUv(DrawEntry entry, vec2 uv, float translation)
+{
+    return vec2(dot(vec2(entry.baseUX, entry.baseUY), uv) + entry.baseUOffset * translation,
+        dot(vec2(entry.baseVX, entry.baseVY), uv) + entry.baseVOffset * translation);
+}
+
+vec2 visibilityDetailUv(DrawEntry entry, vec2 uv, float translation)
+{
+    return vec2(dot(vec2(entry.detailUX, entry.detailUY), uv) + entry.detailUOffset * translation,
+        dot(vec2(entry.detailVX, entry.detailVY), uv) + entry.detailVOffset * translation);
+}
 
 // Matches the static LevelVertex stream, including attributes unused here.
 struct PackedVertex

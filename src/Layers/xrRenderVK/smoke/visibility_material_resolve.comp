@@ -77,9 +77,12 @@ void main()
         return;
 
     mat3x2 texcoords = mat3x2(a.normalYZUv.zw, b.normalYZUv.zw, c.normalYZUv.zw);
-    vec2 uv = texcoords * barycentrics.weights;
-    vec2 uvDx = texcoords * barycentrics.dx;
-    vec2 uvDy = texcoords * barycentrics.dy;
+    vec2 rawUv = texcoords * barycentrics.weights;
+    vec2 rawDx = texcoords * barycentrics.dx;
+    vec2 rawDy = texcoords * barycentrics.dy;
+    vec2 uv = visibilityBaseUv(entry, rawUv, 1.0);
+    vec2 uvDx = visibilityBaseUv(entry, rawDx, 0.0);
+    vec2 uvDy = visibilityBaseUv(entry, rawDy, 0.0);
     vec2 baseUv = uv, baseDx = uvDx, baseDy = uvDy;
     if (!finiteUv(uv) || !finiteUv(uvDx) || !finiteUv(uvDy)) return;
     vec3 normalA = finiteNormal(visibilityNormal(a));
@@ -136,9 +139,9 @@ void main()
             uv, uvDx, uvDy).xyz * 2.0 - 1.0);
     if (hasDetail)
     {
-        vec2 detailUv = baseUv * entry.detailScale + (uv - baseUv);
-        vec2 detailDx = baseDx * entry.detailScale + (uvDx - baseDx);
-        vec2 detailDy = baseDy * entry.detailScale + (uvDy - baseDy);
+        vec2 detailUv = visibilityDetailUv(entry, rawUv, 1.0) * entry.detailScale + (uv - baseUv);
+        vec2 detailDx = visibilityDetailUv(entry, rawDx, 0.0) * entry.detailScale + (uvDx - baseDx);
+        vec2 detailDy = visibilityDetailUv(entry, rawDy, 0.0) * entry.detailScale + (uvDy - baseDy);
         vec4 detail = textureGrad(baseColorTextures[nonuniformEXT(entry.detailSlot)], detailUv, detailDx, detailDy);
         if (entry.detailMode != 1u) color.rgb *= 2.0 * detail.rgb;
         if (hasDetailNormal)
