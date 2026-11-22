@@ -30,6 +30,8 @@ public:
     VkRenderPass render_pass() const { return pass_; }
     VkExtent2D extent() const { return extent_; }
     uint32_t page_size() const { return page_size_; }
+    uint32_t columns() const { return columns_; }
+    uint32_t rows() const { return rows_; }
     uint64_t page_count() const { return uint64_t(columns_) * rows_; }
 private:
     VkDevice device_{};

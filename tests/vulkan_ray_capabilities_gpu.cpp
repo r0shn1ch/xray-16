@@ -1313,8 +1313,9 @@ static bool build_triangle_scene(VkPhysicalDevice physical, VkDevice device,
         std::copy_n(inverse, 16, resolve_params.light_view);
         resolve_params.level[0][0] = resolve_params.level[0][1] = -1.f; resolve_params.level[0][2] = 2.f;
         resolve_params.level[1][0] = resolve_params.level[1][1] = -2.f; resolve_params.level[1][2] = 4.f;
-        resolve_params.axis = 2; resolve_params.levels = 2; resolve_params.page_size = 8;
-        resolve_params.static_columns = 2; resolve_params.static_slots = 2; resolve_params.inverse_depth_range = 1.f;
+        resolve_params.axis = 2; resolve_params.levels = 2; resolve_params.page_size = vsm_atlas.page_size();
+        resolve_params.static_columns = vsm_atlas.columns();
+        resolve_params.inverse_depth_range = 1.f;
         bool resolve_ok = true;
         for (uint32_t scenario = 0; scenario < 9 && resolve_ok; ++scenario)
         {
@@ -1324,10 +1325,11 @@ static bool build_triangle_scene(VkPhysicalDevice physical, VkDevice device,
             if (scenario == 6 || scenario == 7) { mapping[3] = 2; mapping[7] = 0; }
             if (scenario == 8) { mapping[0] = mapping[1] = mapping[2] = 1; mapping[3] = 0; }
             const bool dynamic = (scenario >= 3 && scenario <= 5) || scenario == 7;
-            const uint32_t declared_slots = scenario >= 6 ? 3 : 2;
+            const uint32_t declared_slots = static_cast<uint32_t>(vsm_atlas.page_count()) +
+                (scenario == 6 || scenario == 7 ? 1u : 0u);
             resolve_params.static_slots = dynamic ? 0 : declared_slots;
             resolve_params.dynamic_enabled = dynamic ? 1 : 0;
-            resolve_params.dynamic_columns = 2; resolve_params.dynamic_slots = declared_slots;
+            resolve_params.dynamic_columns = vsm_atlas.columns(); resolve_params.dynamic_slots = declared_slots;
             BufferResource& resolve_mapping = dynamic ? vsm_table : vsm_resolve_table;
             if (!resolve_mapping.write(0, mapping, sizeof(mapping), error) ||
                 vkResetFences(device, 1, &fence) != VK_SUCCESS || vkResetCommandBuffer(command, 0) != VK_SUCCESS ||

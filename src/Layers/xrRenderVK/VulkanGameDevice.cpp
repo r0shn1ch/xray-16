@@ -1869,8 +1869,10 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
                 light_matrix[10] * camera_world[2];
             const float near_depth = std::floor(camera_depth / 64.f) * 64.f - 256.f;
             std::string vsm_error;
+            const auto& atlas = vsm_frames_.static_atlas;
+            const uint32_t axis = atlas.columns();
             vsm_ready = build_vsm_clipmap(sun_uniform.inverse_view_projection, light_matrix, camera_world,
-                8, 3, 32.f, near_depth, near_depth + 512.f, vsm_clipmap_, vsm_error);
+                axis, axis ? atlas.rows() / axis : 0, 32.f, near_depth, near_depth + 512.f, vsm_clipmap_, vsm_error);
             if (!vsm_ready && Device.dwFrame % 300 == 0)
                 Msg("! [renderer-vulkan] VSM clipmap unavailable: %s", vsm_error.c_str());
         }
@@ -2547,7 +2549,9 @@ bool VulkanGameDevice::record_vsm_requests(const FrameRecordingContext& frame, v
     {
         auto resolve = owner.vsm_visible_clipmap_.resolve;
         std::copy_n(owner.vsm_clipmap_.resolve.inverse_view_projection, 16, resolve.inverse_view_projection);
-        resolve.page_size = 64; resolve.static_columns = 8; resolve.dynamic_columns = 8;
+        resolve.page_size = resources.static_atlas.page_size();
+        resolve.static_columns = resources.static_atlas.columns();
+        resolve.dynamic_columns = resources.dynamic_atlas.columns();
         resolve.static_slots = static_cast<uint32_t>(resources.static_atlas.page_count());
         resolve.dynamic_slots = static_cast<uint32_t>(resources.dynamic_atlas.page_count());
         resolve.dynamic_enabled = 1; resolve.bias = .0015f;
