@@ -60,6 +60,12 @@ int main()
     assert(!decode_slide_windows(source.data(), source.size(), indices, 4, windows, error));
     assert(windows.size() == 2);
 
+    auto empty_lod = source;
+    empty_lod[28] = empty_lod[29] = 0;
+    empty_lod[32] = empty_lod[33] = 0;
+    assert(decode_slide_windows(empty_lod.data(), empty_lod.size(), indices, 4, windows, error));
+    assert(windows.back().vertex_count == 2 && select_slide_window(windows, 0.f, indices.size()).index_count == 0);
+
     // A progressive child in an OGF hierarchy keeps every index and window.
     std::vector<uint8_t> vertices, serialized_indices;
     u32(vertices, 0x112); u32(vertices, 3);

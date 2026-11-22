@@ -37,7 +37,8 @@ bool decode_slide_windows(const uint8_t* data, size_t size,
         const uint8_t* p = data + 20 + size_t(i) * 8;
         const uint32_t offset = u32(p), triangles = u16(p + 4);
         const uint16_t vertices = u16(p + 6);
-        if (!triangles || !vertices || vertices > vertex_count ||
+        // Progressive simplification can end with two vertices and no faces.
+        if (!vertices || vertices > vertex_count ||
             offset > indices.size() || triangles > (indices.size() - offset) / 3)
         {
             error = "OGF sliding window exceeds its buffers";
