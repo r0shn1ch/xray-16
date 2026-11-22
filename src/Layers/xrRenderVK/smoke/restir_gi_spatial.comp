@@ -348,8 +348,12 @@ void main()
     {
         vec3 direction = octahedral_decode_direction(reservoir.packed_direction);
         vec3 contribution = diffuse_contribution(center, reservoir.radiance.rgb, direction);
-        vec3 estimate = contribution *
-            (reservoir.weight_sum / (float(reservoir.sample_count) * reservoir.target));
+        // Normalize chromaticity before applying the average candidate weight.
+        // Multiplying sample count by target can overflow for bright samples.
+        vec3 estimate = (contribution / reservoir.target) *
+            (reservoir.weight_sum / float(reservoir.sample_count));
+        if (any(isnan(estimate)) || any(isinf(estimate)))
+            estimate = vec3(0.0);
         output_radiance.values[index] = vec4(estimate, center_radiance.a);
     }
 }
