@@ -61,10 +61,13 @@ void GpuSetAllocationStamp(uint index,bool stateRange,uint value) {
     if (stateRange) InterlockedExchange(g_StateAllocation[index],value,previous);
     else InterlockedExchange(g_ParticleAllocation[index],value,previous);
 }
-uint GpuAllocateRange(uint count,bool stateRange) {
+uint GpuAllocateRange(uint count,bool stateRange,bool reportFailure) {
     if (count == 0) return 0;
     uint limit = stateRange ? g_Papi.actionStateCapacity : g_Papi.particleCapacity;
-    if (count > limit) { GpuAllocationError(stateRange ? 4u : 1u); return GPU_PAPI_INVALID; }
+    if (count > limit) {
+        if (reportFailure) GpuAllocationError(stateRange ? 4u : 1u);
+        return GPU_PAPI_INVALID;
+    }
     for (uint first = 0; first <= limit - count;) {
         uint acquired = 0;
         uint occupiedEnd = first + 1;
@@ -78,7 +81,7 @@ uint GpuAllocateRange(uint count,bool stateRange) {
         for (uint j = 0; j < acquired; ++j) GpuSetAllocationStamp(first + j,stateRange,0);
         first = max(first + acquired + 1,occupiedEnd);
     }
-    GpuAllocationError(stateRange ? 4u : 1u);
+    if (reportFailure) GpuAllocationError(stateRange ? 4u : 1u);
     return GPU_PAPI_INVALID;
 }
 void GpuReleaseReservation() {
@@ -98,18 +101,23 @@ void GpuReleaseReservation() {
     }
     g_Reservation.childFirst = GPU_PAPI_INVALID;
 }
-bool GpuReserveResources(uint particles,uint states,uint children) {
+bool GpuReserveResources(uint particles,uint states,uint children,bool reportFailure) {
     g_Reservation = (GpuPapiReservation)0;
     g_Reservation.particleFirst = GPU_PAPI_INVALID;
     g_Reservation.stateFirst = GPU_PAPI_INVALID;
     g_Reservation.childFirst = GPU_PAPI_INVALID;
     g_Reservation.particleCount = particles;
     g_Reservation.stateCount = states;
-    if (particles > g_Papi.particleCapacity) { GpuAllocationError(1u); return false; }
-    if (states > g_Papi.actionStateCapacity) { GpuAllocationError(4u); return false; }
+    if (particles > g_Papi.particleCapacity || states > g_Papi.actionStateCapacity) {
+        if (reportFailure) GpuAllocationError(particles > g_Papi.particleCapacity ? 1u : 4u);
+        return false;
+    }
     uint rootSlots = g_Papi.phase;
     uint childCapacity = g_Papi.emitterCapacity - rootSlots;
-    if (children > childCapacity) { GpuAllocationError(2u); return false; }
+    if (children > childCapacity) {
+        if (reportFailure) GpuAllocationError(2u);
+        return false;
+    }
     // Under child-slot pressure, avoid reserving and clearing entire particle
     // ranges for events that cannot acquire an emitter.
     uint acquired = 0;
@@ -126,13 +134,13 @@ bool GpuReserveResources(uint particles,uint states,uint children) {
         ++acquired;
     }
     if (acquired != children) {
-        GpuAllocationError(2u);
+        if (reportFailure) GpuAllocationError(2u);
         GpuReleaseReservation();
         return false;
     }
-    g_Reservation.particleFirst = GpuAllocateRange(particles,false);
+    g_Reservation.particleFirst = GpuAllocateRange(particles,false,reportFailure);
     if (g_Reservation.particleFirst != GPU_PAPI_INVALID)
-        g_Reservation.stateFirst = GpuAllocateRange(states,true);
+        g_Reservation.stateFirst = GpuAllocateRange(states,true,reportFailure);
     if (g_Reservation.stateFirst == GPU_PAPI_INVALID) {
         GpuReleaseReservation();
         return false;
@@ -154,7 +162,7 @@ uint GpuTickSteps(GpuPapiEmitter emitter,uint milliseconds) {
 bool GpuReserveTick(GpuPapiEmitter emitter,uint milliseconds) {
     uint births = 0,deaths = 0,particles = 0,states = 0,children = 0;
     if (emitter.childBirth == GPU_PAPI_INVALID && emitter.childPlay == GPU_PAPI_INVALID && emitter.childDead == GPU_PAPI_INVALID)
-        return GpuReserveResources(0,0,0);
+        return GpuReserveResources(0,0,0,false);
     uint steps = GpuTickSteps(emitter,milliseconds);
     if ((emitter.flags & GPU_PAPI_PLAYING) != 0 && steps != 0) {
         GpuPapiProgram program = g_Programs[emitter.program];
@@ -186,7 +194,9 @@ bool GpuReserveTick(GpuPapiEmitter emitter,uint milliseconds) {
     if (!GpuReserveChildProgram(emitter.childBirth,births,particles,states,children) ||
         !GpuReserveChildProgram(emitter.childPlay,births,particles,states,children) ||
         !GpuReserveChildProgram(emitter.childDead,deaths,particles,states,children)) return false;
-    return GpuReserveResources(particles,states,children);
+    // A bulk reservation is speculative. Only an actual spawn that runs out
+    // of resources should publish a capacity failure.
+    return GpuReserveResources(particles,states,children,false);
 }
 void GpuReleaseEmitter(inout GpuPapiEmitter emitter) {
     DeviceMemoryBarrier();
@@ -293,7 +303,7 @@ uint GpuSpawnChild(inout GpuPapiEmitter parent,uint program,GpuPapiParticle part
         g_ReserveChildrenOnDemand = true;
     }
     if (g_ReserveChildrenOnDemand &&
-        !GpuReserveResources(definition.maxParticles,definition.stateCount,1))
+        !GpuReserveResources(definition.maxParticles,definition.stateCount,1,true))
         return GPU_PAPI_INVALID;
     uint index = g_Reservation.childFirst;
     if (index == GPU_PAPI_INVALID || definition.maxParticles > g_Reservation.particleCount - g_Reservation.particleUsed ||
