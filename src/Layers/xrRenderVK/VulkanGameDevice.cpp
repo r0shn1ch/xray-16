@@ -775,10 +775,9 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
         else { Msg("! [renderer-vulkan] GPU smoke trails unavailable: %s", error.c_str()); error.clear(); }
     }
     if (gpu_particles_ || smoke_compute_)
-    {
         frame_.set_compute_recorder(record_pre_geometry, this);
-        window_.frame().set_frame_observer(gpu_particles_submitted, gpu_particles_completed, this);
-    }
+    // Sky-probe slices also advance and become readable through this observer.
+    window_.frame().set_frame_observer(gpu_particles_submitted, gpu_particles_completed, this);
     error.clear();
     return true;
 failed:
@@ -2961,7 +2960,7 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
     frame.set_frame_generation_ui(Fsr3Upscaler::frame_generation_ui_active_callback,
         Fsr3Upscaler::register_frame_generation_ui_callback, &fsr3_upscaler_);
     FrameImagePool* image_pool = frame.image_pool().initialized() ? &frame.image_pool() : nullptr;
-    if (gpu_particles_ || smoke_compute_) frame.set_frame_observer(gpu_particles_submitted, gpu_particles_completed, this);
+    frame.set_frame_observer(gpu_particles_submitted, gpu_particles_completed, this);
 #if defined(XR_PLATFORM_ANDROID)
     Msg("[renderer-vulkan] resolution reset scene=%ux%u presentation=%ux%u", frame.extent().width,
         frame.extent().height, frame.presentation_extent().width, frame.presentation_extent().height);
