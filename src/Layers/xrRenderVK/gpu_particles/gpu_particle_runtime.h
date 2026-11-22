@@ -283,6 +283,15 @@ uint GpuSpawnChild(inout GpuPapiEmitter parent,uint program,GpuPapiParticle part
     if (program == GPU_PAPI_INVALID) return GPU_PAPI_INVALID;
     if (program >= g_Papi.programCount) { GpuAllocationError(8u); return GPU_PAPI_INVALID; }
     GpuPapiProgram definition = g_Programs[program];
+    if (!g_ReserveChildrenOnDemand &&
+        (g_Reservation.childFirst == GPU_PAPI_INVALID ||
+         definition.maxParticles > g_Reservation.particleCount - g_Reservation.particleUsed ||
+         definition.stateCount > g_Reservation.stateCount - g_Reservation.stateUsed)) {
+        // Keep allocations consumed by earlier children and return the unused
+        // portion before trying this spawn against the shared pools.
+        GpuReleaseReservation();
+        g_ReserveChildrenOnDemand = true;
+    }
     if (g_ReserveChildrenOnDemand &&
         !GpuReserveResources(definition.maxParticles,definition.stateCount,1))
         return GPU_PAPI_INVALID;
