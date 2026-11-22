@@ -1018,8 +1018,11 @@ bool CScriptEngine::process_file_if_exists(LPCSTR file_name, bool warn_if_not_ex
         FS.update_path(S, "$game_scripts$", strconcat(sizeof(S1), S1, file_name, ".script"));
 #if defined(XR_PLATFORM_ANDROID)
         if (!xr_strcmp(file_name, "ui_mm_opt_main") || !xr_strcmp(file_name, "ui_mm_opt_video_adv"))
-            // This is the resolved VFS path; game archives can also provide it.
-            Msg("[android] options script VFS path: %s", S);
+        {
+            const auto* source = FS.GetFileDesc(S);
+            Msg("[android] options script VFS path: %s source=%s", S,
+                !source ? "unregistered" : source->vfs == size_t(-1) ? "file" : "archive");
+        }
 #endif
         if (!warn_if_not_exist && !FS.exist(S))
         {
