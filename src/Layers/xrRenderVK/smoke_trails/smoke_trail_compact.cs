@@ -50,8 +50,8 @@ void main(uint gtid : SV_GroupIndex)
 
         if (item < ringCount)
         {
-            uint totalSpawned = g_StateBuffer.Load(4);
-            uint oldestSpawn = (totalSpawned > ringCount) ? (totalSpawned - ringCount) : 0;
+            uint head = g_StateBuffer.Load(0);
+            uint oldestSpawn = head - ringCount;
             uint slot = (oldestSpawn + item) % g_MaxPoints;
 
             SmokeSimPoint p = g_SimBuffer[slot];

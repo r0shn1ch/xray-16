@@ -3,5 +3,5 @@ source=vk/../../../../src/Layers/xrRenderVK/smoke_trails/smoke_trail_compact.cs
 stage=cs
 entry=main
 defines=
-source-fingerprint=e7d10dc59617b9ff
-spirv-fingerprint=cc7635a98b4f830f
+source-fingerprint=804045117a830e0a
+spirv-fingerprint=0b7d6c44aa2e057e

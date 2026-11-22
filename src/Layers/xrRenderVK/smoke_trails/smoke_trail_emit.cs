@@ -17,8 +17,10 @@ void main(uint lane : SV_GroupIndex) {
             g_StateBuffer.Store(0, count);
             g_StateBuffer.Store(4, count);
         } else if (count != 0) {
-            g_StateBuffer.InterlockedAdd(0, count, g_First);
-            uint ignored; g_StateBuffer.InterlockedAdd(4, count, ignored);
+            g_First = g_StateBuffer.Load(0);
+            g_StateBuffer.Store(0, g_First + count);
+            uint stored = min(g_StateBuffer.Load(4), g_MaxPoints);
+            g_StateBuffer.Store(4, stored + min(count, g_MaxPoints - stored));
         }
     }
     GroupMemoryBarrierWithGroupSync();

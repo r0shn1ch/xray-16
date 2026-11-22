@@ -452,7 +452,7 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
     std::string error; SmokeTrailCompute smoke;
     require(smoke.initialize(device, vkGetDeviceProcAddr, limits, memory, vk, 1, VK_NULL_HANDLE, source, error), error);
     BufferResource readback;
-    require(readback.initialize(device, 96, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    require(readback.initialize(device, 160, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, memory, vk, error), error);
     SmokeTrailEmitParams emit{}; emit.current_x = 1.f; emit.lifetime = 2.f; emit.count = 2; emit.max_points = 256;
     SmokeTrailSimParams sim{}; sim.dt = .1f; sim.max_points = 256; sim.heat = 1.f;
@@ -462,7 +462,7 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
     VkCommandBuffer cb{}; require(vkAllocateCommandBuffers(device, &ai, &cb) == VK_SUCCESS, "smoke command allocation");
     VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     require(vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS && smoke.record(cb, 0, emit, sim, compact, true, error), error);
-    const VkBufferCopy state{0, 0, 16}, args{0, 16, 16}, points{0, 32, 64};
+    const VkBufferCopy state{0, 0, 16}, args{0, 16, 16}, points{0, 32, 128};
     vkCmdCopyBuffer(cb, smoke.get(SmokeTrailCompute::State).handle(), readback.handle(), 1, &state);
     vkCmdCopyBuffer(cb, smoke.get(SmokeTrailCompute::DrawArguments).handle(), readback.handle(), 1, &args);
     vkCmdCopyBuffer(cb, smoke.get(SmokeTrailCompute::ControlPoints).handle(), readback.handle(), 1, &points);
@@ -472,7 +472,7 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
     require(vkEndCommandBuffer(cb) == VK_SUCCESS, "smoke command end");
     VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO}; submit.commandBufferCount = 1; submit.pCommandBuffers = &cb;
     require(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS && vkQueueWaitIdle(queue) == VK_SUCCESS, "smoke submit");
-    uint32_t words[24]{}; require(readback.read(0, words, sizeof(words), error), error);
+    uint32_t words[40]{}; require(readback.read(0, words, sizeof(words), error), error);
     float first_x{}, second_x{}, distance{};
     std::memcpy(&first_x, &words[8], 4); std::memcpy(&second_x, &words[16], 4); std::memcpy(&distance, &words[3], 4);
     require(words[0] == 2 && words[1] == 2 && words[2] == 2 && words[4] == 6 && words[5] == 128 &&
@@ -495,6 +495,34 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
     require(words[0] == 2 && words[1] == 2 && words[2] == 2 &&
         std::abs(first_x - 10.25f) < .001f && std::abs(second_x - 10.75f) < .001f,
         "restarted smoke ribbon retained control points from before the gap");
+    vkFreeCommandBuffers(device, pool, 1, &cb);
+    // Force the monotonically increasing head across uint32 wrap. The ring is
+    // full, but only the two points from the preceding restart are alive.
+    emit.restart = 0; emit.previous_x = 20.f; emit.current_x = 21.f;
+    require(vkAllocateCommandBuffers(device, &ai, &cb) == VK_SUCCESS &&
+        vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS, "smoke wrap command begin");
+    vkCmdFillBuffer(cb, smoke.get(SmokeTrailCompute::State).handle(), 0, 4, 0xfffffffeu);
+    vkCmdFillBuffer(cb, smoke.get(SmokeTrailCompute::State).handle(), 4, 4, 256);
+    VkMemoryBarrier seed_barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    seed_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    seed_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 1, &seed_barrier, 0, nullptr, 0, nullptr);
+    require(smoke.record(cb, 0, emit, sim, compact, false, error), error);
+    vkCmdCopyBuffer(cb, smoke.get(SmokeTrailCompute::State).handle(), readback.handle(), 1, &state);
+    vkCmdCopyBuffer(cb, smoke.get(SmokeTrailCompute::ControlPoints).handle(), readback.handle(), 1, &points);
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+    require(vkEndCommandBuffer(cb) == VK_SUCCESS, "smoke wrap command end");
+    submit.pCommandBuffers = &cb;
+    require(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS && vkQueueWaitIdle(queue) == VK_SUCCESS &&
+        readback.read(0, words, sizeof(words), error), "smoke wrap submit");
+    float third_x{}, fourth_x{};
+    std::memcpy(&first_x, &words[8], 4); std::memcpy(&second_x, &words[16], 4);
+    std::memcpy(&third_x, &words[24], 4); std::memcpy(&fourth_x, &words[32], 4);
+    require(words[0] == 0 && words[1] == 256 && words[2] == 4 &&
+        std::abs(first_x - 10.25f) < .001f && std::abs(second_x - 10.75f) < .001f &&
+        std::abs(third_x - 20.25f) < .001f && std::abs(fourth_x - 20.75f) < .001f,
+        "smoke ring lost ordered points after head counter wrapped");
     vkFreeCommandBuffers(device, pool, 1, &cb);
     smoke.destroy();
     FrameImagePool noise_images;
