@@ -429,6 +429,7 @@ bool IndirectRayFrames::record(const FrameRecordingContext& frame, const LevelRa
     const uint32_t reservoir_input_index = reservoir_output_index_ ^ 1u;
     struct Constants { float sky[4], sun[4]; uint32_t count, groups_x, light_count, seed; } parameters{};
     std::memcpy(parameters.sky, sky_color, sizeof(float) * 3);
+    parameters.sky[3] = path_trace_enabled_ ? 1.f : 0.f;
     std::memcpy(parameters.sun, sun_color, sizeof(float) * 3);
     const uint32_t groups = static_cast<uint32_t>((uint64_t(count) + 63) / 64);
     parameters.count = count;

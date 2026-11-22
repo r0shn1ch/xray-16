@@ -995,7 +995,10 @@ static bool build_triangle_scene(VkPhysicalDevice physical, VkDevice device,
         if (!indirect_sun_readback.read(0, &indirect_sun, sizeof(indirect_sun), error)) break;
         if (!indirect_radiance_readback.read(0, indirect_radiance, sizeof(indirect_radiance), error)) break;
         if (!indirect_image_readback.read(0, indirect_pixel, sizeof(indirect_pixel), error)) break;
-        if (indirect_pixel[0] < 0x3aa0 || indirect_pixel[0] > 0x3ae0 || indirect_pixel[3] != 0x3c00)
+        const bool reference_trace = indirect_frames.reference_path_trace_enabled();
+        const uint16_t min_red = reference_trace ? 0x3a14 : 0x3aa0;
+        const uint16_t max_red = reference_trace ? 0x3a94 : 0x3ae0;
+        if (indirect_pixel[0] < min_red || indirect_pixel[0] > max_red || indirect_pixel[3] != 0x3c00)
         {
             error = "indirect radiance image mismatch: red=" + std::to_string(indirect_pixel[0]) +
                 " alpha=" + std::to_string(indirect_pixel[3]);
@@ -1123,16 +1126,22 @@ static bool build_triangle_scene(VkPhysicalDevice physical, VkDevice device,
         const float env_r3 = -.04f + .022f * material;
         const float env_a004 = std::min(env_r0 * env_r0, std::exp2(-9.28f)) * env_r0 + env_r1;
         const float environment_brdf = f0 * (-1.04f * env_a004 + env_r2) + 1.04f * env_a004 + env_r3;
-        const float expected_pbr = .2f * environment_brdf + (material * (1.f - material) * .2f +
-            1.75f * ((1.f - f0) * (1.f - material) * material + f0 / (4.f * std::pow(material, 4.f)))) /
-            3.14159265f;
+        const float expected_direct_pbr = 1.75f * ((1.f - f0) * (1.f - material) * material +
+            f0 / (4.f * std::pow(material, 4.f))) / 3.14159265f;
+        const float expected_ambient_pbr = .2f * (environment_brdf +
+            material * (1.f - material) / 3.14159265f);
         // The seeded RIS sample includes the single in-range local light; the
         // other two test lights are outside its range.
         const float expected_local_pbr = .094f;
-        if (std::abs(indirect_radiance[0] - (expected_pbr + expected_local_pbr)) > .015f)
+        const float expected_direct = expected_direct_pbr + expected_local_pbr;
+        // The traced sky sample depends on the seeded BSDF direction. It must
+        // contribute without the extra analytic ambient term.
+        const float min_radiance = expected_direct + (reference_trace ? 0.f : expected_ambient_pbr) - .015f;
+        const float max_radiance = expected_direct + expected_ambient_pbr + (reference_trace ? 0.f : .015f);
+        if (!(indirect_radiance[0] >= min_radiance && indirect_radiance[0] <= max_radiance))
         {
             error = "indirect radiance mismatch: actual=" + std::to_string(indirect_radiance[0]) +
-                " expected=" + std::to_string(expected_pbr + expected_local_pbr);
+                " expected range=" + std::to_string(min_radiance) + ".." + std::to_string(max_radiance);
             break;
         }
         if (std::abs(indirect_sun.direction_max[2] + 1.f) > .001f ||

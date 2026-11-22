@@ -59,7 +59,9 @@ void main()
             if (is_emissive) value += albedo;
             float ray_length = length(ray.direction_max.xyz);
             vec3 view = ray_length > 1e-6 ? -ray.direction_max.xyz / ray_length : surface.normal.xyz;
-            vec3 irradiance = max(parameters.sky.rgb, vec3(0.0));
+            bool trace_indirect = parameters.sky.w > 0.0;
+            vec3 ambient_sky = trace_indirect ? vec3(0.0) : max(parameters.sky.rgb, vec3(0.0));
+            vec3 irradiance = ambient_sky;
             vec3 pbr_lighting = vec3(0.0);
             if (is_pbr)
                 pbr_lighting += pbr_direct(albedo, surface.pbr.x, surface.pbr.y, surface.normal.xyz,
@@ -111,16 +113,19 @@ void main()
             // The sky input is a uniform environment approximation. Include its
             // specular response as well as diffuse so metallic secondary hits
             // do not incorrectly become black in indirect skylight.
-            vec3 environment_specular = max(parameters.sky.rgb, vec3(0.0)) * surface.pbr.z *
+            vec3 environment_specular = ambient_sky * surface.pbr.z *
                 pbr_environment_brdf(albedo, surface.pbr.x, surface.pbr.y, max(dot(surface.normal.xyz, view), 0.0));
             value += is_pbr ? albedo * (1.0 - surface.pbr.x) * surface.pbr.z * irradiance * 0.31830988618 +
                 environment_specular + pbr_lighting :
                 albedo * irradiance * 0.31830988618;
-            vec3 cached_radiance = world_cache_sample(surface.position_valid.xyz, surface.normal.xyz,
-                surface.position_valid.xyz, parameters.dimensions.w);
-            float diffuse_weight = is_pbr ? max(1.0 - surface.pbr.x, 0.0) *
-                clamp(surface.pbr.z, 0.0, 1.0) : 1.0;
-            value += albedo * cached_radiance * diffuse_weight * (0.35 * 0.31830988618);
+            if (!trace_indirect)
+            {
+                vec3 cached_radiance = world_cache_sample(surface.position_valid.xyz, surface.normal.xyz,
+                    surface.position_valid.xyz, parameters.dimensions.w);
+                float diffuse_weight = is_pbr ? max(1.0 - surface.pbr.x, 0.0) *
+                    clamp(surface.pbr.z, 0.0, 1.0) : 1.0;
+                value += albedo * cached_radiance * diffuse_weight * (0.35 * 0.31830988618);
+            }
         }
     }
     radiance[index] = vec4(value, 1.0);
