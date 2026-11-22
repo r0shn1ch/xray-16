@@ -12,6 +12,7 @@ Pass several diffuse images to reuse the loaded models and write one PBR DDS per
 """
 
 import argparse
+from contextlib import ExitStack
 import os
 from pathlib import Path
 import struct
@@ -211,28 +212,41 @@ def write_dds(file, image, srgb=False):
 def save_outputs(outputs, overwrite):
     staged = []
     published = []
-    try:
+    with ExitStack() as scratch:
         for destination, image, srgb in outputs:
-            with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as file:
-                staged.append((Path(file.name), destination))
+            directory = Path(scratch.enter_context(tempfile.TemporaryDirectory(dir=destination.parent)))
+            temporary = directory / "output.dds"
+            with temporary.open("wb") as file:
                 write_dds(file, image, srgb)
-        for temporary, destination in staged:
+            backup = directory / "original.dds"
             if overwrite:
-                os.replace(temporary, destination)
+                try:
+                    os.link(destination, backup, follow_symlinks=False)
+                except FileNotFoundError:
+                    backup = None
             else:
-                os.link(temporary, destination)
-                published.append((temporary, destination))
-    except OSError:
-        for temporary, destination in published:
-            try:
-                if os.path.samefile(temporary, destination):
-                    destination.unlink()
-            except FileNotFoundError:
-                pass
-        raise
-    finally:
-        for temporary, _ in staged:
-            temporary.unlink(missing_ok=True)
+                backup = None
+            staged.append((temporary, destination, backup))
+        try:
+            for temporary, destination, backup in staged:
+                identity = temporary.stat()
+                if overwrite:
+                    os.replace(temporary, destination)
+                else:
+                    os.link(temporary, destination)
+                published.append((identity, destination, backup))
+        except OSError:
+            for identity, destination, backup in reversed(published):
+                try:
+                    if not os.path.samestat(identity, destination.lstat()):
+                        continue
+                    if backup is None:
+                        destination.unlink()
+                    else:
+                        os.replace(backup, destination)
+                except FileNotFoundError:
+                    pass
+            raise
 
 
 def main():
