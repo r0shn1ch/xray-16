@@ -380,8 +380,9 @@ bool VulkanGameDevice::gpu_particles_completed(uint32_t slot, uint32_t, void* us
         Msg("! [renderer-vulkan] GPU particle readback disabled: %s", error.c_str());
         owner.disable_gpu_particles(); error.clear();
     }
-    else if (result.errors)
-        Msg("! [renderer-vulkan] GPU particle simulation flags=0x%x", result.errors);
+    else if (owner.gpu_particle_diagnostics_.should_report(result.errors, Device.dwTimeGlobal))
+        Msg("! [renderer-vulkan] GPU particle simulation flags=0x%x (1=particles, 2=emitters, 4=action state, 8=invalid data, 16=invalid rate)",
+            result.errors);
     owner.gpu_particle_pending_[slot] = false;
     return true;
 }
@@ -3571,6 +3572,7 @@ void VulkanGameDevice::destroy()
     gpu_particles_.reset();
     frame_buffer_pool_.reset();
     gpu_particle_recorded_ = {}; gpu_particle_pending_ = {}; gpu_particle_failed_ = false;
+    gpu_particle_diagnostics_.reset();
     gpu_collision_recorded_ = {}; gpu_collision_uploaded_ = false; gpu_collision_.clear();
     Msg("[renderer-vulkan] teardown game device idle");
     save_pipeline_cache();

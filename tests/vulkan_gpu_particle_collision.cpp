@@ -1,5 +1,6 @@
 #include "src/Layers/xrRenderVK/GpuParticleCollisionData.h"
 #include "src/Layers/xrRenderVK/GpuParticleStaticCollision.h"
+#include "src/Layers/xrRenderVK/GpuParticleDiagnostics.h"
 #include <cassert>
 #include <cstring>
 #include <limits>
@@ -7,6 +8,16 @@
 using namespace xray::render::vulkan;
 int main()
 {
+    GpuParticleDiagnostics diagnostics;
+    assert(diagnostics.should_report(1, 100));
+    assert(!diagnostics.should_report(1, 101));
+    assert(diagnostics.should_report(3, 102));
+    assert(!diagnostics.should_report(0, 5101));
+    assert(diagnostics.should_report(3, 5102));
+    diagnostics.reset();
+    assert(diagnostics.should_report(4, 0xfffffff0u));
+    assert(!diagnostics.should_report(4, 0x20u));
+    assert(diagnostics.should_report(4, 0x1380u));
     GpuParticleCollisionInput input;
     input.nodes.resize(1); input.nodes[0].escape = 1; input.nodes[0].count = 1;
     input.static_triangles.resize(1); input.static_triangles[0].a[0] = 3.f;

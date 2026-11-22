@@ -27,6 +27,7 @@
 #include "VulkanWindowDevice.h"
 #include "WaterTargets.h"
 #include "GpuParticleRuntime.h"
+#include "GpuParticleDiagnostics.h"
 #include "FrameBufferPool.h"
 #include "GpuParticleEmitters.h"
 #include "GpuParticleLevelCollision.h"
@@ -324,6 +325,7 @@ class VulkanGameDevice
     std::array<bool, FrameContext::FramesInFlight> smoke_recorded_{};
     bool smoke_initialized_{}, smoke_failed_{};
     std::array<bool, FrameContext::FramesInFlight> gpu_particle_recorded_{}, gpu_particle_pending_{};
+    GpuParticleDiagnostics gpu_particle_diagnostics_;
     std::array<bool, FrameContext::FramesInFlight> gpu_collision_recorded_{};
     GpuParticleLevelCollision gpu_collision_;
     bool gpu_collision_uploaded_{};
