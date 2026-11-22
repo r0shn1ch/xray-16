@@ -38,8 +38,9 @@ float ambient_occlusion(float depth, vec2 uv, vec3 normal)
             if (i >= direction_count)
                 break;
             ivec2 offset = ivec2(round(vec2(ao_directions[i] * ao_ring_radii[ring]) * scene_scale));
-            ivec2 pixel = clamp(center + offset,
-                ivec2(0), size - 1);
+            ivec2 pixel = center + offset;
+            if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, size)))
+                continue;
             float sample_depth = texelFetch(resolved_depth_buffer, pixel, 0).r;
             if (sample_depth >= 0.99999)
                 continue;

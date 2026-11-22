@@ -268,7 +268,8 @@ int main(int argc, char** argv)
     std::array<float, uniform_floats> uniform{};
     for (int i : {0, 5, 10, 15}) uniform[i] = 1.f;
     uniform[35] = 2.f;
-    std::array<float, 10> result{};
+    std::array<float, 11> result{};
+    float edge_occlusion = 1.f;
     for (uint32_t iteration = 0; iteration < result.size(); ++iteration)
     {
         std::vector<float> input(Side * Side, iteration == 0 ? .5f : .8f);
@@ -284,12 +285,20 @@ int main(int argc, char** argv)
                 for (uint32_t x = 0; x < Side; ++x)
                     input[y * Side + x] = (iteration % 2 ? x < 31 : x > 33) ? .8f : .5f;
         }
-        if (iteration >= 8)
+        if (iteration == 8 || iteration == 9)
         {
             uniform[44] = 4.f;
             for (uint32_t y = 0; y < Side; ++y)
                 for (uint32_t x = 0; x < Side; ++x)
                     input[y * Side + x] = x >= 40 ? .8f : .5f;
+        }
+        if (iteration == 10)
+        {
+            uniform[44] = 8.f;
+            std::fill(input.begin(), input.end(), .5f);
+            for (uint32_t y : {20u, 28u, 36u, 44u})
+                for (uint32_t x : {0u, 32u})
+                    input[y * Side + x] = .8f;
         }
         void* mapped{};
         check(vkMapMemory(vk.device, vk.upload_memory, 0, ImageBytes, 0, &mapped));
@@ -329,6 +338,8 @@ int main(int argc, char** argv)
         check(vkQueueWaitIdle(vk.queue));
         check(vkMapMemory(vk.device, vk.readback_memory, 0, ImageBytes, 0, &mapped));
         result[iteration] = static_cast<const float*>(mapped)[32 * Side + 32];
+        if (iteration == 10)
+            edge_occlusion = static_cast<const float*>(mapped)[32 * Side];
         if (std::abs(static_cast<const float*>(mapped)[0] - 1.f) > 1e-4f ||
             static_cast<const float*>(mapped)[1] > 1e-5f)
             throw std::runtime_error("indirect reconstruction plane rejection mismatch");
@@ -344,5 +355,7 @@ int main(int argc, char** argv)
             throw std::runtime_error("AO quality tier sampled opposite sides asymmetrically");
     if (result[8] >= .99f || std::abs(result[9] - 1.f) > 1e-4f)
         throw std::runtime_error("AO ring radius did not follow scene scale");
+    if (result[10] >= .99f || std::abs(edge_occlusion - result[10]) > 1e-4f)
+        throw std::runtime_error("AO counted out-of-frame taps at the image edge");
     return 0;
 }
