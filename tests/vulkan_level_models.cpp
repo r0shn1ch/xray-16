@@ -362,6 +362,34 @@ int main()
     assert(load_level_models(input(shaders), input(vb), input(progressive_ib), input(fast_visuals), result, error, input(vb), input(progressive_ib)));
     assert(result.models[0].fast && result.models[0].fast->windows.size() == 2);
     assert(select_slide_window(result.models[0].fast->windows, 0.f, 6).offset == 3);
+    {
+        // Zaton visual 91 has a valid empty terminal window in FASTPATH.
+        // Decode the nested chunks without dropping geomX or changing the
+        // primary geometry's nonempty terminal LOD.
+        Bytes empty_swi(progressive_swi.begin(), progressive_swi.begin() + 28);
+        u32(empty_swi, 0); u16(empty_swi, 0); u16(empty_swi, 2);
+        Bytes empty_fast_chunks, empty_fast_visual = progressive_visual, empty_fast_visuals;
+        part(empty_fast_chunks, 21, progressive_container);
+        part(empty_fast_chunks, 6, empty_swi);
+        part(empty_fast_visual, 22, empty_fast_chunks);
+        part(empty_fast_visuals, 0, empty_fast_visual);
+        bool rejected = true;
+        std::string reason = "previous rejection";
+        assert(load_level_models(input(shaders), input(vb), input(progressive_ib),
+            input(empty_fast_visuals), result, error, input(vb), input(progressive_ib), {}, &rejected, &reason));
+        assert(error.empty() && !rejected && reason.empty() && result.models[0].fast);
+        for (auto profile : {LevelGameProfile::SoC, LevelGameProfile::CS, LevelGameProfile::CoP})
+        {
+            assert(load_game_level_models(profile, input(level_header), input(shaders), input(vb),
+                input(progressive_ib), input(empty_fast_visuals), result, error, input(vb),
+                input(progressive_ib)));
+            assert(error.empty() && result.models[0].fast);
+            assert(result.models[0].fast->windows.size() == 2);
+            const auto terminal = select_slide_window(result.models[0].fast->windows, 0.f, 6);
+            assert(terminal.offset == 0 && terminal.index_count == 0 && terminal.vertex_count == 2);
+            assert(select_slide_window(result.models[0].windows, 0.f, 6).index_count == 3);
+        }
+    }
     for (auto profile : {LevelGameProfile::SoC, LevelGameProfile::CS, LevelGameProfile::CoP})
     {
         assert(load_game_level_models(profile, input(level_header), input(shaders), input(vb),
