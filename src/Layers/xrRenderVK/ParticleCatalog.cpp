@@ -392,6 +392,71 @@ bool duplicate_particle_effect(std::vector<uint8_t>& library, const std::string&
     return true;
 }
 
+bool remove_particle_effect(std::vector<uint8_t>& library, const std::string& name, std::string& error)
+{
+    const LevelBytes input{library.data(), library.size()};
+    ParticleCatalog catalog;
+    if (!parse_particle_catalog(input, catalog, error))
+        return false;
+    std::vector<std::pair<uint32_t, LevelBytes>> root, effects, groups, fields;
+    if (!chunks(input, root) || !unique_chunks(root))
+    {
+        error = "The particle library has ambiguous tables";
+        return false;
+    }
+    const auto group_table = find(root, 4);
+    if (group_table.data && (!chunks(group_table, groups) || groups.size() != catalog.groups.size()))
+    {
+        error = "Cannot check references in every particle group";
+        return false;
+    }
+    for (const auto& group : catalog.groups)
+        for (const auto& item : group.effects)
+            if (item.effect == name || item.on_play == name || item.on_birth == name || item.on_dead == name)
+            {
+                error = "Effect is referenced by group: " + group.name;
+                return false;
+            }
+    const auto table = find(root, 3);
+    if (name.empty() || !catalog.effect(name) || !chunks(table, effects))
+    {
+        error = "Effect was not found in the library";
+        return false;
+    }
+    size_t removed_index = effects.size();
+    for (size_t index = 0; index < effects.size(); ++index)
+    {
+        fields.clear();
+        if (!chunks(effects[index].second, fields))
+            continue;
+        Cursor cursor{find(fields, 2)};
+        std::string candidate;
+        if (!cursor.name(candidate) || candidate != name)
+            continue;
+        if (removed_index != effects.size() || !unique_chunks(fields))
+        {
+            error = "Effect name is ambiguous";
+            return false;
+        }
+        removed_index = index;
+    }
+    if (removed_index == effects.size())
+    {
+        error = "Effect record is missing";
+        return false;
+    }
+    const auto removed = effects[removed_index].second;
+    const size_t offset = static_cast<size_t>(removed.data - input.data) - 8;
+    const size_t removed_size = removed.size + 8;
+    const size_t table_offset = static_cast<size_t>(table.data - input.data);
+    for (size_t index = removed_index + 1; index < effects.size(); ++index)
+        put32(library.data() + (effects[index].second.data - input.data) - 8, static_cast<uint32_t>(index - 1));
+    put32(library.data() + table_offset - 4, static_cast<uint32_t>(table.size - removed_size));
+    library.erase(library.begin() + offset, library.begin() + offset + removed_size);
+    error.clear();
+    return true;
+}
+
 bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string& name,
     uint32_t max_particles, std::string& error, std::optional<float> time_limit,
     const ParticleSpriteMaterial* material)

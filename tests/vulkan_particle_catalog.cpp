@@ -152,6 +152,11 @@ int main()
     const auto before_duplicate = duplicated;
     assert(!duplicate_particle_effect(duplicated, "campfire", "campfire_copy", error) &&
         duplicated == before_duplicate);
+    assert(!remove_particle_effect(duplicated, "campfire", error) && duplicated == before_duplicate);
+    assert(duplicate_particle_effect(duplicated, "campfire", "campfire_second_copy", error));
+    assert(remove_particle_effect(duplicated, "campfire_copy", error));
+    assert(parse_particle_catalog({duplicated.data(), duplicated.size()}, copied, error));
+    assert(!copied.effect("campfire_copy") && copied.effect("campfire_second_copy"));
     assert(parse_particle_catalog({edited.data(), edited.size()}, catalog, error));
     assert(catalog.effect("campfire")->max_particles == 512);
     const Bytes before_invalid_edit = edited;

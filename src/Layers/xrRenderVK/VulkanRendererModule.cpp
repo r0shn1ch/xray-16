@@ -436,6 +436,17 @@ public:
                         }
                     }
                     ImGui::EndDisabled();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Remove effect from draft"))
+                    {
+                        auto candidate = library_;
+                        if (remove_particle_effect(candidate, catalog_.effects[selected_].name, message_) &&
+                            load_draft(candidate))
+                        {
+                            dirty_ = true;
+                            message_ = "Effect removed from draft";
+                        }
+                    }
                     ImGui::TextWrapped("%s", gpu_compatibility_.c_str());
                     draw_preview();
                 }
