@@ -1882,6 +1882,7 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
 {
     visible_details_.clear();
     detail_generation_params_ = {};
+    detail_ground_cell_count_ = 0;
     if (details_.cells.empty() || !g_pGameLevel || !std::isfinite(camera.x) || !std::isfinite(camera.y) ||
         !std::isfinite(camera.z))
         return;
@@ -2134,7 +2135,9 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
                 detail_generation_triangles_.insert(detail_generation_triangles_.end(), ground.begin(), ground.end());
             }
         }
-        detail_generation_params_ = {uint32_t(detail_generation_cells_.size()), grid_size, sample_spacing, density, 1};
+        detail_ground_cell_count_ = static_cast<uint32_t>(detail_generation_cells_.size());
+        if (gpu_generation)
+            detail_generation_params_ = {detail_ground_cell_count_, grid_size, sample_spacing, density, 1};
     }
     if (detail_cache_.size() > 4096)
     {
@@ -2185,6 +2188,39 @@ bool GpuLevel::enable_gpu_details(PFN_vkGetDeviceProcAddr get, const VkPhysicalD
     return true;
 }
 
+bool GpuLevel::detail_ground_source(uint32_t frame_index, DetailGroundSource& source, std::string& error) const
+{
+    source = {};
+    if (frame_index>=detail_generation_frames_.size())
+    { error="invalid detail ground frame slot"; return false; }
+    source.cell_count=detail_ground_cell_count_;
+    source.width=details_.width; source.height=details_.height;
+    source.offset_x=details_.offset_x; source.offset_z=details_.offset_z;
+    if (!source.cell_count) return true;
+    auto& data=detail_generation_frames_[frame_index];
+    const bool same_inputs=data.ground_generation==detail_ground_generation_ &&
+        std::equal(data.uploaded_cell_ids.begin(),data.uploaded_cell_ids.end(),
+            detail_generation_cells_.begin(),detail_generation_cells_.end(),
+            [](uint32_t id,const DetailGenerateSlot& cell) { return id==cell.data[0]; });
+    if (!same_inputs)
+    {
+        const auto upload=[&](BufferResource& buffer,const auto& input) {
+            const VkDeviceSize bytes=input.size()*sizeof(input.front());
+            return (buffer.size()>=bytes || buffer.initialize(device_,bytes,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,memory_,upload_.buffer,error)) &&
+                buffer.write(0,input.data(),bytes,error);
+        };
+        data.uploaded_cell_ids.clear();
+        if (!upload(data.cells,detail_generation_cells_) || !upload(data.triangles,detail_generation_triangles_)) return false;
+        data.uploaded_cell_ids.reserve(detail_generation_cells_.size());
+        for (const auto& cell : detail_generation_cells_) data.uploaded_cell_ids.push_back(cell.data[0]);
+        data.ground_generation=detail_ground_generation_;
+        ++data.source_revision;
+    }
+    source.cells=&data.cells; source.triangles=&data.triangles;
+    return true;
+}
+
 bool GpuLevel::record_generated_details(const FrameRecordingContext& frame, const float (&mvp)[16],
     std::string& error, float wind_amplitude) const
 {
@@ -2220,20 +2256,10 @@ bool GpuLevel::record_generated_details(const FrameRecordingContext& frame, cons
             return false;
         }
     }
-    const bool same_inputs = data.ground_generation == detail_ground_generation_ &&
-        std::equal(data.uploaded_cell_ids.begin(), data.uploaded_cell_ids.end(),
-            detail_generation_cells_.begin(), detail_generation_cells_.end(),
-            [](uint32_t id, const DetailGenerateSlot& cell) { return id == cell.data[0]; });
-    if (!same_inputs)
+    DetailGroundSource ground_source;
+    if (!detail_ground_source(frame.frame_index,ground_source,error)) return false;
+    if (data.model_revision!=data.source_revision || data.model_grid!=grid)
     {
-        // A slot can be reused after its fence. Its input data remains valid
-        // when the same ordered static cells and ground geometry are selected.
-        data.uploaded_cell_ids.clear();
-        if (!upload(data.cells, detail_generation_cells_) || !upload(data.triangles, detail_generation_triangles_))
-            return false;
-        data.uploaded_cell_ids.reserve(detail_generation_cells_.size());
-        for (const auto& cell : detail_generation_cells_)
-            data.uploaded_cell_ids.push_back(cell.data[0]);
         data.model_capacities.assign(batches.size(), 0);
         for (const auto& cell : detail_generation_cells_)
         {
@@ -2248,7 +2274,8 @@ bool GpuLevel::record_generated_details(const FrameRecordingContext& frame, cons
                 }
             }
         }
-        data.ground_generation = detail_ground_generation_;
+        data.model_revision=data.source_revision;
+        data.model_grid=grid;
     }
     float margin = 0.f;
     for (size_t i = 0; i < detail_meshes_.size(); ++i)
@@ -3391,6 +3418,7 @@ void GpuLevel::destroy()
     detail_generation_cells_.clear();
     detail_generation_triangles_.clear();
     detail_generation_params_ = {};
+    detail_ground_cell_count_ = 0;
     for (auto& batches : gpu_detail_batches_)
         batches.clear();
     gpu_detail_recorded_ = {};

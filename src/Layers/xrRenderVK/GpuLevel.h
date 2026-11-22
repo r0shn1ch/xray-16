@@ -152,6 +152,18 @@ class GpuLevel
                               std::vector<uint32_t> &roots) const;
     void all_level_roots(std::vector<uint32_t> &roots) const;
     bool enable_gpu_details(PFN_vkGetDeviceProcAddr get, const VkPhysicalDeviceLimits& limits, std::string& error);
+    struct DetailGroundSource
+    {
+        // Both pointers are null when cell_count is zero. A heightmap caller
+        // must clear the output or supply valid dummy descriptor buffers.
+        const BufferResource* cells{};
+        const BufferResource* triangles{};
+        uint32_t cell_count{}, width{}, height{};
+        int32_t offset_x{}, offset_z{};
+    };
+    // Host uploads are allowed only after this frame slot's fence. The same
+    // immutable source buffers feed generation and the interaction heightmap.
+    bool detail_ground_source(uint32_t frame_index, DetailGroundSource& source, std::string& error) const;
     bool record_detail_cull(const FrameRecordingContext& frame, const float (&mvp)[16], std::string& error,
         float wind_amplitude = 0.f) const;
     void prepare_details(const Fvector &camera_position, float max_distance = 40.f);
@@ -327,6 +339,8 @@ class GpuLevel
         std::vector<uint32_t> uploaded_cell_ids;
         std::vector<uint32_t> model_capacities;
         uint64_t ground_generation{};
+        uint64_t source_revision{}, model_revision{};
+        uint32_t model_grid{};
     };
     mutable std::array<DetailGenerationFrame, FrameContext::FramesInFlight> detail_generation_frames_;
     mutable BufferResource detail_generation_prototypes_;
@@ -335,6 +349,7 @@ class GpuLevel
     std::vector<DetailGenerateSlot> detail_generation_cells_;
     std::vector<DetailGroundTriangle> detail_generation_triangles_;
     DetailGeneratePass::Parameters detail_generation_params_;
+    uint32_t detail_ground_cell_count_{};
     bool record_generated_details(const FrameRecordingContext& frame, const float (&mvp)[16], std::string& error,
         float wind_amplitude) const;
 

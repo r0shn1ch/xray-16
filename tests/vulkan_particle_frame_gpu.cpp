@@ -15,6 +15,7 @@
 #include "src/Layers/xrRenderVK/DetailGeneratePass.h"
 #include "src/Layers/xrRenderVK/DetailCellCullPass.h"
 #include "src/Layers/xrRenderVK/DetailInteractionPass.h"
+#include "src/Layers/xrRenderVK/DetailGroundHeightPass.h"
 #include "src/Layers/xrRenderVK/GpuParticleBuffers.h"
 #include "src/Layers/xrRenderVK/GpuParticleCompute.h"
 #include "src/Layers/xrRenderVK/GpuParticleFrame.h"
@@ -701,6 +702,66 @@ static void exercise_detail_interaction(VkDevice device, VkQueue queue, VkComman
         return exponent ? sign*std::ldexp(1.f+float(value&1023)/1024.f,exponent-15) : sign*std::ldexp(float(value&1023),-24);
     };
     constexpr size_t center=(3*8+3)*4;
+    {
+        DetailGroundHeightPass ground;
+        require(ground.initialize(device,vkGetDeviceProcAddr,limits,1,VK_NULL_HANDLE,error),error);
+        DetailGenerateSlot slots[2]{};
+        slots[0].bounds[2]=-1.f; slots[0].bounds[3]=4.f; slots[0].data[3]=5;
+        slots[1].bounds[0]=4.f; slots[1].bounds[2]=-1.f; slots[1].bounds[3]=4.f;
+        slots[1].data[0]=2; slots[1].data[2]=5; slots[1].data[3]=2;
+        const DetailGroundTriangle triangles[]{
+            {{0,0,0,0},{0,0,2,0},{2,0,0,0}}, {{2,0,0,0},{0,0,2,0},{2,0,2,0}},
+            {{0,1,0,0},{0,1,2,0},{2,1,0,0}}, {{2,1,0,0},{0,1,2,0},{2,1,2,0}},
+            {{0,2,0,0},{2,2,0,0},{0,2,2,0}}, // Back-facing: never terrain.
+            {{4,2,0,0},{4,2,2,0},{6,2,0,0}}, {{6,2,0,0},{4,2,2,0},{6,2,2,0}}};
+        BufferResource cell_buffer,triangle_buffer;
+        require(cell_buffer.initialize(device,sizeof(slots),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,host,memory,buffers,error) &&
+            triangle_buffer.initialize(device,sizeof(triangles),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,host,memory,buffers,error) &&
+            cell_buffer.write(0,slots,sizeof(slots),error) && triangle_buffer.write(0,triangles,sizeof(triangles),error),error);
+        DetailGroundHeightParameters invalid;
+        invalid.level_size[0]=0x80000000u; invalid.level_size[1]=1;
+        error.clear();
+        require(!ground.record(VK_NULL_HANDLE,0,cell_buffer,triangle_buffer,views.views[2],invalid,error) &&
+            error=="invalid GPU detail heightmap inputs",
+            "oversized signed ground dimension rejected");
+        for (unsigned test=0; test<4; ++test)
+        {
+            DetailGroundHeightParameters params;
+            params.size=8; params.level_size[0]=3; params.level_size[1]=1; params.cell_count=test==3 ? 0 : 2;
+            params.minimum_normal_y=.7f; params.select_lowest=test==1;
+            if (test==2) params.origin[0]=4.f;
+            VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+            allocate.commandPool=pool; allocate.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY; allocate.commandBufferCount=1;
+            VkCommandBuffer command{};
+            require(vkAllocateCommandBuffers(device,&allocate,&command)==VK_SUCCESS,"ground height command");
+            VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            require(vkBeginCommandBuffer(command,&begin)==VK_SUCCESS,"ground height begin");
+            require(states.transition(command,targets[2],ImageUse::StorageWrite,{vkCmdPipelineBarrier},error),error);
+            require(ground.record(command,0,cell_buffer,triangle_buffer,views.views[2],params,error),error);
+            require(states.transition(command,targets[2],ImageUse::TransferSource,{vkCmdPipelineBarrier},error),error);
+            VkBufferMemoryBarrier barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+            barrier.srcAccessMask=VK_ACCESS_HOST_READ_BIT|VK_ACCESS_TRANSFER_WRITE_BIT; barrier.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.srcQueueFamilyIndex=barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+            barrier.buffer=readback.handle(); barrier.size=VK_WHOLE_SIZE;
+            vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_HOST_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0,0,nullptr,1,&barrier,0,nullptr);
+            VkBufferImageCopy copy{0,0,0,{VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},{0,0,0},{8,8,1}};
+            vkCmdCopyImageToBuffer(command,targets[2],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,readback.handle(),1,&copy);
+            barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT; barrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
+            vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,0,nullptr,1,&barrier,0,nullptr);
+            require(vkEndCommandBuffer(command)==VK_SUCCESS,"ground height end");
+            VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO}; submit.commandBufferCount=1; submit.pCommandBuffers=&command;
+            require(vkQueueSubmit(queue,1,&submit,VK_NULL_HANDLE)==VK_SUCCESS && vkQueueWaitIdle(queue)==VK_SUCCESS,"ground height submit");
+            float heights[64]{}; require(readback.read(0,heights,sizeof(heights),error),error);
+            vkFreeCommandBuffers(device,pool,1,&command);
+            for (unsigned y=0; y<8; ++y)
+                for (unsigned x=0; x<8; ++x)
+                    if (test<3 && y<4 && x<4)
+                        require(heights[y*8+x]==(test==0 ? 1.f : test==1 ? 0.f : 2.f),"GPU terrain surface selection");
+                    else require(heights[y*8+x]<-1e9f,"GPU terrain hole/outside/empty clearing");
+        }
+        std::cout << "GPU detail heightmap surfaces, binary cell lookup, scrolling and holes passed\n";
+    }
     for (unsigned step=0; step<7; ++step)
     {
         auto params=base; params.previous_valid=step>0;

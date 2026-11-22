@@ -626,6 +626,8 @@ int main()
             std::fprintf(stderr, "vulkan_asset_flow: GpuLevel::load failed: %s\n", error.c_str());
         assert(level_loaded);
         assert(gpu.visual_count() == 1 && gpu.model_count() == 1 && textures.finish_uploads());
+        GpuLevel::DetailGroundSource empty_ground;
+        assert(gpu.detail_ground_source(0,empty_ground,error) && !empty_ground.cell_count && !empty_ground.cells);
         assert(gpu.retire_completed_uploads());
         if (profile == LevelGameProfile::SoC)
         {
