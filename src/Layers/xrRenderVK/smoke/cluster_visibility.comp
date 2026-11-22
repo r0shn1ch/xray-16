@@ -186,14 +186,26 @@ bool occludedByPreviousDepth(vec4 sphere)
 
 void main()
 {
-    uint localIndex = uint(gl_GlobalInvocationID.x) + pc.quality.y;
-    if (localIndex >= pc.ranges.w)
+    if (pc.quality.y >= pc.ranges.w || gl_GlobalInvocationID.x >= pc.ranges.w - pc.quality.y)
+        return;
+    uint localIndex = gl_GlobalInvocationID.x + pc.quality.y;
+    uint outputCapacity = uint(commands.values.length());
+    if (pc.draw.x >= outputCapacity || localIndex >= outputCapacity - pc.draw.x)
         return;
 
+    DrawIndexedIndirectCommand command = DrawIndexedIndirectCommand(0u, 0u, 0u, int(pc.draw.z), 0u);
+    uint clusterCapacity = uint(clusters.values.length());
+    if (pc.ranges.z >= clusterCapacity || localIndex >= clusterCapacity - pc.ranges.z)
+    {
+        commands.values[pc.draw.x + localIndex] = command;
+        return;
+    }
     float targetErrorPixels = uintBitsToFloat(pc.quality.x);
     Cluster cluster = clusters.values[pc.ranges.z + localIndex];
-    bool selected = true;
-    if (cluster.data.y >= 0 && uint(cluster.data.y) < pc.ranges.y)
+    uint groupCapacity = uint(groups.values.length());
+    uint groupCount = min(pc.ranges.y, groupCapacity - min(pc.ranges.x, groupCapacity));
+    bool selected = visible(cluster.bounds);
+    if (selected && cluster.data.y >= 0 && uint(cluster.data.y) < groupCount)
     {
         ClusterGroup owner = groups.values[pc.ranges.x + uint(cluster.data.y)];
         selected = projectedError(owner) > targetErrorPixels;
@@ -201,7 +213,7 @@ void main()
 
     if (selected && cluster.data.x >= 0)
     {
-        if (uint(cluster.data.x) >= pc.ranges.y)
+        if (uint(cluster.data.x) >= groupCount)
             selected = true; // Malformed refinement metadata must not hide geometry.
         else
         {
@@ -210,12 +222,9 @@ void main()
         }
     }
 
-    selected = selected && visible(cluster.bounds) && !occludedByPreviousDepth(cluster.bounds);
-    DrawIndexedIndirectCommand command;
+    selected = selected && !occludedByPreviousDepth(cluster.bounds);
     command.indexCount = selected ? uint(max(cluster.data.w, 0)) : 0u;
     command.instanceCount = selected ? 1u : 0u;
     command.firstIndex = pc.draw.y + uint(max(cluster.data.z, 0));
-    command.vertexOffset = int(pc.draw.z);
-    command.firstInstance = 0u;
     commands.values[pc.draw.x + localIndex] = command;
 }
