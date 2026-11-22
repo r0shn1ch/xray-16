@@ -210,7 +210,9 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
         for (B::Resource resource : {B::Emitters, B::Particles, B::ActionState,
                 B::ParticleAllocation, B::StateAllocation, B::Errors})
             if (!read_write(simulate, resource)) return false;
-        if (!write(simulate, B::Status, BufferUse::ComputeWrite)) return false;
+        // The compiled RWStructuredBuffer status descriptor permits reads as
+        // well as writes. Include both accesses after the initial clear.
+        if (!read_write(simulate, B::Status)) return false;
     }
 
     if (visible_roots)

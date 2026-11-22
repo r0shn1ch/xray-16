@@ -147,9 +147,10 @@ bool SmokeTrailCompute::record(VkCommandBuffer command, uint32_t slot, const Smo
                 {c, info(ControlPoints), info(State), info(DrawArguments), info(Simulation)},
                 nullptr, 1, 1, pass_error);
         });
+    // HLSL exposes these outputs as readable RWStructuredBuffer bindings.
     if (!read(compact_pass, Simulation, BufferUse::ComputeRead) || !read_write(compact_pass, State) ||
-        !write(compact_pass, ControlPoints, BufferUse::ComputeWrite) ||
-        !write(compact_pass, DrawArguments, BufferUse::ComputeWrite)) return false;
+        !read_write(compact_pass, ControlPoints) ||
+        !read_write(compact_pass, DrawArguments)) return false;
     // Keep the consumer in the same graph queue when compute and draw share a
     // command buffer so execution emits the in-list compute-to-vertex barrier.
     // A split frame instead records the consumer on its graphics continuation.

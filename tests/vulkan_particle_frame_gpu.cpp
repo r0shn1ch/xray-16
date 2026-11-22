@@ -799,6 +799,44 @@ int main(int argc, char** argv)
                 "child pressure interrupted the root tick or lost an allocatable child");
             require(result.errors == (scenario == 0 ? 0u : 2u), "unexpected child allocation diagnostics");
         }
+        for (bool exhausted : {true, false})
+        {
+            // A rejected root must publish retirement and release its command
+            // queue. Once the pool has room, its next generation must allocate.
+            fg::GpuPapiEmitter empty_emitters[5]{};
+            uint32_t allocation_stamps[8]{};
+            if (exhausted)
+                std::fill(std::begin(allocation_stamps), std::end(allocation_stamps), 8u);
+            fg::GpuPapiCommand create{};
+            create.generation = exhausted ? 2 : 3;
+            create.serial = 1;
+            const uint32_t create_range[]{0, 1};
+            std::vector<GpuParticleUpload::Update> create_updates{
+                {&buffers.get(GpuParticleBuffers::Programs), 0, &program, sizeof(program)},
+                {&buffers.get(GpuParticleBuffers::ParticleAllocation), 0, allocation_stamps, sizeof(allocation_stamps)},
+                {&buffers.get(GpuParticleBuffers::Commands), 0, &create, sizeof(create)},
+                {&buffers.get(GpuParticleBuffers::RootCommands), 0, create_range, sizeof(create_range)}};
+            if (exhausted)
+                create_updates.push_back({&buffers.get(GpuParticleBuffers::Emitters), 0,
+                    empty_emitters, sizeof(empty_emitters)});
+            require(vkAllocateCommandBuffers(f.device, &ai, &cb) == VK_SUCCESS &&
+                vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS, "root allocation begin");
+            require(upload.record(cb, create_updates, VK_QUEUE_TRANSFER_BIT, error,
+                FrameSubmissionGraph::Queue::Copy), error);
+            uniforms.reset();
+            require(frame.record(cb, compute, buffers, uniforms, 0, constants, 1, 0, planes, false, error), error);
+            require(readback.record(cb, buffers, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT, error), error);
+            submit.pCommandBuffers = &cb;
+            require(vkEndCommandBuffer(cb) == VK_SUCCESS &&
+                vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS &&
+                vkQueueWaitIdle(queue) == VK_SUCCESS, "root allocation submit");
+            require(readback.read(result, error), error);
+            require(result.statuses[0].generation == create.generation && result.statuses[0].serial == 1 &&
+                result.statuses[0].retired == uint32_t(exhausted) &&
+                result.statuses[0].error == uint32_t(exhausted) &&
+                result.errors == uint32_t(exhausted), "root reservation failure or recovery status");
+        }
+        std::cout << "GPU particle root rejection/recovery and child pool pressure passed\n";
         uniforms.reset();
         require(buffers.resize_draw_buckets(f.device, 112, props.limits.maxStorageBufferRange, memory, vk, error), error);
         fg::GpuPapiEmitter emitters[3]{}; emitters[0].active = 1; emitters[0].flags = GPU_PAPI_HUD;
@@ -863,7 +901,12 @@ int main(int argc, char** argv)
             require(buffer_pool.release(narrow) && buffer_pool.release(broad), "pool releases reused buffers");
         }
         GpuParticleRuntime runtime;
-        require(runtime.initialize(f.device, vkGetDeviceProcAddr, props.limits, memory, vk, capacity,
+        require(!runtime.initialize(f.device, vkGetDeviceProcAddr, props.limits, memory, vk, capacity,
+            1, 16384, VK_NULL_HANDLE, source, error, &buffer_pool),
+            "runtime accepted fewer command slots than roots");
+        auto runtime_capacity = capacity;
+        runtime_capacity.commands = runtime_capacity.roots;
+        require(runtime.initialize(f.device, vkGetDeviceProcAddr, props.limits, memory, vk, runtime_capacity,
             1, 16384, VK_NULL_HANDLE, source, error, &buffer_pool), error);
         GpuParticleEmitters emitter_manager(runtime.programs(), runtime.commands(), capacity.roots);
         GpuParticleEmitters::Handle handle{};
@@ -922,7 +965,8 @@ int main(int argc, char** argv)
             xray::render::framegraph::ResourceRetirement retirement(2);
             graph.retire_allocations(retirement, 1u << 1);
             retirement.complete(0);
-            require(retirement.size() == 2 && !graph.buffer_handle(written) && !graph.image_handle(image),
+            // Buffer and image owners are retired as one fence-bound batch.
+            require(retirement.size() == 1 && !graph.buffer_handle(written) && !graph.image_handle(image),
                 "transient resource ownership handoff");
             VkImage other_image{};
             require(image_pool.acquire(image_info, other_image, error), error);
