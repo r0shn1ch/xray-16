@@ -9,6 +9,8 @@
 #include "VulkanSettings.h"
 #include "EngineParticleSource.h"
 #include "ParticleCatalog.h"
+#include "ParticleVisual.h"
+#include "xrParticles/psystem.h"
 #include "xrEngine/XR_IOConsole.h"
 #include "xrEngine/xr_ioc_cmd.h"
 #include "xrEngine/editor_base.h"
@@ -251,6 +253,8 @@ public:
                         ImGui::PushID(static_cast<int>(i));
                         if (ImGui::Selectable(effect.name.c_str(), selected_ == i))
                         {
+                            if (selected_ != i)
+                                preview_.reset();
                             selected_ = i;
                             limit_ = static_cast<int>(effect.max_particles);
                         }
@@ -269,16 +273,68 @@ public:
                         edit_particle_effect_limit(library_, effect.name, static_cast<uint32_t>(limit_), message_))
                     {
                         effect.max_particles = static_cast<uint32_t>(limit_);
+                        preview_.reset();
                         dirty_ = true;
                     }
                     ImGui::EndDisabled();
+                    draw_preview(effect);
                 }
             }
         }
         ImGui::End();
+        if (!get_open_state())
+            preview_.reset();
     }
 
 private:
+    void draw_preview(const ParticleEffectDef& effect)
+    {
+        if (ImGui::Button("Play preview"))
+        {
+            auto catalog = std::make_shared<ParticleCatalog>();
+            catalog->effects.push_back(effect);
+            preview_ = std::make_unique<VulkanParticleEffect>(catalog, catalog->effects.front());
+            preview_->Play();
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!preview_);
+        if (ImGui::Button("Stop preview"))
+            preview_.reset();
+        ImGui::EndDisabled();
+        if (!preview_)
+            return;
+
+        const auto& io = ImGui::GetIO();
+        preview_->OnFrame(static_cast<u32>(std::clamp(io.DeltaTime * 1000.f, 0.f, 100.f)));
+        PAPI::Particle* particles = nullptr;
+        u32 count = 0;
+        preview_->particles(particles, count);
+        ImGui::Text("%u / %u particles", count, effect.max_particles);
+        ImGui::SliderFloat("Preview zoom", &preview_zoom_, 4.f, 128.f, "%.0f px/m", ImGuiSliderFlags_Logarithmic);
+        const ImVec2 size(std::max(1.f, ImGui::GetContentRegionAvail().x), 180.f);
+        ImGui::InvisibleButton("##particle_preview", size);
+        const ImVec2 min = ImGui::GetItemRectMin();
+        const ImVec2 max = ImGui::GetItemRectMax();
+        const ImVec2 center((min.x + max.x) * .5f, (min.y + max.y) * .5f);
+        auto* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(ImGuiCol_FrameBg));
+        draw->AddLine({min.x, center.y}, {max.x, center.y}, ImGui::GetColorU32(ImGuiCol_Border));
+        draw->AddLine({center.x, min.y}, {center.x, max.y}, ImGui::GetColorU32(ImGuiCol_Border));
+        draw->PushClipRect(min, max, true);
+        const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
+        constexpr u32 max_preview_points = 4096;
+        const u32 stride = std::max(1u, (count + max_preview_points - 1) / max_preview_points);
+        for (u32 i = 0; particles && i < count; i += stride)
+        {
+            const auto& pos = particles[i].pos;
+            const ImVec2 point(center.x + (pos.x - pos.z) * preview_zoom_ * .7071f,
+                center.y - (pos.y - (pos.x + pos.z) * .35f) * preview_zoom_);
+            if (point.x >= min.x && point.x < max.x && point.y >= min.y && point.y < max.y)
+                draw->AddRectFilled({point.x - 1.f, point.y - 1.f}, {point.x + 1.f, point.y + 1.f}, color);
+        }
+        draw->PopClipRect();
+    }
+
     void open()
     {
         std::vector<uint8_t> bytes;
@@ -289,12 +345,15 @@ private:
         library_ = std::move(bytes);
         catalog_ = std::move(catalog);
         selected_ = SIZE_MAX;
+        preview_.reset();
     }
 
     std::vector<uint8_t> library_;
     ParticleCatalog catalog_;
     std::string message_;
     ImGuiTextFilter filter_;
+    std::unique_ptr<VulkanParticleEffect> preview_;
+    float preview_zoom_{32.f};
     size_t selected_{SIZE_MAX};
     int limit_{};
     bool dirty_{};
