@@ -2800,7 +2800,7 @@ bool VulkanGameDevice::initialize_gbuffer_targets(std::string& error, const GBuf
     if (frame.scene_samples() != requested_scene_samples &&
         !window_.recreate_frame(presentation_extent, requested_scene_samples, error))
     {
-        if (gbuffer_msaa_configured_ || !msaa || frame.device_lost() || frame.surface_lost())
+        if (!msaa || frame.device_lost() || frame.surface_lost())
             return false;
         Msg("! [renderer-vulkan] %ux MSAA scene creation failed; retrying single-sample: %s",
             gbuffer_msaa_samples, error.c_str());
@@ -2820,7 +2820,7 @@ bool VulkanGameDevice::initialize_gbuffer_targets(std::string& error, const GBuf
     };
     if (!initialize(msaa))
     {
-        if (gbuffer_msaa_configured_ || !msaa)
+        if (!msaa || frame.device_lost() || frame.surface_lost())
             return false;
         Msg("! [renderer-vulkan] %ux G-buffer MSAA target creation failed; retrying single-sample: %s",
             gbuffer_msaa_samples, error.c_str());
@@ -2832,11 +2832,8 @@ bool VulkanGameDevice::initialize_gbuffer_targets(std::string& error, const GBuf
         if (!initialize(nullptr))
             return false;
     }
-    if (!gbuffer_msaa_configured_)
-    {
-        gbuffer_msaa_config_ = msaa ? negotiated : GBufferMsaaConfig{};
-        gbuffer_msaa_configured_ = true;
-    }
+    gbuffer_msaa_config_ = msaa ? negotiated : GBufferMsaaConfig{};
+    gbuffer_msaa_configured_ = true;
     Msg("[renderer-vulkan] gbuffer.samples=%u", static_cast<uint32_t>(targets_.samples()));
     error.clear();
     return true;
