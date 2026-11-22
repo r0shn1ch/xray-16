@@ -92,6 +92,14 @@ int main()
     const std::string original = "campfire";
     assert(edit_particle_group_item(retimed, "campfire_group", 0, 0.f, 2.f, error, &original) &&
         retimed == timing_library);
+    assert(change_particle_group_items(retimed, "campfire_group", 0, ParticleGroupItemOperation::Duplicate, error));
+    assert(parse_particle_catalog({retimed.data(), retimed.size()}, catalog, error));
+    assert(catalog.group("campfire_group")->effects.size() == 2);
+    assert(change_particle_group_items(retimed, "campfire_group", 1, ParticleGroupItemOperation::Remove, error) &&
+        retimed == timing_library);
+    assert(change_particle_group_items(retimed, "campfire_group", 0, ParticleGroupItemOperation::Remove, error));
+    assert(parse_particle_catalog({retimed.data(), retimed.size()}, catalog, error));
+    assert(catalog.group("campfire_group")->effects.empty());
     Bytes edited = library;
     IReader editor_input(library.data(), library.size());
     assert(editable_particle_library_bytes(editor_input, edited, error) && edited == library);

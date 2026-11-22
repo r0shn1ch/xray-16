@@ -57,4 +57,7 @@ bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string
     const ParticleSpriteMaterial* material = nullptr);
 bool edit_particle_group_item(std::vector<uint8_t>& library, const std::string& name,
     size_t item_index, float begin, float end, std::string& error, const std::string* replacement = nullptr);
+enum class ParticleGroupItemOperation { Duplicate, Remove };
+bool change_particle_group_items(std::vector<uint8_t>& library, const std::string& name,
+    size_t item_index, ParticleGroupItemOperation operation, std::string& error);
 } // namespace xray::render::vulkan

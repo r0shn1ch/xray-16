@@ -458,10 +458,11 @@ bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string
     return true;
 }
 
-bool edit_particle_group_item(std::vector<uint8_t>& library, const std::string& name,
-    size_t item_index, float begin, float end, std::string& error, const std::string* replacement)
+static bool update_particle_group_item(std::vector<uint8_t>& library, const std::string& name,
+    size_t item_index, float begin, float end, std::string& error, const std::string* replacement,
+    std::optional<ParticleGroupItemOperation> operation)
 {
-    if (!std::isfinite(begin) || !std::isfinite(end) || begin < 0.f || end <= begin)
+    if (!operation && (!std::isfinite(begin) || !std::isfinite(end) || begin < 0.f || end <= begin))
     {
         error = "Group effect end must be greater than its nonnegative start.";
         return false;
@@ -517,27 +518,57 @@ bool edit_particle_group_item(std::vector<uint8_t>& library, const std::string& 
             if (!catalog.effect(item.effect) || item_index-- != 0)
                 continue;
             const auto effects_offset = static_cast<size_t>(effects.data - input.data);
+            const auto table_offset = static_cast<size_t>(table.data - input.data);
+            const auto record_offset = static_cast<size_t>(record.data - input.data);
+            const auto resize_chunks = [&](size_t removed, size_t added)
+            {
+                put32(library.data() + table_offset - 4, static_cast<uint32_t>(table.size - removed + added));
+                put32(library.data() + record_offset - 4, static_cast<uint32_t>(record.size - removed + added));
+                put32(library.data() + effects_offset - 4, static_cast<uint32_t>(effects.size - removed + added));
+            };
+            constexpr size_t max_catalog_bytes = 64 * 1024 * 1024;
+            if (operation)
+            {
+                const auto start = effects_offset + item_start;
+                const auto finish = effects_offset + cursor.at;
+                const auto size = finish - start;
+                if (*operation == ParticleGroupItemOperation::Duplicate)
+                {
+                    if (count >= 1024 || size > max_catalog_bytes - library.size())
+                    {
+                        error = "Duplicating this entry would exceed the particle library limits.";
+                        return false;
+                    }
+                    const std::vector<uint8_t> copy(library.begin() + start, library.begin() + finish);
+                    library.insert(library.begin() + finish, copy.begin(), copy.end());
+                    resize_chunks(0, size);
+                    put32(library.data() + effects_offset, count + 1);
+                }
+                else
+                {
+                    library.erase(library.begin() + start, library.begin() + finish);
+                    resize_chunks(size, 0);
+                    put32(library.data() + effects_offset, count - 1);
+                }
+                error.clear();
+                return true;
+            }
             if (replacement && *replacement != item.effect)
             {
                 const auto old_size = item.effect.size();
                 const auto new_size = replacement->size();
-                constexpr size_t max_catalog_bytes = 64 * 1024 * 1024;
                 if (new_size > max_catalog_bytes - library.size() + old_size)
                 {
                     error = "Particle catalog exceeds the size limit.";
                     return false;
                 }
-                const auto table_offset = static_cast<size_t>(table.data - input.data);
-                const auto record_offset = static_cast<size_t>(record.data - input.data);
                 const auto start = effects_offset + item_start;
                 if (new_size > old_size)
                     library.insert(library.begin() + start + old_size, new_size - old_size, 0);
                 else if (new_size < old_size)
                     library.erase(library.begin() + start + new_size, library.begin() + start + old_size);
                 std::copy(replacement->begin(), replacement->end(), library.begin() + start);
-                put32(library.data() + table_offset - 4, static_cast<uint32_t>(table.size - old_size + new_size));
-                put32(library.data() + record_offset - 4, static_cast<uint32_t>(record.size - old_size + new_size));
-                put32(library.data() + effects_offset - 4, static_cast<uint32_t>(effects.size - old_size + new_size));
+                resize_chunks(old_size, new_size);
                 timing_offset = timing_offset - old_size + new_size;
             }
             auto* dest = library.data() + effects_offset + timing_offset;
@@ -547,7 +578,19 @@ bool edit_particle_group_item(std::vector<uint8_t>& library, const std::string& 
             return true;
         }
     }
-    error = "Group effect timing record not found: " + name;
+    error = "Group effect record not found: " + name;
     return false;
+}
+
+bool edit_particle_group_item(std::vector<uint8_t>& library, const std::string& name,
+    size_t item_index, float begin, float end, std::string& error, const std::string* replacement)
+{
+    return update_particle_group_item(library, name, item_index, begin, end, error, replacement, {});
+}
+
+bool change_particle_group_items(std::vector<uint8_t>& library, const std::string& name,
+    size_t item_index, ParticleGroupItemOperation operation, std::string& error)
+{
+    return update_particle_group_item(library, name, item_index, 0.f, 0.f, error, nullptr, operation);
 }
 } // namespace xray::render::vulkan

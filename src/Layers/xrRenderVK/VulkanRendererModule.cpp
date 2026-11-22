@@ -374,7 +374,7 @@ public:
 private:
     void draw_group_timing()
     {
-        const auto& group = catalog_.groups[selected_group_];
+        auto& group = catalog_.groups[selected_group_];
         ImGui::Text("%zu effects", group.effects.size());
         const char* selection = group_item_ < group.effects.size()
             ? group.effects[group_item_].effect.c_str() : "Select an effect";
@@ -384,7 +384,8 @@ private:
             {
                 const auto& item = group.effects[i];
                 ImGui::PushID(&item);
-                if (ImGui::Selectable(item.effect.c_str(), group_item_ == i))
+                const auto label = std::to_string(i + 1) + ". " + item.effect;
+                if (ImGui::Selectable(label.c_str(), group_item_ == i))
                 {
                     group_item_ = i;
                     group_begin_ = item.begin;
@@ -431,6 +432,24 @@ private:
             dirty_ = true;
         }
         ImGui::EndDisabled();
+        ImGui::SameLine();
+        const bool duplicate = ImGui::Button("Duplicate entry");
+        ImGui::SameLine();
+        const bool remove = ImGui::Button("Remove entry");
+        if ((duplicate || remove) && change_particle_group_items(library_, group.name, group_item_,
+            duplicate ? ParticleGroupItemOperation::Duplicate : ParticleGroupItemOperation::Remove, message_))
+        {
+            if (duplicate)
+            {
+                const ParticleGroupItem copy = item;
+                group.effects.insert(group.effects.begin() + group_item_ + 1, copy);
+            }
+            else
+                group.effects.erase(group.effects.begin() + group_item_);
+            group_item_ = SIZE_MAX;
+            preview_.reset();
+            dirty_ = true;
+        }
     }
 
     void draw_preview()
