@@ -106,6 +106,7 @@ int main()
             auto owner = std::make_shared<int>(0);
             staged_buffer = owner;
             out.handle = (VkBuffer)(uintptr_t)(++attempts);
+            out.nvrhi_buffer = reinterpret_cast<nvrhi::IBuffer*>(uintptr_t(100 + attempts));
             out.owner = owner;
             return true;
         };
@@ -136,11 +137,16 @@ int main()
             out.handle = (VkImage)(uintptr_t)1;
             out.owner = std::make_shared<int>(0);
             out.view = (VkImageView)(uintptr_t)2;
+            out.nvrhi_texture = reinterpret_cast<nvrhi::ITexture*>(uintptr_t(200));
             return true;
         }, error));
         assert(virtual_graph.buffer_handle(written_buffer) && virtual_graph.buffer_handle(second_buffer));
         assert(virtual_graph.image_handle(written_image));
         assert(virtual_graph.image_view(written_image) == (VkImageView)(uintptr_t)2);
+        assert(virtual_graph.nvrhi_texture(written_image) == reinterpret_cast<nvrhi::ITexture*>(uintptr_t(200)));
+        assert(virtual_graph.nvrhi_buffer(written_buffer) && virtual_graph.nvrhi_buffer(second_buffer));
+        FrameImageGraph another_graph;
+        assert(!another_graph.nvrhi_texture(written_image) && !another_graph.nvrhi_buffer(written_buffer));
         const auto copy = virtual_graph.add_pass("copy unflagged image", [] { return true; });
         assert(virtual_graph.read(copy, written_image, ImageUse::TransferSource, error));
         FrameImageGraph::ResourceLifetimes lifetimes;
@@ -150,6 +156,7 @@ int main()
         virtual_graph.retire_allocations(retirement, 3);
         assert(retirement.size() == 1 && !staged_buffer.expired());
         assert(!virtual_graph.buffer_handle(written_buffer) && !virtual_graph.image_view(written_image));
+        assert(!virtual_graph.nvrhi_buffer(written_buffer) && !virtual_graph.nvrhi_texture(written_image));
         retirement.complete(0);
         assert(!staged_buffer.expired());
         retirement.complete(1);

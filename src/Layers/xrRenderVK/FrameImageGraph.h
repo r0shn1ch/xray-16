@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+namespace nvrhi { class ITexture; class IBuffer; }
+
 namespace xray::render::vulkan
 {
 class FrameBufferPool;
@@ -120,6 +122,8 @@ public:
         VkSharingMode sharing_mode = VK_SHARING_MODE_EXCLUSIVE;
         std::vector<uint32_t> queue_families;
         std::shared_ptr<void> owner;
+        // Optional borrowed handle. Its lifetime must be covered by owner.
+        nvrhi::IBuffer* nvrhi_buffer{};
     };
     struct BufferDescription
     {
@@ -140,11 +144,14 @@ public:
     bool materialize_buffers(const AllocateBuffer& allocate, std::string& error);
     bool materialize_buffers(FrameBufferPool& pool, std::string& error);
     VkBuffer buffer_handle(BufferResource resource) const;
+    nvrhi::IBuffer* nvrhi_buffer(BufferResource resource) const;
     struct TransientImage
     {
         VkImage handle{};
         std::shared_ptr<void> owner;
         VkImageView view{};
+        // Optional borrowed handle. Its lifetime must be covered by owner.
+        nvrhi::ITexture* nvrhi_texture{};
     };
     using AllocateImage = std::function<bool(const VkImageCreateInfo&, const VkImageSubresourceRange&,
         TransientImage&, std::string&)>;
@@ -158,6 +165,7 @@ public:
     bool materialize_resources(const AllocateBuffer& allocate_buffer, const AllocateImage& allocate_image,
         std::string& error);
     VkImage image_handle(Resource resource) const;
+    nvrhi::ITexture* nvrhi_texture(Resource resource) const;
     // Call after recording the last use. The slots must cover every submitted use.
     void retire_allocations(framegraph::ResourceRetirement& retirement, uint32_t slots);
     Pass add_pass(const char* name, Record record);
@@ -250,6 +258,7 @@ private:
         VkImageCreateInfo transient_info{};
         std::shared_ptr<void> allocation;
         VkImageView view = VK_NULL_HANDLE;
+        nvrhi::ITexture* nvrhi_texture{};
     };
     struct Access
     {
@@ -271,6 +280,7 @@ private:
         framegraph::ResourceVersionSequence versions{};
         BufferDescription transient_description{};
         std::shared_ptr<void> allocation;
+        nvrhi::IBuffer* nvrhi_buffer{};
     };
     struct BufferAccess
     {

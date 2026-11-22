@@ -230,6 +230,14 @@ bool FrameImagePool::acquire(const VkImageCreateInfo& info, VkImage& image, std:
     return true;
 }
 
+nvrhi::ITexture* FrameImagePool::nvrhi_texture(VkImage image) const
+{
+    for (const Entry& entry : entries_)
+        if (entry.in_use && entry.image == image)
+            return entry.nvrhi_texture.Get();
+    return nullptr;
+}
+
 bool FrameImagePool::release(VkImage image)
 {
     for (Entry& entry : entries_)

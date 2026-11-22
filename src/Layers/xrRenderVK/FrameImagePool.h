@@ -52,6 +52,8 @@ public:
         const FrameImagePoolDispatch& dispatch, nvrhi::vulkan::DeviceHandle nvrhi_device = {});
     bool initialized() const { return device_ != VK_NULL_HANDLE; }
     bool acquire(const VkImageCreateInfo& info, VkImage& image, std::string& error);
+    // Borrowed while the image remains acquired; some native images cannot be wrapped.
+    nvrhi::ITexture* nvrhi_texture(VkImage image) const;
     bool release(VkImage image);
     void tick();
     void reset();

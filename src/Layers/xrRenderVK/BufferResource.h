@@ -57,6 +57,8 @@ public:
     void destroy();
 
     VkBuffer handle() const { return m_buffer; }
+    // Borrowed from this owner; invalid after destroy or move.
+    nvrhi::IBuffer* nvrhi_buffer() const { return m_nvrhi_buffer; }
     VkDeviceSize size() const { return m_size; }
     VkSharingMode sharing_mode() const { return m_sharing_mode; }
     const std::vector<uint32_t>& sharing_queue_families() const { return m_sharing_queue_families; }

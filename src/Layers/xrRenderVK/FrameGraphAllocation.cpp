@@ -33,6 +33,7 @@ bool FrameImageGraph::materialize_images(FrameImagePool& pool, std::string& erro
         if (!pool.acquire(info, owner->image, failure))
             return false;
         output.handle = owner->image;
+        output.nvrhi_texture = pool.nvrhi_texture(owner->image);
         output.owner = std::move(owner);
         return true;
     }, error);
@@ -50,6 +51,7 @@ bool FrameImageGraph::materialize_buffers(FrameBufferPool& pool, std::string& er
             pool.release(static_cast<vulkan::BufferResource*>(resource));
         });
         output.handle = buffer->handle();
+        output.nvrhi_buffer = buffer->nvrhi_buffer();
         output.sharing_mode = buffer->sharing_mode();
         output.queue_families = buffer->sharing_queue_families();
         return true;
@@ -82,7 +84,7 @@ bool FrameImageGraph::materialize_2d_image_views(FrameImagePool& pool, VkDevice 
             failure = "Frame image graph: pooled 2D image view creation failed";
             return false;
         }
-        output = {owner->image, owner, owner->view};
+        output = {owner->image, owner, owner->view, pool.nvrhi_texture(owner->image)};
         return true;
     }, error);
 }

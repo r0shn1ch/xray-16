@@ -276,6 +276,7 @@ void FrameImageGraph::bind_buffers(PendingBuffers& allocations, const ResourceLi
         Buffer& buffer = m_buffers[pending.first];
         auto& physical = pending.second;
         buffer.buffer = physical.handle;
+        buffer.nvrhi_buffer = physical.nvrhi_buffer;
         buffer.sharing_mode = physical.sharing_mode;
         buffer.sharing_queue_families = std::move(physical.queue_families);
         buffer.allocation = std::move(physical.owner);
@@ -289,6 +290,11 @@ VkBuffer FrameImageGraph::buffer_handle(BufferResource resource) const
         return VK_NULL_HANDLE;
     const Buffer& buffer = m_buffers[resource.index];
     return resource.version < buffer.versions.size() ? buffer.buffer : VK_NULL_HANDLE;
+}
+
+nvrhi::IBuffer* FrameImageGraph::nvrhi_buffer(BufferResource resource) const
+{
+    return buffer_handle(resource) ? m_buffers[resource.index].nvrhi_buffer : nullptr;
 }
 
 void FrameImageGraph::retire_allocations(framegraph::ResourceRetirement& retirement, uint32_t slots)
@@ -306,6 +312,7 @@ void FrameImageGraph::retire_allocations(framegraph::ResourceRetirement& retirem
         if (buffer.allocation)
         {
             buffer.buffer = VK_NULL_HANDLE;
+            buffer.nvrhi_buffer = nullptr;
             buffer.allocation.reset();
         }
     for (auto& image : m_images)
@@ -313,6 +320,7 @@ void FrameImageGraph::retire_allocations(framegraph::ResourceRetirement& retirem
         {
             image.image = VK_NULL_HANDLE;
             image.view = VK_NULL_HANDLE;
+            image.nvrhi_texture = nullptr;
             image.allocation.reset();
         }
 }
@@ -667,6 +675,7 @@ void FrameImageGraph::bind_images(PendingImages& allocations, const ResourceLife
         auto& image = m_images[pending.first];
         image.image = pending.second.handle;
         image.view = pending.second.view;
+        image.nvrhi_texture = pending.second.nvrhi_texture;
         image.allocation = std::move(pending.second.owner);
         image.initial_queue = m_passes[lifetimes.pass_order[lifetimes.images[pending.first].first_use]].queue;
     }
@@ -678,6 +687,11 @@ VkImage FrameImageGraph::image_handle(Resource resource) const
         return VK_NULL_HANDLE;
     const Image& image = m_images[resource.index];
     return resource.version < image.versions.size() ? image.image : VK_NULL_HANDLE;
+}
+
+nvrhi::ITexture* FrameImageGraph::nvrhi_texture(Resource resource) const
+{
+    return image_handle(resource) ? m_images[resource.index].nvrhi_texture : nullptr;
 }
 
 VkImageView FrameImageGraph::image_view(Resource resource) const
