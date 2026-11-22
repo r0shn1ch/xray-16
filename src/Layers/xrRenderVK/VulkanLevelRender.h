@@ -159,6 +159,9 @@ private:
   void release_ray_materials();
   void release_ray_diffuse_materials();
   bool prepare_visibility_materials(const VulkanWindowDevice& window, std::string& error);
+  void release_visibility_views();
+  bool refresh_visibility_views(std::string& error);
+  bool rebind_visibility_samplers(std::string& error);
   void release_visibility_materials();
   bool acquire_model_ray_materials(const std::vector<RayModelGeometry>& geometry,
       std::vector<RayModelTextureSlots>& slots, std::string& error);

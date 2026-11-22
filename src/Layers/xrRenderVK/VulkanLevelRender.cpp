@@ -370,6 +370,7 @@ void VulkanLevelRender::OnAssetsChanged()
             std::string error;
             const auto before = [&] {
                 release_ray_views();
+                release_visibility_views();
                 if (game_device_)
                     game_device_->detach_color_maps_for_asset_reload();
                 // Old weather descriptors must be retired before old image views.
@@ -379,6 +380,11 @@ void VulkanLevelRender::OnAssetsChanged()
             };
             const auto after = [&] {
                 rebind_ray_views();
+                if (!refresh_visibility_views(error))
+                {
+                    Msg("! [renderer-vulkan] visibility materials disabled after texture reload: %s", error.c_str());
+                    release_visibility_materials();
+                }
                 std::string color_map_error;
                 if (!game_device_->refresh_color_maps_after_asset_reload(color_map_error))
                     Msg("! [renderer-vulkan] color maps unavailable after asset reload: %s", color_map_error.c_str());
@@ -394,11 +400,17 @@ void VulkanLevelRender::OnAssetsChanged()
         std::string error;
         const auto before = [&] {
             release_ray_views();
+            release_visibility_views();
             if (game_device_)
                 game_device_->detach_color_maps_for_asset_reload();
         };
         const auto after = [&] {
             rebind_ray_views();
+            if (!refresh_visibility_views(error))
+            {
+                Msg("! [renderer-vulkan] visibility materials disabled after texture reload: %s", error.c_str());
+                release_visibility_materials();
+            }
             if (game_device_)
             {
                 std::string color_map_error;
@@ -1060,17 +1072,30 @@ void VulkanLevelRender::Reset(SDL_Window *window, u32 &width, u32 &height, float
         };
         const auto after_sampler_rebind = [&] {
             rebind_ray_views();
+            std::string visibility_error;
+            if (!rebind_visibility_samplers(visibility_error))
+            {
+                Msg("! [renderer-vulkan] visibility materials disabled after sampler update: %s", visibility_error.c_str());
+                release_visibility_materials();
+            }
             restore_weather_descriptors();
         };
         if (textures_->texture_quality_changed())
         {
             const auto before_texture_reload = [&] {
                 before_sampler_rebind();
+                release_visibility_views();
                 if (game_device_)
                     game_device_->detach_color_maps_for_asset_reload();
             };
             const auto after_texture_reload = [&] {
                 rebind_ray_views();
+                std::string visibility_error;
+                if (!refresh_visibility_views(visibility_error))
+                {
+                    Msg("! [renderer-vulkan] visibility materials disabled after texture quality update: %s", visibility_error.c_str());
+                    release_visibility_materials();
+                }
                 if (game_device_)
                 {
                     std::string color_map_error;
@@ -2103,30 +2128,7 @@ bool VulkanLevelRender::prepare_visibility_materials(const VulkanWindowDevice& w
     if (!visibility_materials_.initialize(device_, window.device_proc(), static_cast<uint32_t>(names.size()), error))
         return false;
 
-    bool ready = true;
-    visibility_material_views_.reserve(names.size());
-    for (uint32_t slot = 0; slot < names.size(); ++slot)
-    {
-        VkImageView view{};
-        const auto& texture = names[slot];
-        if (!textures_->projection_texture(texture.name, view, error, texture.linear))
-        {
-            ready = false;
-            break;
-        }
-        visibility_material_views_.push_back(view);
-        const auto sampler = texture.lightmap ? textures_->lightmap_sampler() : textures_->sampler();
-        if (!visibility_materials_.write(slot, view, sampler, error, VK_IMAGE_LAYOUT_GENERAL))
-        {
-            ready = false;
-            break;
-        }
-    }
-    if (ready && !textures_->finish_uploads())
-    {
-        error = "visibility texture uploads did not complete";
-        ready = false;
-    }
+    const bool ready = refresh_visibility_views(error);
     if (ready)
     {
         auto passes = std::make_unique<VisibilityPasses>();
@@ -2143,16 +2145,56 @@ bool VulkanLevelRender::prepare_visibility_materials(const VulkanWindowDevice& w
     return false;
 }
 
+void VulkanLevelRender::release_visibility_views()
+{
+    if (textures_)
+        for (VkImageView view : visibility_material_views_)
+            textures_->release_environment(view);
+    visibility_material_views_.clear();
+}
+
+bool VulkanLevelRender::refresh_visibility_views(std::string& error)
+{
+    if (!visibility_materials_.set()) { error.clear(); return true; }
+    const auto& names = level_.visibility_textures();
+    if (!textures_ || !visibility_material_views_.empty() || names.size() != visibility_materials_.capacity())
+    { error = "visibility texture reload has inconsistent material state"; return false; }
+    visibility_material_views_.reserve(names.size());
+    for (const auto& texture : names)
+    {
+        VkImageView view{};
+        if (!textures_->projection_texture(texture.name, view, error, texture.linear))
+            return false;
+        visibility_material_views_.push_back(view);
+    }
+    if (!textures_->finish_uploads())
+    { error = "visibility texture uploads did not complete"; return false; }
+    return rebind_visibility_samplers(error);
+}
+
+bool VulkanLevelRender::rebind_visibility_samplers(std::string& error)
+{
+    if (!visibility_materials_.set()) { error.clear(); return true; }
+    const auto& names = level_.visibility_textures();
+    if (!textures_ || names.size() != visibility_material_views_.size() ||
+        names.size() != visibility_materials_.capacity())
+    { error = "visibility sampler update has inconsistent material state"; return false; }
+    for (uint32_t slot = 0; slot < names.size(); ++slot)
+    {
+        const auto sampler = names[slot].lightmap ? textures_->lightmap_sampler() : textures_->sampler();
+        if (!visibility_materials_.write(slot, visibility_material_views_[slot], sampler, error, VK_IMAGE_LAYOUT_GENERAL))
+            return false;
+    }
+    error.clear(); return true;
+}
+
 void VulkanLevelRender::release_visibility_materials()
 {
     if (visibility_passes_ && game_device_)
         game_device_->set_level_visibility(nullptr, nullptr);
     visibility_passes_.reset();
     visibility_materials_.destroy();
-    if (textures_)
-        for (VkImageView view : visibility_material_views_)
-            textures_->release_environment(view);
-    visibility_material_views_.clear();
+    release_visibility_views();
 }
 
 void VulkanLevelRender::release_ray_materials()
