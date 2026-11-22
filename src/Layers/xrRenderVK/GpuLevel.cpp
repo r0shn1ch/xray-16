@@ -1893,6 +1893,7 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
     {
         detail_cache_.clear();
         detail_ground_cache_.clear();
+        ++detail_ground_generation_;
         detail_spacing_ = spacing;
         detail_cache_gpu_only_ = gpu_generation;
     }
@@ -2141,15 +2142,37 @@ bool GpuLevel::record_generated_details(const FrameRecordingContext& frame, cons
     const uint32_t grid = detail_generation_params_.grid_size;
     const uint32_t per_cell = grid * grid;
     const uint32_t candidates = detail_generation_params_.slot_count * per_cell;
-    std::vector<std::array<float, 2>> scales;
-    scales.reserve(details_.prototypes.size());
-    for (const auto& prototype : details_.prototypes)
-        scales.push_back({prototype.min_scale, prototype.max_scale});
-    if (!upload(data.cells, detail_generation_cells_) || !upload(data.triangles, detail_generation_triangles_) ||
-        !upload(data.prototypes, scales) ||
-        !ensure(data.placed, VkDeviceSize(candidates) * sizeof(GeneratedDetail), storage, local) ||
+    if (!detail_generation_prototypes_.handle())
+    {
+        std::vector<std::array<float, 2>> scales;
+        scales.reserve(details_.prototypes.size());
+        for (const auto& prototype : details_.prototypes)
+            scales.push_back({prototype.min_scale, prototype.max_scale});
+        if (!upload(detail_generation_prototypes_, scales))
+        {
+            detail_generation_prototypes_.destroy();
+            return false;
+        }
+    }
+    const bool same_inputs = data.ground_generation == detail_ground_generation_ &&
+        std::equal(data.uploaded_cell_ids.begin(), data.uploaded_cell_ids.end(),
+            detail_generation_cells_.begin(), detail_generation_cells_.end(),
+            [](uint32_t id, const DetailGenerateSlot& cell) { return id == cell.data[0]; });
+    if (!same_inputs)
+    {
+        // A slot can be reused after its fence. Its input data remains valid
+        // when the same ordered static cells and ground geometry are selected.
+        data.uploaded_cell_ids.clear();
+        if (!upload(data.cells, detail_generation_cells_) || !upload(data.triangles, detail_generation_triangles_))
+            return false;
+        data.uploaded_cell_ids.reserve(detail_generation_cells_.size());
+        for (const auto& cell : detail_generation_cells_)
+            data.uploaded_cell_ids.push_back(cell.data[0]);
+        data.ground_generation = detail_ground_generation_;
+    }
+    if (!ensure(data.placed, VkDeviceSize(candidates) * sizeof(GeneratedDetail), storage, local) ||
         !detail_generate_->record(frame.command_buffer, frame.frame_index, data.cells, data.triangles,
-            data.prototypes, data.placed, detail_generation_params_, error))
+            detail_generation_prototypes_, data.placed, detail_generation_params_, error))
         return false;
 
     std::vector<uint32_t> capacities(batches.size(), 0);
@@ -3232,6 +3255,8 @@ void GpuLevel::destroy()
     detail_generate_.reset();
     detail_gpu_generation_failed_ = detail_cache_gpu_only_ = false;
     detail_generation_frames_ = {};
+    detail_generation_prototypes_.destroy();
+    detail_ground_generation_ = 0;
     detail_ground_cache_.clear();
     detail_generation_cells_.clear();
     detail_generation_triangles_.clear();

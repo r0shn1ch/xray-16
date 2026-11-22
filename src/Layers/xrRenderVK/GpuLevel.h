@@ -308,8 +308,15 @@ class GpuLevel
     std::unique_ptr<DetailGeneratePass> detail_generate_;
     mutable bool detail_gpu_generation_failed_{};
     bool detail_cache_gpu_only_{};
-    struct DetailGenerationFrame { BufferResource cells, triangles, prototypes, placed; };
+    struct DetailGenerationFrame
+    {
+        BufferResource cells, triangles, placed;
+        std::vector<uint32_t> uploaded_cell_ids;
+        uint64_t ground_generation{};
+    };
     mutable std::array<DetailGenerationFrame, FrameContext::FramesInFlight> detail_generation_frames_;
+    mutable BufferResource detail_generation_prototypes_;
+    uint64_t detail_ground_generation_{};
     std::unordered_map<size_t, std::vector<DetailGroundTriangle>> detail_ground_cache_;
     std::vector<DetailGenerateSlot> detail_generation_cells_;
     std::vector<DetailGroundTriangle> detail_generation_triangles_;
