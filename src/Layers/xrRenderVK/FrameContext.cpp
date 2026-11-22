@@ -3750,6 +3750,9 @@ void FrameContext::destroy_swapchain_resources()
         (void)m_frame_generation_ui_register(VK_NULL_HANDLE, VK_FORMAT_UNDEFINED, {}, 0,
             m_frame_generation_ui_data, error);
     }
+    // The interpolation backend may still be presenting on its own queues.
+    if (m_frame_interpolation_swapchain && m_swapchain_destroyed)
+        m_swapchain_destroyed(m_swapchain_data);
     m_completion_pending = {};
     m_completion_images = {};
     for (VkFramebuffer framebuffer : m_framebuffers)
@@ -3824,8 +3827,6 @@ void FrameContext::destroy_swapchain_resources()
         if (semaphore) m_vk.destroy_semaphore(m_device, semaphore, nullptr);
     for (VkFence fence : m_frame_fences)
         if (fence) m_vk.destroy_fence(m_device, fence, nullptr);
-    if (m_frame_interpolation_swapchain && m_swapchain_destroyed)
-        m_swapchain_destroyed(m_swapchain_data);
     if (m_swapchain) m_vk.destroy_swapchain(m_device, m_swapchain, nullptr);
     m_swapchain = VK_NULL_HANDLE;
     m_frame_interpolation_swapchain = false;
