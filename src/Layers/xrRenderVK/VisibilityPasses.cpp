@@ -247,9 +247,11 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
             return true;
         }, error))
         return false;
-    retirement.defer_for_slots(1u << frame.frame_index, [owner = id_target]() mutable { owner.reset(); });
-    return graph.execute(frame.command_buffer, states, {barrier_}, error, frame.command_queue_flags,
+    const bool recorded = graph.execute(frame.command_buffer, states, {barrier_}, error, frame.command_queue_flags,
         frame.semaphore_handoff, FrameSubmissionGraph::Queue::Graphics);
+    // A failed pass can still leave commands referencing the ID image.
+    graph.retire_allocations(retirement, 1u << frame.frame_index);
+    return recorded;
 }
 
 bool VisibilityPasses::rasterize(VkCommandBuffer command, uint32_t slot, uint32_t batch, RasterPhase phase,
