@@ -54,6 +54,13 @@ bool GpuCheckedProduct(uint count,uint stride,out uint product) {
     product = count * stride;
     return true;
 }
+// Every access to a live allocation stamp uses atomics because other workgroups
+// can probe it while a reservation is rolled back, split, or released.
+void GpuSetAllocationStamp(uint index,bool stateRange,uint value) {
+    uint previous;
+    if (stateRange) InterlockedExchange(g_StateAllocation[index],value,previous);
+    else InterlockedExchange(g_ParticleAllocation[index],value,previous);
+}
 uint GpuAllocateRange(uint count,bool stateRange) {
     if (count == 0) return 0;
     uint limit = stateRange ? g_Papi.actionStateCapacity : g_Papi.particleCapacity;
@@ -68,10 +75,7 @@ uint GpuAllocateRange(uint count,bool stateRange) {
             if (old != 0) { occupiedEnd = old; break; }
         }
         if (acquired == count) return first;
-        for (uint j = 0; j < acquired; ++j) {
-            if (stateRange) g_StateAllocation[first + j] = 0;
-            else g_ParticleAllocation[first + j] = 0;
-        }
+        for (uint j = 0; j < acquired; ++j) GpuSetAllocationStamp(first + j,stateRange,0);
         first = max(first + acquired + 1,occupiedEnd);
     }
     GpuAllocationError(stateRange ? 4u : 1u);
@@ -81,10 +85,10 @@ void GpuReleaseReservation() {
     DeviceMemoryBarrier();
     if (g_Reservation.particleFirst != GPU_PAPI_INVALID)
         for (uint i = g_Reservation.particleUsed; i < g_Reservation.particleCount; ++i)
-            g_ParticleAllocation[g_Reservation.particleFirst + i] = 0;
+            GpuSetAllocationStamp(g_Reservation.particleFirst + i,false,0);
     if (g_Reservation.stateFirst != GPU_PAPI_INVALID)
         for (uint j = g_Reservation.stateUsed; j < g_Reservation.stateCount; ++j)
-            g_StateAllocation[g_Reservation.stateFirst + j] = 0;
+            GpuSetAllocationStamp(g_Reservation.stateFirst + j,true,0);
     uint child = g_Reservation.childFirst;
     while (child != GPU_PAPI_INVALID) {
         uint next = g_Emitters[child].pad1;
@@ -182,9 +186,10 @@ bool GpuReserveTick(GpuPapiEmitter emitter,uint milliseconds) {
 void GpuReleaseEmitter(inout GpuPapiEmitter emitter) {
     DeviceMemoryBarrier();
     if (emitter.particleFirst != GPU_PAPI_INVALID)
-        for (uint i = 0; i < emitter.capacity; ++i) g_ParticleAllocation[emitter.particleFirst + i] = 0;
+        for (uint i = 0; i < emitter.capacity; ++i) GpuSetAllocationStamp(emitter.particleFirst + i,false,0);
     if (emitter.actionStateFirst != GPU_PAPI_INVALID)
-        for (uint j = 0; j < g_Programs[emitter.program].stateCount; ++j) g_StateAllocation[emitter.actionStateFirst + j] = 0;
+        for (uint j = 0; j < g_Programs[emitter.program].stateCount; ++j)
+            GpuSetAllocationStamp(emitter.actionStateFirst + j,true,0);
     emitter.count = 0;
     emitter.capacity = 0;
     emitter.particleFirst = GPU_PAPI_INVALID;
@@ -288,8 +293,10 @@ uint GpuSpawnChild(inout GpuPapiEmitter parent,uint program,GpuPapiParticle part
     uint stateFirst = g_Reservation.stateFirst + g_Reservation.stateUsed;
     g_Reservation.particleUsed += definition.maxParticles;
     g_Reservation.stateUsed += definition.stateCount;
-    for (uint i = 0; i < definition.maxParticles; ++i) g_ParticleAllocation[particleFirst + i] = particleFirst + definition.maxParticles;
-    for (uint j = 0; j < definition.stateCount; ++j) g_StateAllocation[stateFirst + j] = stateFirst + definition.stateCount;
+    for (uint i = 0; i < definition.maxParticles; ++i)
+        GpuSetAllocationStamp(particleFirst + i,false,particleFirst + definition.maxParticles);
+    for (uint j = 0; j < definition.stateCount; ++j)
+        GpuSetAllocationStamp(stateFirst + j,true,stateFirst + definition.stateCount);
     GpuPapiEmitter child;
     uint generation = g_Emitters[index].generation + 1;
     GpuInitializeEmitter(child,program,index,generation,parent.root,particleFirst,stateFirst);
