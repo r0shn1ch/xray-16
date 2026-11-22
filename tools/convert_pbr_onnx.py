@@ -315,7 +315,11 @@ def main():
         if path.resolve() in inputs:
             parser.error("outputs must be distinct and differ from every input")
         inputs.add(path.resolve())
-        if path.exists() and not args.overwrite:
+        if not path.parent.is_dir():
+            parser.error(f"output directory does not exist: {path.parent}")
+        if path.is_dir():
+            parser.error(f"output is a directory: {path}")
+        if (path.exists() or path.is_symlink()) and not args.overwrite:
             parser.error(f"output exists: {path}")
 
     sessions = {} if len(args.diffuse) > 1 else None
