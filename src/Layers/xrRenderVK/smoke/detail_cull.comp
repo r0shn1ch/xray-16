@@ -11,6 +11,7 @@ layout(set = 0, binding = 2, std430) buffer DrawArguments
     int vertex_offset;
     uint first_instance;
 };
+layout(set = 0, binding = 3, std430) readonly buffer VisibleCells { uint visible_cells[]; };
 layout(push_constant) uniform DetailCull
 {
     vec4 planes[6];
@@ -19,6 +20,8 @@ layout(push_constant) uniform DetailCull
     float radius;
     uint source_stride; // five floats for legacy placements, eight for GPU generation
     uint model;
+    uint compact_cells;
+    uint candidates_per_cell;
 } settings;
 
 bool visible(vec3 position, float radius)
@@ -31,8 +34,11 @@ bool visible(vec3 position, float radius)
 
 bool load_visible_placement(uint index, out vec3 position, out float scale, out float yaw)
 {
+    uint count = settings.placement_count;
+    if (settings.compact_cells != 0u)
+        count = min(visible_cells[0], count / settings.candidates_per_cell) * settings.candidates_per_cell;
     if ((settings.source_stride != 5u && settings.source_stride != 8u) ||
-        index >= settings.placement_count || index >= placements.length() / settings.source_stride)
+        index >= count || index >= placements.length() / settings.source_stride)
         return false;
 
     uint source = index * settings.source_stride;

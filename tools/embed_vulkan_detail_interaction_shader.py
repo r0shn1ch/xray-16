@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Embed the GPU grass contact/spring field; --check validates the shipped words."""
+"""Embed GPU grass field and culling shaders; --check validates the shipped words."""
 import argparse
 from pathlib import Path
 import struct
@@ -42,7 +42,9 @@ if __name__ == "__main__":
             (SOURCE.with_name("detail_bend.comp"), HEADER.with_name("DetailBendShaders.h"),
              "detail_bend_shaders"),
             (SOURCE.with_name("detail_cull.comp"), HEADER.with_name("DetailCullShaders.h"),
-             "detail_cull_shaders")]:
+             "detail_cull_shaders"),
+            (SOURCE.with_name("detail_cell_cull.comp"), HEADER.with_name("DetailCellCullShaders.h"),
+             "detail_cell_cull_shaders")]:
         result = generate(args.glslc, source, namespace)
         if args.check:
             if header.read_text() != result: parser.error(f"{header.name} is stale")

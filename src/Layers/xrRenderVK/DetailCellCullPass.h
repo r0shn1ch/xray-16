@@ -1,6 +1,6 @@
 #pragma once
-#include <cstring>
 #include "DetailGeneratePass.h"
+#include "DetailCellCullShaders.h"
 
 namespace xray::render::vulkan
 {
@@ -9,27 +9,23 @@ class DetailCellCullPass
 {
 public:
     bool initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, const VkPhysicalDeviceLimits& limits,
-        uint32_t slots, VkPipelineCache cache, const DetailCullPass::Source& source, std::string& error)
+        uint32_t slots, VkPipelineCache cache, std::string& error)
     {
         update_ = reinterpret_cast<PFN_vkCmdUpdateBuffer>(get(device, "vkCmdUpdateBuffer"));
         fill_ = reinterpret_cast<PFN_vkCmdFillBuffer>(get(device, "vkCmdFillBuffer"));
         barrier_ = reinterpret_cast<PFN_vkCmdPipelineBarrier>(get(device, "vkCmdPipelineBarrier"));
         max_groups_x_ = std::min(limits.maxComputeWorkGroupCount[0], 65535u);
         max_groups_y_ = std::min(limits.maxComputeWorkGroupCount[1], 65535u);
-        std::vector<uint8_t> binary;
         if (!update_ || !fill_ || !barrier_ || !max_groups_x_ || !max_groups_y_ ||
-            limits.maxPerStageDescriptorStorageBuffers < 4 || limits.maxDescriptorSetStorageBuffers < 4 ||
-            limits.maxPushConstantsSize < sizeof(Parameters) ||
-            !source("vk/detail_cell_cull.cs.spv", binary, error) || binary.size() < 20 || binary.size() % 4)
+            limits.maxPerStageDescriptorStorageBuffers < 3 || limits.maxDescriptorSetStorageBuffers < 3 ||
+            limits.maxPushConstantsSize < sizeof(Parameters))
         { if (error.empty()) error = "GPU detail cell culling unavailable"; return false; }
-        std::vector<uint32_t> words(binary.size() / 4);
-        std::memcpy(words.data(), binary.data(), binary.size());
-        return compute_.initialize(device, get, slots, 4, sizeof(Parameters), limits.maxStorageBufferRange,
-            cache, words.data(), binary.size(), error);
+        return compute_.initialize(device, get, slots, 3, sizeof(Parameters), limits.maxStorageBufferRange,
+            cache, detail_cell_cull_shaders::Compute, sizeof(detail_cell_cull_shaders::Compute), error);
     }
 
     bool record(VkCommandBuffer command, uint32_t slot, const BufferResource& cells,
-        const BufferResource& visible, const BufferResource& arguments, const BufferResource& placements,
+        const BufferResource& visible, const BufferResource& arguments,
         const float (&mvp)[16], const float* camera_distance, float margin,
         const DetailGeneratePass::Parameters& generation, std::string& error) const
     {
@@ -42,8 +38,7 @@ public:
             !y || y > max_groups_y_ || !camera_distance || !std::isfinite(margin) || margin < 0.f ||
             !cells.handle() || uint64_t(generation.slot_count) * sizeof(DetailGenerateSlot) > cells.size() ||
             !visible.handle() || (uint64_t(generation.slot_count) + 1) * 4 > visible.size() ||
-            !arguments.handle() || arguments.size() < sizeof(VkDispatchIndirectCommand) ||
-            !placements.handle() || candidates * sizeof(GeneratedDetail) > placements.size())
+            !arguments.handle() || arguments.size() < sizeof(VkDispatchIndirectCommand))
         { error = "invalid GPU detail cell culling range"; return false; }
         for (unsigned i = 0; i < 4; ++i)
             if (!std::isfinite(camera_distance[i]) || (i == 3 && camera_distance[i] < 0.f))
@@ -64,8 +59,7 @@ public:
         barrier_(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             0, 1, &dependency, 0, nullptr, 0, nullptr);
         if (!compute_.record(command, slot, {{cells.handle(), 0, cells.size()},
-                {visible.handle(), 0, visible.size()}, {arguments.handle(), 0, sizeof(initial)},
-                {placements.handle(), 0, candidates * sizeof(GeneratedDetail)}}, &params, x,
+                {visible.handle(), 0, visible.size()}, {arguments.handle(), 0, sizeof(initial)}}, &params, x,
                 static_cast<uint32_t>(y), error)) return false;
         VkBufferMemoryBarrier indirect{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
         indirect.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;

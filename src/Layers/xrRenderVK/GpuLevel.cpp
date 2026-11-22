@@ -2176,7 +2176,7 @@ bool GpuLevel::enable_gpu_details(PFN_vkGetDeviceProcAddr get, const VkPhysicalD
     if (generate->initialize(device_, get, limits, FrameContext::FramesInFlight,
             pass_->pipeline_cache(), read_engine_shader, error) &&
         cell_cull->initialize(device_, get, limits, FrameContext::FramesInFlight,
-            pass_->pipeline_cache(), read_engine_shader, error))
+            pass_->pipeline_cache(), error))
     {
         detail_generate_ = std::move(generate);
         detail_cell_cull_ = std::move(cell_cull);
@@ -2348,7 +2348,7 @@ bool GpuLevel::record_generated_details(const FrameRecordingContext& frame, cons
         !ensure(data.dispatch, sizeof(VkDispatchIndirectCommand),
             storage | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, local) ||
         !detail_cell_cull_->record(frame.command_buffer, frame.frame_index, data.cells, data.visible_cells,
-            data.dispatch, data.placed, mvp, detail_generation_camera_.data(), margin, detail_generation_params_, error) ||
+            data.dispatch, mvp, detail_generation_camera_.data(), margin, detail_generation_params_, error) ||
         !detail_generate_->record(frame.command_buffer, frame.frame_index, data.cells, data.triangles,
             detail_generation_prototypes_, data.placed, detail_generation_params_, error,
             &data.visible_cells, &data.dispatch))
@@ -2368,7 +2368,7 @@ bool GpuLevel::record_generated_details(const FrameRecordingContext& frame, cons
                 data.placed, batch.instances, batch.arguments, mvp, candidates, detail_meshes_[model].index_count,
                 detail_wind_radius(detail_meshes_[model].detail_radius,
                     detail_meshes_[model].detail_wind_extent, wind_amplitude), error,
-                static_cast<uint32_t>(model), batch.count))
+                static_cast<uint32_t>(model), batch.count, &data.visible_cells, &data.dispatch, per_cell))
             return false;
     }
     return true;

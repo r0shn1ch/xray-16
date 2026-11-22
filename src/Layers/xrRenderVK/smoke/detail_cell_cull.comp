@@ -1,11 +1,9 @@
 #version 450
 struct Slot { vec4 bounds; uvec4 data; uvec4 palettes; };
-struct Placement { vec4 position_scale; float yaw; uint model; uvec2 padding; };
 layout(local_size_x = 64) in;
 layout(set = 0, binding = 0, std430) readonly buffer Cells { Slot cells[]; };
 layout(set = 0, binding = 1, std430) buffer Visible { uint visible[]; };
 layout(set = 0, binding = 2, std430) buffer Arguments { uint args[]; };
-layout(set = 0, binding = 3, std430) writeonly buffer Placements { Placement placed[]; };
 layout(push_constant) uniform Cull
 {
     mat4 mvp;
@@ -26,10 +24,6 @@ void main()
     if (group > 0xffffffffu / gl_WorkGroupSize.x) return;
     uint index = group * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
     if (index >= settings.slot_count || index >= cells.length()) return;
-    // Clear the complete capacity, including the tail left by a shrinking
-    // visible list or an empty indirect dispatch in this frame.
-    for (uint i = 0u; i < settings.per_cell; ++i)
-        placed[index * settings.per_cell + i] = Placement(vec4(0.0), 0.0, 0xffffffffu, uvec2(0u));
     Slot cell = cells[index];
     if (cell.data.y == 0x3f3f3f3fu || cell.data.w == 0u) return;
     vec2 delta = cell.bounds.xy + 1.0 - settings.camera_distance.xz;

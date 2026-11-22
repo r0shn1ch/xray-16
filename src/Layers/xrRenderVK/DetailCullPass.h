@@ -32,7 +32,7 @@ public:
                 error = "invalid GPU detail culling shader or procedures";
             return false;
         }
-        return compute_.initialize(device, get, slots, 3, sizeof(Parameters), limits.maxStorageBufferRange,
+        return compute_.initialize(device, get, slots, 4, sizeof(Parameters), limits.maxStorageBufferRange,
             cache, detail_cull_shaders::Compute, sizeof(detail_cull_shaders::Compute), error);
     }
 
@@ -41,7 +41,8 @@ public:
         const BufferResource& output, const BufferResource& args, const float (&mvp)[16],
         uint32_t count, uint32_t index_count, float model_radius, std::string& error,
         uint32_t generated_model = UINT32_MAX,
-        uint32_t capacity = 0) const
+        uint32_t capacity = 0, const BufferResource* visible_cells = nullptr,
+        const BufferResource* indirect_dispatch = nullptr, uint32_t candidates_per_cell = 0) const
     {
         const uint64_t groups = (uint64_t(count) + 63) / 64;
         const uint32_t groups_x = static_cast<uint32_t>(std::min<uint64_t>(groups, max_groups_x_));
@@ -54,7 +55,12 @@ public:
         if (!command || !count || !index_count || !update_ || !barrier_ ||
             !input.handle() || !output.handle() || !args.handle() || !groups_y || groups_y > max_groups_y_ ||
             input_bytes > input.size() || output_bytes > output.size() ||
-            args.size() < sizeof(VkDrawIndexedIndirectCommand))
+            args.size() < sizeof(VkDrawIndexedIndirectCommand) ||
+            ((visible_cells != nullptr) != (indirect_dispatch != nullptr)) ||
+            (visible_cells && (!visible_cells->handle() || visible_cells->size() < sizeof(uint32_t) ||
+                !indirect_dispatch->handle() || indirect_dispatch->size() < sizeof(VkDispatchIndirectCommand) ||
+                generated_model == UINT32_MAX || !candidates_per_cell || candidates_per_cell > count ||
+                count % candidates_per_cell != 0)))
         {
             error = "invalid GPU detail culling buffers";
             return false;
@@ -94,8 +100,14 @@ public:
         constants.radius = model_radius;
         constants.source_stride = source_stride;
         constants.model = generated_model;
-        if (!compute_.record(command, slot, {{input.handle(), 0, input_bytes},
-                {output.handle(), 0, output_bytes}, {args.handle(), 0, sizeof(initial)}},
+        constants.compact_cells = visible_cells ? 1u : 0u;
+        constants.candidates_per_cell = candidates_per_cell;
+        const BufferResource& selection = visible_cells ? *visible_cells : input;
+        const std::vector<VkDescriptorBufferInfo> bindings{{input.handle(), 0, input_bytes},
+            {output.handle(), 0, output_bytes}, {args.handle(), 0, sizeof(initial)},
+            {selection.handle(), 0, visible_cells ? sizeof(uint32_t) : input_bytes}};
+        if (indirect_dispatch ? !compute_.record_indirect(command, slot, bindings, &constants,
+                *indirect_dispatch, 0, error) : !compute_.record(command, slot, bindings,
                 &constants, groups_x, static_cast<uint32_t>(groups_y), error))
             return false;
 
@@ -113,9 +125,9 @@ private:
         float planes[6][4];
         uint32_t placement_count, instance_capacity;
         float radius;
-        uint32_t source_stride, model;
+        uint32_t source_stride, model, compact_cells, candidates_per_cell;
     };
-    static_assert(sizeof(Parameters) == 116);
+    static_assert(sizeof(Parameters) == 124);
     StorageComputePass compute_;
     PFN_vkCmdUpdateBuffer update_{};
     PFN_vkCmdPipelineBarrier barrier_{};

@@ -585,7 +585,7 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
         compact_limits.maxComputeWorkGroupCount[0] = 1;
         DetailCellCullPass cell_cull;
         DetailGeneratePass compact_generate;
-        require(cell_cull.initialize(device, vkGetDeviceProcAddr, compact_limits, 1, VK_NULL_HANDLE, source, error) &&
+        require(cell_cull.initialize(device, vkGetDeviceProcAddr, compact_limits, 1, VK_NULL_HANDLE, error) &&
             compact_generate.initialize(device, vkGetDeviceProcAddr, compact_limits, 1, VK_NULL_HANDLE, source, error), error);
         std::array<DetailGenerateSlot, 4> neighborhood{cells[0], cells[0], cells[0], cells[0]};
         neighborhood[1].bounds[0] = 100.f;
@@ -606,6 +606,15 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
             const uint32_t grid = two_dimensional ? 8 : 1;
             const uint32_t candidate_count = 4 * grid * grid;
             DetailGeneratePass::Parameters params{4, grid, 2.f / grid, 1.f, 1};
+            // Keep stale, drawable placements in the tail. The GPU cull must
+            // use the current visible count, not rely on clearing capacity.
+            std::vector<GeneratedDetail> stale(candidate_count);
+            for (auto& placement : stale)
+            {
+                placement.position_scale[2]=.5f; placement.position_scale[3]=1.f;
+                placement.model=0;
+            }
+            require(generated.write(0,stale.data(),stale.size()*sizeof(GeneratedDetail),error),error);
             float camera[4]{1.f, 0.f, 1.f, 10.f};
             float projection[16]; std::copy_n(identity, 16, projection);
             if (scenario == 1) { camera[0] = camera[2] = 20.f; camera[3] = 1.f; }
@@ -618,12 +627,12 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
             }
             require(vkAllocateCommandBuffers(device, &ai, &cb) == VK_SUCCESS &&
                 vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS, "detail cell cull begin");
-            require(cell_cull.record(cb, 0, cell_data, visible_cells, generation_dispatch, generated,
+            require(cell_cull.record(cb, 0, cell_data, visible_cells, generation_dispatch,
                 projection, camera, 0.f, params, error), error);
             require(compact_generate.record(cb, 0, cell_data, ground, prototype, generated,
                 params, error, &visible_cells, &generation_dispatch), error);
             require(grass.record(cb, 0, generated, instances, detail_args, identity,
-                candidate_count, 12, 1.f, error, 0, 2), error);
+                candidate_count, 12, 1.f, error, 0, 2, &visible_cells, &generation_dispatch, grid * grid), error);
             vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
                 VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &probe_barrier, 0, nullptr, 0, nullptr);
             require(vkEndCommandBuffer(cb) == VK_SUCCESS, "detail cell cull end");
@@ -644,7 +653,7 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
                 require(selected[1 + i] < (two_dimensional ? 2u : 1u), "GPU detail cell ID");
             if (two_dimensional) require(selected[1] != selected[2], "duplicate GPU detail cell ID");
             for (size_t i = size_t(visible_count) * grid * grid; i < compacted.size(); ++i)
-                require(compacted[i].model == UINT32_MAX, "stale generated grass after visibility shrink");
+                require(compacted[i].model == 0, "unselected placement capacity should remain untouched");
             require(draw.instanceCount == (visible_count ? (two_dimensional ? 2u : 1u) : 0u),
                 "GPU selected grass draw count");
             vkFreeCommandBuffers(device, pool, 1, &cb);
