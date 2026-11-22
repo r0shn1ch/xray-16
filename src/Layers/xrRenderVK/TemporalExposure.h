@@ -24,7 +24,7 @@ public:
     void commit_frame() { history_valid_ = true; }
     void reset_history() { history_valid_ = false; }
     bool record(const FrameRecordingContext& frame) const;
-    static void record_callback(const FrameRecordingContext& frame, void* user);
+    static bool record_callback(const FrameRecordingContext& frame, void* user, std::string& error);
     static bool history_valid_callback(void* user);
     bool ready() const { return pipeline_ != VK_NULL_HANDLE && histogram_pipeline_ != VK_NULL_HANDLE; }
     VkImage image() const { return image_; }

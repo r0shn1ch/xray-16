@@ -263,7 +263,7 @@ public:
     bool attach_postprocess_motion(const std::vector<VkImage>& images, std::string& error);
     // Register a shared 1x1 history image before recording begins. The caller
     // owns it and releases it after release_swapchain() and GPU idle.
-    bool attach_temporal_exposure(VkImage image, FrameRecorder recorder, FrameHistoryValid history_valid,
+    bool attach_temporal_exposure(VkImage image, FrameCheckedRecorder recorder, FrameHistoryValid history_valid,
         void* data,
         std::string& error);
     bool attach_temporal_resolve(const std::array<VkImage, 2>& history_images,
@@ -453,7 +453,7 @@ private:
     std::vector<VkImage> m_post_motion_images;
     ImageStateTracker m_post_image_states;
     VkImage m_exposure_image = VK_NULL_HANDLE;
-    FrameRecorder m_exposure_recorder{};
+    FrameCheckedRecorder m_exposure_recorder{};
     FrameHistoryValid m_exposure_history_valid{};
     void* m_exposure_data{};
     std::array<VkImage, 2> m_temporal_images{};

@@ -316,9 +316,15 @@ bool TemporalExposure::record(const FrameRecordingContext& frame) const
     return true;
 }
 
-void TemporalExposure::record_callback(const FrameRecordingContext& frame, void* user)
+bool TemporalExposure::record_callback(const FrameRecordingContext& frame, void* user, std::string& error)
 {
-    if (user) static_cast<TemporalExposure*>(user)->record(frame);
+    if (!user || !static_cast<TemporalExposure*>(user)->record(frame))
+    {
+        error = "Temporal exposure has invalid frame inputs";
+        return false;
+    }
+    error.clear();
+    return true;
 }
 
 bool TemporalExposure::history_valid_callback(void* user)

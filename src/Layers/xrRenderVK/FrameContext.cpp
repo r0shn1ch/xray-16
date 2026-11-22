@@ -1468,7 +1468,7 @@ bool FrameContext::attach_scene_depth(const std::vector<VkImageView>& views,
     return true;
 }
 
-bool FrameContext::attach_temporal_exposure(VkImage image, FrameRecorder recorder,
+bool FrameContext::attach_temporal_exposure(VkImage image, FrameCheckedRecorder recorder,
     FrameHistoryValid history_valid, void* data, std::string& error)
 {
     if (!m_postprocess || !image || !recorder || !history_valid || m_exposure_image)
@@ -2872,11 +2872,11 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
         {
             const auto adapt_queue = record_async_compute ? FrameSubmissionGraph::Queue::Compute :
                 FrameSubmissionGraph::Queue::Graphics;
-            const auto adapt = graph.add_command_pass("temporal exposure", adapt_queue,
-                [&, adapt_queue](VkCommandBuffer recording_command) {
+            const auto adapt = graph.add_checked_command_pass("temporal exposure", adapt_queue,
+                [&, adapt_queue](VkCommandBuffer recording_command, std::string& record_error) {
                 const FrameRecordingContext context = make_frame_recording_context(callback_context,
                     recording_command, VK_NULL_HANDLE, VK_NULL_HANDLE, m_extent, 0, {}, adapt_queue);
-                m_exposure_recorder(context, m_exposure_data);
+                return m_exposure_recorder(context, m_exposure_data, record_error);
             });
             if (!graph.read(adapt, mips[0], ImageUse::ComputeSampled, error))
                 return false;
