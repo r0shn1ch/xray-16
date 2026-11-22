@@ -1900,32 +1900,47 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
     const int cz = static_cast<int>(std::floor(camera.z / 2.f)) + details_.offset_z;
     const int radius = static_cast<int>(max_distance / 2.f) + 1;
     CDB::COLLIDER collider;
-    std::vector<size_t> cells;
-    for (int z = std::max(0, cz - radius); z <= std::min(int(details_.height) - 1, cz + radius); ++z)
-        for (int x = std::max(0, cx - radius); x <= std::min(int(details_.width) - 1, cx + radius); ++x)
-            cells.push_back(size_t(z) * details_.width + x);
-    const auto distance = [&](size_t index) {
-        const float x = float(int(index % details_.width) - details_.offset_x) * 2.f + 1.f - camera.x;
-        const float z = float(int(index / details_.width) - details_.offset_z) * 2.f + 1.f - camera.z;
-        return x * x + z * z;
+    struct NearbyCell
+    {
+        size_t index;
+        float distance_squared;
     };
-    std::stable_sort(cells.begin(), cells.end(), [&](size_t a, size_t b) { return distance(a) < distance(b); });
+    std::vector<size_t> cells;
+    std::vector<NearbyCell> updates;
+    const float max_distance_squared = max_distance * max_distance;
+    for (int z = std::max(0, cz - radius); z <= std::min(int(details_.height) - 1, cz + radius); ++z)
+    {
+        const float dz = float(z - details_.offset_z) * 2.f + 1.f - camera.z;
+        for (int x = std::max(0, cx - radius); x <= std::min(int(details_.width) - 1, cx + radius); ++x)
+        {
+            const float dx = float(x - details_.offset_x) * 2.f + 1.f - camera.x;
+            const float distance_squared = dx * dx + dz * dz;
+            const size_t index = size_t(z) * details_.width + x;
+            const auto& cell = details_.cells[index];
+            if (distance_squared <= max_distance_squared &&
+                std::abs(cell.ground - camera.y) <= max_distance + cell.height &&
+                std::any_of(cell.ids.begin(), cell.ids.end(), [](uint8_t id) { return id != 63; }))
+            {
+                cells.push_back(index);
+                if (detail_cache_.find(index) == detail_cache_.end())
+                    updates.push_back({index, distance_squared});
+            }
+        }
+    }
+    std::stable_sort(updates.begin(), updates.end(), [](const NearbyCell& a, const NearbyCell& b) {
+        return a.distance_squared < b.distance_squared;
+    });
 #if defined(XR_PLATFORM_ANDROID)
     const auto prepare_begin = std::chrono::steady_clock::now();
 #endif
     int updated = 0;
-    for (size_t index : cells)
+    for (const NearbyCell& nearby : updates)
     {
+        const size_t index = nearby.index;
         const int x = int(index % details_.width), z = int(index / details_.width);
         const DetailCell &cell = details_.cells[index];
         const float slot_x = float(x - details_.offset_x) * 2.f;
         const float slot_z = float(z - details_.offset_z) * 2.f;
-        const float dx = slot_x + 1.f - camera.x, dz = slot_z + 1.f - camera.z;
-        if (dx * dx + dz * dz > max_distance * max_distance ||
-            std::abs(cell.ground - camera.y) > max_distance + cell.height)
-            continue;
-        if (std::all_of(cell.ids.begin(), cell.ids.end(), [](uint8_t id) { return id == 63; }))
-            continue;
         auto found = detail_cache_.find(index);
         if (found == detail_cache_.end())
         {
@@ -2033,13 +2048,9 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
     }
     // Keep draw order independent of generation priority, so camera motion
     // does not invalidate the cached detail vertex buffers by reordering cells.
-    std::sort(cells.begin(), cells.end());
     for (size_t index : cells)
     {
         const auto &cell = details_.cells[index];
-        if (distance(index) > max_distance * max_distance ||
-            std::abs(cell.ground - camera.y) > max_distance + cell.height)
-            continue;
         const auto found = detail_cache_.find(index);
         if (found != detail_cache_.end())
             visible_details_.insert(visible_details_.end(), found->second.begin(), found->second.end());
