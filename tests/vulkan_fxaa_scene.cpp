@@ -111,4 +111,20 @@ int main(int argc, char** argv)
         assert(changed > 100);
         assert(filtered_error < original_error * .9);
     }
+    // A 2% linear edge is below the absolute threshold in linear light,
+    // but is visible with perceptual luminance.
+    constexpr float dark_edge = .02f;
+    unsigned dark_edge_pixels = 0;
+    for (int y = 0; y < Height; ++y)
+        for (int x = 0; x < Width; ++x)
+            source[y * Width + x] = vec3(x + .5f > 15.f + .37f * (y + .5f) ? dark_edge : 0.f);
+    for (int y = 0; y < Height; ++y)
+        for (int x = 0; x < Width; ++x)
+        {
+            const float value = fxaa(uv(x, y), pixel, 1.f).r;
+            assert(value >= 0.f && value <= dark_edge);
+            if (value > 1e-5f && value < dark_edge - 1e-5f)
+                ++dark_edge_pixels;
+        }
+    assert(dark_edge_pixels > 50);
 }
