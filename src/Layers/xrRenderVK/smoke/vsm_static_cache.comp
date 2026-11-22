@@ -17,14 +17,17 @@ void main()
     uint phase = params.limits.w;
     bool primary_phase = phase < 2u;
     if (phase == 0u) table[index] = 0xffffffffu;
+    uint request = needed[index];
+    bool requested_in_phase = request != 0u && (((request & 1u) != 0u) == primary_phase);
+    bool invalidate = phase == 0u && params.limits.y != 0u;
+    if (!requested_in_phase && !invalidate) return;
     uint per_level = axis * axis, level = index / per_level, within = index % per_level;
     ivec2 absolute_page = params.base[level].xy + ivec2(within % axis, within / axis);
     uvec2 toroidal = uvec2(absolute_page) & uvec2(axis - 1u);
     uint slot = level * per_level + toroidal.y * axis + toroidal.x;
+    if (invalidate) slots[slot].w = 0;
+    if (!requested_in_phase) return;
     ivec4 state = slots[slot];
-    if (phase == 0u && params.limits.y != 0u) { slots[slot].w = 0; state.w = 0; }
-    uint request = needed[index];
-    if (request == 0u || ((request & 1u) != 0u) != primary_phase) return;
     bool wrong = state.w == 0 || any(notEqual(state.xy, absolute_page));
     // A forced invalidation may represent changed caster geometry. Do not
     // expose stale content, including when the update budget is exhausted.
