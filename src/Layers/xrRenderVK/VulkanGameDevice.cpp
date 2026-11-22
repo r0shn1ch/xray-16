@@ -2447,13 +2447,11 @@ bool VulkanGameDevice::record_ray_visibility(const FrameRecordingContext& frame,
         for (const auto& projection : device.indirect_projections_) projection_views.push_back(projection.second);
         const VkImageView motion_view = device.motion_.ready() ? device.motion_.view(frame.image_index) :
             device.targets_.normal_view(frame.image_index);
-        const bool reservoir_history_valid = device.motion_.ready() && device.motion_.history_valid() &&
-            device.indirect_temporal_.ready() && device.indirect_temporal_.history_valid();
         const bool motion_history_valid = device.motion_.ready() && device.motion_.history_valid();
         if (!device.indirect_frames_.record(frame, *ray_scene, *device.indirect_surfaces_,
                 shadow.inverse_view_projection, 100.f, Device.dwFrame, direction, shadow.hemi_color,
                 light.color, indirect_lights, error, projection_views, device.textures_.sampler(),
-                motion_view, motion_history_valid, reservoir_history_valid,
+                motion_view, motion_history_valid, motion_history_valid,
                 device.motion_.ready() ? device.motion_.image(frame.image_index) : VK_NULL_HANDLE,
                 device.motion_.format() == VK_FORMAT_R16G16B16A16_SFLOAT))
         {

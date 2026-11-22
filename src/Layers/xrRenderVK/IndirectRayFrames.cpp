@@ -738,8 +738,9 @@ bool IndirectRayFrames::record(const FrameRecordingContext& frame, const LevelRa
             next_world_cache, error))
         return false;
 
+    const bool reuse_reservoir = temporal_history_valid && reservoir_history_valid_ && motion_image != VK_NULL_HANDLE;
     const uint32_t spatial_constants[]{extent_.width, extent_.height, seed,
-        temporal_history_valid && reservoir_history_valid_ ? (motion_has_previous_depth ? 3u : 1u) : 0u,
+        reuse_reservoir ? (motion_has_previous_depth ? 3u : 1u) : 0u,
         material_inputs_valid ? 1u : 0u};
     const std::vector<VkDescriptorBufferInfo> spatial_buffers{info(radiance_[frame.image_index]),
         info(primary_surfaces_[frame.image_index]), info(rays), info(reservoir_history_[reservoir_input_index]),
@@ -768,7 +769,7 @@ bool IndirectRayFrames::record(const FrameRecordingContext& frame, const LevelRa
         !graph.write_buffer(resample, resolved_radiance_resource, BufferUse::ComputeWrite,
             next_radiance, error))
         return false;
-    if (motion_image != VK_NULL_HANDLE &&
+    if (reuse_reservoir &&
         !graph.read(resample, motion_resource, ImageUse::ComputeSampled, error))
         return false;
     if (material_inputs_valid &&
