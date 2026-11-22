@@ -421,7 +421,63 @@ bool GameShaderResources::pipeline(DeferredPass &pass, const std::string &svs, c
         }
         previous = next;
     }
-    return pass.create_game_pipeline(vs->name, ps->name, vs->module.handle(), ps->module.handle(),
-        mode, hud, error, skinned, stages);
+    if (!pass.create_game_pipeline(vs->name, ps->name, vs->module.handle(), ps->module.handle(),
+            mode, hud, error, skinned, stages))
+        return false;
+    std::string key = vs->name;
+    key.push_back('\0');
+    key += ps->name;
+    key.push_back('\0');
+    key += std::to_string(stages.shader_variant_hash);
+    if (pipeline_recipes_.find(key) == pipeline_recipes_.end())
+    {
+        PipelineRecipe recipe{vs->name, ps->name, vs->module.handle(), ps->module.handle(), mode, hud, skinned, stages};
+        const VkSpecializationInfo** fields[]{&recipe.stages.vertex_specialization, &recipe.stages.hull_specialization,
+            &recipe.stages.domain_specialization, &recipe.stages.geometry_specialization, &recipe.stages.fragment_specialization};
+        for (size_t stage = 0; stage < recipe.specialization.size(); ++stage)
+        {
+            const auto* info = *fields[stage];
+            *fields[stage] = nullptr;
+            if (!info || !info->mapEntryCount)
+                continue;
+            auto& data = recipe.specialization[stage];
+            data.entries.assign(info->pMapEntries, info->pMapEntries + info->mapEntryCount);
+            const auto* bytes = static_cast<const uint8_t*>(info->pData);
+            data.bytes.assign(bytes, bytes + info->dataSize);
+        }
+        pipeline_recipes_.emplace(std::move(key), std::move(recipe));
+    }
+    return true;
+}
+
+bool GameShaderResources::rebuild_pipelines(DeferredPass& pass, std::string& error) const
+{
+    pass.begin_game_pipeline_reload();
+    for (const auto& entry : pipeline_recipes_)
+    {
+        const auto& recipe = entry.second;
+        auto stages = recipe.stages;
+        std::array<VkSpecializationInfo, 5> info{};
+        const VkSpecializationInfo** fields[]{&stages.vertex_specialization, &stages.hull_specialization,
+            &stages.domain_specialization, &stages.geometry_specialization, &stages.fragment_specialization};
+        for (size_t stage = 0; stage < info.size(); ++stage)
+        {
+            const auto& data = recipe.specialization[stage];
+            if (data.entries.empty())
+                continue;
+            info[stage] = {static_cast<uint32_t>(data.entries.size()), data.entries.data(),
+                data.bytes.size(), data.bytes.data()};
+            *fields[stage] = &info[stage];
+        }
+        if (!pass.create_game_pipeline(recipe.vertex_name, recipe.fragment_name, recipe.vertex, recipe.fragment,
+                recipe.mode, recipe.hud, error, recipe.skinned, stages))
+        {
+            pass.abort_game_pipeline_reload();
+            return false;
+        }
+    }
+    pass.commit_game_pipeline_reload();
+    error.clear();
+    return true;
 }
 } // namespace xray::render::vulkan

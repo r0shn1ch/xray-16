@@ -904,9 +904,6 @@ int main()
         assert(GameShaderResources::canonical_name("legacy/stage", item.first, canonical, error));
         assert(canonical == item.second);
     }
-    resources.clear();
-    assert(module_destroys == 3 && resources.size() == 0);
-    resources.destroy();
     assert(deferred.create_game_pipeline("vk\\level_laemb_base.vs", "vk\\level_laemb_multiply.ps",
                                          handle<VkShaderModule>(90), handle<VkShaderModule>(91), SurfaceMode::Opaque,
                                          false, error));
@@ -1124,4 +1121,12 @@ int main()
     assert(!rebuild() && pipeline_destroys == destroyed_before_rebuild + 1);
     fail_scene_alpha_pipeline = false;
     assert(rebuild() && pipeline_destroys == destroyed_before_rebuild + 7);
+    const uint32_t reads_before_msaa_pipeline_rebuild = source_reads;
+    assert(resources.rebuild_pipelines(deferred, error));
+    assert(source_reads == reads_before_msaa_pipeline_rebuild);
+    assert(deferred.require_game_pipeline("legacy\\deffer_base.vs", "legacy\\deffer_base.ps",
+        SurfaceMode::Opaque, false, false, error));
+    resources.clear();
+    assert(module_destroys == 3 && resources.size() == 0);
+    resources.destroy();
 }

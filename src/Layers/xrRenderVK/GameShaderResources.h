@@ -2,6 +2,7 @@
 
 #include "ShaderModule.h"
 #include "ShaderReflection.h"
+#include "DeferredPass.h"
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -79,8 +80,10 @@ class GameShaderResources
         const std::vector<std::string> &defines = {}, uint64_t *variant_hash = nullptr);
     void clear()
     {
+        pipeline_recipes_.clear();
         resources_.clear();
     }
+    bool rebuild_pipelines(DeferredPass& pass, std::string& error) const;
     void destroy();
     size_t size() const
     {
@@ -91,6 +94,20 @@ class GameShaderResources
     static bool stage_from_target(const char *target, GameShaderStage &stage);
 
   private:
+    struct PipelineRecipe
+    {
+        std::string vertex_name, fragment_name;
+        VkShaderModule vertex{}, fragment{};
+        SurfaceMode mode{};
+        bool hud{}, skinned{};
+        DeferredPass::GamePipelineStages stages;
+        struct Specialization
+        {
+            std::vector<VkSpecializationMapEntry> entries;
+            std::vector<uint8_t> bytes;
+        };
+        std::array<Specialization, 5> specialization;
+    };
     VkDevice device_{};
     ShaderModuleDispatch dispatch_{};
     Source source_;
@@ -101,5 +118,6 @@ class GameShaderResources
     bool tessellation_supported_{};
     std::vector<std::string> engine_defines_;
     std::unordered_map<std::string, std::unique_ptr<GameShaderResource>> resources_;
+    std::unordered_map<std::string, PipelineRecipe> pipeline_recipes_;
 };
 } // namespace xray::render::vulkan

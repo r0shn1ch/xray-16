@@ -158,7 +158,8 @@ bool DeferredShaderFactory::build(VkDevice device, const ShaderModuleDispatch& s
             sizeof(distortion_shaders::Composite), error) ||
         !pass.initialize_distortion(distortion_vertex.handle(), distortion_fragment.handle(), light_vertex.handle(),
             distortion_composite.handle(), error)) return false;
-    return reload_game_pipelines(device, shader_dispatch, pass, resources, error);
+    return initial_dispatch ? reload_game_pipelines(device, shader_dispatch, pass, resources, error) :
+        resources.rebuild_pipelines(pass, error);
 }
 
 bool DeferredShaderFactory::reload_game_pipelines(VkDevice device, const ShaderModuleDispatch &shader_dispatch, DeferredPass &pass,
