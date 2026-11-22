@@ -87,6 +87,7 @@ public:
     void Play() override;
     void Stop(BOOL deferred = TRUE) override;
     BOOL IsPlaying() override { return playing_; }
+    bool simulation_active() const { return playing_; }
     u32 ParticlesCount() override;
     float GetTimeLimit() override { return def_->time_limit; }
     const shared_str Name() override { return def_->name.c_str(); }

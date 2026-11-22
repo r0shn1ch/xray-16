@@ -876,13 +876,27 @@ void VulkanParticleGroup::OnFrame(u32 dt)
             if (transform_parent_) parent_.transform_dir(velocity);
             Fmatrix frame = transform_parent_ ? parent_ : Fidentity; frame.c.set(position);
             child.UpdateParent(frame, velocity, FALSE);
-            if (!child.IsPlaying() && (def_->effects[root].flags & (1u << 4))) child.Play();
+            if (!deferred_ && !child.IsPlaying() && (def_->effects[root].flags & (1u << 4))) child.Play();
         }
     }
     for (auto& child : triggered_) if (child.effect->IsPlaying()) child.effect->OnFrame(dt);
     time_ = next;
     if (!deferred_ && def_->time_limit > 0.f && time_ > def_->time_limit) Stop(TRUE);
-    if (deferred_ && ParticlesCount() == 0) { playing_ = false; deferred_ = false; }
+    if (deferred_)
+    {
+        // A newly started child can be active before its first fixed simulation
+        // step creates particles. Keep advancing the group until it drains.
+        bool active = false;
+        visit_effects([&](const VulkanParticleEffect& effect)
+        {
+            active = active || effect.simulation_active();
+        });
+        if (!active)
+        {
+            playing_ = false;
+            deferred_ = false;
+        }
+    }
     visibility_.box.invalidate();
     for (const auto& effect : effects_)
     {
