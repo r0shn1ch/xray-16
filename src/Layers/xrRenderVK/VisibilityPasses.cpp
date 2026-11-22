@@ -9,28 +9,6 @@
 
 namespace xray::render::vulkan
 {
-namespace
-{
-struct VisibilityIdImage
-{
-    VisibilityIdImage(FrameImagePool& pool, VkDevice device, PFN_vkDestroyImageView destroy)
-        : pool(pool), device(device), destroy(destroy) {}
-    ~VisibilityIdImage()
-    {
-        if (view)
-            destroy(device, view, nullptr);
-        if (image)
-            pool.release(image);
-    }
-
-    FrameImagePool& pool;
-    VkDevice device;
-    PFN_vkDestroyImageView destroy;
-    VkImage image{};
-    VkImageView view{};
-};
-}
-
 static_assert(sizeof(LevelVertex) == 64 && offsetof(LevelVertex, normal) == 12 && offsetof(LevelVertex, uv) == 24);
 
 bool VisibilityPasses::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, const VkPhysicalDeviceLimits& limits,
@@ -155,7 +133,6 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
     id_info.mipLevels = id_info.arrayLayers = 1;
     id_info.samples = VK_SAMPLE_COUNT_1_BIT;
     id_info.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    std::shared_ptr<VisibilityIdImage> id_target;
     const auto import = [&](const Target& target, FrameImageGraph::Resource& resource) {
         return target.view && states.register_image(target.image, full_color, ImageUse::Undefined, error) &&
             graph.import_image(target.image, full_color, resource, error);
@@ -169,7 +146,7 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
         const VkClearColorValue zero{};
         VkClearColorValue far_depth{};
         far_depth.uint32[0] = 0x3f800000u;
-        clear_(command, id_target->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &full_color);
+        clear_(command, graph.image_handle(ids), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &full_color);
         for (const auto target : {targets.base_color, targets.normals})
             clear_(command, target.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &full_color);
         clear_(command, targets.depth.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &far_depth, 1, &full_color);
@@ -191,7 +168,7 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
                     const visibility::SoftwareRasterParameters params{camera, range.first_draw,
                         range.draw_count, 0, range.geometry_batch};
                     if (!rasterize(command, frame.frame_index, batch, phase, geometry[batch], commands, draw_mask_view,
-                            params, id_target->view, targets.depth.view, reason))
+                            params, graph.image_view(ids), targets.depth.view, reason))
                         return false;
                 }
                 return true;
@@ -205,7 +182,7 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
 
     const auto resolve_pass = graph.add_checked_command_pass("visibility material resolve",
         [&](VkCommandBuffer command, std::string& reason) {
-            const VkDescriptorImageInfo id_texture{targets.id_sampler, id_target->view,
+            const VkDescriptorImageInfo id_texture{targets.id_sampler, graph.image_view(ids),
                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             for (uint32_t batch = 0; batch < batches.size(); ++batch)
             {
@@ -225,27 +202,7 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
     for (const auto resource : {depth, base, normals})
         if (!graph.read(export_pass, resource, ImageUse::SampledGraphicsCompute, error))
             return false;
-    if (!graph.materialize_images([&](const VkImageCreateInfo& info,
-            FrameImageGraph::TransientImage& output, std::string& failure) {
-            auto target = std::make_shared<VisibilityIdImage>(pool, device_, destroy_view_);
-            if (!pool.acquire(info, target->image, failure))
-                return false;
-            VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-            view.image = target->image;
-            view.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            view.format = info.format;
-            view.subresourceRange = full_color;
-            if (create_view_(device_, &view, nullptr, &target->view) != VK_SUCCESS)
-            {
-                target->view = VK_NULL_HANDLE;
-                failure = "visibility ID view creation failed";
-                return false;
-            }
-            output.handle = target->image;
-            output.owner = target;
-            id_target = std::move(target);
-            return true;
-        }, error))
+    if (!graph.materialize_color_2d_images(pool, device_, create_view_, destroy_view_, error))
         return false;
     const bool recorded = graph.execute(frame.command_buffer, states, {barrier_}, error, frame.command_queue_flags,
         frame.semaphore_handoff, FrameSubmissionGraph::Queue::Graphics);

@@ -11,12 +11,17 @@ struct PooledImage
     explicit PooledImage(FrameImagePool& pool) : pool(pool) {}
     ~PooledImage()
     {
+        if (view)
+            destroy_view(device, view, nullptr);
         if (image)
             pool.release(image);
     }
 
     FrameImagePool& pool;
     VkImage image = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+    VkDevice device{};
+    PFN_vkDestroyImageView destroy_view{};
 };
 }
 
@@ -47,6 +52,36 @@ bool FrameImageGraph::materialize_buffers(FrameBufferPool& pool, std::string& er
         output.handle = buffer->handle();
         output.sharing_mode = buffer->sharing_mode();
         output.queue_families = buffer->sharing_queue_families();
+        return true;
+    }, error);
+}
+
+bool FrameImageGraph::materialize_color_2d_images(FrameImagePool& pool, VkDevice device,
+    PFN_vkCreateImageView create_view, PFN_vkDestroyImageView destroy_view, std::string& error)
+{
+    return materialize_images([&](const VkImageCreateInfo& info, TransientImage& output, std::string& failure) {
+        if (!device || !create_view || !destroy_view || info.imageType != VK_IMAGE_TYPE_2D || info.arrayLayers != 1)
+        {
+            failure = "Frame image graph: invalid pooled 2D image view configuration";
+            return false;
+        }
+        auto owner = std::make_shared<PooledImage>(pool);
+        owner->device = device;
+        owner->destroy_view = destroy_view;
+        if (!pool.acquire(info, owner->image, failure))
+            return false;
+        VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view.image = owner->image;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = info.format;
+        view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, info.mipLevels, 0, 1};
+        if (create_view(device, &view, nullptr, &owner->view) != VK_SUCCESS)
+        {
+            owner->view = VK_NULL_HANDLE;
+            failure = "Frame image graph: pooled 2D image view creation failed";
+            return false;
+        }
+        output = {owner->image, owner, owner->view};
         return true;
     }, error);
 }

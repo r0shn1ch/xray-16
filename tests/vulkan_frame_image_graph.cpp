@@ -94,10 +94,12 @@ int main()
         assert(virtual_graph.materialize_resources(allocate, [](const auto&, auto& out, auto&) {
             out.handle = (VkImage)(uintptr_t)1;
             out.owner = std::make_shared<int>(0);
+            out.view = (VkImageView)(uintptr_t)2;
             return true;
         }, error));
         assert(virtual_graph.buffer_handle(written_buffer) && virtual_graph.buffer_handle(second_buffer));
         assert(virtual_graph.image_handle(written_image));
+        assert(virtual_graph.image_view(written_image) == (VkImageView)(uintptr_t)2);
         const auto copy = virtual_graph.add_pass("copy unflagged image", [] { return true; });
         assert(virtual_graph.read(copy, written_image, ImageUse::TransferSource, error));
         FrameImageGraph::ResourceLifetimes lifetimes;

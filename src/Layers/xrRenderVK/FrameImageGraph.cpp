@@ -297,7 +297,10 @@ void FrameImageGraph::retire_allocations(framegraph::ResourceRetirement& retirem
     for (auto& buffer : m_buffers)
         retire(buffer, buffer.buffer);
     for (auto& image : m_images)
+    {
         retire(image, image.image);
+        image.view = VK_NULL_HANDLE;
+    }
 }
 
 bool FrameImageGraph::valid_buffer(Pass pass, BufferResource resource, std::string& error) const
@@ -644,6 +647,7 @@ void FrameImageGraph::bind_images(PendingImages& allocations, const ResourceLife
     {
         auto& image = m_images[pending.first];
         image.image = pending.second.handle;
+        image.view = pending.second.view;
         image.allocation = std::move(pending.second.owner);
         image.initial_queue = m_passes[lifetimes.pass_order[lifetimes.images[pending.first].first_use]].queue;
     }
@@ -655,6 +659,11 @@ VkImage FrameImageGraph::image_handle(Resource resource) const
         return VK_NULL_HANDLE;
     const Image& image = m_images[resource.index];
     return resource.version < image.versions.size() ? image.image : VK_NULL_HANDLE;
+}
+
+VkImageView FrameImageGraph::image_view(Resource resource) const
+{
+    return image_handle(resource) ? m_images[resource.index].view : VK_NULL_HANDLE;
 }
 
 bool FrameImageGraph::materialize_resources(const AllocateBuffer& allocate_buffer,
