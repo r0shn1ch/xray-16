@@ -280,7 +280,7 @@ bool FrameContext::release_swapchain()
 
 bool FrameContext::wait_idle()
 {
-    if (!m_device || !m_vk.device_wait_idle)
+    if (!m_device || !m_vk.device_wait_idle || m_device_lost)
         return false;
     const VkResult result = m_vk.device_wait_idle(m_device);
     m_device_lost = result == VK_ERROR_DEVICE_LOST;

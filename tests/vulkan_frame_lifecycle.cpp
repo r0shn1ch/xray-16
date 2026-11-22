@@ -381,6 +381,11 @@ int main()
     assert(frame.recreate(physical, surface, {720, 1280}, error) && !frame.surface_lost());
     next_acquire = VK_ERROR_DEVICE_LOST;
     assert(!frame.render_frame(clear, status, error) && frame.device_lost());
+    // A subsequent successful idle callback must not revive a lost device.
+    // Recovery requires destroying and initializing the device context again.
+    const auto idle_before_lost_retry = idle_calls;
+    assert(!frame.wait_idle() && frame.device_lost() && idle_calls == idle_before_lost_retry);
+    assert(!frame.recreate(physical, surface, {640, 480}, error) && frame.device_lost());
     next_idle = VK_ERROR_DEVICE_LOST;
     frame.destroy();
     next_idle = VK_SUCCESS;
