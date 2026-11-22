@@ -80,6 +80,13 @@ vec3 reconstructed(vec2 uv, vec2 pixel)
     return max(filtered, vec3(0.0));
 }
 
+float postprocess_depth(vec2 uv)
+{
+    ivec2 extent = textureSize(depth_image, 0);
+    ivec2 pixel = clamp(ivec2(uv * vec2(extent)), ivec2(0), extent - 1);
+    return texelFetch(depth_image, pixel, 0).r;
+}
+
 float depth_of_field_amount(float depth, float focus_disparity)
 {
     if (!(depth >= 0.0 && depth <= 1.0)) return 0.0;
@@ -112,7 +119,7 @@ void main()
             velocity *= 24.0 / pixel_length;
             pixel_length = 24.0;
         }
-        float depth = pixel_length > 0.5 ? texture(depth_image, texcoord).r : -1.0;
+        float depth = pixel_length > 0.5 ? postprocess_depth(texcoord) : -1.0;
         if (depth >= 0.0 && depth <= 1.0)
         {
             float disparity = max(1.0 - depth, 0.001);
@@ -123,7 +130,7 @@ void main()
                 float position = float(tap) * 0.25 - 0.5;
                 vec2 sample_uv = clamp(texcoord + velocity * position,
                     pixel * 0.5, 1.0 - pixel * 0.5);
-                float sample_depth = texture(depth_image, sample_uv).r;
+                float sample_depth = postprocess_depth(sample_uv);
                 if (!(sample_depth >= 0.0 && sample_depth <= 1.0)) continue;
                 float weight = 1.0 - smoothstep(0.02, 0.15, abs(sample_depth - depth) / disparity);
                 blurred += aa_sample(sample_uv) * weight;
@@ -135,7 +142,7 @@ void main()
     }
     if (settings.add.w > 0.0)
     {
-        float depth = texture(depth_image, texcoord).r;
+        float depth = postprocess_depth(texcoord);
         // Perspective depth packs most of the playable distance range near 1.
         // Normalize by the focus disparity so far focus distances retain blur.
         float focus_disparity = max(1.0 - settings.tint.w, 0.00001);
@@ -157,7 +164,7 @@ void main()
                 {
                     vec2 neighbor = clamp(texcoord + taps[i] * pixel * radius,
                         pixel * 0.5, 1.0 - pixel * 0.5);
-                    float neighbor_depth = texture(depth_image, neighbor).r;
+                    float neighbor_depth = postprocess_depth(neighbor);
                     float neighbor_defocus = depth_of_field_amount(neighbor_depth, focus_disparity);
                     if (neighbor_defocus <= 0.0) continue;
                     float disparity = max(1.0 - depth, focus_disparity);
