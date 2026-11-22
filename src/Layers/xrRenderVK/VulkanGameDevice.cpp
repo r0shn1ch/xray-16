@@ -1399,7 +1399,7 @@ void VulkanGameDevice::begin_frame()
         temporal_jitter_uses_fsr_ = fsr3_selected;
     }
     temporal_jitter_active_ = fsr3_selected ||
-        ((antialiasing == 2 || spatial_upscaler == 2) && temporal_.ready());
+        ((antialiasing == 2 || spatial_upscaler == 2 || spatial_upscaler == 3) && temporal_.ready());
     temporal_jitter_ndc_ = {};
     if (fsr3_selected)
     {
@@ -1613,7 +1613,9 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         (antialiasing == 1 || antialiasing == 2 || spatial_upscaler == 2 || spatial_upscaler == 3) ? 1.f : 0.f;
     const VkExtent2D scene_size = window_.frame().extent();
     const VkExtent2D output_size = window_.frame().presentation_extent();
-    if (render_world && spatial_upscaler == 1 && !(temporal_upscale_ && temporal_.active()) &&
+    const bool spatial_fallback = spatial_upscaler == 3 && !fsr3_active;
+    if (render_world && (spatial_upscaler == 1 || spatial_fallback) &&
+        !(temporal_upscale_ && temporal_.active()) &&
         (scene_size.width < output_size.width || scene_size.height < output_size.height))
         frame_postprocess.color_map[3] += 2.f;
     if (render_world && motion_.ready())
