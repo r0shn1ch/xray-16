@@ -171,6 +171,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         VkDevice device;
         VkBufferView mask{};
         VkImageView images[7]{};
+        VkImageView cube{};
         VkSampler sampler{};
         VkSampler clamp_sampler{};
         ~Views()
@@ -178,6 +179,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
             if (mask) vkDestroyBufferView(device, mask, nullptr);
             if (sampler) vkDestroySampler(device, sampler, nullptr);
             if (clamp_sampler) vkDestroySampler(device, clamp_sampler, nullptr);
+            if (cube) vkDestroyImageView(device, cube, nullptr);
             for (auto image : images)
                 if (image) vkDestroyImageView(device, image, nullptr);
         }
@@ -217,6 +219,22 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     VisibilityPasses visibility_passes;
     if (bindless)
     {
+        VkImageCreateInfo cube_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        cube_info.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+        cube_info.imageType = VK_IMAGE_TYPE_2D;
+        cube_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+        cube_info.extent = {1, 1, 1};
+        cube_info.mipLevels = 1; cube_info.arrayLayers = 6;
+        cube_info.samples = VK_SAMPLE_COUNT_1_BIT;
+        cube_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+        VkImage cube{};
+        require(images.acquire(cube_info, cube, error), error);
+        VkImageViewCreateInfo cube_view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        cube_view.image = cube; cube_view.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+        cube_view.format = cube_info.format;
+        cube_view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6};
+        require(vkCreateImageView(device, &cube_view, nullptr, &views.cube) == VK_SUCCESS,
+            "visibility cubemap view");
         VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         require(vkCreateSampler(device, &sampler_info, nullptr, &views.sampler) == VK_SUCCESS, "visibility test sampler");
         if (clamp_cutout)
@@ -225,9 +243,13 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
             require(vkCreateSampler(device, &sampler_info, nullptr, &views.clamp_sampler) == VK_SUCCESS,
                 "visibility clamp sampler");
         }
-        require(materials.initialize(device, vkGetDeviceProcAddr, 2, error) &&
+        require(materials.initialize(device, vkGetDeviceProcAddr, 2, error, 1) &&
             materials.write(0, views.images[5], views.sampler, error, VK_IMAGE_LAYOUT_GENERAL) &&
-            materials.write(1, views.images[6], clamp_cutout ? views.clamp_sampler : views.sampler, error, VK_IMAGE_LAYOUT_GENERAL), error);
+            materials.write(1, views.images[6], clamp_cutout ? views.clamp_sampler : views.sampler, error, VK_IMAGE_LAYOUT_GENERAL) &&
+            materials.cube_capacity() == 1 &&
+            materials.write_cube(0, views.cube, views.sampler, error, VK_IMAGE_LAYOUT_GENERAL), error);
+        require(!materials.write_cube(1, views.cube, views.sampler, error, VK_IMAGE_LAYOUT_GENERAL),
+            "cubemap descriptor capacity must be enforced");
         require(visibility_passes.initialize(device, vkGetDeviceProcAddr, limits, 1, 2, VK_NULL_HANDLE,
             materials, source, error), error);
     }
