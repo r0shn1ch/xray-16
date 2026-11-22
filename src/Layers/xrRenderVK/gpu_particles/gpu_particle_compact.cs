@@ -113,14 +113,36 @@ void GpuCompactEmitter(GpuPapiEmitter emitter,uint lane,uint rootIndex,bool chil
 [numthreads(64,1,1)]
 void main(uint3 groupID : SV_GroupID,uint lane : SV_GroupIndex) {
     if (g_Papi.phase == 1) {
-        if (groupID.x != 0 || lane != 0) return;
-        uint offset = 0;
-        for (uint bucket = 0; bucket < g_Papi.rootCapacity * g_Papi.programCount * 28u; ++bucket) {
-            uint count = min(g_DrawArgs[bucket].y,g_Papi.particleCapacity - offset);
-            g_BucketOffsets[bucket] = offset;
-            g_BucketCursors[bucket] = 0;
-            g_DrawArgs[bucket] = uint4(6,count,0,0);
-            offset += count;
+        if (groupID.x != 0) return;
+        if (lane == 0) g_EmitterFirst = 0;
+        GroupMemoryBarrierWithGroupSync();
+        uint bucketCount = g_Papi.rootCapacity * g_Papi.programCount * 28u;
+        for (uint first = 0; first < bucketCount; first += 64u) {
+            uint bucket = first + lane;
+            uint count = bucket < bucketCount ? min(g_DrawArgs[bucket].y,g_Papi.particleCapacity) : 0u;
+            g_LaneOffsets[lane] = count;
+            GroupMemoryBarrierWithGroupSync();
+            // Saturating inclusive scan prevents integer overflow even if the
+            // input counts exceed the available particle-index buffer.
+            for (uint stride = 1; stride < 64u; stride <<= 1u) {
+                uint add = lane >= stride ? g_LaneOffsets[lane - stride] : 0u;
+                GroupMemoryBarrierWithGroupSync();
+                uint value = g_LaneOffsets[lane];
+                g_LaneOffsets[lane] = value + min(add,g_Papi.particleCapacity - value);
+                GroupMemoryBarrierWithGroupSync();
+            }
+            uint base = g_EmitterFirst;
+            uint before = lane == 0 ? 0u : g_LaneOffsets[lane - 1u];
+            uint offset = base + min(before,g_Papi.particleCapacity - base);
+            if (bucket < bucketCount) {
+                g_BucketOffsets[bucket] = offset;
+                g_BucketCursors[bucket] = 0;
+                g_DrawArgs[bucket] = uint4(6,min(count,g_Papi.particleCapacity - offset),0,0);
+            }
+            GroupMemoryBarrierWithGroupSync();
+            if (lane == 0)
+                g_EmitterFirst = base + min(g_LaneOffsets[63],g_Papi.particleCapacity - base);
+            GroupMemoryBarrierWithGroupSync();
         }
         return;
     }

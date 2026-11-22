@@ -1452,6 +1452,69 @@ int main(int argc, char** argv)
         for (size_t i = 0; i < 112; ++i)
             require(draw_words[i * 4] == 6 && draw_words[i * 4 + 1] == (i == 6 || i == 20 || i == 90 ? 1u : 0u), "compacted draw arguments");
         require(index_values[0] == 0 && index_values[1] == 2 && index_values[2] == 1, "root and child particle indices");
+        {
+            // Exercise the prefix across a workgroup boundary and deliberately
+            // exceed capacity, including a count that would overflow uint32.
+            uint32_t counts[112 * 4]{};
+            counts[0 * 4 + 1] = 2; counts[63 * 4 + 1] = 3;
+            counts[64 * 4 + 1] = 2; counts[90 * 4 + 1] = UINT32_MAX;
+            BufferResource offsets;
+            require(offsets.initialize(f.device, 112 * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, memory, vk, error), error);
+            uniforms.reset();
+            fg::GpuPapiConstants prefix = constants;
+            prefix.phase = 1; prefix.rootCapacity = 2; prefix.programCount = 2;
+            VkDescriptorBufferInfo prefix_params{}, visibility_params{};
+            std::vector<VkDescriptorBufferInfo> prefix_descriptors;
+            require(uniforms.append(&prefix, sizeof(prefix), prefix_params, error) &&
+                uniforms.append(planes, sizeof(planes), visibility_params, error) &&
+                buffers.descriptors(GpuParticleCompute::Pass::Compact, prefix_params, visibility_params,
+                    prefix_descriptors, error), error);
+            require(vkAllocateCommandBuffers(f.device, &ai, &cb) == VK_SUCCESS &&
+                vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS, "prefix command begin");
+            const std::vector<GpuParticleUpload::Update> count_update{
+                {&buffers.get(GpuParticleBuffers::DrawArguments), 0, counts, sizeof(counts)}};
+            require(upload.record(cb, count_update, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT |
+                VK_QUEUE_TRANSFER_BIT, error), error);
+            VkMemoryBarrier to_compute{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            to_compute.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            to_compute.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                0, 1, &to_compute, 0, nullptr, 0, nullptr);
+            require(compute.record(GpuParticleCompute::Pass::Compact, cb, 0, prefix_descriptors, 1, error), error);
+            VkMemoryBarrier to_copy{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            to_copy.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; to_copy.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0, 1, &to_copy, 0, nullptr, 0, nullptr);
+            copy.size = sizeof(counts);
+            vkCmdCopyBuffer(cb, buffers.get(GpuParticleBuffers::DrawArguments).handle(), draw.handle(), 1, &copy);
+            copy.size = 112 * 4;
+            vkCmdCopyBuffer(cb, buffers.get(GpuParticleBuffers::BucketOffsets).handle(), offsets.handle(), 1, &copy);
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+            require(vkEndCommandBuffer(cb) == VK_SUCCESS, "prefix command end");
+            submit.pCommandBuffers = &cb;
+            require(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS &&
+                vkQueueWaitIdle(queue) == VK_SUCCESS, "prefix submit");
+            uint32_t prefix_offsets[112]{};
+            require(draw.read(0, draw_words, sizeof(draw_words), error) &&
+                offsets.read(0, prefix_offsets, sizeof(prefix_offsets), error), error);
+            for (uint32_t i = 0; i < 112; ++i)
+            {
+                const uint32_t expected_offset = i == 0 ? 0 : i <= 63 ? 2 : i == 64 ? 5 : i <= 90 ? 7 : 8;
+                const uint32_t expected_count = i == 0 ? 2 : i == 63 ? 3 : i == 64 ? 2 : i == 90 ? 1 : 0;
+                require(prefix_offsets[i] == expected_offset && draw_words[i * 4] == 6 &&
+                    draw_words[i * 4 + 1] == expected_count, "saturated particle bucket prefix");
+            }
+            // Later graphics checks consume the original compacted scene.
+            uniforms.reset();
+            require(vkAllocateCommandBuffers(f.device, &ai, &cb) == VK_SUCCESS &&
+                vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS, "restore compact command begin");
+            require(frame.record(cb, compute, buffers, uniforms, 0, constants, 0, 2, planes, false, error), error);
+            require(vkEndCommandBuffer(cb) == VK_SUCCESS, "restore compact command end");
+            submit.pCommandBuffers = &cb;
+            require(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS &&
+                vkQueueWaitIdle(queue) == VK_SUCCESS, "restore compact submit");
+        }
         FrameBufferPool buffer_pool;
         require(buffer_pool.initialize(f.device, memory, vk), "particle frame buffer pool");
         {
