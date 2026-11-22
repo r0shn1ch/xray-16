@@ -1447,6 +1447,21 @@ static bool build_triangle_scene(VkPhysicalDevice physical, VkDevice device,
             !vsm_table.read(0, page_table, sizeof(page_table), error))
         { if (error.empty()) error = "VSM static page publication failed"; break; }
         if (page_table[7] != 7) { error = "VSM static page publication mismatch"; break; }
+        cache_params.frame = 20; cache_params.budget = 1;
+        const uint32_t extra_request = 1;
+        const uint32_t no_request = 0;
+        if (!vsm_needed.write(6 * sizeof(uint32_t), &extra_request, sizeof(extra_request), error) ||
+            vkResetFences(device, 1, &fence) != VK_SUCCESS || vkResetCommandBuffer(command, 0) != VK_SUCCESS ||
+            vkBeginCommandBuffer(command, &query_begin) != VK_SUCCESS ||
+            !vsm_static_cache.prepare(command, 0, cache_params, vsm_needed, vsm_table, vsm_cache_slots, vsm_cache_work, error) ||
+            vkEndCommandBuffer(command) != VK_SUCCESS || vkQueueSubmit(queue, 1, &query_submit, fence) != VK_SUCCESS ||
+            vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS ||
+            !vsm_table.read(0, page_table, sizeof(page_table), error) ||
+            !vsm_cache_work.read(0, cache_work, sizeof(cache_work), error) ||
+            !vsm_needed.write(6 * sizeof(uint32_t), &no_request, sizeof(no_request), error))
+        { if (error.empty()) error = "VSM cache priority submission failed"; break; }
+        if (page_table[7] != 7 || cache_work[0] != 2 || cache_work[5] != 6 || cache_work[6] != 1)
+        { error = "VSM refresh displaced a missing receiver page"; break; }
         cache_params.frame = 1; cache_params.force_dirty = 1; cache_params.budget = 0;
         if (vkResetFences(device, 1, &fence) != VK_SUCCESS || vkResetCommandBuffer(command, 0) != VK_SUCCESS ||
             vkBeginCommandBuffer(command, &query_begin) != VK_SUCCESS ||

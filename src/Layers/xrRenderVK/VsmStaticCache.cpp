@@ -5,6 +5,10 @@
 
 namespace xray::render::vulkan
 {
+namespace
+{
+constexpr uint32_t PreparePhases = 4;
+}
 bool VsmStaticCache::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, uint32_t frame_slots,
     VkDeviceSize max_storage_range, VkPipelineCache cache, std::string& error)
 {
@@ -13,8 +17,8 @@ bool VsmStaticCache::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, ui
     fill_ = reinterpret_cast<PFN_vkCmdFillBuffer>(get(device, "vkCmdFillBuffer"));
     barrier_ = reinterpret_cast<PFN_vkCmdPipelineBarrier>(get(device, "vkCmdPipelineBarrier"));
     if (!fill_ || !barrier_ ||
-        frame_slots > UINT32_MAX / 2 ||
-        !prepare_.initialize(device, get, frame_slots * 2, 4, sizeof(VsmStaticCacheParameters), max_storage_range,
+        frame_slots > UINT32_MAX / PreparePhases ||
+        !prepare_.initialize(device, get, frame_slots * PreparePhases, 4, sizeof(VsmStaticCacheParameters), max_storage_range,
             cache, vsm_cache_shaders::Prepare, sizeof(vsm_cache_shaders::Prepare), error) ||
         !publish_.initialize(device, get, frame_slots, 4, sizeof(VsmStaticCacheParameters), max_storage_range,
             cache, vsm_cache_shaders::Publish, sizeof(vsm_cache_shaders::Publish), error))
@@ -62,7 +66,7 @@ bool VsmStaticCache::record(bool publication, VkCommandBuffer command, uint32_t 
     VsmStaticCacheParameters params, const BufferResource& needed, const BufferResource& table,
     const BufferResource& slots, const BufferResource& work, std::string& error) const
 {
-    if (!command || !fill_ || !barrier_ || frame_slot >= UINT32_MAX / 2 || !params.axis || params.axis > 32768 ||
+    if (!command || !fill_ || !barrier_ || frame_slot >= UINT32_MAX / PreparePhases || !params.axis || params.axis > 32768 ||
         (params.axis & (params.axis - 1)) || !params.levels || params.levels > 6)
     { error = "invalid VSM static cache dimensions"; return false; }
     const uint64_t count = uint64_t(params.axis) * params.axis * params.levels;
@@ -91,11 +95,15 @@ bool VsmStaticCache::record(bool publication, VkCommandBuffer command, uint32_t 
     const uint32_t groups_y = (groups + params.groups_x - 1) / params.groups_x;
     if (publication)
         return publish_.record(command, frame_slot, buffers, &params, params.groups_x, groups_y, error);
-    params.reserved = 0;
-    if (!prepare_.record(command, frame_slot * 2, buffers, &params, params.groups_x, groups_y, error))
-        return false;
-    params.reserved = 1;
-    return prepare_.record(command, frame_slot * 2 + 1, buffers, &params, params.groups_x, groups_y, error);
+    // Each request class fills missing pages before spending budget on refresh.
+    for (uint32_t phase = 0; phase < PreparePhases; ++phase)
+    {
+        params.reserved = phase;
+        if (!prepare_.record(command, frame_slot * PreparePhases + phase, buffers, &params,
+                params.groups_x, groups_y, error))
+            return false;
+    }
+    return true;
 }
 
 void VsmStaticCache::destroy()
