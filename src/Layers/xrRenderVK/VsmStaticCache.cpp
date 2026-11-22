@@ -7,7 +7,7 @@ namespace xray::render::vulkan
 {
 namespace
 {
-constexpr uint32_t PreparePhases = 4;
+constexpr uint32_t PreparePhases = 5;
 }
 bool VsmStaticCache::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, uint32_t frame_slots,
     VkDeviceSize max_storage_range, VkPipelineCache cache, std::string& error)

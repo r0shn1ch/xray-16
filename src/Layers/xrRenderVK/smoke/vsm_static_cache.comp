@@ -15,13 +15,17 @@ void main()
     if (gl_GlobalInvocationID.x >= count - row) return;
     uint index = row + gl_GlobalInvocationID.x;
     uint phase = params.limits.w;
-    bool primary_phase = phase < 2u;
+    bool primary_phase = phase < 3u;
     if (phase == 0u) table[index] = 0xffffffffu;
     uint request = needed[index];
     bool requested_in_phase = request != 0u && (((request & 1u) != 0u) == primary_phase);
+    uint per_level = axis * axis;
+    // Give coarse misses priority over detailed misses and refreshes.
+    if (phase < 2u)
+        requested_in_phase = requested_in_phase && ((index >= count - per_level) == (phase == 0u));
     bool invalidate = phase == 0u && params.limits.y != 0u;
     if (!requested_in_phase && !invalidate) return;
-    uint per_level = axis * axis, level = index / per_level, within = index % per_level;
+    uint level = index / per_level, within = index % per_level;
     ivec2 absolute_page = params.base[level].xy + ivec2(within % axis, within / axis);
     uvec2 toroidal = uvec2(absolute_page) & uvec2(axis - 1u);
     uint slot = level * per_level + toroidal.y * axis + toroidal.x;
@@ -32,7 +36,7 @@ void main()
     // A forced invalidation may represent changed caster geometry. Do not
     // expose stale content, including when the update budget is exhausted.
     if (!wrong && params.limits.y == 0u) table[index] = slot;
-    bool refresh_phase = (phase & 1u) != 0u;
+    bool refresh_phase = phase == 2u || phase == 4u;
     if (refresh_phase ? wrong || params.config.z - uint(state.z) < params.config.w : !wrong) return;
     uint job = atomicAdd(work[0], 1u);
     if (job >= params.limits.x) return;
