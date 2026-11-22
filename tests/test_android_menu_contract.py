@@ -44,6 +44,12 @@ class AndroidMenuContractTest(unittest.TestCase):
             self.assertEqual(upscaler.find('options_item').get('entry'), 'r_vk_upscaler')
             self.assertEqual(upscaler.get('list_length'), '4')
             self.assertEqual(upscaler.find('options_item').get('depend'), 'vid')
+            start = text.index('<combo_vk_msaa ')
+            end = text.index('</combo_vk_msaa>', start) + len('</combo_vk_msaa>')
+            msaa = ET.fromstring(text[start:end])
+            self.assertEqual(msaa.get('list_length'), '3')
+            self.assertEqual(msaa.find('options_item').attrib,
+                             {'entry': 'r_vk_msaa', 'group': 'mm_opt_video_adv', 'depend': 'vid'})
             found += 1
         self.assertGreaterEqual(found, 4)
 

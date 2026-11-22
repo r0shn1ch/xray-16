@@ -233,7 +233,7 @@
             <text r="170" g="170" b="170" font="letterica16" align="r" vert_align="c">st_vk_msaa</text>
         </cap_vk_msaa>
         <combo_vk_msaa x="144" y="0" width="188" height="20" list_length="3" always_show_scroll="0">
-            <options_item entry="r_vk_msaa" group="mm_opt_video_adv" depend="restart"/>
+            <options_item entry="r_vk_msaa" group="mm_opt_video_adv" depend="vid"/>
             <list_font r="170" g="170" b="170" font="letterica16"/>
             <text_color>
                 <e r="170" g="170" b="170"/>

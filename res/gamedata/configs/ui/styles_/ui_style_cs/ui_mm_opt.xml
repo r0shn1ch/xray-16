@@ -419,7 +419,7 @@
 			<text font="letterica16" color="ui_6">st_vk_msaa</text>
 		</cap_vk_msaa>
 		<combo_vk_msaa x="194" y="0" width="245" height="21" list_length="3" always_show_scroll="0">
-      <options_item entry="r_vk_msaa" group="mm_opt_video_adv" depend="restart"/>
+      <options_item entry="r_vk_msaa" group="mm_opt_video_adv" depend="vid"/>
       <text_color>
         <e r="216" g="186" b="140"/>
         <d color="ui_gray"/>
