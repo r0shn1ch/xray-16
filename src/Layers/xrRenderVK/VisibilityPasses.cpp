@@ -93,7 +93,8 @@ bool VisibilityPasses::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, 
 
 bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel& level, const Targets& targets,
     const visibility::Camera& camera, const BindlessTextureTable& materials,
-    VkBufferView draw_mask, FrameImagePool& pool, framegraph::ResourceRetirement& retirement,
+    const BufferResource& draw_mask, VkBufferView draw_mask_view,
+    FrameImagePool& pool, framegraph::ResourceRetirement& retirement,
     std::string& error) const
 {
     const auto& batches = level.visibility_draw_ranges();
@@ -119,6 +120,32 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
 
     FrameImageGraph graph;
     ImageStateTracker states;
+    using GraphBuffer = FrameImageGraph::BufferResource;
+    GraphBuffer draw_entries, draw_commands, mask;
+    const auto import_buffer = [&](const VkDescriptorBufferInfo& buffer, BufferUse use, GraphBuffer& resource) {
+        return graph.import_buffer(buffer.buffer, buffer.offset, buffer.range, use, resource, error);
+    };
+    if (!import_buffer(entries, BufferUse::ComputeRead, draw_entries) ||
+        !import_buffer(commands, BufferUse::IndirectAndComputeRead, draw_commands) ||
+        !import_buffer({draw_mask.handle(), 0, draw_mask.size()}, BufferUse::HostWrite, mask))
+        return false;
+    std::vector<GraphBuffer> geometry_resources{draw_entries};
+    for (const auto& batch : geometry)
+        for (const auto& buffer : {batch.vertices, batch.indices})
+        {
+            GraphBuffer resource;
+            if (!import_buffer(buffer, BufferUse::ComputeRead, resource))
+                return false;
+            if (std::none_of(geometry_resources.begin(), geometry_resources.end(),
+                    [resource](GraphBuffer existing) { return existing.index == resource.index; }))
+                geometry_resources.push_back(resource);
+        }
+    const auto read_geometry = [&](FrameImageGraph::Pass pass) {
+        for (const auto resource : geometry_resources)
+            if (!graph.read_buffer(pass, resource, BufferUse::ComputeRead, error))
+                return false;
+        return true;
+    };
     constexpr VkImageSubresourceRange full_color{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     FrameImageGraph::Resource ids, depth, base, normals;
     VkImageCreateInfo id_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -163,13 +190,16 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
                     const auto& range = batches[batch];
                     const visibility::SoftwareRasterParameters params{camera, range.first_draw,
                         range.draw_count, 0, range.geometry_batch};
-                    if (!rasterize(command, frame.frame_index, batch, phase, geometry[batch], commands, draw_mask,
+                    if (!rasterize(command, frame.frame_index, batch, phase, geometry[batch], commands, draw_mask_view,
                             params, id_target->view, targets.depth.view, reason))
                         return false;
                 }
                 return true;
             });
-        if (!graph.read_write(raster_pass, ids, ids, error) || !graph.read_write(raster_pass, depth, depth, error))
+        if (!read_geometry(raster_pass) ||
+            !graph.read_buffer(raster_pass, draw_commands, BufferUse::ComputeRead, error) ||
+            !graph.read_buffer(raster_pass, mask, BufferUse::ComputeRead, error) ||
+            !graph.read_write(raster_pass, ids, ids, error) || !graph.read_write(raster_pass, depth, depth, error))
             return false;
     }
 
@@ -188,7 +218,7 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
             }
             return true;
         });
-    if (!graph.read(resolve_pass, ids, ImageUse::ComputeSampled, error) ||
+    if (!read_geometry(resolve_pass) || !graph.read(resolve_pass, ids, ImageUse::ComputeSampled, error) ||
         !graph.read_write(resolve_pass, base, base, error) || !graph.read_write(resolve_pass, normals, normals, error))
         return false;
     const auto export_pass = graph.add_pass("visibility outputs ready", [] {});

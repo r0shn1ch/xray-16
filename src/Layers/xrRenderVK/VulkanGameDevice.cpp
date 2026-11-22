@@ -3232,6 +3232,12 @@ void VulkanGameDevice::record_level_visibility(const FrameRecordingContext& fram
     auto& mask = self.visibility_draw_masks_[frame.frame_index];
     auto& mask_view = self.visibility_mask_views_[frame.frame_index];
     const auto bytes = selected.size() * sizeof(uint32_t);
+    if (mask_view && mask.size() != bytes)
+    {
+        self.destroy_visibility_mask_view_(self.window_.device(), mask_view, nullptr);
+        mask_view = VK_NULL_HANDLE;
+        mask.destroy();
+    }
     if (!mask_view)
     {
         const auto device = self.window_.device();
@@ -3268,7 +3274,7 @@ void VulkanGameDevice::record_level_visibility(const FrameRecordingContext& fram
     camera.viewport.extent[1] = static_cast<float>(frame.extent.height);
     if (!self.initialize_visibility_gbuffer(error) || !self.ensure_visibility_targets(frame.frame_index, frame.extent, error) ||
         !self.visibility_passes_->record(frame, level, self.visibility_targets_[frame.frame_index], camera,
-            *self.visibility_materials_, mask_view, self.window_.frame().image_pool(), self.retired_, error))
+            *self.visibility_materials_, mask, mask_view, self.window_.frame().image_pool(), self.retired_, error))
     {
         Msg("! [renderer-vulkan] visibility buffer recording disabled: %s", error.c_str());
         self.frame_.set_visibility_recorder(nullptr, nullptr);

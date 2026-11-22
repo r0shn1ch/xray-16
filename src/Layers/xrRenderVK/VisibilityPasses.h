@@ -32,7 +32,8 @@ public:
     // Caller owns the outputs per in-flight slot. The graph allocates the ID image.
     bool record(const FrameRecordingContext& frame, const GpuLevel& level, const Targets& targets,
         const visibility::Camera& camera, const BindlessTextureTable& materials,
-        VkBufferView draw_mask, FrameImagePool& pool, framegraph::ResourceRetirement& retirement,
+        const BufferResource& draw_mask, VkBufferView draw_mask_view,
+        FrameImagePool& pool, framegraph::ResourceRetirement& retirement,
         std::string& error) const;
 
     bool initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, const VkPhysicalDeviceLimits& limits,
