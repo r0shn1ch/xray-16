@@ -38,9 +38,13 @@ bool resolveVisibilityBarycentrics(vec4 a, vec4 b, vec4 c, vec2 ndc, vec2 ndcPer
     vec3 x = vec3(a.x, b.x, c.x);
     vec3 y = vec3(a.y, b.y, c.y);
     vec3 w = vec3(a.w, b.w, c.w);
+    // Translate to the sample before evaluating the determinants. This avoids
+    // subtracting large screen-origin terms for small, off-center triangles.
+    x -= ndc.x * w;
+    y -= ndc.y * w;
+    vec3 q = cross(x, y);
     vec3 qdx = cross(y, w);
     vec3 qdy = cross(w, x);
-    vec3 q = cross(x, y) + qdx * ndc.x + qdy * ndc.y;
     float denominator = q.x + q.y + q.z;
     if (!(abs(denominator) > 1e-20))
         return false;
