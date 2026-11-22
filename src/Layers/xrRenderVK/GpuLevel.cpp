@@ -2985,6 +2985,46 @@ bool GpuLevel::record_tree_velocity(const FrameRecordingContext& frame, const Ob
     return true;
 }
 
+bool GpuLevel::record_detail_velocity(const FrameRecordingContext& frame, const ObjectVelocityPass& pass,
+    const float (&current_mvp)[16], const float (&previous_mvp)[16],
+    const DetailWindParameters& current_wind, const DetailWindParameters& previous_wind) const
+{
+    if (!pass.ready() || frame.frame_index >= detail_batches_.size()) return false;
+    const auto slot = frame.frame_index;
+    for (size_t model = 0; model < detail_meshes_.size(); ++model)
+    {
+        const auto& mesh = detail_meshes_[model];
+        if (mesh.mode == SurfaceMode::Transparent) continue;
+        VkBuffer instances{}, arguments{};
+        uint32_t count = 0;
+        if (gpu_detail_recorded_[slot])
+        {
+            if (model >= gpu_detail_batches_[slot].size()) return false;
+            const auto& batch = gpu_detail_batches_[slot][model];
+            instances = batch.instances.handle(); arguments = batch.arguments.handle(); count = batch.count;
+        }
+        else if (model < detail_batches_[slot].size())
+        {
+            const auto& batch = detail_batches_[slot][model];
+            instances = batch.vertices.handle(); count = batch.instance_count;
+        }
+        if (!count) continue;
+        float rows[8]{1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f};
+        if (mesh.matrices.enabled[0])
+        {
+            const auto matrix = mesh.matrices.values[0].evaluate(Device.fTimeGlobal,
+                reinterpret_cast<const float*>(&Device.mView));
+            for (size_t row = 0; row < 2; ++row)
+                std::copy(matrix[row].begin(), matrix[row].end(), rows + row * 4);
+        }
+        if (!pass.draw_details(frame, mesh.vertex_buffer(), mesh.index_buffer(), mesh.index_count,
+                instances, count, current_mvp, previous_mvp, current_wind, previous_wind,
+                mesh.mode == SurfaceMode::AlphaTest ? mesh.material : VK_NULL_HANDLE,
+                float(mesh.alpha_ref) / 255.f, rows, arguments)) return false;
+    }
+    return true;
+}
+
 bool GpuLevel::supports_dynamic_occluder_mask(size_t index) const
 {
     const auto visit = [&](const auto& self, uint32_t visual_index) -> bool {

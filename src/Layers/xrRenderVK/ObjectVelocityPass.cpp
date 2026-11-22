@@ -4,6 +4,7 @@
 #include "DeferredPass.h"
 #include "ObjectVelocityShaders.h"
 #include "ShaderModule.h"
+#include "DetailInstance.h"
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
@@ -127,7 +128,7 @@ bool ObjectVelocityPass::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get
     layout_info.pPushConstantRanges = ranges;
     if (create_layout(device_, &layout_info, nullptr, &layout_) != VK_SUCCESS)
         return fail("object velocity pipeline layout creation failed");
-    ShaderModule vertex, skinned_vertex, lod_vertex, particle_velocity_vertex, particle_velocity_fragment,
+    ShaderModule vertex, detail_vertex, skinned_vertex, lod_vertex, particle_velocity_vertex, particle_velocity_fragment,
         fragment, cutout_fragment, lod_fragment;
     const ShaderModuleDispatch shader_dispatch{
         procedure<PFN_vkCreateShaderModule>(device, get, "vkCreateShaderModule"),
@@ -135,7 +136,9 @@ bool ObjectVelocityPass::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get
     if (!vertex.initialize(device_, shader_dispatch, object_velocity_shaders::Vertex,
             sizeof(object_velocity_shaders::Vertex), error) ||
         !fragment.initialize(device_, shader_dispatch, object_velocity_shaders::Fragment,
-            sizeof(object_velocity_shaders::Fragment), error))
+            sizeof(object_velocity_shaders::Fragment), error) ||
+        !detail_vertex.initialize(device_, shader_dispatch, object_velocity_shaders::DetailVertex,
+            sizeof(object_velocity_shaders::DetailVertex), error))
     { const std::string reason = "object velocity shader: " + error; return fail(reason.c_str()); }
     if (material_layout && !cutout_fragment.initialize(device_, shader_dispatch,
             object_velocity_shaders::CutoutFragment, sizeof(object_velocity_shaders::CutoutFragment), error))
@@ -213,6 +216,31 @@ bool ObjectVelocityPass::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get
     pipeline_info.renderPass = pass_;
     if (create_pipeline(device_, cache, 1, &pipeline_info, nullptr, &pipeline_) != VK_SUCCESS)
         return fail("object velocity graphics pipeline creation failed");
+    const VkVertexInputBindingDescription detail_bindings[]{
+        {0, sizeof(LevelVertex), VK_VERTEX_INPUT_RATE_VERTEX},
+        {1, sizeof(DetailInstance), VK_VERTEX_INPUT_RATE_INSTANCE}};
+    const VkVertexInputAttributeDescription detail_attributes[]{
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(LevelVertex, position)},
+        {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(LevelVertex, uv)},
+        {3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(LevelVertex, lightmap_uv)},
+        {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(DetailInstance, position_scale)},
+        {5, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(DetailInstance, rotation)}};
+    input.pVertexBindingDescriptions = detail_bindings;
+    input.pVertexAttributeDescriptions = detail_attributes;
+    input.vertexAttributeDescriptionCount = 5;
+    stages[0].module = detail_vertex.handle();
+    if (create_pipeline(device_, cache, 1, &pipeline_info, nullptr, &detail_pipeline_) != VK_SUCCESS)
+        return fail("object velocity detail pipeline creation failed");
+    if (material_layout)
+    {
+        stages[1].module = cutout_fragment.handle();
+        if (create_pipeline(device_, cache, 1, &pipeline_info, nullptr, &detail_cutout_pipeline_) != VK_SUCCESS)
+            return fail("object velocity detail cutout pipeline creation failed");
+    }
+    input.pVertexBindingDescriptions = bindings;
+    input.pVertexAttributeDescriptions = attributes;
+    input.vertexAttributeDescriptionCount = 4;
+    stages[0].module = vertex.handle();
     if (material_layout)
     {
         stages[1].module = cutout_fragment.handle();
@@ -365,6 +393,39 @@ void ObjectVelocityPass::draw(const FrameRecordingContext& frame, VkBuffer verti
         draw_indexed_(frame.command_buffer, index_count, 1, first_index, vertex_offset, 0);
 }
 
+bool ObjectVelocityPass::draw_details(const FrameRecordingContext& frame, VkBuffer vertices, VkBuffer indices,
+    uint32_t index_count, VkBuffer instances, uint32_t instance_count, const float* current_mvp,
+    const float* previous_mvp, const DetailWindParameters& current_wind, const DetailWindParameters& previous_wind,
+    VkDescriptorSet material, float alpha_ref, const float* base_rows, VkBuffer indirect_commands) const
+{
+    const auto pipeline = material ? detail_cutout_pipeline_ : detail_pipeline_;
+    if (!pipeline || !frame.command_buffer || !vertices || !indices || !index_count || !instances ||
+        !instance_count || !current_mvp || !previous_mvp) return false;
+    bind_pipeline_(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    const VkBuffer buffers[]{vertices, instances};
+    const VkDeviceSize offsets[]{0, 0};
+    bind_vertices_(frame.command_buffer, 0, 2, buffers, offsets);
+    bind_indices_(frame.command_buffer, indices, 0, VK_INDEX_TYPE_UINT32);
+    float data[56]{};
+    std::copy_n(current_mvp, 16, data);
+    std::copy_n(previous_mvp, 16, data + 16);
+    data[32] = alpha_ref;
+    data[36] = data[41] = 1.f;
+    if (base_rows) std::copy_n(base_rows, 8, data + 36);
+    std::copy_n(current_wind.directions, 4, data + 44);
+    std::copy_n(previous_wind.directions, 4, data + 48);
+    data[52] = current_wind.phase; data[53] = previous_wind.phase;
+    push_constants_(frame.command_buffer, layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+        0, sizeof(data), data);
+    if (material)
+        bind_sets_(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &material, 0, nullptr);
+    if (indirect_commands)
+        draw_indexed_indirect_(frame.command_buffer, indirect_commands, 0, 1, sizeof(VkDrawIndexedIndirectCommand));
+    else
+        draw_indexed_(frame.command_buffer, index_count, instance_count, 0, 0, 0);
+    return true;
+}
+
 void ObjectVelocityPass::draw_skinned(const FrameRecordingContext& frame, VkBuffer vertices, VkBuffer indices,
     uint32_t index_count, uint32_t first_index, const float* current_mvp,
     const float* previous_mvp, VkDescriptorSet current_pose, VkDescriptorSet previous_pose,
@@ -470,6 +531,8 @@ void ObjectVelocityPass::destroy()
 {
     if (device_)
     {
+        if (detail_pipeline_ && destroy_pipeline_) destroy_pipeline_(device_, detail_pipeline_, nullptr);
+        if (detail_cutout_pipeline_ && destroy_pipeline_) destroy_pipeline_(device_, detail_cutout_pipeline_, nullptr);
         if (skinned_cutout_pipeline_ && destroy_pipeline_)
             destroy_pipeline_(device_, skinned_cutout_pipeline_, nullptr);
         if (skinned_pipeline_ && destroy_pipeline_) destroy_pipeline_(device_, skinned_pipeline_, nullptr);
@@ -492,6 +555,7 @@ void ObjectVelocityPass::destroy()
     layout_ = VK_NULL_HANDLE;
     pipeline_ = VK_NULL_HANDLE;
     cutout_pipeline_ = VK_NULL_HANDLE;
+    detail_pipeline_ = detail_cutout_pipeline_ = VK_NULL_HANDLE;
     lod_pipeline_ = VK_NULL_HANDLE;
     particle_velocity_pipeline_ = VK_NULL_HANDLE;
     particle_transparent_velocity_pipeline_ = VK_NULL_HANDLE;

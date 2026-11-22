@@ -3,6 +3,7 @@
 #include "src/Layers/xrRenderVK/LevelModels.h"
 #include "src/Layers/xrRenderVK/ModelGeometry.h"
 #include "src/Layers/xrRenderVK/DeferredPass.h"
+#include "src/Layers/xrRenderVK/DetailInstance.h"
 #include <vulkan/vulkan.h>
 #include <array>
 #include <cstdlib>
@@ -153,19 +154,26 @@ int run_test(int argc, char** argv)
     const bool fallback = argc > 2 && std::string(argv[2]) == "fallback";
     const bool deform_velocity = argc > 2 && std::string(argv[2]) == "deform";
     const bool wind_velocity = argc > 2 && std::string(argv[2]) == "wind";
+    const std::string mode = argc > 2 ? argv[2] : "";
+    const bool detail_velocity = mode.find("detail") == 0;
+    const bool detail_still = mode == "detail_still";
+    const DetailWindParameters detail_current{{.1f, 0.f, .1f, 0.f}, .12f};
+    const DetailWindParameters detail_previous = mode == "detail_reset" ? detail_current :
+        DetailWindParameters{{.5f, 0.f, .5f, 0.f}, .25f};
     const bool offset_velocity = argc > 2 && std::string(argv[2]) == "offset";
     const bool cutout_velocity = argc > 2 &&
-        (std::string(argv[2]) == "cutout" || std::string(argv[2]) == "cutout_solid");
-    const bool indirect_velocity = argc > 2 && std::string(argv[2]) == "indirect";
+        (std::string(argv[2]) == "cutout" || std::string(argv[2]) == "cutout_solid" ||
+         mode == "detail_cutout" || mode == "detail_cutout_solid");
+    const bool indirect_velocity = mode == "indirect" || mode == "detail_indirect";
     const bool skinned_cutout = argc > 2 && std::string(argv[2]) == "skinned_cutout";
     const bool solid_cutout = argc > 2 &&
-        (std::string(argv[2]) == "cutout_solid" || skinned_cutout);
+        (std::string(argv[2]) == "cutout_solid" || skinned_cutout || mode == "detail_cutout_solid");
     const bool blended_skinning = argc > 2 && std::string(argv[2]) == "skinned_blend";
     const bool skinned_velocity = argc > 2 &&
         (std::string(argv[2]) == "skinned" || blended_skinning || skinned_cutout);
     const bool object_velocity = argc > 2 &&
         (std::string(argv[2]) == "object" || deform_velocity || wind_velocity || offset_velocity ||
-         cutout_velocity || indirect_velocity || skinned_velocity);
+         cutout_velocity || indirect_velocity || skinned_velocity || detail_velocity);
     const bool prefer_reprojected_depth = argc > 2 &&
         (std::string(argv[2]) == "reprojected" || object_velocity);
     const bool rgba = fallback || prefer_reprojected_depth;
@@ -430,6 +438,8 @@ int run_test(int argc, char** argv)
         if (wind_velocity)
             for (uint32_t i = base; i < base + 3; ++i)
             { triangle[i].lightmap_uv[0] = 1.f; triangle[i].lightmap_uv[1] = triangle[i].position[1] - 1.f; }
+        if (detail_velocity)
+            for (auto& vertex : triangle) vertex.lightmap_uv[0] = detail_still ? 0.f : 1.f;
         std::array<ModelVertex, 6> skin_triangle{};
         if (skinned_velocity)
             for (uint32_t i = base; i < base + 3; ++i)
@@ -458,6 +468,15 @@ int run_test(int argc, char** argv)
                 vk.previous_vertices, vk.previous_vertex_memory);
             check(vkMapMemory(vk.device, vk.previous_vertex_memory, 0, sizeof(triangle), 0, &mapped));
             std::memcpy(mapped, triangle.data(), sizeof(triangle));
+            vkUnmapMemory(vk.device, vk.previous_vertex_memory);
+        }
+        if (detail_velocity)
+        {
+            const auto instance = detail_instance(0.f, 0.f, 0.f, 0.f, 1.f);
+            vk.buffer(sizeof(instance), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                vk.previous_vertices, vk.previous_vertex_memory);
+            check(vkMapMemory(vk.device, vk.previous_vertex_memory, 0, sizeof(instance), 0, &mapped));
+            std::memcpy(mapped, &instance, sizeof(instance));
             vkUnmapMemory(vk.device, vk.previous_vertex_memory);
         }
         check(vkMapMemory(vk.device, vk.index_memory, 0, sizeof(triangle_indices), 0, &mapped));
@@ -524,12 +543,21 @@ int run_test(int argc, char** argv)
                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT);
             frame.extent = {2, 2};
             auto current = identity, previous = identity;
-            if (!deform_velocity && !skinned_velocity && !wind_velocity) previous[12] = .5f;
+            if (!deform_velocity && !skinned_velocity && !wind_velocity && !detail_velocity) previous[12] = .5f;
+            if (mode == "detail_camera") previous[12] = .5f;
             if (!object_pass.begin(frame)) throw std::runtime_error("object velocity begin failed");
             const float shifted_uv[8]{1.f, 0.f, 0.f, 1.f, 0.f, 1.f, 0.f, 0.f};
             TreeWindParameters current_wind{}, previous_wind{};
             previous_wind.direction[0] = .5f;
-            if (skinned_velocity)
+            if (detail_velocity)
+            {
+                if (!object_pass.draw_details(frame, vk.vertices, vk.indices, 3, vk.previous_vertices, 1,
+                        current.data(), previous.data(), detail_current, detail_previous, vk.cutout_set, .5f,
+                        solid_cutout ? shifted_uv : nullptr,
+                        indirect_velocity ? vk.indirect_commands : VK_NULL_HANDLE))
+                    throw std::runtime_error("detail velocity draw rejected");
+            }
+            else if (skinned_velocity)
                 object_pass.draw_skinned(frame, vk.vertices, vk.indices, 3, 0,
                     current.data(), previous.data(), vk.pose_sets[0], vk.pose_sets[1],
                     skinned_cutout ? vk.cutout_set : VK_NULL_HANDLE, .5f,
@@ -566,6 +594,36 @@ int run_test(int argc, char** argv)
         const uint32_t stride = rgba ? 4 : 2;
         for (uint32_t pixel = 0; pixel < 4; ++pixel)
         {
+            if (detail_velocity && iteration == 1 && pixel != 2 && (!cutout_velocity || solid_cutout))
+            {
+                const float root[3]{};
+                const float positions[3][3]{{-1.f, -1.f, .5f}, {3.f, -1.f, .5f}, {-1.f, 3.f, .5f}};
+                std::array<float, 3> current_x{}, previous_x{};
+                for (unsigned i = 0; i < 3; ++i)
+                {
+                    current_x[i] = positions[i][0] + detail_wind_displacement(positions[i], root,
+                        detail_still ? 0.f : 1.f, detail_current)[0];
+                    previous_x[i] = positions[i][0] + detail_wind_displacement(positions[i], root,
+                        detail_still ? 0.f : 1.f, detail_previous)[0];
+                }
+                const float x = pixel % 2 ? .5f : -.5f, y = pixel / 2 ? -.5f : .5f;
+                const float b = (y + 1.f) / 4.f;
+                const float a = (x - current_x[0] - b * (current_x[2] - current_x[0])) /
+                    (current_x[1] - current_x[0]);
+                const float expected = ((1.f - a - b) * previous_x[0] + a * previous_x[1] + b * previous_x[2] - x) * .5f +
+                    (mode == "detail_camera" ? .25f : 0.f);
+                const auto half = [](uint16_t value) {
+                    const float sign = value & 0x8000u ? -1.f : 1.f;
+                    const int exponent = (value >> 10) & 31;
+                    return exponent ? sign * std::ldexp(1.f + float(value & 1023) / 1024.f, exponent - 15) :
+                        sign * std::ldexp(float(value & 1023), -24);
+                };
+                if (std::abs(half(values[pixel * stride]) - expected) > .002f ||
+                    half(values[pixel * stride + 1]) != 0.f || values[pixel * stride + 2] != 0x3800 ||
+                    values[pixel * stride + 3] != 0x3c00)
+                    throw std::runtime_error("detail wind velocity differs from CPU barycentric reference");
+                continue;
+            }
             const uint16_t expected_x = iteration == 1 && pixel != 2 ?
                 (object_velocity && (!cutout_velocity || solid_cutout) ? 0x3400 : 0x3000) : 0;
             const uint16_t actual_x = values[pixel * stride];

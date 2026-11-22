@@ -1806,9 +1806,9 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         load("swing_fast_", detail_wind_animation_.fast);
         detail_wind_animation_.configured = true;
     }
-    const auto detail_wind = detail_wind_animation_.advance(Device.fTimeGlobal,
+    current_detail_wind_ = detail_wind_animation_.advance(Device.fTimeGlobal,
         g_pGamePersistent ? g_pGamePersistent->Environment().wind_strength_factor : 0.f);
-    deferred_.set_detail_wind(detail_wind);
+    deferred_.set_detail_wind(current_detail_wind_);
     sun_uniform.options[3] = render_world ? ao_strength : 0.f;
     const uint32_t ao_quality = std::min<uint32_t>(quality_preset,
         static_cast<uint32_t>(std::size(PresetAODirections) - 1));
@@ -2166,6 +2166,7 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         {
             motion_.commit_view();
             previous_tree_wind_ = current_tree_wind_;
+            previous_detail_wind_ = current_detail_wind_;
             object_motion_.commit_frame();
         }
         else
@@ -3539,6 +3540,7 @@ void VulkanGameDevice::save_pipeline_cache()
 void VulkanGameDevice::destroy()
 {
     detail_wind_animation_ = {};
+    current_detail_wind_ = previous_detail_wind_ = {};
     frame_generation_available = 0;
     Msg("[renderer-vulkan] teardown game device begin");
     if (window_.device())

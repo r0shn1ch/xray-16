@@ -359,6 +359,12 @@ if (XRAY_BUILD_VULKAN_TESTS)
         set_tests_properties(vulkan_motion_gpu_deform PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
         add_test(NAME vulkan_motion_gpu_wind COMMAND vulkan_motion_gpu_test ${_xray_vk_motion_device_index} wind)
         set_tests_properties(vulkan_motion_gpu_wind PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+        foreach(_detail_motion_mode detail detail_indirect detail_camera detail_still detail_reset detail_cutout detail_cutout_solid)
+            add_test(NAME vulkan_motion_gpu_${_detail_motion_mode} COMMAND vulkan_motion_gpu_test
+                ${_xray_vk_motion_device_index} ${_detail_motion_mode})
+            set_tests_properties(vulkan_motion_gpu_${_detail_motion_mode} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30
+                FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
+        endforeach()
         add_test(NAME vulkan_motion_gpu_offset COMMAND vulkan_motion_gpu_test ${_xray_vk_motion_device_index} offset)
         set_tests_properties(vulkan_motion_gpu_offset PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
         add_test(NAME vulkan_motion_gpu_cutout COMMAND vulkan_motion_gpu_test ${_xray_vk_motion_device_index} cutout)

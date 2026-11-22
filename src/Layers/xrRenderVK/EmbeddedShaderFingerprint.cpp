@@ -59,6 +59,7 @@ void append_embedded_shader_fingerprint(PipelineCacheFingerprint& fingerprint)
     XRAY_HASH_SHADER("motion.rg.cs", motion_vector_shaders::FillRg);
     XRAY_HASH_SHADER("motion.rgba.cs", motion_vector_shaders::FillRgba);
     XRAY_HASH_SHADER("motion.object.vs", object_velocity_shaders::Vertex);
+    XRAY_HASH_SHADER("motion.detail.vs", object_velocity_shaders::DetailVertex);
     XRAY_HASH_SHADER("motion.object.skin.vs", object_velocity_shaders::SkinnedVertex);
     XRAY_HASH_SHADER("motion.object.particle.vs", object_velocity_shaders::ParticleVelocityVertex);
     XRAY_HASH_SHADER("motion.object.particle.ps", object_velocity_shaders::ParticleVelocityFragment);

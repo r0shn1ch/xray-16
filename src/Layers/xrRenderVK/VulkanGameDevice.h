@@ -342,6 +342,7 @@ class VulkanGameDevice
     VsmFrameResources vsm_frames_;
     TreeWindParameters current_tree_wind_{}, previous_tree_wind_{};
     DetailWindAnimation detail_wind_animation_{};
+    DetailWindParameters current_detail_wind_{}, previous_detail_wind_{};
     VsmClipmap vsm_clipmap_{};
     bool vsm_cache_initialized_{};
     enum class VsmWorkState { Idle, Waiting, Ready };

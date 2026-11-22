@@ -95,6 +95,9 @@ class GpuLevel
     bool record_tree_velocity(const FrameRecordingContext& frame, const ObjectVelocityPass& pass,
         const float (&current_mvp)[16], const float (&previous_mvp)[16],
         const TreeWindParameters& current_wind, const TreeWindParameters& previous_wind) const;
+    bool record_detail_velocity(const FrameRecordingContext& frame, const ObjectVelocityPass& pass,
+        const float (&current_mvp)[16], const float (&previous_mvp)[16],
+        const DetailWindParameters& current_wind, const DetailWindParameters& previous_wind) const;
     size_t model_count() const
     {
         return meshes_.size();

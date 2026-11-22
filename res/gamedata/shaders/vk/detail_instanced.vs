@@ -1,5 +1,6 @@
 // The prototype is immutable; both opaque and transparent details share this
 // transform and the two legacy detail waves. No per-vertex CPU expansion.
+#include "detail_wind.hlsli"
 [[vk::push_constant]] cbuffer Camera {
     float4x4 mvp;
     float4 material_padding[4];
@@ -35,22 +36,10 @@ struct Fragment {
     [[vk::location(6)]] float3 tangent : TEXCOORD6;
     [[vk::location(7)]] float3 bitangent : TEXCOORD7;
 };
-float3 rotate_detail(float3 p, float2 rotation) {
-    return float3(rotation.x * p.x + rotation.y * p.z, p.y, -rotation.y * p.x + rotation.x * p.z);
-}
 Fragment main(Vertex vertex) {
     Fragment result;
-    float3 root = vertex.instance_position_scale.xyz;
-    float3 p = rotate_detail(vertex.position * vertex.instance_position_scale.w, vertex.instance_rotation) + root;
-    uint hash = asuint(root.x == 0.0 ? 0.0 : root.x) * 0x9e3779b9u ^
-        asuint(root.z == 0.0 ? 0.0 : root.z) * 0x85ebca6bu;
-    hash ^= hash >> 16;
-    bool second = hash % 3u == 0u;
-    float3 wave = second ? float3(1.0 / 3.0, 1.0 / 7.0, 1.0 / 5.0) : float3(1.0 / 5.0, 1.0 / 7.0, 1.0 / 3.0);
-    float phase = frac(base_matrix_u.z + dot(p, wave) / 6.283185307179586);
-    float cyclic = 2.8284271 * phase - 1.4142136;
-    float bend = (p.y - root.y) * (cyclic * cyclic - 1.0) * vertex.lightmap_uv.x;
-    p.xz += (second ? object_rotation.zw : object_rotation.xy) * bend;
+    float3 p = detail_world_position(vertex.position, vertex.instance_position_scale,
+        vertex.instance_rotation, vertex.lightmap_uv.x, object_rotation, base_matrix_u.z);
     result.position = mul(mvp, float4(p, 1.0));
     result.position.y = -result.position.y;
     result.normal = rotate_detail(vertex.normal, vertex.instance_rotation);

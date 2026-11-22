@@ -3,5 +3,6 @@ source=vk/detail_instanced.vs
 stage=vs
 entry=main
 defines=LEVEL_GEOMETRY=1|VK_INSTANCED_DETAIL=1
-source-fingerprint=e94a6037ea381249
-spirv-fingerprint=8df090eb90b639fb
+source-fingerprint=50ad270c3be5c38a
+dependency=vk/detail_wind.hlsli=efcbff71fbf10e58
+spirv-fingerprint=09abfba7655a8552

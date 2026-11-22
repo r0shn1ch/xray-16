@@ -980,6 +980,13 @@ bool VulkanGameDevice::record_object_velocity(const FrameRecordingContext &frame
             owner.level_recorded_ = false;
             owner.level_error_ = "Vulkan tree wind velocity recording failed";
         }
+        if (owner.level_recorded_ && !owner.current_level_->record_detail_velocity(frame, owner.object_velocity_,
+                current, previous, owner.current_detail_wind_,
+                have_previous_view ? owner.previous_detail_wind_ : owner.current_detail_wind_))
+        {
+            owner.level_recorded_ = false;
+            owner.level_error_ = "Vulkan detail wind velocity recording failed";
+        }
     }
     if (owner.models_recorded_ && owner.level_recorded_)
     {

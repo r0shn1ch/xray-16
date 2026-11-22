@@ -8,6 +8,7 @@
 namespace xray::render::vulkan
 {
 struct TreeWindParameters;
+struct DetailWindParameters;
 // Depth-equal raster overlay for opaque and cutout meshes. LevelVertex draws
 // bind current and previous vertices; ModelVertex draws bind two bone poses.
 class ObjectVelocityPass
@@ -36,6 +37,11 @@ public:
         const float* previous_mvp, VkDescriptorSet current_pose, VkDescriptorSet previous_pose,
         VkDescriptorSet material = VK_NULL_HANDLE, float alpha_ref = 0.5f,
         const float* base_rows = nullptr) const;
+    bool draw_details(const FrameRecordingContext& frame, VkBuffer vertices, VkBuffer indices, uint32_t index_count,
+        VkBuffer instances, uint32_t instance_count, const float* current_mvp, const float* previous_mvp,
+        const DetailWindParameters& current_wind, const DetailWindParameters& previous_wind,
+        VkDescriptorSet material = VK_NULL_HANDLE, float alpha_ref = .5f, const float* base_rows = nullptr,
+        VkBuffer indirect_commands = VK_NULL_HANDLE) const;
     void draw_lod(const FrameRecordingContext& frame, VkBuffer vertices, VkBuffer indices,
         uint32_t index_count, uint32_t first_index, const float* mvp,
         VkDescriptorSet material, float alpha_ref, float blend) const;
@@ -55,6 +61,7 @@ private:
     VkPipelineLayout layout_{};
     VkPipeline pipeline_{};
     VkPipeline cutout_pipeline_{};
+    VkPipeline detail_pipeline_{}, detail_cutout_pipeline_{};
     VkPipeline lod_pipeline_{};
     VkPipeline particle_velocity_pipeline_{};
     VkPipeline particle_transparent_velocity_pipeline_{};
