@@ -125,6 +125,13 @@ bool GpuParticleGraphics::record_velocity(const FrameRecordingContext& frame, co
         descriptor, camera.bucket, matrices, error);
 }
 void GpuParticleGraphics::clear_pipelines() { pipelines_.clear(); }
+void GpuParticleGraphics::rebind_gbuffer_samples(VkSampleCountFlagBits samples)
+{
+    if (gbuffer_samples_ == samples)
+        return;
+    clear_pipelines();
+    gbuffer_samples_ = samples;
+}
 void GpuParticleGraphics::destroy()
 {
     velocity_transparent_.destroy(); velocity_opaque_.destroy();

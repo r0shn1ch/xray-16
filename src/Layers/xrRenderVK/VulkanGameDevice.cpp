@@ -2869,6 +2869,11 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
 #endif
     if (!initialize_gbuffer_targets(error))
         return false;
+    if (gpu_particle_graphics_)
+    {
+        gpu_particle_graphics_->rebind_gbuffer_samples(targets_.samples());
+        gpu_particle_graphics_failed_ = false;
+    }
     if (had_ray_frames && !prepare_ray_frames(error))
     {
         Msg("! [renderer-vulkan] RT frame resources unavailable after resize: %s", error.c_str());

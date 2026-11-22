@@ -27,6 +27,7 @@ public:
         VkDescriptorSet material, const GpuParticleDrawParams& camera, const float* material_constants,
         const float* current_mvp, const float* previous_mvp, bool transparent, std::string& error);
     void clear_pipelines(); // Caller must wait for GPU idle first.
+    void rebind_gbuffer_samples(VkSampleCountFlagBits samples);
     void destroy(); // Caller must wait for GPU idle first.
     ~GpuParticleGraphics() { destroy(); }
 private:
