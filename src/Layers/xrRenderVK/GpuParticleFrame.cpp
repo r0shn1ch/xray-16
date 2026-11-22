@@ -175,11 +175,11 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
     if (pending_roots || visible_roots)
     {
         params.phase = 0;
-        const uint32_t particle_groups = (capacities.particleCapacity + 63u) / 64u;
+        const uint32_t emitter_groups = std::min(capacities.emitterCapacity, 65535u);
         const auto capture_motion = graph.add_checked_command_pass("capture GPU particle motion history",
-            [&, dispatch_params = params, particle_groups](VkCommandBuffer recording_command, std::string& pass_error) {
+            [&, dispatch_params = params, emitter_groups](VkCommandBuffer recording_command, std::string& pass_error) {
                 return dispatch(recording_command, P::CaptureMotion, base, dispatch_params, {},
-                    particle_groups, pass_error);
+                    emitter_groups, pass_error);
             });
         if (!read(capture_motion, B::Emitters, BufferUse::ComputeRead) ||
             !read_write(capture_motion, B::Particles)) return false;
