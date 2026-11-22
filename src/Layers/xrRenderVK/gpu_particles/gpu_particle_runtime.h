@@ -436,18 +436,34 @@ void GpuAdvanceEmitter(inout GpuPapiEmitter emitter,uint milliseconds,uint lane)
         for (uint actionIndex = 0; actionIndex < program.actionCount;) {
             uint actionDataIndex = program.actionFirst + actionIndex;
             uint type = g_Actions[actionDataIndex].type;
-            if (type == 10u) {
+            bool deterministicSink = (type == 19u || type == 20u) &&
+                g_Actions[actionDataIndex].domains[0].type != 8u;
+            if (type == 10u || deterministicSink) {
                 // Classify in parallel, then remove in the same descending
                 // order as PAPI. Removal moves the last survivor and can
                 // detach or spawn child emitters, so it remains serialized.
+                // Blob membership consumes the emitter RNG and stays serial.
                 float4 params = g_Actions[actionDataIndex].p0;
-                killOldTime = params.x;
+                if (type == 10u) killOldTime = params.x;
+                GpuPapiDomain sinkDomain = (GpuPapiDomain)0;
+                if (deterministicSink)
+                    sinkDomain = GpuPapiTransformDomain(g_Actions[actionDataIndex].domains[0], emitter,
+                        g_Actions[actionDataIndex].flags, type == 20u);
                 uint remaining = emitter.count;
                 while (remaining > 0u) {
                     uint batch = min(remaining,64u);
                     if (lane < batch) {
                         uint index = GpuParticleIndex(emitter,remaining - 1u - lane);
-                        g_GroupDead[lane] = ((g_Particles[index].age < params.x) == (params.y != 0.0)) ? 1u : 0u;
+                        GpuPapiParticle particle = g_Particles[index];
+                        bool remove;
+                        if (type == 10u)
+                            remove = (particle.age < params.x) == (params.y != 0.0);
+                        else {
+                            uint unusedRng = 0u;
+                            remove = GpuPapiWithin(sinkDomain, type == 19u ? particle.position : particle.velocity,
+                                unusedRng) == (params.x != 0.0);
+                        }
+                        g_GroupDead[lane] = remove ? 1u : 0u;
                     }
                     AllMemoryBarrierWithGroupSync();
                     if (lane == 0)

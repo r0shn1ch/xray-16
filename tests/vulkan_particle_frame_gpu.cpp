@@ -1499,8 +1499,8 @@ int main(int argc, char** argv)
         require(commands.acknowledge(result.statuses, error) && commands.snapshot(batch, error) && batch.commands.empty(), error);
         for (size_t i = 0; i < 28; ++i) require(draw_words[i * 4] == 6 && draw_words[i * 4 + 1] == 0, "draw arguments");
         {
-            // Exercise more than two workgroup-width batches, both age
-            // predicates, and the swap-with-last order used by removal.
+            // Exercise more than two workgroup-width batches, both predicate
+            // directions, and the swap-with-last order used by removal.
             constexpr uint32_t count = 130;
             GpuParticleBuffers age_buffers;
             GpuParticleBuffers::Capacity age_capacity{count, 2, 1, 1, 1, 1, 1, 514, 48};
@@ -1513,18 +1513,26 @@ int main(int argc, char** argv)
             require(particle_copy.initialize(f.device, count * sizeof(fg::GpuPapiParticle),
                 VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, memory, vk, error), error);
-            for (uint32_t young : {0u, 1u})
+            for (uint32_t scenario = 0; scenario < 10; ++scenario)
             {
+                const bool sink = scenario >= 2;
+                const uint32_t predicate = scenario % 2;
+                const bool velocity_sink = sink && ((scenario - 2) % 4 >= 2);
+                const bool translated = scenario >= 6;
+                const float domain_offset = translated && !velocity_sink ? 10.f : 0.f;
                 std::vector<fg::GpuPapiParticle> particles(count);
                 for (uint32_t i = 0; i < count; ++i)
                 {
                     particles[i].age = float(i % 3);
                     particles[i].position.x = float(i);
+                    particles[i].velocity.x = float(count - 1 - i);
                     particles[i].child = GPU_PAPI_INVALID;
                 }
                 auto expected = particles;
                 for (size_t i = expected.size(); i > 0; --i)
-                    if ((expected[i - 1].age < 1.f) == (young != 0))
+                    if ((sink ? ((velocity_sink ? expected[i - 1].velocity.x : expected[i - 1].position.x) >= 30.f + domain_offset &&
+                            (velocity_sink ? expected[i - 1].velocity.x : expected[i - 1].position.x) <= 100.f + domain_offset) :
+                            (expected[i - 1].age < 1.f)) == (predicate != 0))
                     {
                         expected[i - 1] = expected.back();
                         expected.pop_back();
@@ -1532,9 +1540,15 @@ int main(int argc, char** argv)
                 fg::GpuPapiEmitter root{};
                 root.active = root.generation = 1; root.completedSerial = 1;
                 root.flags = GPU_PAPI_PLAYING; root.capacity = root.count = count;
+                if (translated) { root.flags |= GPU_PAPI_PARENT_SET; root.actionOrigin.x = 10.f; }
                 root.childBirth = root.childPlay = root.childDead = root.pad0 = GPU_PAPI_INVALID;
                 fg::GpuPapiProgram age_program{}; age_program.maxParticles = count; age_program.actionCount = 1;
-                fg::GpuPapiAction action{}; action.type = 10; action.p0.x = 1.f; action.p0.y = float(young);
+                fg::GpuPapiAction action{};
+                action.type = sink ? (velocity_sink ? 20 : 19) : 10;
+                action.p0.x = sink ? float(predicate) : 1.f; action.p0.y = float(predicate);
+                action.domains[0].type = 4;
+                action.domains[0].p1.set(30.f, -1.f, -1.f, 0.f);
+                action.domains[0].p2.set(100.f, 1.f, 1.f, 0.f);
                 fg::GpuPapiCommand tick{}; tick.type = 6; tick.generation = 1; tick.serial = 2; tick.p0 = 33;
                 const uint32_t range[]{0, 1};
                 const std::vector<GpuParticleUpload::Update> updates{
@@ -1567,9 +1581,9 @@ int main(int argc, char** argv)
                     vkQueueWaitIdle(queue) == VK_SUCCESS, "particle age tick submit");
                 require(age_readback.read(result, error) && particle_copy.read(0, particles.data(),
                     particles.size() * sizeof(particles[0]), error), error);
-                require(result.statuses[0].count == expected.size() && result.errors == 0, "particle age count");
+                require(result.statuses[0].count == expected.size() && result.errors == 0, "particle removal count");
                 for (size_t i = 0; i < expected.size(); ++i)
-                    require(particles[i].position.x == expected[i].position.x, "particle age removal order");
+                    require(particles[i].position.x == expected[i].position.x, "particle removal order");
                 vkFreeCommandBuffers(f.device, f.pool, 1, &cb);
             }
         }
