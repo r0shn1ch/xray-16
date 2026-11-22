@@ -7,7 +7,7 @@ namespace xray::render::vulkan
 {
 namespace
 {
-constexpr uint32_t allocation_phases = 3;
+constexpr uint32_t allocation_phases = 4;
 }
 
 bool VsmPageAllocator::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, uint32_t frame_slots,

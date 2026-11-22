@@ -18,9 +18,10 @@ void main()
     uint request = needed[page];
     if (request == 0u || ((request & 1u) != 0u) != (params.phase < 2u)) return;
     uint per_level = params.axis * params.axis;
-    // Reserve coarse fallback coverage before allocating finer receiver
-    // pages. Filter-only neighbors remain the lowest priority.
-    if (params.phase < 2u && (page >= params.count - per_level) != (params.phase == 0u)) return;
+    // Prioritize coarse coverage within each class. Once all receivers are
+    // covered, fill coarse filter borders before spending slots on fine borders.
+    bool coarsest = page >= params.count - per_level;
+    if (coarsest != ((params.phase & 1u) == 0u)) return;
     uint slot = atomicAdd(counts[0], 1u);
     if (slot >= params.max_pages) return;
     uint level = page / per_level;
