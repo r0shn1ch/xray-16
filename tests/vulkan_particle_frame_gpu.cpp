@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -462,6 +463,9 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
         sampled == std::array<float, 6>{.5f, .5f, .5f, .5f, .5f, .5f} &&
         !sample_sky_probes(layout, baked_prefix, {1.f, 3.f, 5.f}, sampled) &&
         sampled == std::array<float, 6>{.5f, .5f, .5f, .5f, .5f, .5f}, "partially baked sky probe interpolation");
+    grid.back().faces[0] = std::numeric_limits<float>::quiet_NaN();
+    require(!sample_sky_probes(layout, grid, {1.f, 3.f, 5.f}, sampled) &&
+        sampled == std::array<float, 6>{.5f, .5f, .5f, .5f, .5f, .5f}, "invalid sky probe changed lighting output");
     for (size_t i = 0; i < generated_rays.size(); ++i)
     {
         const auto& ray = generated_rays[i];

@@ -44,7 +44,12 @@ inline bool sample_sky_probes(const framegraph::SkyProbeLayout& layout,
         if (index >= probes.size())
             return false;
         for (unsigned face = 0; face < result.size(); ++face)
-            result[face] += probes[index].faces[face] * weight;
+        {
+            const float visibility = probes[index].faces[face];
+            if (!(visibility >= 0.f && visibility <= 1.f))
+                return false;
+            result[face] += visibility * weight;
+        }
     }
     faces = result;
     return true;
