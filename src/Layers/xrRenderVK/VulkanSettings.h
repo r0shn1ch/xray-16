@@ -79,7 +79,7 @@ inline float rtgi_strength = 1.f;
 inline int rtgi_available = 0;
 // Requested G-buffer MSAA sample count (0 disables MSAA). This setting is
 // latched when the Vulkan game device is created.
-inline uint32_t gbuffer_msaa_samples = 0;
+inline uint32_t gbuffer_msaa_samples = 1;
 // Independent of desktop MSAA: off, FXAA, or temporal color resolve.
 inline uint32_t antialiasing = 1;
 // Scene reconstruction at presentation resolution: bilinear, cubic or temporal.
@@ -139,8 +139,8 @@ inline void apply_vulkan_launch_settings(const char *parameters)
         {
             char *end = nullptr;
             const long samples = std::strtol(value.c_str(), &end, 10);
-            if (end != value.c_str() && !*end && (samples == 0 || samples == 2 || samples == 4))
-                gbuffer_msaa_samples = static_cast<uint32_t>(samples);
+            if (end != value.c_str() && !*end && (samples == 0 || samples == 1 || samples == 2 || samples == 4))
+                gbuffer_msaa_samples = samples == 0 ? 1u : static_cast<uint32_t>(samples);
         }
         else if (token == "-vk-ambient-scale" || token == "-vk-hemi-scale" || token == "-vk-sun-scale")
         {

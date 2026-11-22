@@ -257,6 +257,7 @@ bool FrameContext::recreate(VkPhysicalDevice physical_device, VkSurfaceKHR surfa
 
 failed:
     destroy_swapchain_resources();
+    m_format = previous_format;
     return false;
 }
 

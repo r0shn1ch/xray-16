@@ -31,7 +31,19 @@ namespace
 {
 const xr_token quality_tokens[]{{"Minimum", 0}, {"Low", 1}, {"Default", 2}, {"High", 3}, {"Extreme", 4}, {nullptr, 0}};
 const xr_token aa_tokens[]{{"off", 0}, {"FXAA", 1}, {"TAA", 2}, {nullptr, 0}};
-const xr_token msaa_tokens[]{{"off", 0}, {"2x", 2}, {"4x", 4}, {nullptr, 0}};
+const xr_token msaa_tokens[]{{"1x", 1}, {"2x", 2}, {"4x", 4}, {nullptr, 0}};
+
+class VulkanMsaaOption final : public CCC_Token
+{
+public:
+    VulkanMsaaOption() : CCC_Token("r_vk_msaa", &gbuffer_msaa_samples, msaa_tokens) {}
+
+    void Execute(pcstr args) override
+    {
+        // Older user.ltx files saved the single-sample choice as "off".
+        CCC_Token::Execute(xr_stricmp(args, "off") == 0 ? "1x" : args);
+    }
+};
 const xr_token upscale_tokens[]{{"Bilinear", 0}, {"Cubic", 1}, {"Temporal", 2}, {"FSR 3.1", 3}, {nullptr, 0}};
 const xr_token render_scale_tokens[]{{"Auto", 0}, {"50%", 50}, {"67%", 67}, {"75%", 75},
     {"83%", 83}, {"100%", 100}, {nullptr, 0}};
@@ -738,7 +750,7 @@ void register_vulkan_options(VulkanLevelRender& renderer)
     Console->AddCommand(&particle_limit);
     static VulkanPreset preset(renderer);
     static CCC_Token aa("r_vk_aa", &antialiasing, aa_tokens);
-    static CCC_Token msaa("r_vk_msaa", &gbuffer_msaa_samples, msaa_tokens);
+    static VulkanMsaaOption msaa;
     static CCC_Token upscaler("r_vk_upscaler", &spatial_upscaler, upscale_tokens);
     static CCC_Token render_scale("r_vk_render_scale", &render_scale_percent, render_scale_tokens);
     static CCC_Token frame_generation_option("r_vk_frame_generation", &frame_generation,

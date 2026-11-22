@@ -2736,9 +2736,18 @@ bool VulkanGameDevice::initialize_gbuffer_targets(std::string& error)
     }
 
     const VkSampleCountFlagBits requested_scene_samples = msaa ? msaa->samples : VK_SAMPLE_COUNT_1_BIT;
+    const VkExtent2D presentation_extent = frame.presentation_extent();
     if (frame.scene_samples() != requested_scene_samples &&
-        !window_.recreate_frame(frame.presentation_extent(), requested_scene_samples, error))
-        return false;
+        !window_.recreate_frame(presentation_extent, requested_scene_samples, error))
+    {
+        if (gbuffer_msaa_configured_ || !msaa)
+            return false;
+        Msg("! [renderer-vulkan] %ux MSAA scene creation failed; retrying single-sample: %s",
+            gbuffer_msaa_samples, error.c_str());
+        msaa = nullptr;
+        if (!window_.recreate_frame(presentation_extent, VK_SAMPLE_COUNT_1_BIT, error))
+            return false;
+    }
 
     const FrameImageSharing sharing = frame_image_sharing(physical.graphics_present_family,
         physical.compute_queue_family);

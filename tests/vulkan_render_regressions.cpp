@@ -249,6 +249,14 @@ int main()
     assert(hemisphere_scale == 1 && detail_radius == 20);
     assert(texture_anisotropy == 16);
     apply_vulkan_launch_settings("-vk-anisotropy 3");
+    apply_vulkan_launch_settings("-vk-msaa 4");
+    assert(gbuffer_msaa_samples == 4);
+    apply_vulkan_launch_settings("-vk-msaa 2");
+    assert(gbuffer_msaa_samples == 2);
+    apply_vulkan_launch_settings("-vk-msaa 0");
+    assert(gbuffer_msaa_samples == 1);
+    apply_vulkan_launch_settings("-vk-msaa 4 -vk-msaa 1");
+    assert(gbuffer_msaa_samples == 1);
     assert(texture_anisotropy == 3);
     // Commands loaded from user.ltx can override the preset independently.
     detail_radius = 37;
