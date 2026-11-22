@@ -21,7 +21,7 @@ bool upload_gpu_particle_frame(VkCommandBuffer command, const GpuParticleBuffers
     for (const auto& program : programs.programs())
         if (program.materialID != GPU_PAPI_INVALID && program.materialID >= programs.programs().size())
         { error = "GPU particle material index exceeds the material table"; return false; }
-    const uint64_t emitters = buffers.get(B::Emitters).size() / sizeof(fg::GpuPapiEmitter);
+    const auto is_root = [&](uint32_t index) { return index % 2 == 0 && index / 2 < buffers.root_slots(); };
     size_t next = 0;
     std::unordered_set<uint32_t> command_roots;
     for (const auto& range : batch.ranges)
@@ -30,7 +30,7 @@ bool upload_gpu_particle_frame(VkCommandBuffer command, const GpuParticleBuffers
             range[1] > batch.commands.size() - range[0])
         { error = "invalid GPU particle command range"; return false; }
         const auto& first = batch.commands[range[0]];
-        if (first.emitter % 2 || first.emitter >= emitters || !command_roots.insert(first.emitter).second)
+        if (!is_root(first.emitter) || !command_roots.insert(first.emitter).second)
         { error = "invalid GPU particle command root"; return false; }
         uint32_t last_serial = 0;
         for (size_t i = range[0]; i < size_t(range[0]) + range[1]; ++i)
@@ -49,7 +49,7 @@ bool upload_gpu_particle_frame(VkCommandBuffer command, const GpuParticleBuffers
     if (next != batch.commands.size()) { error = "unreferenced GPU particle commands"; return false; }
     std::unordered_set<uint32_t> visible;
     for (uint32_t index : visible_roots)
-        if (index % 2 || index >= emitters || !visible.insert(index).second)
+        if (!is_root(index) || !visible.insert(index).second)
         { error = "invalid visible GPU particle root"; return false; }
     std::vector<uint8_t> collision_bytes;
     if (collision && !pack_gpu_particle_collision(*collision, buffers.get(B::Collision).size(), collision_bytes, error))

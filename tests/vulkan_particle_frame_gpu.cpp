@@ -686,6 +686,15 @@ int main(int argc, char** argv)
         require(!upload_gpu_particle_frame(cb, buffers, upload, programs, batch, {0, 0}, &collision,
             true, true, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT, inputs, error),
             "duplicate visible root accepted");
+        const uint32_t tail_child = capacity.roots * 2;
+        invalid_batch = batch;
+        invalid_batch.commands[0].emitter = tail_child;
+        require(!upload_gpu_particle_frame(cb, buffers, upload, programs, invalid_batch, visible_roots, &collision,
+            true, true, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT, inputs, error),
+            "command accepted for a child slot beyond the root range");
+        require(!upload_gpu_particle_frame(cb, buffers, upload, programs, batch, {tail_child}, &collision,
+            true, true, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT, inputs, error),
+            "child slot beyond the root range accepted as a visible root");
         require(upload_gpu_particle_frame(cb, buffers, upload, programs, batch, visible_roots, &collision,
             true, true, VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT, inputs, error,
             VK_NULL_HANDLE, 0, FrameSubmissionGraph::Queue::Compute,

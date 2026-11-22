@@ -37,6 +37,7 @@ public:
         VkDescriptorBufferInfo visibility, std::vector<VkDescriptorBufferInfo>& output, std::string& error) const;
     const BufferResource& get(Resource resource) const
     { return buffers_[resource] ? *buffers_[resource] : empty_buffers_[resource]; }
+    uint32_t root_slots() const { return root_slots_; }
 private:
     bool create_buffer(VkDeviceSize size, VkBufferUsageFlags usage, bool pooled_memory,
         std::unique_ptr<BufferResource>& owned, BufferResource*& result, std::string& error);
@@ -45,6 +46,7 @@ private:
     VkPhysicalDeviceMemoryProperties memory_{};
     BufferResourceDispatch dispatch_{};
     FrameBufferPool* pool_{};
+    uint32_t root_slots_{};
     std::array<BufferResource*, Count> buffers_{};
     std::array<std::unique_ptr<BufferResource>, Count> owned_buffers_{};
     std::array<BufferResource, Count> empty_buffers_{};

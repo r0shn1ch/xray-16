@@ -48,6 +48,7 @@ bool GpuParticleBuffers::initialize(VkDevice device, const VkPhysicalDeviceLimit
         buffers_[i] = buffer;
         owned_buffers_[i] = std::move(owned);
     }
+    root_slots_ = capacity.roots;
     error.clear(); return true;
 }
 
@@ -93,6 +94,7 @@ void GpuParticleBuffers::destroy()
         buffers_[i] = nullptr;
     }
     pool_ = nullptr;
+    root_slots_ = 0;
     device_ = VK_NULL_HANDLE;
     memory_ = {};
     dispatch_ = {};

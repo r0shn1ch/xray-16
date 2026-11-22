@@ -38,7 +38,8 @@ bool GpuParticleFrame::record(VkCommandBuffer command, GpuParticleCompute& compu
         !capacities.particleCapacity || !capacities.emitterCapacity || !capacities.programCount ||
         bucket_count > UINT32_MAX ||
         pending_roots > 65535 || visible_roots > 65535 ||
-        !capacities.rootCapacity || capacities.rootCapacity > capacities.emitterCapacity / 2 ||
+        !capacities.rootCapacity || capacities.rootCapacity != buffers.root_slots() ||
+        capacities.rootCapacity > capacities.emitterCapacity / 2 ||
         pending_roots > capacities.rootCapacity || visible_roots > capacities.rootCapacity ||
         !fits(B::Particles, uint64_t(capacities.particleCapacity) * sizeof(fg::GpuPapiParticle)) ||
         !fits(B::Emitters, uint64_t(capacities.emitterCapacity) * sizeof(fg::GpuPapiEmitter)) ||
