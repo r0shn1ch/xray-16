@@ -285,8 +285,19 @@ void Fsr3Upscaler::set_frame(uint64_t frame_id, float delta_ms, float camera_nea
     upscale_recorded_ = false;
     frame_id_ = frame_id;
     delta_ms_ = std::isfinite(delta_ms) ? std::clamp(delta_ms, 0.1f, 1000.f) : 16.67f;
-    camera_near_ = std::isfinite(camera_near) && camera_near > 0.f ? camera_near : .1f;
-    camera_far_ = std::isfinite(camera_far) && camera_far > camera_near_ ? camera_far : 500.f;
+    // Both FSR dispatches require an ordered pair of finite clip planes.
+    if (std::isfinite(camera_near) && std::isfinite(camera_far) &&
+        camera_near > 0.f && camera_far > camera_near)
+    {
+        camera_near_ = camera_near;
+        camera_far_ = camera_far;
+    }
+    else
+    {
+        camera_near_ = .1f;
+        camera_far_ = 500.f;
+        reset_history();
+    }
     camera_fov_vertical_ = std::isfinite(camera_fov_vertical) && camera_fov_vertical > 0.f &&
         camera_fov_vertical < 3.13f ? camera_fov_vertical : 1.04719755f;
 #if defined(XRAY_HAS_FSR3_ANDROID)
