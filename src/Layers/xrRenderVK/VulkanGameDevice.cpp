@@ -2704,38 +2704,34 @@ void VulkanGameDevice::release_ray_frames()
     ray_frames_.destroy();
 }
 
-bool VulkanGameDevice::initialize_gbuffer_targets(std::string& error)
+GBufferMsaaConfig VulkanGameDevice::negotiate_requested_msaa()
+{
+    if (gbuffer_msaa_samples != 2 && gbuffer_msaa_samples != 4)
+        return {};
+    const auto& physical = window_.physical();
+    const auto& frame = window_.frame();
+    GBufferMsaaConfig negotiated{};
+    std::string error;
+    const auto requested = gbuffer_msaa_samples == 4 ? VK_SAMPLE_COUNT_4_BIT : VK_SAMPLE_COUNT_2_BIT;
+    if (window_.gbuffer_msaa_resolve_available() &&
+        negotiate_gbuffer_msaa(physical.handle, physical.properties, VK_FORMAT_R8G8B8A8_UNORM,
+            frame.depth_format(), requested, window_.image_format_properties(),
+            window_.depth_stencil_resolve_properties(), window_.create_render_pass2(), negotiated, error,
+            frame.scene_format()))
+        return negotiated;
+    Msg("! [renderer-vulkan] requested %ux G-buffer MSAA unavailable; using single-sample rendering: %s",
+        gbuffer_msaa_samples, error.empty() ? "render-pass depth resolve unsupported" : error.c_str());
+    return {};
+}
+
+bool VulkanGameDevice::initialize_gbuffer_targets(std::string& error, const GBufferMsaaConfig* preselected)
 {
     gbuffer_msaa_request_ = gbuffer_msaa_samples;
     const auto& physical = window_.physical();
     auto& frame = window_.frame();
-    GBufferMsaaConfig negotiated{};
-    const GBufferMsaaConfig* msaa = nullptr;
-    if (gbuffer_msaa_configured_)
-    {
-        if (gbuffer_msaa_config_.samples != VK_SAMPLE_COUNT_1_BIT)
-            msaa = &gbuffer_msaa_config_;
-    }
-    else if (gbuffer_msaa_samples == 2 || gbuffer_msaa_samples == 4)
-    {
-        const VkSampleCountFlagBits requested = gbuffer_msaa_samples == 4 ?
-            VK_SAMPLE_COUNT_4_BIT : VK_SAMPLE_COUNT_2_BIT;
-        if (window_.gbuffer_msaa_resolve_available() &&
-            negotiate_gbuffer_msaa(physical.handle, physical.properties, VK_FORMAT_R8G8B8A8_UNORM,
-                frame.depth_format(), requested, window_.image_format_properties(),
-                window_.depth_stencil_resolve_properties(), window_.create_render_pass2(), negotiated, error,
-                frame.scene_format()))
-        {
-            msaa = &negotiated;
-        }
-        else
-        {
-            Msg("! [renderer-vulkan] requested %ux G-buffer MSAA unavailable; using single-sample rendering: %s",
-                gbuffer_msaa_samples, error.empty() ? "render-pass depth resolve unsupported" : error.c_str());
-            error.clear();
-        }
-    }
-
+    const auto negotiated = gbuffer_msaa_configured_ ? gbuffer_msaa_config_ :
+        preselected ? *preselected : negotiate_requested_msaa();
+    const auto* msaa = negotiated.samples != VK_SAMPLE_COUNT_1_BIT ? &negotiated : nullptr;
     const VkSampleCountFlagBits requested_scene_samples = msaa ? msaa->samples : VK_SAMPLE_COUNT_1_BIT;
     const VkExtent2D presentation_extent = frame.presentation_extent();
     if (frame.scene_samples() != requested_scene_samples &&
@@ -2772,9 +2768,6 @@ bool VulkanGameDevice::initialize_gbuffer_targets(std::string& error)
             return false;
         if (!initialize(nullptr))
             return false;
-        negotiated = {};
-        gbuffer_msaa_config_ = {};
-        gbuffer_msaa_configured_ = true;
     }
     if (!gbuffer_msaa_configured_)
     {
@@ -2806,6 +2799,10 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
     smoke_draw_.reset();
     trail_draw_.reset();
     const bool replace_surface = recreate_surface || window_.frame().surface_lost();
+    // The existing frame supplies the attachment formats for a same-surface reset.
+    // A replacement surface is negotiated after SDL has created it.
+    const bool preselect_msaa = !replace_surface && !gbuffer_msaa_configured_;
+    auto selected_msaa = preselect_msaa ? negotiate_requested_msaa() : GBufferMsaaConfig{};
     release_visibility_gbuffer();
     for (auto& target : visibility_targets_)
         release_visibility_targets(target);
@@ -2853,17 +2850,28 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
     if (!android_presentation_extent(scaled_android_window_, extent, error))
         return false;
     const VkExtent2D scene_extent = scaled_scene_extent(extent, spatial_upscaler, render_scale_percent);
-    if (!(replace_surface ? window_.recreate_surface(extent, scene_extent, error) :
-            window_.recreate_frame(extent, scene_extent, error)))
-        return false;
+    const auto recreate = [&] { return replace_surface ? window_.recreate_surface(extent, scene_extent, error) :
+        window_.recreate_frame(extent, scene_extent, error); };
 #else
-    if (!(replace_surface ? window_.recreate_surface(extent, error) : window_.recreate_frame(extent, error)))
-        return false;
+    const auto recreate = [&] { return replace_surface ? window_.recreate_surface(extent, error) :
+        window_.recreate_frame(extent, error); };
 #endif
+    if (preselect_msaa && !window_.frame().request_scene_samples(selected_msaa.samples, error))
+        return false;
+    if (!recreate())
+    {
+        if (!preselect_msaa || selected_msaa.samples == VK_SAMPLE_COUNT_1_BIT)
+            return false;
+        Msg("! [renderer-vulkan] %ux MSAA scene creation failed; retrying single-sample: %s",
+            gbuffer_msaa_samples, error.c_str());
+        selected_msaa = {};
+        if (!window_.frame().request_scene_samples(selected_msaa.samples, error) || !recreate())
+            return false;
+    }
 
     auto &frame = window_.frame();
     const auto &physical = window_.physical();
-    if (!initialize_gbuffer_targets(error))
+    if (!initialize_gbuffer_targets(error, preselect_msaa ? &selected_msaa : nullptr))
         return false;
     frame.set_frame_generation_ui(Fsr3Upscaler::frame_generation_ui_active_callback,
         Fsr3Upscaler::register_frame_generation_ui_callback, &fsr3_upscaler_);

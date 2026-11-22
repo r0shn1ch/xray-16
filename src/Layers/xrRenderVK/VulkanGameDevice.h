@@ -253,7 +253,8 @@ class VulkanGameDevice
     bool refresh_color_maps(std::string &error);
     bool update_rain_shadow_resolution(std::string &error);
     bool create_forward_targets(std::string &error);
-    bool initialize_gbuffer_targets(std::string &error);
+    GBufferMsaaConfig negotiate_requested_msaa();
+    bool initialize_gbuffer_targets(std::string& error, const GBufferMsaaConfig* preselected = nullptr);
     void release_forward_targets();
     struct LevelDraw
     {
