@@ -81,6 +81,7 @@ private:
         const FrameSwapchainCreateContext& context, FrameDispatch& dispatch,
         VkSwapchainKHR& swapchain, std::string& error);
     void destroy_context();
+    void configure_frame_generation(bool enabled);
 #endif
 
     VkInstance instance_{};

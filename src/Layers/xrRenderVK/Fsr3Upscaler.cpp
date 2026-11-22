@@ -287,32 +287,36 @@ void Fsr3Upscaler::set_frame(uint64_t frame_id, float delta_ms, float camera_nea
         camera_fov_vertical < 3.13f ? camera_fov_vertical : 1.04719755f;
 #if defined(XRAY_HAS_FSR3_ANDROID)
     if (frame_generation_context_ && frame_interpolation_swapchain_)
-    {
-        FfxFrameGenerationConfig config{};
-        config.swapChain = ffxGetSwapchainVK(frame_interpolation_swapchain_);
-        config.frameGenerationCallback = [](const FfxFrameGenerationDispatchDescription* desc, void*)
-        {
-            return ffxFsr3DispatchFrameGeneration(desc);
-        };
-        config.frameGenerationEnabled = active_ && frame_generation_requested_ && history_valid_;
-        config.allowAsyncWorkloads = false;
-        config.onlyPresentInterpolated = false;
-        config.interpolationRect = {0, 0, static_cast<int32_t>(display_extent_.width),
-            static_cast<int32_t>(display_extent_.height)};
-        config.frameID = frame_id_;
-        const FfxErrorCode result = ffxFsr3ConfigureFrameGeneration(&context_, &config);
-        frame_generation_frame_enabled_ = result == FFX_OK && config.frameGenerationEnabled;
-        frame_generation_config_valid_ = result == FFX_OK;
-        if (result != FFX_OK)
-        {
-            Msg("! [renderer-vulkan][FSR3] frame-generation configuration failed with code %d",
-                static_cast<int>(result));
-            config.frameGenerationEnabled = false;
-            frame_generation_config_valid_ = ffxFsr3ConfigureFrameGeneration(&context_, &config) == FFX_OK;
-        }
-    }
+        configure_frame_generation(active_ && frame_generation_requested_ && history_valid_);
 #endif
 }
+
+#if defined(XRAY_HAS_FSR3_ANDROID)
+void Fsr3Upscaler::configure_frame_generation(bool enabled)
+{
+    FfxFrameGenerationConfig config{};
+    config.swapChain = ffxGetSwapchainVK(frame_interpolation_swapchain_);
+    config.frameGenerationCallback = [](const FfxFrameGenerationDispatchDescription* desc, void*)
+    {
+        return ffxFsr3DispatchFrameGeneration(desc);
+    };
+    config.frameGenerationEnabled = enabled;
+    config.allowAsyncWorkloads = false;
+    config.onlyPresentInterpolated = false;
+    config.interpolationRect = {0, 0, static_cast<int32_t>(display_extent_.width),
+        static_cast<int32_t>(display_extent_.height)};
+    config.frameID = frame_id_;
+    const FfxErrorCode result = ffxFsr3ConfigureFrameGeneration(&context_, &config);
+    frame_generation_frame_enabled_ = result == FFX_OK && config.frameGenerationEnabled;
+    frame_generation_config_valid_ = result == FFX_OK;
+    if (result != FFX_OK)
+    {
+        Msg("! [renderer-vulkan][FSR3] frame-generation configuration failed with code %d",
+            static_cast<int>(result));
+        if (enabled) configure_frame_generation(false);
+    }
+}
+#endif
 
 bool Fsr3Upscaler::jitter_offset(uint32_t sample, float& x, float& y) const
 {
@@ -505,6 +509,7 @@ bool Fsr3Upscaler::record(const FrameRecordingContext& frame, std::string& error
         error = "ffxFsr3ContextDispatchUpscale failed with code " +
             std::to_string(static_cast<int>(result));
         history_valid_ = false;
+        if (frame_generation_frame_enabled_) configure_frame_generation(false);
         return false;
     }
     if (frame_generation_frame_enabled_)
@@ -526,10 +531,15 @@ bool Fsr3Upscaler::record(const FrameRecordingContext& frame, std::string& error
             ffxFsr3ContextDispatchFrameGenerationPrepare(&context_, &prepare);
         if (prepare_result != FFX_OK)
         {
-            error = "ffxFsr3ContextDispatchFrameGenerationPrepare failed with code " +
-                std::to_string(static_cast<int>(prepare_result));
+            Msg("! [renderer-vulkan][FSR3] frame-generation prepare failed with code %d",
+                static_cast<int>(prepare_result));
             history_valid_ = false;
-            return false;
+            configure_frame_generation(false);
+            if (!frame_generation_config_valid_)
+            {
+                error = "FSR could not disable interpolation after frame-generation prepare failed";
+                return false;
+            }
         }
     }
     error.clear();
