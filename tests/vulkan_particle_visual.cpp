@@ -94,7 +94,9 @@ int main()
     xadd.particle_screen_set = particle_uses_screen_program("particles\\xadd", "S_SET   ");
     assert(build_render_pass_graph(xadd, graph, error));
     assert(graph.passes[0].fragment == "vk\\particle_world_additive.ps");
+    xrDebug::Initialize(nullptr);
     Core.Initialize("vulkan_particle_visual_test", nullptr, false);
+    SetLogCB({ [](void*, const char* line) { std::fprintf(stderr, "%s\n", line); }, nullptr });
     {
     uint32_t bucket{};
     assert(gpu_particle_draw_bucket(1, 2, 1, 2, 0, 0, true, bucket) && bucket == 90);
@@ -231,6 +233,26 @@ int main()
     assert(emitter_commands.acknowledge(emitter_status, program_error) && emitter_manager.apply(emitter_status, program_error) &&
         emitter_manager.snapshot(emitter_handle, read_status));
     {
+        GpuParticleCommands drain_commands(1);
+        GpuParticleEmitters drain_emitters(programs, drain_commands, 1);
+        GpuParticleEmitters::Handle root{};
+        assert(drain_emitters.create(translated_def, root, program_error));
+        assert(drain_emitters.play(root, program_error));
+        assert(drain_emitters.stop(root, true, program_error));
+        assert(drain_emitters.draining(root));
+        auto statuses = emitter_status;
+        statuses[0].serial = 2;
+        assert(drain_emitters.apply(statuses, program_error) && drain_emitters.draining(root));
+        statuses[0].serial = 3;
+        statuses[0].count = 1;
+        assert(drain_emitters.apply(statuses, program_error) && drain_emitters.draining(root));
+        statuses[0].count = 0;
+        assert(drain_emitters.apply(statuses, program_error) && !drain_emitters.draining(root));
+        assert(drain_emitters.play(root, program_error) && drain_emitters.draining(root));
+        drain_emitters.disable();
+        assert(!drain_emitters.draining(root));
+    }
+    {
         GpuParticleCommands draw_commands(1);
         GpuParticleEmitters draw_emitters(programs, draw_commands, 1);
         GpuParticleEmitters::Handle root{};
@@ -311,6 +333,11 @@ int main()
         assert(instance.effects()[0]->IsPlaying() && !instance.effects()[1]->IsPlaying());
         assert(instance.triggered_count() == 0 && instance.related_count(0) == 0);
         instance.OnFrame(80);
+        assert(instance.effects()[0]->IsPlaying());
+        std::vector<xray::render::fg::GpuPapiStatus> group_status(4);
+        assert(group_gpu_commands.state(0, group_status[0].generation, group_status[0].serial));
+        assert(group_gpu_emitters.apply(group_status, program_error));
+        instance.OnFrame(0);
         assert(!instance.effects()[0]->IsPlaying());
         instance.OnFrame(100);
         assert(instance.effects()[1]->IsPlaying());

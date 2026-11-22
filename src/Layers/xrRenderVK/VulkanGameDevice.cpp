@@ -250,14 +250,14 @@ bool VulkanGameDevice::record_gpu_particles(const FrameRecordingContext& frame, 
     if (needs_collision && !owner.gpu_collision_.update(collision_changed, error))
     {
         Msg("! [renderer-vulkan] GPU particle level collision unavailable: %s", error.c_str());
-        owner.gpu_particle_failed_ = true; error.clear(); return true;
+        owner.disable_gpu_particles(); error.clear(); return true;
     }
     if (collision_changed) owner.gpu_collision_uploaded_ = false;
     bool dynamic_changed = false;
     if (!owner.gpu_collision_.update_dynamic(needs_dynamic, dynamic_changed, error))
     {
         Msg("! [renderer-vulkan] GPU particle object collision unavailable: %s", error.c_str());
-        owner.gpu_particle_failed_ = true; error.clear(); return true;
+        owner.disable_gpu_particles(); error.clear(); return true;
     }
     if (dynamic_changed) owner.gpu_collision_uploaded_ = false;
     const GpuParticleCollisionInput empty_collision{};
@@ -272,7 +272,7 @@ bool VulkanGameDevice::record_gpu_particles(const FrameRecordingContext& frame, 
     if (resize_collision || resize_draw)
     {
         if (!owner.window_.frame().wait_idle())
-        { error = "GPU particle collision resize could not wait for the device"; owner.gpu_particle_failed_ = true; return false; }
+        { error = "GPU particle collision resize could not wait for the device"; owner.disable_gpu_particles(); return false; }
         for (uint32_t i = 0; i < owner.gpu_particle_pending_.size(); ++i)
             gpu_particles_completed(i, 0, &owner, error);
         if (owner.gpu_particle_failed_) { error.clear(); return true; }
@@ -283,7 +283,7 @@ bool VulkanGameDevice::record_gpu_particles(const FrameRecordingContext& frame, 
                 physical.memory, owner.buffer_upload_.buffer, static_cast<uint32_t>(visible.size()), error)))
         {
             Msg("! [renderer-vulkan] GPU particle collision resize: %s", error.c_str());
-            owner.gpu_particle_failed_ = true; error.clear(); return true;
+            owner.disable_gpu_particles(); error.clear(); return true;
         }
         if (resize_collision) owner.gpu_collision_uploaded_ = false;
     }
@@ -300,7 +300,7 @@ bool VulkanGameDevice::record_gpu_particles(const FrameRecordingContext& frame, 
             frame.request_submission_command_buffer))
     {
         Msg("! [renderer-vulkan] GPU particle simulation disabled: %s", error.c_str());
-        owner.gpu_particle_failed_ = true; error.clear(); return true;
+        owner.disable_gpu_particles(); error.clear(); return true;
     }
     if (owner.gpu_particle_graphics_ && !owner.gpu_particle_graphics_failed_ &&
         !owner.gpu_particle_graphics_->begin_frame(frame.frame_index, error))
@@ -338,10 +338,17 @@ void VulkanGameDevice::gpu_particles_submitted(uint32_t slot, uint32_t, void* us
         owner.gpu_particle_pending_[slot] = true;
         if (owner.gpu_collision_recorded_[slot]) owner.gpu_collision_uploaded_ = true;
     }
-    else { owner.gpu_particle_failed_ = true; Msg("! [renderer-vulkan] GPU particle submission: %s", error.c_str()); }
+    else { owner.disable_gpu_particles(); Msg("! [renderer-vulkan] GPU particle submission: %s", error.c_str()); }
     owner.gpu_particle_recorded_[slot] = false;
     owner.gpu_collision_recorded_[slot] = false;
 }
+void VulkanGameDevice::disable_gpu_particles()
+{
+    gpu_particle_failed_ = true;
+    if (gpu_particle_emitters_)
+        gpu_particle_emitters_->disable();
+}
+
 bool VulkanGameDevice::gpu_particles_completed(uint32_t slot, uint32_t, void* user, std::string& error)
 {
     auto& owner = *static_cast<VulkanGameDevice*>(user);
@@ -364,7 +371,7 @@ bool VulkanGameDevice::gpu_particles_completed(uint32_t slot, uint32_t, void* us
         !owner.gpu_particle_emitters_->apply(result.statuses, error))
     {
         Msg("! [renderer-vulkan] GPU particle readback disabled: %s", error.c_str());
-        owner.gpu_particle_failed_ = true; error.clear();
+        owner.disable_gpu_particles(); error.clear();
     }
     else if (result.errors)
         Msg("! [renderer-vulkan] GPU particle simulation flags=0x%x", result.errors);
@@ -1945,7 +1952,7 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         !gpu_particle_materials_.sync(gpu_particles_->programs(), *gpu_particle_catalog_, textures_, deferred_, error))
     {
         Msg("! [renderer-vulkan] GPU particle materials unavailable: %s", error.c_str());
-        gpu_particle_failed_ = true;
+        disable_gpu_particles();
         error.clear();
     }
     if (trail_enabled_ && !trail_failed_ && !trail_texture_ && pSettings)

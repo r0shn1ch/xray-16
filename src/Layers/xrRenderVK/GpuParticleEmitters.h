@@ -27,6 +27,8 @@ public:
     bool children(Handle handle, uint32_t birth, uint32_t play, uint32_t death, uint32_t flags, std::string& error);
     bool apply(const std::vector<fg::GpuPapiStatus>& statuses, std::string& error);
     bool snapshot(Handle handle, fg::GpuPapiStatus& status) const;
+    bool draining(Handle handle) const;
+    void disable() { enabled_ = false; }
     bool visible_index(Handle handle, uint32_t& index) const;
     // Includes children still alive after reconfiguration. Valid until destroy/reuse.
     const std::vector<uint32_t>* draw_programs(Handle handle) const;
@@ -38,5 +40,6 @@ private:
     bool enqueue(Handle handle, fg::GpuPapiCommand command, bool lifecycle, std::string& error);
     GpuParticlePrograms& programs_; GpuParticleCommands& commands_;
     std::vector<Root> roots_;
+    bool enabled_{true};
 };
 }

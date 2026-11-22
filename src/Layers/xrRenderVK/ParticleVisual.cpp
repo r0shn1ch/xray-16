@@ -492,7 +492,11 @@ void VulkanParticleEffect::OnFrame(u32 dt)
     PAPI::Particle* particles = nullptr;
     u32 count = 0;
     PAPI::ParticleManager()->GetParticles(effect_, particles, count);
-    if (deferred_ && count == 0) { deferred_ = false; playing_ = false; }
+    if (deferred_ && count == 0 && (!gpu_emitters_ || !gpu_emitters_->draining(gpu_emitter_)))
+    {
+        deferred_ = false;
+        playing_ = false;
+    }
     if (!count || !particles) { bounds(visibility_, initial_position_); return; }
     visibility_.box.invalidate();
     float radius = 0.f;

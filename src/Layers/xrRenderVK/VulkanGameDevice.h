@@ -322,6 +322,7 @@ class VulkanGameDevice
     std::array<bool, FrameContext::FramesInFlight> gpu_collision_recorded_{};
     GpuParticleLevelCollision gpu_collision_;
     bool gpu_collision_uploaded_{};
+    void disable_gpu_particles();
     bool gpu_particle_failed_{};
     static bool record_gpu_particles(const FrameRecordingContext& frame, void* user, std::string& error);
     static bool record_pre_geometry(const FrameRecordingContext& frame, void* user, std::string& error);

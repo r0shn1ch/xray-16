@@ -10,7 +10,7 @@ GpuParticleEmitters::GpuParticleEmitters(GpuParticlePrograms& programs, GpuParti
 const GpuParticleEmitters::Root* GpuParticleEmitters::find(Handle handle) const
 {
     const uint32_t low = static_cast<uint32_t>(handle), generation = static_cast<uint32_t>(handle >> 32);
-    if (!low || low - 1 >= roots_.size()) return nullptr;
+    if (!enabled_ || !low || low - 1 >= roots_.size()) return nullptr;
     const auto& root = roots_[low - 1];
     return root.live && root.generation == generation ? &root : nullptr;
 }
@@ -18,6 +18,8 @@ GpuParticleEmitters::Root* GpuParticleEmitters::find(Handle handle)
 { return const_cast<Root*>(static_cast<const GpuParticleEmitters*>(this)->find(handle)); }
 bool GpuParticleEmitters::create(const ParticleEffectDef& definition, Handle& handle, std::string& error)
 {
+    if (!enabled_)
+    { error = "GPU particle simulation is disabled"; return false; }
     size_t index = 0;
     while (index < roots_.size() && (roots_[index].live || roots_[index].retiring)) ++index;
     if (index >= roots_.size() || index >= UINT32_MAX)
@@ -115,6 +117,14 @@ bool GpuParticleEmitters::snapshot(Handle handle, fg::GpuPapiStatus& status) con
     const auto* root = find(handle);
     if (!root || !root->has_snapshot || root->snapshot.serial < root->lifecycle_serial) return false;
     status = root->snapshot; return true;
+}
+bool GpuParticleEmitters::draining(Handle handle) const
+{
+    const auto* root = find(handle);
+    if (!root)
+        return false;
+    fg::GpuPapiStatus status{};
+    return !snapshot(handle, status) || status.playing || status.count;
 }
 bool GpuParticleEmitters::visible_index(Handle handle, uint32_t& index) const
 {
