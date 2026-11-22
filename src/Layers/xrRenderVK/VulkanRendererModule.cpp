@@ -429,10 +429,12 @@ public:
                     ImGui::SameLine();
                     if (ImGui::Button("Remove effect from draft"))
                     {
+                        const auto name = catalog_.effects[selected_].name;
                         auto candidate = library_;
-                        if (remove_particle_effect(candidate, catalog_.effects[selected_].name, message_) &&
+                        if (remove_particle_effect(candidate, name, message_) &&
                             load_draft(candidate))
                         {
+                            removed_effect_ = name;
                             dirty_ = true;
                             message_ = "Effect removed from draft";
                         }
@@ -468,14 +470,23 @@ private:
 
     void discard_draft()
     {
-        const std::string effect_name = selected_ < catalog_.effects.size() ? catalog_.effects[selected_].name : "";
         const std::string group_name = selected_group_ < catalog_.groups.size() ? catalog_.groups[selected_group_].name : "";
+        const std::string effect_name = selected_ < catalog_.effects.size() ? catalog_.effects[selected_].name :
+            group_name.empty() ? removed_effect_ : "";
         if (!load_draft(saved_library_))
             return;
         if (const auto* effect = effect_name.empty() ? nullptr : catalog_.effect(effect_name))
+        {
             select_effect(static_cast<size_t>(effect - catalog_.effects.data()));
+            if (!filter_.PassFilter(effect->name.c_str()))
+                filter_.Clear();
+        }
         else if (const auto* group = group_name.empty() ? nullptr : catalog_.group(group_name))
+        {
             select_group(static_cast<size_t>(group - catalog_.groups.data()));
+            if (!filter_.PassFilter(group->name.c_str()))
+                filter_.Clear();
+        }
         message_ = "Draft restored";
     }
 
@@ -818,6 +829,7 @@ private:
         catalog_ = std::move(catalog);
         selected_ = SIZE_MAX;
         selected_group_ = SIZE_MAX;
+        removed_effect_.clear();
         group_item_ = SIZE_MAX;
         adding_group_item_ = false;
         preview_.reset();
@@ -829,6 +841,7 @@ private:
     std::vector<uint8_t> library_;
     std::vector<uint8_t> saved_library_;
     std::string saved_copy_name_;
+    std::string removed_effect_;
     ParticleCatalog catalog_;
     std::string message_;
     std::string gpu_compatibility_;
