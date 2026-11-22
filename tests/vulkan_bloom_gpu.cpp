@@ -383,6 +383,7 @@ int main(int argc, char** argv) try
     check(vkMapMemory(vk.device, depth_upload_memory, 0, scene_bytes, 0, &mapped));
     std::memcpy(mapped, depth_pixels.data(), scene_bytes);
     vkUnmapMemory(vk.device, depth_upload_memory);
+    depth_pixels.fill(.99995f);
     for (unsigned y = 0; y < 2; ++y)
         for (unsigned x = 0; x < 4; ++x)
             depth_pixels[y * 8 + x] = 1.f;

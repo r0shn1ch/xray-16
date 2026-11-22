@@ -34,7 +34,10 @@ void main()
         if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0))))
         {
             float weight = t * t;
-            float sky = smoothstep(0.999, 0.9999, texture(depth_image, uv).r);
+            ivec2 pixel = min(ivec2(uv * size), ivec2(size) - 1);
+            // The depth attachment is cleared to 1. Far geometry can be very
+            // close to that value and must still occlude the sky.
+            float sky = texelFetch(depth_image, pixel, 0).r >= 1.0 ? 1.0 : 0.0;
             visibility += sky * weight;
             weight_sum += weight;
         }
