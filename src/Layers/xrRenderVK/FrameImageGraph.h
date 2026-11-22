@@ -221,6 +221,8 @@ public:
         bool semaphore_handoff = false) const;
 
 private:
+    bool materialize_buffers(const AllocateBuffer& allocate, const ResourceLifetimes& lifetimes, std::string& error);
+    bool materialize_images(const AllocateImage& allocate, const ResourceLifetimes& lifetimes, std::string& error);
     using Version = framegraph::ResourceVersion;
     struct Image
     {

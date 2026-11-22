@@ -226,6 +226,12 @@ bool FrameImageGraph::materialize_buffers(const AllocateBuffer& allocate, std::s
     ResourceLifetimes lifetimes;
     if (!compile_resource_lifetimes(lifetimes, error))
         return false;
+    return materialize_buffers(allocate, lifetimes, error);
+}
+
+bool FrameImageGraph::materialize_buffers(const AllocateBuffer& allocate,
+    const ResourceLifetimes& lifetimes, std::string& error)
+{
     std::vector<std::pair<size_t, TransientBuffer>> allocations;
     std::set<VkBuffer> handles;
     for (const auto& buffer : m_buffers)
@@ -590,6 +596,12 @@ bool FrameImageGraph::materialize_images(const AllocateImage& allocate, std::str
     ResourceLifetimes lifetimes;
     if (!compile_resource_lifetimes(lifetimes, error))
         return false;
+    return materialize_images(allocate, lifetimes, error);
+}
+
+bool FrameImageGraph::materialize_images(const AllocateImage& allocate,
+    const ResourceLifetimes& lifetimes, std::string& error)
+{
     std::vector<std::pair<size_t, TransientImage>> allocations;
     std::set<VkImage> handles;
     for (const auto& image : m_images)
@@ -638,11 +650,14 @@ VkImage FrameImageGraph::image_handle(Resource resource) const
 bool FrameImageGraph::materialize_resources(const AllocateBuffer& allocate_buffer,
     const AllocateImage& allocate_image, std::string& error)
 {
+    ResourceLifetimes lifetimes;
+    if (!compile_resource_lifetimes(lifetimes, error))
+        return false;
     std::vector<size_t> unbound_buffers;
     for (size_t index = 0; index < m_buffers.size(); ++index)
         if (!m_buffers[index].buffer) unbound_buffers.push_back(index);
-    if (!materialize_buffers(allocate_buffer, error)) return false;
-    if (materialize_images(allocate_image, error)) return true;
+    if (!materialize_buffers(allocate_buffer, lifetimes, error)) return false;
+    if (materialize_images(allocate_image, lifetimes, error)) return true;
 
     for (size_t index : unbound_buffers)
     {
