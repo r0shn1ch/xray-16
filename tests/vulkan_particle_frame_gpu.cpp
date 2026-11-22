@@ -820,7 +820,9 @@ int main(int argc, char** argv)
                 vkGetImageMemoryRequirements, vkAllocateMemory, vkFreeMemory, vkBindImageMemory}), "transient image pool");
             FrameImageGraph graph;
             FrameImageGraph::BufferResource transient, written, unused;
-            require(graph.declare_buffer(64, VK_BUFFER_USAGE_TRANSFER_DST_BIT, transient, error) &&
+            const FrameImageGraph::BufferDescription readback_description{64, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, false};
+            require(graph.declare_buffer(readback_description, transient, error) &&
                 graph.declare_buffer(128, VK_BUFFER_USAGE_TRANSFER_DST_BIT, unused, error), error);
             VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
             image_info.imageType = VK_IMAGE_TYPE_2D;
@@ -858,19 +860,9 @@ int main(int argc, char** argv)
                 });
                 return true;
             }, error), error);
-            BufferResource* physical = nullptr;
-            require(graph.materialize_buffers([&](VkDeviceSize size, VkBufferUsageFlags usage,
-                FrameImageGraph::TransientBuffer& output, std::string& failure) {
-                if (!buffer_pool.acquire(size, usage, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, false, physical, failure))
-                    return false;
-                output.handle = physical->handle();
-                output.owner = std::shared_ptr<void>(physical, [&buffer_pool](void* buffer) {
-                    buffer_pool.release(static_cast<BufferResource*>(buffer));
-                });
-                return true;
-            }, error), error);
-            require(physical && !graph.buffer_handle(unused), "unused transient buffer was allocated");
+            require(graph.materialize_buffers(buffer_pool, error), error);
+            const VkBuffer materialized = graph.buffer_handle(written);
+            require(materialized && !graph.buffer_handle(unused), "unexpected transient buffer allocation");
             VkCommandBuffer transient_command{};
             require(vkAllocateCommandBuffers(f.device, &ai, &transient_command) == VK_SUCCESS &&
                 vkBeginCommandBuffer(transient_command, &begin) == VK_SUCCESS, "transient buffer begin");
@@ -889,11 +881,16 @@ int main(int argc, char** argv)
             transient_submit.pCommandBuffers = &transient_command;
             require(vkQueueSubmit(queue, 1, &transient_submit, VK_NULL_HANDLE) == VK_SUCCESS &&
                 vkQueueWaitIdle(queue) == VK_SUCCESS, "transient buffer submit");
-            uint32_t result{};
-            require(physical->read(0, &result, sizeof(result), error) && result == 0xff0000ffu, "transient image result");
             vkFreeCommandBuffers(f.device, f.pool, 1, &transient_command);
             retirement.complete(1);
             require(retirement.size() == 0, "transient buffer retirement");
+            BufferResource* physical = nullptr;
+            require(buffer_pool.acquire(readback_description.size, readback_description.usage,
+                readback_description.memory_properties, readback_description.pooled_memory, physical, error), error);
+            uint32_t result{};
+            require(physical->handle() == materialized &&
+                physical->read(0, &result, sizeof(result), error) && result == 0xff0000ffu, "transient image result");
+            require(buffer_pool.release(physical), "release transient readback buffer");
         }
         FrameSubmissionGraph runtime_submission_graph;
         const auto runtime_continuation = runtime_submission_graph.add_pass(

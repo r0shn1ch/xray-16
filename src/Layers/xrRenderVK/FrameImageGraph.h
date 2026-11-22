@@ -14,6 +14,7 @@
 
 namespace xray::render::vulkan
 {
+class FrameBufferPool;
 enum class BufferUse
 {
     Undefined, HostWrite, HostRead, TransferSource, TransferDestination,
@@ -118,11 +119,24 @@ public:
         std::vector<uint32_t> queue_families;
         std::shared_ptr<void> owner;
     };
-    using AllocateBuffer = std::function<bool(VkDeviceSize, VkBufferUsageFlags,
+    struct BufferDescription
+    {
+        VkDeviceSize size{};
+        VkBufferUsageFlags usage{};
+        VkMemoryPropertyFlags memory_properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+        bool pooled_memory = true;
+        VkQueueFlags shared_queue_flags{};
+    };
+    using AllocateBuffer = std::function<bool(const BufferDescription&,
         TransientBuffer&, std::string&)>;
+    bool declare_buffer(const BufferDescription& description, BufferResource& resource, std::string& error);
     bool declare_buffer(VkDeviceSize size, VkBufferUsageFlags usage,
-        BufferResource& resource, std::string& error);
+        BufferResource& resource, std::string& error)
+    {
+        return declare_buffer({size, usage}, resource, error);
+    }
     bool materialize_buffers(const AllocateBuffer& allocate, std::string& error);
+    bool materialize_buffers(FrameBufferPool& pool, std::string& error);
     VkBuffer buffer_handle(BufferResource resource) const;
     struct TransientImage
     {
@@ -234,7 +248,7 @@ private:
         VkSharingMode sharing_mode = VK_SHARING_MODE_EXCLUSIVE;
         std::vector<uint32_t> sharing_queue_families;
         std::vector<Version> versions{{}};
-        VkBufferUsageFlags transient_usage{};
+        BufferDescription transient_description{};
         std::shared_ptr<void> allocation;
     };
     struct BufferAccess

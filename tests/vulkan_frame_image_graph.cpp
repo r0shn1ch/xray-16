@@ -59,18 +59,20 @@ int main()
         assert(virtual_graph.write_buffer(write, second_buffer, BufferUse::ComputeWrite, second_buffer, error));
         std::weak_ptr<int> staged_buffer;
         unsigned attempts = 0;
-        const auto allocate = [&](VkDeviceSize, VkBufferUsageFlags, FrameImageGraph::TransientBuffer& out,
-            std::string&) {
+        const auto allocate = [&](const FrameImageGraph::BufferDescription& description,
+            FrameImageGraph::TransientBuffer& out, std::string&) {
+            assert(description.size == 64 && description.usage == VK_BUFFER_USAGE_STORAGE_BUFFER_BIT &&
+                description.memory_properties == VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT && description.pooled_memory);
             auto owner = std::make_shared<int>(0);
             staged_buffer = owner;
             out.handle = (VkBuffer)(uintptr_t)(++attempts);
             out.owner = owner;
             return true;
         };
-        assert(!virtual_graph.materialize_buffers([&](auto size, auto usage, auto& out, auto& reason) {
+        assert(!virtual_graph.materialize_buffers([&](const auto& description, auto& out, auto& reason) {
             if (attempts)
                 throw std::runtime_error("allocation interrupted");
-            return allocate(size, usage, out, reason);
+            return allocate(description, out, reason);
         }, error));
         assert(staged_buffer.expired() && !virtual_graph.buffer_handle(written_buffer) &&
             !virtual_graph.buffer_handle(second_buffer));

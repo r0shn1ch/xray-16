@@ -167,19 +167,7 @@ bool SmokeTrailNoise::record(VkCommandBuffer command, uint32_t slot, float time,
             FrameSubmissionGraph::Queue::Graphics, {});
         if (!graph.read(sample, uploaded_image, ImageUse::Sampled, error))
             return false;
-        if (transient && !graph.materialize_buffers([buffer_pool](VkDeviceSize size, VkBufferUsageFlags usage,
-                FrameImageGraph::TransientBuffer& output, std::string& failure) {
-                BufferResource* buffer = nullptr;
-                if (!buffer_pool->acquire(size, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, true, buffer, failure))
-                    return false;
-                output.owner = std::shared_ptr<void>(buffer, [buffer_pool](void* resource) {
-                    buffer_pool->release(static_cast<BufferResource*>(resource));
-                });
-                output.handle = buffer->handle();
-                output.sharing_mode = buffer->sharing_mode();
-                output.queue_families = buffer->sharing_queue_families();
-                return true;
-            }, error))
+        if (transient && !graph.materialize_buffers(*buffer_pool, error))
             return false;
 
         ImageStateTracker image_states;

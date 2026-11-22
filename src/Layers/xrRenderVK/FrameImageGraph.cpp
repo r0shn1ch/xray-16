@@ -1,4 +1,5 @@
 #include "FrameImageGraph.h"
+#include "FrameBufferPool.h"
 
 #include <algorithm>
 #include <array>
@@ -202,17 +203,17 @@ bool FrameImageGraph::import_buffer(VkBuffer buffer, VkDeviceSize offset, VkDevi
     return true;
 }
 
-bool FrameImageGraph::declare_buffer(VkDeviceSize size, VkBufferUsageFlags usage,
+bool FrameImageGraph::declare_buffer(const BufferDescription& description,
     BufferResource& resource, std::string& error)
 {
-    if (!size || !usage)
+    if (!description.size || !description.usage)
     {
         error = "Frame image graph: transient buffer requires size and usage";
         return false;
     }
     Buffer buffer;
-    buffer.size = size;
-    buffer.transient_usage = usage;
+    buffer.size = description.size;
+    buffer.transient_description = description;
     buffer.initial_queue = default_queue_;
     m_buffers.push_back(std::move(buffer));
     resource = {uint32_t(m_buffers.size() - 1), 0, generation_};
@@ -233,7 +234,7 @@ bool FrameImageGraph::materialize_buffers(const AllocateBuffer& allocate, std::s
             continue;
         TransientBuffer physical;
         if (!allocate || !try_allocate_transient([&] {
-                return allocate(buffer.size, buffer.transient_usage, physical, error);
+                return allocate(buffer.transient_description, physical, error);
             }, error) ||
             !physical.handle || !physical.owner ||
             !valid_sharing_metadata(physical.sharing_mode, physical.queue_families))
@@ -380,7 +381,7 @@ bool FrameImageGraph::read_buffer(Pass pass, BufferResource resource,
         return false;
     }
     const Buffer& buffer = m_buffers[resource.index];
-    if (!resource.version && buffer.transient_usage)
+    if (!resource.version && buffer.transient_description.usage)
     {
         error = "Frame image graph: transient buffer read requires a written version";
         return false;
@@ -444,7 +445,7 @@ bool FrameImageGraph::read_write_buffer(Pass pass, BufferResource resource,
     BufferUse use, BufferResource& next, std::string& error)
 {
     if (!valid_buffer(pass, resource, error)) return false;
-    if (!resource.version && m_buffers[resource.index].transient_usage)
+    if (!resource.version && m_buffers[resource.index].transient_description.usage)
     {
         error = "Frame image graph: transient buffer read/write requires a written version";
         return false;
@@ -1006,7 +1007,7 @@ bool FrameImageGraph::compile_resource_lifetimes(ResourceLifetimes& lifetimes, s
     };
     const auto record_buffer = [&](const BufferAccess& access, uint32_t index)
     {
-        const auto usage = m_buffers[access.resource.index].transient_usage;
+        const auto usage = m_buffers[access.resource.index].transient_description.usage;
         const auto required = required_buffer_usage(access.use);
         if (usage && (usage & required) != required)
         {
