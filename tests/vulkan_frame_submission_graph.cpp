@@ -54,6 +54,22 @@ int main()
         edges[1].insert(0);
         assert(!sort_passes(edges, {1, 1}, order) && order == (std::vector<uint32_t>{0, 1}));
     }
+    {
+        using namespace xray::render::framegraph;
+        ResourceDependencyGraph graph(5);
+        // Two readers of a written version must finish before its overwrite.
+        const std::vector<ResourceVersion> resource{{INVALID_INDEX, {}}, {0, {1, 2}}, {3, {4}}};
+        assert(graph.add_versions(resource));
+        const auto before = graph.edges();
+        assert(!graph.add_versions({{INVALID_INDEX, {1}}, {INVALID_INDEX, {}}}));
+        assert(graph.edges() == before);
+        assert(!graph.add_versions({{INVALID_INDEX, {5}}}));
+        assert(graph.edges() == before);
+        std::vector<uint32_t> order;
+        assert(graph.compile(order) && order == (std::vector<uint32_t>{0, 1, 2, 3, 4}));
+        assert(graph.add_edge(4, 0));
+        assert(!graph.compile(order));
+    }
     FrameSubmissionGraph graph;
     const auto first = graph.add_pass("first", FrameSubmissionGraph::Queue::Compute);
     const auto second = graph.add_pass("second", FrameSubmissionGraph::Queue::Graphics);

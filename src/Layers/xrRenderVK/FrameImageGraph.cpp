@@ -1026,18 +1026,15 @@ bool FrameImageGraph::read_write(Pass pass, Resource resource, Resource& next, s
 bool FrameImageGraph::build_pass_graph(std::vector<std::set<Pass>>& edges,
     std::vector<Pass>& order, std::string& error) const
 {
-    edges.assign(m_passes.size(), {});
-    std::vector<uint32_t> indegree(m_passes.size());
-    const auto edge = [&](Pass from, Pass to) {
-        if (from != ~0u && from != to && edges[from].insert(to).second)
-            ++indegree[to];
-    };
+    framegraph::ResourceDependencyGraph graph(m_passes.size());
     for (const Image& image : m_images)
-        framegraph::add_resource_dependencies(image.versions, edge);
-    add_image_alias_hazard_edges(edges, indegree);
+        if (!graph.add_versions(image.versions))
+        { error = "Frame image graph: invalid image version dependency"; return false; }
+    add_image_alias_hazard_edges(graph.edges(), graph.indegree());
     for (const Buffer& buffer : m_buffers)
-        framegraph::add_resource_dependencies(buffer.versions, edge);
-    add_buffer_alias_hazard_edges(edges, indegree);
+        if (!graph.add_versions(buffer.versions))
+        { error = "Frame image graph: invalid buffer version dependency"; return false; }
+    add_buffer_alias_hazard_edges(graph.edges(), graph.indegree());
     for (const Dependency& dependency : m_dependencies)
     {
         if (dependency.before >= m_passes.size() || dependency.after >= m_passes.size() ||
@@ -1046,14 +1043,16 @@ bool FrameImageGraph::build_pass_graph(std::vector<std::set<Pass>>& edges,
             error = "Frame image graph: explicit dependency became invalid";
             return false;
         }
-        edge(dependency.before, dependency.after);
+        if (!graph.add_edge(dependency.before, dependency.after))
+        { error = "Frame image graph: invalid explicit dependency"; return false; }
     }
 
-    if (!framegraph::sort_passes(edges, std::move(indegree), order))
+    if (!graph.compile(order))
     {
         error = "Frame image graph: cyclic pass dependencies";
         return false;
     }
+    edges = std::move(graph.edges());
     error.clear();
     return true;
 }

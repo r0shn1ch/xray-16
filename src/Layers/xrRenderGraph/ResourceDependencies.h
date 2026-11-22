@@ -93,4 +93,47 @@ inline bool sort_passes(const std::vector<std::set<uint32_t>>& edges,
     order = std::move(sorted);
     return true;
 }
+
+// Backend-independent dependency compiler for versioned virtual resources.
+// Backends may add alias hazards to the same edge set before compiling.
+class ResourceDependencyGraph
+{
+public:
+    explicit ResourceDependencyGraph(size_t passes) : edges_(passes), indegree_(passes) {}
+
+    bool add_edge(uint32_t producer, uint32_t consumer)
+    {
+        if (producer == INVALID_INDEX) return consumer < edges_.size();
+        if (producer >= edges_.size() || consumer >= edges_.size()) return false;
+        if (producer != consumer && edges_[producer].insert(consumer).second)
+            ++indegree_[consumer];
+        return true;
+    }
+
+    bool add_versions(const std::vector<ResourceVersion>& versions)
+    {
+        // Validate before inserting, so malformed chains cannot partially
+        // mutate the dependency graph.
+        for (const auto& version : versions)
+        {
+            if (version.producer != INVALID_INDEX && version.producer >= edges_.size()) return false;
+            for (uint32_t reader : version.readers)
+                if (reader >= edges_.size()) return false;
+        }
+        for (size_t i = 1; i < versions.size(); ++i)
+            if (versions[i].producer == INVALID_INDEX) return false;
+        add_resource_dependencies(versions, [this](uint32_t producer, uint32_t consumer) {
+            add_edge(producer, consumer);
+        });
+        return true;
+    }
+
+    std::vector<std::set<uint32_t>>& edges() { return edges_; }
+    std::vector<uint32_t>& indegree() { return indegree_; }
+    bool compile(std::vector<uint32_t>& order) const { return sort_passes(edges_, indegree_, order); }
+
+private:
+    std::vector<std::set<uint32_t>> edges_;
+    std::vector<uint32_t> indegree_;
+};
 }
