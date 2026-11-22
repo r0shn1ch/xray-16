@@ -826,7 +826,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
               !metadata.parallax_texture.empty()) ||
              definition.emissive);
         mesh.surface = surface_roles;
-        mesh.visibility_material_supported = !metadata.normal && mesh.parallax_texture.empty();
+        mesh.visibility_material_supported = !metadata.normal;
         mesh.visibility_material_class = std::clamp((float(metadata.material) + metadata.material_weight) / 3.f, 0.f, 1.f);
         bool surface_ready = false;
         if (surface_roles)
@@ -1319,7 +1319,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                                             uint32_t first_draw, uint32_t first_index, uint32_t draw_count,
                                             uint32_t material_slot, uint32_t lightmap_slot,
                                             const std::array<uint32_t, 4>& pbr_slots,
-                                            const std::array<uint32_t, 3>& normal_slots) -> bool {
+                                            const std::array<uint32_t, 3>& normal_slots, uint32_t parallax_slot) -> bool {
                 if (!draw_count || draw_count > hierarchy.clusters.size() || first_draw > entries.size() ||
                     draw_count > entries.size() - first_draw || mesh.geometry_batch >= prepared.geometry_batches_.size())
                     return false;
@@ -1333,7 +1333,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                     entries[first_draw + i] = {first_index + cluster.first_index, cluster.index_count,
                         static_cast<int32_t>(mesh.first_vertex), material_slot, mesh.geometry_batch, lightmap_slot,
                         mesh.visibility_material_class, pbr_slots[0], pbr_slots[1], pbr_slots[2], pbr_slots[3],
-                        normal_slots[0], normal_slots[1], normal_slots[2], mesh.bump_height};
+                        normal_slots[0], normal_slots[1], normal_slots[2], mesh.bump_height, parallax_slot};
                 }
                 auto& range = prepared.visibility_draw_ranges_[mesh.geometry_batch];
                 if (!range.draw_count)
@@ -1381,12 +1381,13 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                     has_bump ? optional_slot(mesh.bump_texture) : UINT32_MAX,
                     has_bump ? optional_slot(mesh.bump_texture + "#") : UINT32_MAX,
                     optional_slot(mesh.visibility_external_normal)};
+                const uint32_t parallax_slot = optional_slot(mesh.parallax_texture);
                 if (mesh.windows.empty())
                     mesh.visibility_rasterizable = append_entries(mesh, mesh.cluster_lod, mesh.cluster_first_draw_command,
-                        mesh.cluster_first_index, mesh.cluster_cull_cluster_count, base_slot, lightmap_slot, pbr_slots, normal_slots);
+                        mesh.cluster_first_index, mesh.cluster_cull_cluster_count, base_slot, lightmap_slot, pbr_slots, normal_slots, parallax_slot);
                 for (auto& window : mesh.cluster_lod_windows)
                     window.visibility_rasterizable = append_entries(mesh, window.data, window.first_draw_command,
-                        window.first_index, window.cull_cluster_count, base_slot, lightmap_slot, pbr_slots, normal_slots);
+                        window.first_index, window.cull_cluster_count, base_slot, lightmap_slot, pbr_slots, normal_slots, parallax_slot);
             }
             auto& ranges = prepared.visibility_draw_ranges_;
             ranges.erase(std::remove_if(ranges.begin(), ranges.end(), [](const VisibilityDrawRange& range) {

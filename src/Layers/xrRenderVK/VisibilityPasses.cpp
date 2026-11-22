@@ -71,7 +71,7 @@ bool VisibilityPasses::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, 
 }
 
 bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel& level, const Targets& targets,
-    const visibility::Camera& camera, const BindlessTextureTable& materials,
+    const visibility::Camera& camera, const float (&eye_and_steep)[4], const BindlessTextureTable& materials,
     const BufferResource& draw_mask, VkBufferView draw_mask_view,
     FrameImagePool& pool, framegraph::ResourceRetirement& retirement,
     std::string& error) const
@@ -85,6 +85,7 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
         targets.extent.width != frame.extent.width || targets.extent.height != frame.extent.height ||
         !targets.id_sampler || materials.layout() != material_layout_ ||
         !std::all_of(camera.view_projection, camera.view_projection + 16, finite) ||
+        !std::all_of(eye_and_steep, eye_and_steep + 4, finite) ||
         !finite(camera.viewport.origin[0]) || !finite(camera.viewport.origin[1]) ||
         !finite(camera.viewport.extent[0]) || !finite(camera.viewport.extent[1]) ||
         camera.viewport.extent[0] <= 0.f || camera.viewport.extent[1] <= 0.f)
@@ -210,8 +211,9 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
             for (uint32_t batch = 0; batch < batches.size(); ++batch)
             {
                 const auto& range = batches[batch];
-                const visibility::MaterialResolveParameters params{camera, range.first_draw, range.draw_count,
+                visibility::MaterialResolveParameters params{camera, range.first_draw, range.draw_count,
                     static_cast<uint32_t>(level.visibility_textures().size()), range.geometry_batch};
+                std::copy_n(eye_and_steep, 4, params.eye_and_steep);
                 if (!resolve(command, frame.frame_index, batch, geometry[batch], id_texture, materials,
                         targets.base_color.view, targets.normals.view, targets.surface.view, targets.extent, params, reason))
                     return false;

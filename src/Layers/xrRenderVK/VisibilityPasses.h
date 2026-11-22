@@ -31,7 +31,7 @@ public:
 
     // Caller owns the outputs per in-flight slot. The graph allocates the ID image.
     bool record(const FrameRecordingContext& frame, const GpuLevel& level, const Targets& targets,
-        const visibility::Camera& camera, const BindlessTextureTable& materials,
+        const visibility::Camera& camera, const float (&eye_and_steep)[4], const BindlessTextureTable& materials,
         const BufferResource& draw_mask, VkBufferView draw_mask_view,
         FrameImagePool& pool, framegraph::ResourceRetirement& retirement,
         std::string& error) const;

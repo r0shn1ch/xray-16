@@ -56,7 +56,7 @@ static void require(bool condition, const std::string& message)
 
 static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommandPool pool,
     const VkPhysicalDeviceLimits& limits, const VkPhysicalDeviceMemoryProperties& memory,
-    const BufferResourceDispatch& vk, const VisibilityPasses::Source& source, bool bindless)
+    const BufferResourceDispatch& vk, const VisibilityPasses::Source& source, bool bindless, bool steep = false)
 {
     std::string error;
     std::vector<uint8_t> shader;
@@ -73,8 +73,8 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         limits.maxStorageBufferRange, limits.maxUniformBufferRange, VK_NULL_HANDLE,
         code.data(), shader.size(), error), error);
 
-    const visibility::DrawEntry entries[]{{0, 3, 0, 0, 0, UINT32_MAX, 1.f / 3.f, 0, UINT32_MAX, 0,
-            UINT32_MAX, UINT32_MAX, UINT32_MAX, 0, 0.05f},
+    const visibility::DrawEntry entries[]{{0, 3, 0, 1, 0, UINT32_MAX, 1.f / 3.f, 0, UINT32_MAX, 0,
+            UINT32_MAX, UINT32_MAX, UINT32_MAX, 0, 0.3f, 0},
         {3, 3, 0, 0, 1, 0, 0.625f, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX, 0, 0, UINT32_MAX, 0.05f},
         {6, 3, 0, 0, 1},
         {9, 3, 0, 0, 1}};
@@ -100,10 +100,13 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         std::copy_n(far_points[vertex], 3, vertices[9 + vertex].position);
         vertices[9 + vertex].normal[1] = 1.f;
     }
-    for (auto& vertex : vertices) { vertex.tangent[0] = 127; vertex.bitangent[2] = 127; }
+    for (auto& vertex : vertices) {
+        vertex.tangent[0] = 127; vertex.bitangent[2] = 127;
+        vertex.uv[0] = vertex.uv[1] = .5f;
+    }
     constexpr uint32_t visible_draws = 0b1011u;
     constexpr auto host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    BufferResource geometry[4], mask, readback;
+    BufferResource geometry[4], mask, readback, gradient;
     const auto upload = [&](BufferResource& buffer, const void* data, size_t bytes, VkBufferUsageFlags usage) {
         require(buffer.initialize(device, bytes, usage, host, memory, vk, error) && buffer.write(0, data, bytes, error), error);
     };
@@ -112,6 +115,15 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     upload(geometry[2], vertices, sizeof(vertices), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     upload(geometry[3], commands, sizeof(commands), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     upload(mask, &visible_draws, sizeof(visible_draws), VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT);
+    uint16_t gradient_pixels[8 * 8 * 4]{};
+    for (uint32_t y = 0; y < 8; ++y)
+        for (uint32_t x = 0; x < 8; ++x)
+        {
+            constexpr uint16_t red[]{0, 0x3000, 0x3400, 0x3600, 0x3800, 0x3900, 0x3a00, 0x3b00};
+            gradient_pixels[(y * 8 + x) * 4] = red[x];
+            gradient_pixels[(y * 8 + x) * 4 + 3] = 0x3c00;
+        }
+    if (bindless) upload(gradient, gradient_pixels, sizeof(gradient_pixels), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     constexpr VkDeviceSize raster_bytes = 2 * 8 * 8 * sizeof(uint32_t);
     constexpr VkDeviceSize resolved_bytes = 8 * 8 * 4 * sizeof(uint16_t);
     require(readback.initialize(device, raster_bytes + (bindless ? 3 * resolved_bytes : 0), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -124,7 +136,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     {
         VkDevice device;
         VkBufferView mask{};
-        VkImageView images[6]{};
+        VkImageView images[7]{};
         VkSampler sampler{};
         ~Views()
         {
@@ -141,9 +153,9 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     require(vkCreateBufferView(device, &mask_info, nullptr, &views.mask) == VK_SUCCESS, "visibility mask view");
     FrameImageGraph graph;
     ImageStateTracker states;
-    VkImage targets[6]{};
-    FrameImageGraph::Resource resources[6];
-    const size_t target_count = bindless ? 6 : 2;
+    VkImage targets[7]{};
+    FrameImageGraph::Resource resources[7];
+    const size_t target_count = bindless ? 7 : 2;
     constexpr VkImageSubresourceRange color{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     for (size_t i = 0; i < target_count; ++i)
     {
@@ -178,6 +190,9 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
             vkCmdClearColorImage(command, targets[3], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &color);
             vkCmdClearColorImage(command, targets[4], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &color);
             vkCmdClearColorImage(command, targets[5], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &material, 1, &color);
+            VkBufferImageCopy gradient_copy{0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {8, 8, 1}};
+            vkCmdCopyBufferToImage(command, gradient.handle(), targets[6], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                1, &gradient_copy);
         }
     });
     for (size_t i = 0; i < target_count; ++i)
@@ -215,8 +230,9 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     {
         VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         require(vkCreateSampler(device, &sampler_info, nullptr, &views.sampler) == VK_SUCCESS, "visibility test sampler");
-        require(materials.initialize(device, vkGetDeviceProcAddr, 1, error) &&
-            materials.write(0, views.images[5], views.sampler, error, VK_IMAGE_LAYOUT_GENERAL), error);
+        require(materials.initialize(device, vkGetDeviceProcAddr, 2, error) &&
+            materials.write(0, views.images[5], views.sampler, error, VK_IMAGE_LAYOUT_GENERAL) &&
+            materials.write(1, views.images[6], views.sampler, error, VK_IMAGE_LAYOUT_GENERAL), error);
         require(visibility_passes.initialize(device, vkGetDeviceProcAddr, limits, 1, 2, VK_NULL_HANDLE,
             materials, source, error), error);
         const auto resolve = graph.add_checked_command_pass("resolve visibility test", [&](VkCommandBuffer cb, std::string& why) {
@@ -225,7 +241,10 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
             visibility::MaterialResolveParameters params{};
             for (size_t i = 0; i < 16; i += 5) params.camera.view_projection[i] = 1.f;
             params.camera.viewport.extent[0] = params.camera.viewport.extent[1] = 8.f;
-            params.material_count = 1;
+            params.material_count = 2;
+            params.eye_and_steep[0] = 5.f;
+            params.eye_and_steep[1] = 5.f;
+            params.eye_and_steep[3] = steep ? 1.f : 0.f;
             for (uint32_t batch = 0; batch < 2; ++batch)
             {
                 params.first_draw = batch;
@@ -238,7 +257,8 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
             return true;
         });
         require(graph.read(resolve, resources[0], ImageUse::ComputeSampled, error) &&
-            graph.read(resolve, resources[5], ImageUse::StorageRead, error), error);
+            graph.read(resolve, resources[5], ImageUse::StorageRead, error) &&
+            graph.read(resolve, resources[6], ImageUse::StorageRead, error), error);
         for (size_t i = 2; i < 5; ++i)
             require(graph.read_write(resolve, resources[i], resources[i], error), error);
     }
@@ -295,6 +315,8 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
             output[1][36][3] == 0x3a00, "visibility resolve baked sunlight and hemisphere");
         require(output[0][20][3] == 0x3c00 && (output[1][20][3] == 0x3af6 || output[1][20][3] == 0x3af5),
             "visibility resolve unlightmapped PBR hemisphere");
+        require(output[0][20][0] < 0x3800, "visibility parallax must shift sampled color: " +
+            std::to_string(output[0][20][0]) + (steep ? " steep" : " regular"));
         require(output[2][36][0] == 0x2c00 && output[2][36][1] == 0x3900 &&
             output[1][20][0] >= 0xb727 && output[1][20][0] <= 0xb729 &&
             output[2][20][0] == 0x3400 &&
@@ -1248,6 +1270,8 @@ int main(int argc, char** argv)
         };
         exercise_smoke_shader(f.device, queue, f.pool, props.limits, memory, vk, source);
         exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source, bindless);
+        if (bindless)
+            exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source, true, true);
         std::cout << "Visibility material resolve " << (bindless ? "passed" : "skipped (no descriptor indexing)") << '\n';
         require(compute.initialize_from_source(f.device, vkGetDeviceProcAddr, props.limits, 3, VK_NULL_HANDLE, source, error), error);
         GpuParticleBuffers buffers;

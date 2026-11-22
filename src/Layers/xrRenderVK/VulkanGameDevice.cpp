@@ -3354,6 +3354,8 @@ void VulkanGameDevice::record_level_visibility(const FrameRecordingContext& fram
     std::memcpy(camera.view_projection, mvp, sizeof(mvp));
     camera.viewport.extent[0] = static_cast<float>(frame.extent.width);
     camera.viewport.extent[1] = static_cast<float>(frame.extent.height);
+    const float eye_and_steep[]{Device.vCameraPosition.x, Device.vCameraPosition.y, Device.vCameraPosition.z,
+        steep_parallax ? 1.f : 0.f};
     if (!self.initialize_visibility_gbuffer(error))
     {
         Msg("! [renderer-vulkan] visibility G-buffer pipeline unavailable: %s", error.c_str());
@@ -3362,7 +3364,7 @@ void VulkanGameDevice::record_level_visibility(const FrameRecordingContext& fram
         return;
     }
     if (!self.ensure_visibility_targets(frame.frame_index, frame.extent, error) ||
-        !self.visibility_passes_->record(frame, level, self.visibility_targets_[frame.frame_index], camera,
+        !self.visibility_passes_->record(frame, level, self.visibility_targets_[frame.frame_index], camera, eye_and_steep,
             *self.visibility_materials_, mask, mask_view, self.window_.frame().image_pool(), self.retired_, error))
     {
         Msg("! [renderer-vulkan] using conventional G-buffer for this frame: %s", error.c_str());
