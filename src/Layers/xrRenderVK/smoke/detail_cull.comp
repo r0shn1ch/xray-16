@@ -29,37 +29,66 @@ bool visible(vec3 position, float radius)
     return true;
 }
 
-void main()
+bool load_visible_placement(uint index, out vec3 position, out float scale, out float yaw)
 {
-    uint index = gl_GlobalInvocationID.x;
     if ((settings.source_stride != 5u && settings.source_stride != 8u) ||
         index >= settings.placement_count || index >= placements.length() / settings.source_stride)
-        return;
+        return false;
 
     uint source = index * settings.source_stride;
     bool generated = settings.source_stride == 8u;
     if (generated && placements[source + 5u] != settings.model)
-        return;
-    vec3 position = uintBitsToFloat(uvec3(placements[source], placements[source + 1u], placements[source + 2u]));
-    float scale = uintBitsToFloat(placements[source + (generated ? 3u : 4u)]);
-    float yaw = uintBitsToFloat(placements[source + (generated ? 4u : 3u)]);
+        return false;
+    position = uintBitsToFloat(uvec3(placements[source], placements[source + 1u], placements[source + 2u]));
+    scale = uintBitsToFloat(placements[source + (generated ? 3u : 4u)]);
+    yaw = uintBitsToFloat(placements[source + (generated ? 4u : 3u)]);
     vec4 transform = vec4(position, scale);
     if (any(isnan(transform)) || any(isinf(transform)) || isnan(yaw) || isinf(yaw))
-        return;
-    if (!visible(position, settings.radius * abs(scale)))
-        return;
+        return false;
+    return visible(position, settings.radius * abs(scale));
+}
 
+shared uint group_count;
+shared uint group_first;
+shared uint group_reserved;
+
+void reserve_instances()
+{
+    group_reserved = 0u;
+    if (group_count == 0u)
+        return;
     uint capacity = min(settings.instance_capacity, uint(instances.length()) / 6u);
     uint destination = atomicAdd(instance_count, 0u);
-    for (;;)
+    while (destination < capacity)
     {
-        if (destination >= capacity)
-            return;
-        uint previous = atomicCompSwap(instance_count, destination, destination + 1u);
+        uint count = min(group_count, capacity - destination);
+        uint previous = atomicCompSwap(instance_count, destination, destination + count);
         if (previous == destination)
-            break;
+        {
+            group_first = destination;
+            group_reserved = count;
+            return;
+        }
         destination = previous;
     }
+}
+
+void main()
+{
+    if (gl_LocalInvocationIndex == 0u)
+        group_count = 0u;
+    barrier();
+    vec3 position;
+    float scale, yaw;
+    bool accepted = load_visible_placement(gl_GlobalInvocationID.x, position, scale, yaw);
+    uint rank = accepted ? atomicAdd(group_count, 1u) : 0u;
+    barrier();
+    if (gl_LocalInvocationIndex == 0u)
+        reserve_instances();
+    barrier();
+    if (!accepted || rank >= group_reserved)
+        return;
+    uint destination = group_first + rank;
     uint output_offset = destination * 6u;
     instances[output_offset] = position.x;
     instances[output_offset + 1u] = position.y;
