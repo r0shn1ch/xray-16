@@ -157,10 +157,20 @@ bool occludedByPreviousDepth(vec4 sphere)
     int mip_count = textureQueryLevels(previous_hiz);
     int mip = int(clamp(floor(log2(max(pixel_extent.x, pixel_extent.y))),
         0.0, float(max(mip_count - 1, 0))));
-    ivec2 mip_size = textureSize(previous_hiz, mip);
-    ivec2 first = clamp(ivec2(floor(uv_minimum * vec2(mip_size))), ivec2(0), mip_size - 1);
-    ivec2 last = clamp(ivec2(floor(max(uv_maximum * vec2(mip_size) - vec2(1e-4), vec2(0.0)))),
-        ivec2(0), mip_size - 1);
+    // Each mip halves the pixel coordinates and folds an odd edge into the last texel.
+    // The source depth size may be odd, so bound both possible sizes from mip zero.
+    ivec2 first_pixel = ivec2(floor(uv_minimum * vec2(base_size * 2)));
+    ivec2 last_pixel = ivec2(floor(uv_maximum * vec2(base_size * 2 + 1)));
+    ivec2 first;
+    ivec2 last;
+    for (; mip < mip_count; ++mip)
+    {
+        ivec2 mip_size = textureSize(previous_hiz, mip);
+        first = min(first_pixel >> (mip + 1), mip_size - 1);
+        last = min(last_pixel >> (mip + 1), mip_size - 1);
+        if (all(lessThanEqual(last - first, ivec2(1))))
+            break;
+    }
     float farthest_occluder = max(
         max(texelFetch(previous_hiz, first, mip).r, texelFetch(previous_hiz, ivec2(last.x, first.y), mip).r),
         max(texelFetch(previous_hiz, ivec2(first.x, last.y), mip).r, texelFetch(previous_hiz, last, mip).r));
