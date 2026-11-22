@@ -688,6 +688,7 @@ VulkanParticleGroup::VulkanParticleGroup(std::shared_ptr<const ParticleCatalog> 
     bounds(visibility_, initial_position_);
     for (const auto& item : def.effects)
         effects_.push_back(std::make_unique<VulkanParticleEffect>(catalog_, *catalog_->effect(item.effect)));
+    entry_phases_.resize(effects_.size(), ParticleGroupEntryPhase::Waiting);
     related_.resize(effects_.size());
     for (size_t i = 0; i < effects_.size(); ++i)
         effects_[i]->set_events([this, i](bool birth, PAPI::Particle& particle, u32 index)
@@ -794,6 +795,7 @@ void VulkanParticleGroup::Play()
     time_ = 0.f;
     deferred_ = false;
     playing_ = true;
+    std::fill(entry_phases_.begin(), entry_phases_.end(), ParticleGroupEntryPhase::Waiting);
     for (auto& effect : effects_) effect->Stop(FALSE);
     for (auto& item : triggered_) item.effect->Stop(FALSE);
     pending_.clear();
@@ -825,18 +827,15 @@ void VulkanParticleGroup::OnFrame(u32 dt)
         const auto& item = def_->effects[i];
         if ((item.flags & enabled) && !deferred_)
         {
-            // The legacy group chooses either the start or stop transition
-            // based on the state at the beginning of this frame. A short
-            // effect may cross both boundaries in one update; stopping it
-            // immediately prevents its first particles from ever appearing.
-            if (effect.IsPlaying())
+            auto& phase = entry_phases_[i];
+            const auto next_phase = advance_particle_group_entry(phase, next, item.begin, item.end);
+            if (phase != next_phase)
             {
-                if (time_ <= item.end && next >= item.end)
+                phase = next_phase;
+                if (phase == ParticleGroupEntryPhase::Emitting)
+                    effect.Play();
+                else if (effect.IsPlaying())
                     effect.Stop(item.flags & deferred_stop);
-            }
-            else if (time_ <= item.begin && next >= item.begin)
-            {
-                effect.Play();
             }
         }
         effect.OnFrame(dt);

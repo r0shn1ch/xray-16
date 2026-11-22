@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ParticleCatalog.h"
+#include "ParticleGroupTiming.h"
 #include "BufferResource.h"
 #include "DeferredPass.h"
 #include "GameTextureFactory.h"
@@ -211,6 +212,7 @@ private:
     std::shared_ptr<const ParticleCatalog> catalog_;
     const ParticleGroupDef* def_{};
     std::vector<std::unique_ptr<VulkanParticleEffect>> effects_;
+    std::vector<ParticleGroupEntryPhase> entry_phases_;
     struct Triggered
     {
         std::string name;

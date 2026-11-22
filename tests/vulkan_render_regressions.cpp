@@ -6,6 +6,7 @@
 #include "src/Layers/xrRenderVK/ModelPoseConstants.h"
 #include "src/Layers/xrRenderVK/ObjectVisibility.h"
 #include "src/Layers/xrRenderVK/ParticleSprite.h"
+#include "src/Layers/xrRenderVK/ParticleGroupTiming.h"
 #include "src/Layers/xrRenderVK/ResourceRetirement.h"
 #include "src/Layers/xrRenderVK/ShaderPairCache.h"
 #include "src/Layers/xrRenderVK/ShadowStability.h"
@@ -20,6 +21,13 @@
 using namespace xray::render::vulkan;
 int main()
 {
+    using Phase = xray::render::vulkan::ParticleGroupEntryPhase;
+    using xray::render::vulkan::advance_particle_group_entry;
+    assert(advance_particle_group_entry(Phase::Waiting, .01f, .02f, .03f) == Phase::Waiting);
+    const auto crossed = advance_particle_group_entry(Phase::Waiting, .04f, .02f, .03f);
+    assert(crossed == Phase::Emitting);
+    assert(advance_particle_group_entry(crossed, .06f, .02f, .03f) == Phase::Finished);
+    assert(advance_particle_group_entry(Phase::Finished, .08f, .02f, .03f) == Phase::Finished);
     {
         xray::render::framegraph::LocalAtlasAllocator atlas;
         std::array<uint32_t, 6> faces{};
