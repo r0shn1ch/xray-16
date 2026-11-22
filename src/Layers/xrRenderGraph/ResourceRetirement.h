@@ -70,8 +70,13 @@ class ResourceRetirement
     }
     void drain()
     {
-        std::vector<Entry> pending;
-        pending.swap(entries_);
+        // Destructors can retire additional resources. The caller has waited
+        // for every relevant queue, so drain those follow-up entries too.
+        while (!entries_.empty())
+        {
+            std::vector<Entry> pending;
+            pending.swap(entries_);
+        }
     }
     size_t size() const
     {

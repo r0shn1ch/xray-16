@@ -129,6 +129,16 @@ int main()
     assert(deleted == 5 && retirement.size() == 1);
     retirement.complete(0);
     assert(deleted == 6 && retirement.size() == 0);
+    const int before_nested_drain = deleted;
+    retirement.defer([&] {
+        ++deleted;
+        retirement.defer([&] {
+            ++deleted;
+            retirement.defer([&] { ++deleted; });
+        });
+    });
+    retirement.drain();
+    assert(deleted == before_nested_drain + 3 && retirement.size() == 0);
     ResourceRetirement full_mask_retirement(32);
     full_mask_retirement.defer_for_slots(1u << 31, [&] { ++deleted; });
     full_mask_retirement.retire(std::unique_ptr<Retired>(new Retired{&deleted}));
