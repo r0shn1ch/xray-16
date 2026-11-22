@@ -382,7 +382,7 @@ bool HiZPyramid::record(const FrameRecordingContext& frame, bool reject_dynamic_
     return true;
 }
 
-void HiZPyramid::commit_history()
+void HiZPyramid::commit_history(bool dynamic_mask_recorded)
 {
     if (pending_image_index_ >= targets_.size())
         return;
@@ -390,7 +390,7 @@ void HiZPyramid::commit_history()
     last_image_index_ = pending_image_index_;
     pending_image_index_ = UINT32_MAX;
     history_valid_ = true;
-    last_dynamic_safe_ = pending_dynamic_safe_;
+    last_dynamic_safe_ = pending_dynamic_safe_ && dynamic_mask_recorded;
 }
 
 VkImageView HiZPyramid::view(uint32_t index) const

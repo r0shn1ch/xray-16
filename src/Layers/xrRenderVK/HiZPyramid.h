@@ -25,7 +25,7 @@ public:
         VkPipelineCache cache, std::string& error, FrameImagePool* image_pool = nullptr,
         const FrameImageSharing* sharing = nullptr);
     bool record(const FrameRecordingContext& frame, bool reject_dynamic_occluders);
-    void commit_history();
+    void commit_history(bool dynamic_mask_recorded = true);
     VkImage image(uint32_t image_index) const;
     VkImageView view(uint32_t image_index) const;
     VkImage previous_image() const { return history_valid_ ? image(last_image_index_) : VK_NULL_HANDLE; }

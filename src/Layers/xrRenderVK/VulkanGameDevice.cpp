@@ -1962,7 +1962,6 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
     if (!motion_.history_valid())
     {
         hiz_.reset_history();
-        hiz_unsupported_dynamic_previous_ = false;
         temporal_.reset_history();
         fsr3_upscaler_.reset_history();
         indirect_temporal_.reset_history();
@@ -2037,7 +2036,6 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
                 break;
             }
     const bool hiz_dynamic_mask_enabled = render_world && scene_visibility_ &&
-        !hiz_unsupported_dynamic_previous_ &&
         !unsupported_dynamic_occluders && motion_.ready() &&
         motion_.format() == VK_FORMAT_R16G16B16A16_SFLOAT && object_velocity_.ready() &&
         object_velocity_.lod_ready();
@@ -2053,7 +2051,6 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         // Shadow faces can be marked cached while recording the frame.
         local_shadows_.invalidate_cache();
         hiz_.reset_history();
-        hiz_unsupported_dynamic_previous_ = false;
         object_motion_.reset();
         motion_.reset_history();
         indirect_temporal_.reset_history();
@@ -2101,15 +2098,9 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         return false;
     }
     if (!render_world)
-    {
         hiz_.reset_history();
-        hiz_unsupported_dynamic_previous_ = false;
-    }
     else
-    {
-        hiz_.commit_history();
-        hiz_unsupported_dynamic_previous_ = unsupported_dynamic_occluders || !hiz_dynamic_mask_recorded_;
-    }
+        hiz_.commit_history(hiz_dynamic_mask_recorded_);
     if (indirect_recorded_image_ != UINT32_MAX)
     {
         indirect_frames_.mark_output_recorded(indirect_recorded_image_);
