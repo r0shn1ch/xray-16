@@ -83,6 +83,14 @@ vec4 gbuffer_surface(vec2 uv, int sample_index)
 #endif
 }
 
+bool valid_shadow_tile(ivec4 tile)
+{
+    ivec3 atlas = textureSize(shadow_array, 0);
+    return tile.z > 0 && tile.w >= 0 && tile.w < atlas.z &&
+        all(greaterThanEqual(tile.xy, ivec2(0))) &&
+        all(lessThanEqual(tile.xy, atlas.xy - ivec2(tile.z)));
+}
+
 float visibility(vec3 world, vec3 delta, vec3 normal)
 {
     if (light.shadow_params.z < 0.5) return 1.0;
@@ -120,7 +128,7 @@ float visibility(vec3 world, vec3 delta, vec3 normal)
     vec2 gradient = abs(determinant) > 1e-12 ?
         vec2(uy.y * dx.z - ux.y * dy.z, ux.x * dy.z - uy.x * dx.z) / determinant : vec2(0);
     ivec4 tile = light.shadow_tiles[face];
-    if (tile.z <= 0) return 1.0;
+    if (!valid_shadow_tile(tile)) return 1.0;
     ivec2 size = ivec2(tile.z);
     vec2 grid = uv * vec2(size) - 0.5;
     ivec2 center = ivec2(floor(grid));
@@ -157,7 +165,7 @@ float volume_shadow(vec3 world, vec3 delta)
     if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) ||
         projected.z <= 0.0 || projected.z >= 1.0) return 1.0;
     ivec4 tile = light.shadow_tiles[face];
-    if (tile.z <= 0) return 1.0;
+    if (!valid_shadow_tile(tile)) return 1.0;
     ivec2 pixel = clamp(ivec2(uv * float(tile.z)), ivec2(0), ivec2(tile.z - 1));
     float nearest_depth = texelFetch(shadow_array, ivec3(tile.xy + pixel, tile.w), 0).r;
     return projected.z <= nearest_depth + 0.0001 ? 1.0 : 0.0;
