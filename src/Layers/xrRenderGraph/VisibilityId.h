@@ -39,6 +39,7 @@ struct DrawEntry
     uint32_t normal_slot{UINT32_MAX};
     float bump_height{};
     uint32_t parallax_slot{UINT32_MAX};
+    float alpha_cutoff{-1.f};
 };
 
 struct Viewport
@@ -60,6 +61,7 @@ struct SoftwareRasterParameters
     uint32_t draw_count;
     uint32_t write_ids;
     uint32_t geometry_batch;
+    uint32_t material_count{};
 };
 
 struct MaterialResolveParameters
@@ -72,11 +74,11 @@ struct MaterialResolveParameters
     float eye_and_steep[4]{};
 };
 
-static_assert(sizeof(DrawEntry) == 64);
+static_assert(sizeof(DrawEntry) == 68);
 static_assert(sizeof(Viewport) == 16);
 static_assert(offsetof(Camera, viewport) == 64);
 static_assert(sizeof(Camera) == 80);
-static_assert(sizeof(SoftwareRasterParameters) == 96);
+static_assert(sizeof(SoftwareRasterParameters) == 100);
 static_assert(sizeof(MaterialResolveParameters) == 112);
 
 static_assert(pack_id(0, 0) == 128);

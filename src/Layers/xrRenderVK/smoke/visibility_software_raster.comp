@@ -1,5 +1,9 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#ifdef VISIBILITY_ALPHA_TEST
+#extension GL_EXT_nonuniform_qualifier : require
+layout(set = 1, binding = 0) uniform sampler2D baseColorTextures[];
+#endif
 #include "visibility_common.glsl"
 #include "visibility_geometry.glsl"
 
@@ -27,6 +31,7 @@ layout(push_constant) uniform RasterParameters
     uint drawCount;
     uint writeIds;
     uint geometryBatch;
+    uint materialCount;
 } parameters;
 
 // Coordinates increase downwards. For positive-area triangles rasterize the
@@ -76,7 +81,8 @@ bool finiteClipPosition(vec4 vertex)
     return !any(isnan(vertex)) && !any(isinf(vertex));
 }
 
-void rasterizeTriangle(vec4 a, vec4 b, vec4 c, uint id)
+void rasterizeTriangle(vec4 a, vec4 b, vec4 c, uint id, DrawEntry entry,
+    vec4 originalA, vec4 originalB, vec4 originalC, mat3x2 texcoords)
 {
     vec2 p0 = visibilityScreenPosition(a, parameters.viewportOrigin, parameters.viewportExtent);
     vec2 p1 = visibilityScreenPosition(b, parameters.viewportOrigin, parameters.viewportExtent);
@@ -116,6 +122,23 @@ void rasterizeTriangle(vec4 a, vec4 b, vec4 c, uint id)
                 (edges.x == 0.0 && !sharedEdge.x) || (edges.y == 0.0 && !sharedEdge.y) ||
                 (edges.z == 0.0 && !sharedEdge.z))
                 continue;
+#ifdef VISIBILITY_ALPHA_TEST
+            if (entry.alphaCutoff >= 0.0)
+            {
+                if (entry.materialSlot >= parameters.materialCount) continue;
+                vec2 ndcPerPixel = 2.0 / parameters.viewportExtent;
+                vec2 ndc = (samplePosition - parameters.viewportOrigin) * ndcPerPixel - 1.0;
+                VisibilityBarycentrics barycentrics;
+                if (!resolveVisibilityBarycentrics(originalA, originalB, originalC, ndc, ndcPerPixel, barycentrics))
+                    continue;
+                vec2 uv = texcoords * barycentrics.weights;
+                vec2 dx = texcoords * barycentrics.dx, dy = texcoords * barycentrics.dy;
+                if (any(isnan(uv)) || any(isinf(uv)) || any(isnan(dx)) || any(isinf(dx)) ||
+                    any(isnan(dy)) || any(isinf(dy))) continue;
+                float alpha = textureGrad(baseColorTextures[nonuniformEXT(entry.materialSlot)], uv, dx, dy).a;
+                if (alpha < entry.alphaCutoff) continue;
+            }
+#endif
             // Interpolate relative to one vertex to preserve constant depth
             // exactly, including at the near and far clip planes.
             float z = depth.x + dot(edges.yz / area, depthDelta);
@@ -157,6 +180,9 @@ void rasterizeDrawTriangle(DrawEntry entry, uint triangle, uint id)
     if (!finiteClipPosition(polygon[0]) || !finiteClipPosition(polygon[1]) ||
         !finiteClipPosition(polygon[2]))
         return;
+    vec4 originalA = polygon[0], originalB = polygon[1], originalC = polygon[2];
+    mat3x2 texcoords = mat3x2(vertices[verticesOfTriangle.x].normalYZUv.zw,
+        vertices[verticesOfTriangle.y].normalYZUv.zw, vertices[verticesOfTriangle.z].normalYZUv.zw);
     uint outside0 = outsideFrustumPlanes(polygon[0]);
     uint outside1 = outsideFrustumPlanes(polygon[1]);
     uint outside2 = outsideFrustumPlanes(polygon[2]);
@@ -165,7 +191,7 @@ void rasterizeDrawTriangle(DrawEntry entry, uint triangle, uint id)
     uint planesToClip = outside0 | outside1 | outside2;
     if (planesToClip == 0u)
     {
-        rasterizeTriangle(polygon[0], polygon[1], polygon[2], id);
+        rasterizeTriangle(polygon[0], polygon[1], polygon[2], id, entry, originalA, originalB, originalC, texcoords);
         return;
     }
     uint vertexCount = 3u;
@@ -206,7 +232,7 @@ void rasterizeDrawTriangle(DrawEntry entry, uint triangle, uint id)
             polygon[i] = clipped[i];
     }
     for (uint i = 1u; i + 1u < vertexCount; ++i)
-        rasterizeTriangle(polygon[0], polygon[i], polygon[i + 1u], id);
+        rasterizeTriangle(polygon[0], polygon[i], polygon[i + 1u], id, entry, originalA, originalB, originalC, texcoords);
 }
 
 void main()

@@ -52,9 +52,9 @@ bool VisibilityPasses::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, 
     constexpr auto sampled = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     constexpr auto image = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     const uint32_t batch_slots = slots * batch_count;
-    if (!load(raster_, "vk/visibility_software_raster.cs.spv", batch_slots * 2,
+    if (!load(raster_, "vk/visibility_software_raster_alpha.cs.spv", batch_slots * 2,
             sizeof(visibility::SoftwareRasterParameters), {{0, image}, {1, buffer}, {2, buffer},
-                {3, buffer}, {4, image}, {5, buffer}, {6, VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER}}, VK_NULL_HANDLE) ||
+                {3, buffer}, {4, image}, {5, buffer}, {6, VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER}}, materials.layout()) ||
         !load(resolve_, "vk/visibility_material_resolve.cs.spv", batch_slots, sizeof(visibility::MaterialResolveParameters),
             {{0, sampled}, {1, buffer}, {2, buffer}, {3, buffer}, {5, image}, {6, image}, {7, image}}, materials.layout()))
     {
@@ -190,8 +190,8 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
                 {
                     const auto& range = batches[batch];
                     const visibility::SoftwareRasterParameters params{camera, range.first_draw,
-                        range.draw_count, 0, range.geometry_batch};
-                    if (!rasterize(command, frame.frame_index, batch, phase, geometry[batch], commands, draw_mask_view,
+                        range.draw_count, 0, range.geometry_batch, static_cast<uint32_t>(level.visibility_textures().size())};
+                    if (!rasterize(command, frame.frame_index, batch, phase, geometry[batch], commands, draw_mask_view, materials,
                             params, graph.image_view(ids), targets.depth.view, reason))
                         return false;
                 }
@@ -239,13 +239,14 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
 
 bool VisibilityPasses::rasterize(VkCommandBuffer command, uint32_t slot, uint32_t batch, RasterPhase phase,
     const Geometry& geometry,
-    const VkDescriptorBufferInfo& draw_commands, VkBufferView draw_mask,
+    const VkDescriptorBufferInfo& draw_commands, VkBufferView draw_mask, const BindlessTextureTable& materials,
     visibility::SoftwareRasterParameters parameters,
     VkImageView ids, VkImageView depth, std::string& error) const
 {
     const auto capacity = std::min<VkDeviceSize>({draw_commands.range / sizeof(VkDrawIndexedIndirectCommand),
         geometry.entries.range / sizeof(visibility::DrawEntry), visibility::EntryCountLimit});
-    if (slot >= slots_ || batch >= batch_count_ || parameters.first_draw > capacity ||
+    if (slot >= slots_ || batch >= batch_count_ || materials.layout() != material_layout_ || !materials.set() ||
+        parameters.material_count > materials.capacity() || parameters.first_draw > capacity ||
         parameters.draw_count > capacity - parameters.first_draw)
     {
         error = "invalid visibility draw range";
@@ -270,7 +271,7 @@ bool VisibilityPasses::rasterize(VkCommandBuffer command, uint32_t slot, uint32_
     parameters.write_ids = phase == RasterPhase::Id ? 1u : 0u;
     const uint32_t descriptor_index = (slot * batch_count_ + batch) * 2 + parameters.write_ids;
     return raster_.record_mixed(command, descriptor_index, buffers, images, &parameters, groups_x, groups_y, error,
-        VK_NULL_HANDLE, draw_mask);
+        materials.set(), draw_mask);
 }
 
 bool VisibilityPasses::resolve(VkCommandBuffer command, uint32_t slot, uint32_t batch, const Geometry& geometry,

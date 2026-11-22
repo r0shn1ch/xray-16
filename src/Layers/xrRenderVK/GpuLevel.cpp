@@ -1333,7 +1333,8 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                     entries[first_draw + i] = {first_index + cluster.first_index, cluster.index_count,
                         static_cast<int32_t>(mesh.first_vertex), material_slot, mesh.geometry_batch, lightmap_slot,
                         mesh.visibility_material_class, pbr_slots[0], pbr_slots[1], pbr_slots[2], pbr_slots[3],
-                        normal_slots[0], normal_slots[1], normal_slots[2], mesh.bump_height, parallax_slot};
+                        normal_slots[0], normal_slots[1], normal_slots[2], mesh.bump_height, parallax_slot,
+                        mesh.mode == SurfaceMode::AlphaTest ? float(mesh.alpha_ref) / 255.f : -1.f};
                 }
                 auto& range = prepared.visibility_draw_ranges_[mesh.geometry_batch];
                 if (!range.draw_count)
@@ -1349,16 +1350,20 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
             for (Mesh& mesh : prepared.meshes_)
             {
                 const auto& node = mesh.pass_graph.passes[0];
+                const bool cutout = mesh.mode == SurfaceMode::AlphaTest;
                 const bool simple_shader = mesh.lightmapped
                     ? !mesh.lightmap_texture_name.empty() &&
                         (node.textures & ~(BumpRole | BumpAuxRole | GlossRole | NormalRole)) == (BaseRole | LightmapRole) &&
-                        node.vertex == "vk\\level_lightmap.vs" && node.fragment == "vk\\level_lightmap.ps"
+                        node.vertex == (cutout ? "vk\\level_lightmap_cutout.vs" : "vk\\level_lightmap.vs") &&
+                        node.fragment == (cutout ? "vk\\level_lightmap_cutout.ps" : "vk\\level_lightmap.ps")
                     : (node.textures & ~(BumpRole | BumpAuxRole | GlossRole | NormalRole)) == BaseRole &&
-                        node.vertex == "vk\\level_opaque.vs" && node.fragment == "vk\\level_opaque.ps";
-                if (mesh.mode != SurfaceMode::Opaque || !mesh.packed_cluster_indices || mesh.secondary_opaque ||
+                        node.vertex == (cutout ? "vk\\level_cutout.vs" : "vk\\level_opaque.vs") &&
+                        node.fragment == (cutout ? "vk\\level_cutout.ps" : "vk\\level_opaque.ps");
+                if ((mesh.mode != SurfaceMode::Opaque && !cutout) || !mesh.packed_cluster_indices || mesh.secondary_opaque ||
                     !mesh.visibility_material_supported || mesh.terrain || mesh.single_detail || mesh.environment ||
                     mesh.environment_constant || mesh.laemb || mesh.lod_atlas || mesh.tree || mesh.emissive ||
                     mesh.tessellation || mesh.fog || mesh.depth_proxy || mesh.matrices.enabled[0] ||
+                    (cutout && !mesh.parallax_texture.empty()) ||
                     mesh.pass_graph.count != 1 ||
                     !simple_shader ||
                     mesh.material_id >= models.materials.size())

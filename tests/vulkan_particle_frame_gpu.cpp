@@ -56,7 +56,8 @@ static void require(bool condition, const std::string& message)
 
 static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommandPool pool,
     const VkPhysicalDeviceLimits& limits, const VkPhysicalDeviceMemoryProperties& memory,
-    const BufferResourceDispatch& vk, const VisibilityPasses::Source& source, bool bindless, bool steep = false)
+    const BufferResourceDispatch& vk, const VisibilityPasses::Source& source, bool bindless, bool steep = false,
+    float alpha_cutoff = -1.f)
 {
     std::string error;
     std::vector<uint8_t> shader;
@@ -73,11 +74,12 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         limits.maxStorageBufferRange, limits.maxUniformBufferRange, VK_NULL_HANDLE,
         code.data(), shader.size(), error), error);
 
-    const visibility::DrawEntry entries[]{{0, 3, 0, 1, 0, UINT32_MAX, 1.f / 3.f, 0, UINT32_MAX, 0,
+    visibility::DrawEntry entries[]{{0, 3, 0, 1, 0, UINT32_MAX, 1.f / 3.f, 0, UINT32_MAX, 0,
             UINT32_MAX, UINT32_MAX, UINT32_MAX, 0, 0.3f, 0},
         {3, 3, 0, 0, 1, 0, 0.625f, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX, 0, 0, UINT32_MAX, 0.05f},
         {6, 3, 0, 0, 1},
         {9, 3, 0, 0, 1}};
+    entries[1].alpha_cutoff = alpha_cutoff;
     const VkDrawIndexedIndirectCommand commands[]{{3, 1, 0, 0, 0}, {3, 1, 3, 0, 0}, {3, 1, 6, 0, 0},
         {3, 1, 9, 0, 0}};
     const uint32_t indices[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
@@ -177,6 +179,18 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         require(graph.import_image(targets[i], color, resources[i], error) &&
             states.register_image(targets[i], color, ImageUse::Undefined, error), error);
     }
+    BindlessTextureTable materials;
+    VisibilityPasses visibility_passes;
+    if (bindless)
+    {
+        VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        require(vkCreateSampler(device, &sampler_info, nullptr, &views.sampler) == VK_SUCCESS, "visibility test sampler");
+        require(materials.initialize(device, vkGetDeviceProcAddr, 2, error) &&
+            materials.write(0, views.images[5], views.sampler, error, VK_IMAGE_LAYOUT_GENERAL) &&
+            materials.write(1, views.images[6], views.sampler, error, VK_IMAGE_LAYOUT_GENERAL), error);
+        require(visibility_passes.initialize(device, vkGetDeviceProcAddr, limits, 1, 2, VK_NULL_HANDLE,
+            materials, source, error), error);
+    }
     const auto clear = graph.add_command_pass("clear visibility test", [&](VkCommandBuffer command) {
         VkClearColorValue value{};
         vkCmdClearColorImage(command, targets[0], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &value, 1, &color);
@@ -185,7 +199,7 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
         if (bindless)
         {
             VkClearColorValue zero{};
-            VkClearColorValue material{{0.25f, 0.5f, 1.f, 1.f}};
+            VkClearColorValue material{{0.25f, 0.5f, 1.f, alpha_cutoff >= 0.f ? 0.5f : 1.f}};
             vkCmdClearColorImage(command, targets[2], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &color);
             vkCmdClearColorImage(command, targets[3], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &color);
             vkCmdClearColorImage(command, targets[4], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &color);
@@ -215,26 +229,26 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
                 params.first_draw = batch;
                 params.draw_count = batch ? 3 : 1;
                 params.geometry_batch = batch;
-                if (!raster.record_mixed(cb, 2 * phase + batch, buffers, descriptors, &params, params.draw_count, 1,
-                        why, VK_NULL_HANDLE, views.mask))
+                params.material_count = 2;
+                const VisibilityPasses::Geometry geometry_input{buffers[0], buffers[1], buffers[2]};
+                const bool recorded = alpha_cutoff >= 0.f ?
+                    visibility_passes.rasterize(cb, 0, batch,
+                        phase == 0 ? VisibilityPasses::RasterPhase::Depth : VisibilityPasses::RasterPhase::Id,
+                        geometry_input, buffers[3], views.mask, materials, params, views.images[0], views.images[1], why) :
+                    raster.record_mixed(cb, 2 * phase + batch, buffers, descriptors, &params, params.draw_count, 1,
+                        why, VK_NULL_HANDLE, views.mask);
+                if (!recorded)
                     return false;
             }
             return true;
         });
         for (size_t i = 0; i < 2; ++i)
             require(graph.read_write(pass, resources[i], resources[i], error), error);
+        if (alpha_cutoff >= 0.f)
+            require(graph.read(pass, resources[5], ImageUse::StorageRead, error), error);
     }
-    BindlessTextureTable materials;
-    VisibilityPasses visibility_passes;
     if (bindless)
     {
-        VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-        require(vkCreateSampler(device, &sampler_info, nullptr, &views.sampler) == VK_SUCCESS, "visibility test sampler");
-        require(materials.initialize(device, vkGetDeviceProcAddr, 2, error) &&
-            materials.write(0, views.images[5], views.sampler, error, VK_IMAGE_LAYOUT_GENERAL) &&
-            materials.write(1, views.images[6], views.sampler, error, VK_IMAGE_LAYOUT_GENERAL), error);
-        require(visibility_passes.initialize(device, vkGetDeviceProcAddr, limits, 1, 2, VK_NULL_HANDLE,
-            materials, source, error), error);
         const auto resolve = graph.add_checked_command_pass("resolve visibility test", [&](VkCommandBuffer cb, std::string& why) {
             const VisibilityPasses::Geometry input{buffers[0], buffers[1], buffers[2]};
             const VkDescriptorImageInfo ids{views.sampler, views.images[0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -296,15 +310,16 @@ static void exercise_visibility_raster(VkDevice device, VkQueue queue, VkCommand
     vkFreeCommandBuffers(device, pool, 1, &cb);
     uint32_t pixels[2][64]{};
     require(readback.read(0, pixels, sizeof(pixels), error), error);
-    require(pixels[0][36] == visibility::pack_id(1, 0), "nearest unmasked triangle must win across batches");
+    const bool rejected = alpha_cutoff > 0.5f;
+    require(pixels[0][36] == visibility::pack_id(rejected ? 0 : 1, 0), "alpha test must select the correct visible triangle");
     float depth{};
     std::memcpy(&depth, &pixels[1][36], sizeof(depth));
-    require(std::abs(depth - 0.1875f) < 1e-6f, "visibility depth after near clipping");
+    require(std::abs(depth - (rejected ? 0.75f : 0.1875f)) < 1e-6f, "visibility depth after alpha test and near clipping");
     require(pixels[0][20] == visibility::pack_id(0, 0), "near clipping must expose the triangle behind it");
     require(pixels[0][0] == visibility::Background && pixels[1][0] == 0x3f800000u, "visibility background clear");
     require(pixels[0][23] == visibility::pack_id(3, 0) && pixels[1][23] == 0x3f800000u,
         "far-plane triangle must retain its ID at an interior pixel");
-    if (bindless)
+    if (bindless && alpha_cutoff < 0.f)
     {
         uint16_t output[3][64][4]{};
         require(readback.read(raster_bytes, output, sizeof(output), error), error);
@@ -1271,7 +1286,11 @@ int main(int argc, char** argv)
         exercise_smoke_shader(f.device, queue, f.pool, props.limits, memory, vk, source);
         exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source, bindless);
         if (bindless)
+        {
             exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source, true, true);
+            exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source, true, false, 0.75f);
+            exercise_visibility_raster(f.device, queue, f.pool, props.limits, memory, vk, source, true, false, 0.5f);
+        }
         std::cout << "Visibility material resolve " << (bindless ? "passed" : "skipped (no descriptor indexing)") << '\n';
         require(compute.initialize_from_source(f.device, vkGetDeviceProcAddr, props.limits, 3, VK_NULL_HANDLE, source, error), error);
         GpuParticleBuffers buffers;

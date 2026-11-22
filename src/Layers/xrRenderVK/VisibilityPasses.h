@@ -47,7 +47,7 @@ public:
     // Draw entries and the camera commands share an index. Unselected commands
     // have no indices or instances, and only entries in the draw range are read.
     bool rasterize(VkCommandBuffer command, uint32_t slot, uint32_t batch, RasterPhase phase, const Geometry& geometry,
-        const VkDescriptorBufferInfo& draw_commands, VkBufferView draw_mask,
+        const VkDescriptorBufferInfo& draw_commands, VkBufferView draw_mask, const BindlessTextureTable& materials,
         visibility::SoftwareRasterParameters parameters,
         VkImageView ids, VkImageView depth, std::string& error) const;
 
