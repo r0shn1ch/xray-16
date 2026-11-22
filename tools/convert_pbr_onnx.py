@@ -8,6 +8,7 @@ Requires numpy, Pillow and onnxruntime.
 
 Alternatively pass the OpenXRay ONNX model directory and an RGB normal map.
 This mode packs parallax into alpha and can export albedo and parallax separately.
+Pass several diffuse images to reuse the loaded models and write one PBR DDS per image.
 """
 
 import argparse
@@ -26,8 +27,17 @@ def read_rgb(path):
         return np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
 
 
-def run_model(model, diffuse, normal, output_name):
+def model_session(model, sessions):
+    if sessions is not None and model in sessions:
+        return sessions[model]
     session = ort.InferenceSession(str(model), providers=["CPUExecutionProvider"])
+    if sessions is not None:
+        sessions[model] = session
+    return session
+
+
+def run_model(model, diffuse, normal, output_name, sessions=None):
+    session = model_session(model, sessions)
     inputs = session.get_inputs()
     if len(inputs) != 1 or inputs[0].type != "tensor(float)" or len(inputs[0].shape) != 4:
         raise ValueError("model must have one rank-four float32 NCHW input")
@@ -115,7 +125,7 @@ def resize_mask(mask, height, width):
     return top * (1 - uy) + bottom * uy
 
 
-def run_openxray_models(directory, diffuse, normal):
+def run_openxray_models(directory, diffuse, normal, sessions=None):
     if normal is None:
         raise ValueError("the OpenXRay model set requires --normal with an RGB tangent-space normal map")
     rgb, normals = read_rgb(diffuse), read_rgb(normal)
@@ -129,7 +139,7 @@ def run_openxray_models(directory, diffuse, normal):
     std = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)[None, :, None, None]
 
     def infer(name, outputs, **inputs):
-        session = ort.InferenceSession(str(directory / (name + ".onnx")), providers=["CPUExecutionProvider"])
+        session = model_session(directory / (name + ".onnx"), sessions)
         data = session.run(outputs, {key: np.ascontiguousarray(value) for key, value in inputs.items()})
         if any(tensor.dtype != np.float32 or not np.isfinite(tensor).all() for tensor in data):
             raise ValueError(f"{name} returned invalid float32 data")
@@ -228,25 +238,32 @@ def save_outputs(outputs, overwrite):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("model", type=Path)
-    parser.add_argument("diffuse", type=Path)
-    parser.add_argument("--normal", type=Path)
+    parser.add_argument("diffuse", type=Path, nargs="+")
+    parser.add_argument("--normal", type=Path, action="append", help="repeat in diffuse input order for batches")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--output-name")
     parser.add_argument("--albedo-output", type=Path)
     parser.add_argument("--parallax-output", type=Path, help="use <material>_parallax.dds for engine discovery")
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
-    base = args.diffuse.stem
-    if len(base) > 2 and base.endswith("_d"):
-        base = base[:-2]
-    destination = args.output or args.diffuse.with_name(base + "_pbr.dds")
     model_set = args.model.is_dir()
+    if len(args.diffuse) > 1 and (args.output or args.albedo_output or args.parallax_output):
+        parser.error("explicit output paths require a single diffuse input")
+    if (model_set or args.normal) and len(args.normal or []) != len(args.diffuse):
+        parser.error("provide one --normal per diffuse input")
+    normals = args.normal or [None] * len(args.diffuse)
+    destinations = []
+    for diffuse in args.diffuse:
+        base = diffuse.stem
+        if len(base) > 2 and base.endswith("_d"):
+            base = base[:-2]
+        destinations.append(args.output or diffuse.with_name(base + "_pbr.dds"))
     if model_set and args.output_name is not None:
         parser.error("--output-name applies to single-model conversion")
     if not model_set and (args.albedo_output or args.parallax_output):
         parser.error("separate albedo and parallax exports require a model directory")
-    paths = [path for path in (destination, args.albedo_output, args.parallax_output) if path is not None]
-    inputs = {path.resolve() for path in (args.model, args.diffuse, args.normal) if path is not None}
+    paths = destinations + [path for path in (args.albedo_output, args.parallax_output) if path is not None]
+    inputs = {path.resolve() for path in (args.model, *args.diffuse, *normals) if path is not None}
     for path in paths:
         if path.suffix.lower() != ".dds":
             parser.error("outputs must have a .dds extension")
@@ -256,17 +273,19 @@ def main():
         if path.exists() and not args.overwrite:
             parser.error(f"output exists: {path}")
 
-    outputs = []
-    if model_set:
-        packed, albedo, parallax = run_openxray_models(args.model, args.diffuse, args.normal)
-        if args.albedo_output:
-            outputs.append((args.albedo_output, albedo, True))
-        if args.parallax_output:
-            outputs.append((args.parallax_output, parallax, False))
-    else:
-        packed = run_model(args.model, args.diffuse, args.normal, args.output_name)
-    outputs.append((destination, packed, False))
-    save_outputs(outputs, args.overwrite)
+    sessions = {} if len(args.diffuse) > 1 else None
+    for diffuse, normal, destination in zip(args.diffuse, normals, destinations):
+        outputs = []
+        if model_set:
+            packed, albedo, parallax = run_openxray_models(args.model, diffuse, normal, sessions)
+            if args.albedo_output:
+                outputs.append((args.albedo_output, albedo, True))
+            if args.parallax_output:
+                outputs.append((args.parallax_output, parallax, False))
+        else:
+            packed = run_model(args.model, diffuse, normal, args.output_name, sessions)
+        outputs.append((destination, packed, False))
+        save_outputs(outputs, args.overwrite)
 
 
 if __name__ == "__main__":
