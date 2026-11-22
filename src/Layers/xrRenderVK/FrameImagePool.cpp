@@ -1,7 +1,8 @@
 #include "FrameImagePool.h"
 
 #include <algorithm>
-#include <type_traits>
+#include <cstring>
+#include <exception>
 #include <utility>
 
 #if defined(XRAY_HAS_NVRHI_VULKAN)
@@ -18,14 +19,6 @@ nvrhi::Format to_nvrhi_format(VkFormat format)
     return nvrhi::Format::UNKNOWN;
 }
 
-template <typename Handle>
-Handle from_nvrhi_object(nvrhi::Object object)
-{
-    if constexpr (std::is_pointer_v<Handle>)
-        return static_cast<Handle>(object.pointer);
-    else
-        return static_cast<Handle>(object.integer);
-}
 }
 #endif
 
@@ -129,59 +122,6 @@ bool FrameImagePool::acquire(const VkImageCreateInfo& info, VkImage& image, std:
         return true;
     }
 
-#if defined(XRAY_HAS_NVRHI_VULKAN)
-    // NVRHI owns compatible frame images when it can describe the requested
-    // Vulkan image. The existing Vulkan state tracker still owns transitions.
-    if (nvrhi_device_ && info.sharingMode == VK_SHARING_MODE_EXCLUSIVE &&
-        info.flags == 0 && info.tiling == VK_IMAGE_TILING_OPTIMAL &&
-        info.initialLayout == VK_IMAGE_LAYOUT_UNDEFINED && !(info.usage & ~reusable_usage))
-    {
-        const nvrhi::Format format = to_nvrhi_format(info.format);
-        if (format != nvrhi::Format::UNKNOWN)
-        {
-            nvrhi::TextureDesc texture_desc{};
-            texture_desc.width = info.extent.width;
-            texture_desc.height = info.extent.height;
-            texture_desc.depth = info.extent.depth;
-            texture_desc.arraySize = info.arrayLayers;
-            texture_desc.mipLevels = info.mipLevels;
-            texture_desc.sampleCount = static_cast<uint32_t>(info.samples);
-            texture_desc.format = format;
-            using Dimension = nvrhi::TextureDimension;
-            const bool array = info.arrayLayers > 1;
-            if (info.imageType == VK_IMAGE_TYPE_3D)
-                texture_desc.dimension = Dimension::Texture3D;
-            else if (info.imageType == VK_IMAGE_TYPE_1D)
-                texture_desc.dimension = array ? Dimension::Texture1DArray : Dimension::Texture1D;
-            else if (info.samples != VK_SAMPLE_COUNT_1_BIT)
-                texture_desc.dimension = array ? Dimension::Texture2DMSArray : Dimension::Texture2DMS;
-            else
-                texture_desc.dimension = array ? Dimension::Texture2DArray : Dimension::Texture2D;
-            texture_desc.isShaderResource = (info.usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0;
-            texture_desc.isRenderTarget = (info.usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) != 0;
-            texture_desc.isUAV = (info.usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0;
-            texture_desc.debugName = "Vulkan frame image pool";
-
-            nvrhi::TextureHandle texture = nvrhi_device_->createTexture(texture_desc);
-            if (texture)
-            {
-                const VkImage created = from_nvrhi_object<VkImage>(
-                    texture->getNativeObject(nvrhi::ObjectTypes::VK_Image));
-                if (created)
-                {
-                    entries_.push_back({descriptor, created, VK_NULL_HANDLE,
-                        std::move(texture), frame_, true});
-                    image = created;
-                    error.clear();
-                    return true;
-                }
-            }
-        }
-    }
-
-#endif
-
     VkImage created{};
     if (vk_.create_image(device_, &info, nullptr, &created) != VK_SUCCESS)
     {
@@ -234,7 +174,57 @@ bool FrameImagePool::acquire(const VkImageCreateInfo& info, VkImage& image, std:
         error = "frame image pool could not bind memory";
         return false;
     }
-    entries_.push_back({descriptor, created, memory, {}, frame_, true});
+    nvrhi::TextureHandle texture;
+#if defined(XRAY_HAS_NVRHI_VULKAN)
+    // Wrap the pooled image after checked native allocation. The pool owns
+    // the VkImage and its memory; NVRHI holds a non-owning resource handle.
+    if (nvrhi_device_ && info.sharingMode == VK_SHARING_MODE_EXCLUSIVE &&
+        info.flags == 0 && info.tiling == VK_IMAGE_TILING_OPTIMAL &&
+        info.initialLayout == VK_IMAGE_LAYOUT_UNDEFINED && !(info.usage & ~reusable_usage))
+    {
+        const nvrhi::Format format = to_nvrhi_format(info.format);
+        if (format != nvrhi::Format::UNKNOWN)
+        {
+            nvrhi::TextureDesc texture_desc{};
+            texture_desc.width = info.extent.width;
+            texture_desc.height = info.extent.height;
+            texture_desc.depth = info.extent.depth;
+            texture_desc.arraySize = info.arrayLayers;
+            texture_desc.mipLevels = info.mipLevels;
+            texture_desc.sampleCount = static_cast<uint32_t>(info.samples);
+            texture_desc.format = format;
+            using Dimension = nvrhi::TextureDimension;
+            const bool array = info.arrayLayers > 1;
+            if (info.imageType == VK_IMAGE_TYPE_3D)
+                texture_desc.dimension = Dimension::Texture3D;
+            else if (info.imageType == VK_IMAGE_TYPE_1D)
+                texture_desc.dimension = array ? Dimension::Texture1DArray : Dimension::Texture1D;
+            else if (info.samples != VK_SAMPLE_COUNT_1_BIT)
+                texture_desc.dimension = array ? Dimension::Texture2DMSArray : Dimension::Texture2DMS;
+            else
+                texture_desc.dimension = array ? Dimension::Texture2DArray : Dimension::Texture2D;
+            texture_desc.isShaderResource = (info.usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0;
+            texture_desc.isRenderTarget = (info.usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) != 0;
+            texture_desc.isUAV = (info.usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0;
+            texture_desc.debugName = "Vulkan frame image pool";
+
+            uint64_t native_handle{};
+            static_assert(sizeof(created) <= sizeof(native_handle));
+            std::memcpy(&native_handle, &created, sizeof(created));
+            try
+            {
+                texture = nvrhi_device_->createHandleForNativeTexture(nvrhi::ObjectTypes::VK_Image,
+                    nvrhi::Object(native_handle), texture_desc);
+            }
+            catch (const std::exception&)
+            {
+                // Native Vulkan rendering can still use this image.
+            }
+        }
+    }
+#endif
+    entries_.push_back({descriptor, created, memory, std::move(texture), frame_, true});
     image = created;
     error.clear();
     return true;
@@ -254,12 +244,7 @@ bool FrameImagePool::release(VkImage image)
 
 void FrameImagePool::destroy(Entry& entry)
 {
-    if (entry.nvrhi_texture)
-    {
-        entry.nvrhi_texture = nullptr;
-        entry.image = VK_NULL_HANDLE;
-        return;
-    }
+    entry.nvrhi_texture = nullptr;
     if (entry.image)
         vk_.destroy_image(device_, entry.image, nullptr);
     if (entry.memory)
