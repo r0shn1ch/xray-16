@@ -3742,6 +3742,14 @@ void FrameContext::destroy_swapchain_resources()
 {
     if (!m_device)
         return;
+    if (m_frame_interpolation_swapchain && m_frame_generation_ui_register &&
+        !m_frame_generation_ui_images.empty())
+    {
+        // Clear the SDK's UI image reference before returning the images to the pool.
+        std::string error;
+        (void)m_frame_generation_ui_register(VK_NULL_HANDLE, VK_FORMAT_UNDEFINED, {}, 0,
+            m_frame_generation_ui_data, error);
+    }
     m_completion_pending = {};
     m_completion_images = {};
     for (VkFramebuffer framebuffer : m_framebuffers)
