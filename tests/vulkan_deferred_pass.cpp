@@ -48,6 +48,7 @@ VkPipeline bound_pipeline{};
 bool instanced_detail_probe{};
 uint32_t detail_instance_binds{}, detail_instance_draws{};
 VkDeviceSize expected_instance_offset{};
+DetailWindParameters expected_detail_wind{};
 VkPipelineLayout geometry_layout{}, skinned_layout{}, lighting_layout{}, weather_layout{};
 VkDescriptorSet updated_material{};
 VkImageView updated_albedo{};
@@ -405,6 +406,8 @@ void VKAPI_PTR push_constants(VkCommandBuffer, VkPipelineLayout layout, VkShader
     if (offset == 240)
     {
         assert(size == 16 && stage == expected_game_stage_flags);
+        if (instanced_detail_probe)
+            assert(std::memcmp(data, expected_detail_wind.directions, 16) == 0);
         return;
     }
     if (offset == 128)
@@ -412,6 +415,7 @@ void VKAPI_PTR push_constants(VkCommandBuffer, VkPipelineLayout layout, VkShader
         assert(stage == expected_game_stage_flags);
         assert(size == sizeof(float) * 28);
         const float *rows = static_cast<const float *>(data);
+        if (instanced_detail_probe) assert(rows[2] == expected_detail_wind.phase);
         assert(rows[0] == 1.f && rows[5] == 1.f && rows[8] == 1.f && rows[13] == 1.f && rows[16] == 1.f &&
                rows[21] == 1.f && rows[26] == 1.f);
         return;
@@ -1117,6 +1121,8 @@ int main()
     assert(deferred.create_game_pipeline("vk\\level_detail_instanced.vs", "vk\\level_detail_unlit_blended.ps",
         handle<VkShaderModule>(204), handle<VkShaderModule>(203), SurfaceMode::Transparent, false, error));
     instanced_detail_probe = true;
+    expected_detail_wind = {{.1f, .2f, .3f, .4f}, .7f};
+    deferred.set_detail_wind(expected_detail_wind);
     const auto record_detail = [&](VkBuffer instances, VkDeviceSize offset, const char* vertex = "vk\\level_detail_instanced.vs") {
         return deferred.record_transparent(hud_frame, handle<VkBuffer>(20), handle<VkBuffer>(21), 6,
             expected_mvp, detail, 0, vertex, "vk\\level_detail_unlit_blended.ps", nullptr, 0.f, nullptr,

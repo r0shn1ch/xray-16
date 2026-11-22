@@ -1431,8 +1431,12 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
         prepared.detail_meshes_.emplace_back();
         Mesh &mesh = prepared.detail_meshes_.back();
         for (const auto& vertex : prototype.vertices)
+        {
             mesh.detail_radius = std::max(mesh.detail_radius, std::hypot(
                 vertex.position[0], vertex.position[1], vertex.position[2]));
+            mesh.detail_wind_extent = std::max(mesh.detail_wind_extent,
+                std::abs(vertex.position[1] * vertex.lightmap_uv[0]));
+        }
         MaterialDefinition detail_definition;
         if (!textures.surface_mode(prototype.shader, prototype.texture, mesh.mode, error, &mesh.alpha_ref, nullptr,
                                    false, false, true, false, nullptr, nullptr, &detail_definition))
@@ -2182,7 +2186,7 @@ bool GpuLevel::enable_gpu_details(PFN_vkGetDeviceProcAddr get, const VkPhysicalD
 }
 
 bool GpuLevel::record_generated_details(const FrameRecordingContext& frame, const float (&mvp)[16],
-    std::string& error) const
+    std::string& error, float wind_amplitude) const
 {
     auto& data = detail_generation_frames_[frame.frame_index];
     auto& batches = gpu_detail_batches_[frame.frame_index];
@@ -2248,7 +2252,8 @@ bool GpuLevel::record_generated_details(const FrameRecordingContext& frame, cons
     }
     float margin = 0.f;
     for (size_t i = 0; i < detail_meshes_.size(); ++i)
-        margin = std::max(margin, detail_meshes_[i].detail_radius * details_.prototypes[i].max_scale);
+        margin = std::max(margin, detail_wind_radius(detail_meshes_[i].detail_radius,
+            detail_meshes_[i].detail_wind_extent, wind_amplitude) * details_.prototypes[i].max_scale);
     if (!ensure(data.placed, VkDeviceSize(candidates) * sizeof(GeneratedDetail), storage, local) ||
         !ensure(data.visible_cells, (VkDeviceSize(detail_generation_params_.slot_count) + 1) * sizeof(uint32_t),
             storage | VK_BUFFER_USAGE_TRANSFER_DST_BIT, local) ||
@@ -2273,14 +2278,16 @@ bool GpuLevel::record_generated_details(const FrameRecordingContext& frame, cons
                 storage | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, local) ||
             !detail_cull_->record(frame.command_buffer, static_cast<uint32_t>(frame.frame_index * batches.size() + model),
                 data.placed, batch.instances, batch.arguments, mvp, candidates, detail_meshes_[model].index_count,
-                detail_meshes_[model].detail_radius, error, static_cast<uint32_t>(model), batch.count))
+                detail_wind_radius(detail_meshes_[model].detail_radius,
+                    detail_meshes_[model].detail_wind_extent, wind_amplitude), error,
+                static_cast<uint32_t>(model), batch.count))
             return false;
     }
     return true;
 }
 
 bool GpuLevel::record_detail_cull(const FrameRecordingContext& frame, const float (&mvp)[16],
-    std::string& error) const
+    std::string& error, float wind_amplitude) const
 {
     const auto slot = frame.frame_index;
     if (slot >= gpu_detail_batches_.size())
@@ -2295,7 +2302,7 @@ bool GpuLevel::record_detail_cull(const FrameRecordingContext& frame, const floa
 
     if (detail_generate_ && !detail_gpu_generation_failed_ && detail_generation_params_.slot_count)
     {
-        if (!record_generated_details(frame, mvp, error))
+        if (!record_generated_details(frame, mvp, error, wind_amplitude))
         {
             detail_gpu_generation_failed_ = true;
             return false;
@@ -2336,7 +2343,8 @@ bool GpuLevel::record_detail_cull(const FrameRecordingContext& frame, const floa
             !batch.placements.write(0, inputs.data(), inputs.size() * sizeof(DetailCullInput), error) ||
             !detail_cull_->record(frame.command_buffer, static_cast<uint32_t>(slot * grouped.size() + model),
                 batch.placements, batch.instances, batch.arguments, mvp, batch.count, detail_meshes_[model].index_count,
-                detail_meshes_[model].detail_radius, error))
+                detail_wind_radius(detail_meshes_[model].detail_radius,
+                    detail_meshes_[model].detail_wind_extent, wind_amplitude), error))
             return false;
     }
     gpu_detail_recorded_[slot] = true;
@@ -2378,7 +2386,8 @@ bool GpuLevel::record_details(const FrameRecordingContext &frame, const Deferred
             return false;
         const auto& mesh = detail_meshes_[p.model];
         if (mesh.mode == SurfaceMode::Transparent ||
-            !visible_sphere(mvp, p.x, p.y, p.z, mesh.detail_radius * std::abs(p.scale)))
+            !visible_sphere(mvp, p.x, p.y, p.z, detail_wind_radius(mesh.detail_radius,
+                mesh.detail_wind_extent, pass.detail_wind_amplitude()) * std::abs(p.scale)))
             continue;
         auto instance = detail_instance(p.x, p.y, p.z, p.yaw, p.scale);
         const auto *bytes = reinterpret_cast<const uint8_t *>(&instance);
@@ -2428,7 +2437,7 @@ bool GpuLevel::record_details(const FrameRecordingContext &frame, const Deferred
 }
 
 bool GpuLevel::prepare_transparent_details(const FrameRecordingContext &frame, const float (&mvp)[16],
-                                           std::vector<float> &sort_distances) const
+                                           std::vector<float> &sort_distances, float wind_amplitude) const
 {
     if (frame.frame_index >= transparent_detail_instances_.size())
         return false;
@@ -2443,7 +2452,7 @@ bool GpuLevel::prepare_transparent_details(const FrameRecordingContext &frame, c
             return false;
         const auto& mesh = detail_meshes_[placement.model];
         if (mesh.mode == SurfaceMode::Transparent && visible_sphere(mvp, placement.x, placement.y, placement.z,
-                mesh.detail_radius * std::abs(placement.scale)))
+                detail_wind_radius(mesh.detail_radius, mesh.detail_wind_extent, wind_amplitude) * std::abs(placement.scale)))
             visible.push_back(&placement);
     }
     const auto distance = [](const DetailPlacement *placement) {

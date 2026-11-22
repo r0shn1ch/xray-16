@@ -15,6 +15,7 @@
 #include "../src/Layers/xrRenderVK/LocalLightShaders.h"
 #include "../src/Layers/xrRenderVK/LocalShadowTargets.h"
 #include "../src/Layers/xrRenderVK/DetailInstance.h"
+#include "../src/Layers/xrRenderVK/DetailWind.h"
 #include "../src/Layers/xrRenderVK/ForwardLighting.h"
 #include "vulkan_motion_scene.h"
 #include "../src/Include/xrRender/WaterContactEffect.h"
@@ -842,6 +843,13 @@ int main(int argc, char **argv)
             memory.allocate(required, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         check(vkBindBufferMemory(device, local_buffer, local_memory, 0));
         LocalLightUniform local_uniform{};
+        const auto set_local_shadow_tiles = [&] {
+            for (unsigned face = 0; face < LocalShadowFaces; ++face)
+            {
+                local_uniform.shadow_tiles[face][2] = static_cast<int32_t>(cube.width);
+                local_uniform.shadow_tiles[face][3] = static_cast<int32_t>(face);
+            }
+        };
         auto write_local = [&]() {
             void *value{};
             check(vkMapMemory(device, local_memory, 0, VK_WHOLE_SIZE, 0, &value));
@@ -2004,6 +2012,9 @@ int main(int argc, char **argv)
         local_uniform.inverse_view_projection[12] = local_uniform.position_range[0] = 0;
         for (unsigned i = 0; i < 16; i += 5)
             local_uniform.shadow_matrices[0][i] = 1;
+        // The local shader samples atlas rectangles. This fixture uses one
+        // full-size tile in each layer of its six-layer shadow image.
+        set_local_shadow_tiles();
         local_uniform.shadow_params[2] = 1;
         write_local();
         upload_solid_cube(memory, queue, commands, cmd, cube,
@@ -2098,6 +2109,7 @@ int main(int argc, char **argv)
         std::memcpy(mapped, grass_quad.data(), sizeof(grass_quad));
         vkUnmapMemory(device, vertex_memory);
         Push grass_push{};
+        std::fill_n(grass_push.rotation, 4, 0.f); // still detail wind, rather than an object quaternion
         for (unsigned i = 0; i < 16; i += 5)
             grass_push.mvp[i] = 1;
         fill(memory, input[0], {.7f, .3f, .2f, 1});
@@ -2111,6 +2123,82 @@ int main(int argc, char **argv)
         std::memcpy(right_normal, static_cast<char *>(mapped) + (128 * 96) * 16 + 16, 16);
         vkUnmapMemory(device, readback_memory);
         near(right_normal[2], 0, "second grass normal rotates independently");
+        // Compare the shipped wind VS with CPU-deformed geometry at 128x96.
+        // Exercise both wave groups, changing time and DO_NO_WAVING.
+        scene_test = true;
+        const auto still_quad = grass_quad;
+        auto reference_push = grass_push;
+        std::fill_n(reference_push.rotation, 4, 0.f);
+        reference_push.rotation[3] = 1.f;
+        bool tested_first_wave = false, tested_second_wave = false;
+        std::array<std::array<float, 4>, 128 * 96> previous_wind_pixels{};
+        unsigned animated_changes = 0;
+        for (const float root_x : {-.4f, .35f})
+        {
+            const DetailInstance test_instances[]{detail_instance(root_x, 0.f, .5f, .7f, .6f),
+                detail_instance(100.f, 0.f, .5f, 0.f, .6f)};
+            tested_second_wave |= detail_second_wave(root_x, .5f);
+            tested_first_wave |= !detail_second_wave(root_x, .5f);
+            check(vkMapMemory(device, instance_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
+            std::memcpy(mapped, test_instances, sizeof(test_instances));
+            vkUnmapMemory(device, instance_memory);
+            for (const uint32_t flags : {0u, 1u})
+                for (const float phase : {.07f, .43f})
+                {
+                    DetailWindParameters wind{{.9f, .3f, -.5f, .6f}, phase};
+                    auto wind_push = grass_push;
+                    wind_push.matrices[2] = phase;
+                    std::copy_n(wind.directions, 4, wind_push.rotation);
+                    auto prototype = still_quad;
+                    float minimum_y = prototype[0].position[1], maximum_y = minimum_y;
+                    for (const auto& vertex : prototype)
+                    {
+                        minimum_y = std::min(minimum_y, vertex.position[1]);
+                        maximum_y = std::max(maximum_y, vertex.position[1]);
+                    }
+                    for (auto& vertex : prototype)
+                        vertex.lightmap_uv[0] = detail_wind_weight(vertex.position[1], maximum_y - minimum_y, flags);
+                    check(vkMapMemory(device, vertex_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
+                    std::memcpy(mapped, prototype.data(), sizeof(prototype));
+                    vkUnmapMemory(device, vertex_memory);
+                    execute(flat, wind_push, false, instanced_vertex, true);
+                    const auto gpu_pixels = scene_pixels;
+                    if (!flags && phase == .07f) previous_wind_pixels = gpu_pixels;
+                    if (!flags && phase == .43f)
+                        for (size_t pixel = 0; pixel < gpu_pixels.size(); ++pixel)
+                            animated_changes += std::abs(gpu_pixels[pixel][0] - previous_wind_pixels[pixel][0]) > .1f;
+                    auto deformed = prototype;
+                    for (auto& vertex : deformed)
+                    {
+                        const auto p = detail_transform(test_instances[0], vertex.position);
+                        const auto displacement = detail_wind_displacement(p.data(),
+                            test_instances[0].position_scale, vertex.lightmap_uv[0], wind);
+                        for (unsigned axis = 0; axis < 3; ++axis) vertex.position[axis] = p[axis] + displacement[axis];
+                        const float c = test_instances[0].rotation[0], s = test_instances[0].rotation[1];
+                        const float x = vertex.normal[0], z = vertex.normal[2];
+                        vertex.normal[0] = c * x + s * z;
+                        vertex.normal[2] = -s * x + c * z;
+                    }
+                    check(vkMapMemory(device, vertex_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
+                    std::memcpy(mapped, deformed.data(), sizeof(deformed));
+                    vkUnmapMemory(device, vertex_memory);
+                    execute(flat, reference_push, false, VK_NULL_HANDLE, true);
+                    unsigned mismatches = 0;
+                    for (size_t pixel = 0; pixel < gpu_pixels.size(); ++pixel)
+                        mismatches += std::abs(gpu_pixels[pixel][0] - scene_pixels[pixel][0]) > .015f;
+                    if (mismatches > 8) throw std::runtime_error("detail wind VS/CPU raster mismatch: " + std::to_string(mismatches));
+                }
+        }
+        if (!tested_first_wave || !tested_second_wave || animated_changes < 10)
+            throw std::runtime_error("detail wind raster did not exercise both waves/animation");
+        std::cout << "Instanced detail wind raster, both waves and DO_NO_WAVING passed\n";
+        scene_test = false;
+        check(vkMapMemory(device, vertex_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
+        std::memcpy(mapped, still_quad.data(), sizeof(still_quad));
+        vkUnmapMemory(device, vertex_memory);
+        check(vkMapMemory(device, instance_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
+        std::memcpy(mapped, detail_instances, sizeof(detail_instances));
+        vkUnmapMemory(device, instance_memory);
         fill(memory, input[0], {.7f, .3f, .2f, 0});
         grass_push.threshold = .5f;
         const auto grass_cutout = module("level_cutout.ps.spv");
@@ -2458,6 +2546,7 @@ int main(int argc, char **argv)
             upload_solid_cube(memory, queue, commands, cmd, cube,
                 std::array<float, 4>{.25f, 0, 0, 1}, VK_IMAGE_LAYOUT_GENERAL);
             local_uniform = {};
+            set_local_shadow_tiles();
             constexpr Point Lamp{-.75f, 0.f, 7.75f};
             constexpr float Range = 1.65f;
             std::copy(Lamp.begin(), Lamp.end(), local_uniform.position_range);

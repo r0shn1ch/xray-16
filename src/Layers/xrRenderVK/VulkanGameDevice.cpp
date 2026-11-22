@@ -1791,6 +1791,24 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
     }
     deferred_.set_tree_wind(tree_wind);
     current_tree_wind_ = tree_wind;
+    if (!detail_wind_animation_.configured && pSettings && pSettings->section_exist("details"))
+    {
+        const auto load = [](const char* prefix, DetailWindSettings& settings) {
+            const auto value = [prefix](const char* suffix) {
+                const std::string key = std::string(prefix) + suffix;
+                return pSettings->line_exist("details", key.c_str()) ? pSettings->r_float("details", key.c_str()) : 0.f;
+            };
+            settings.rotation[0] = value("rot1"); settings.rotation[1] = value("rot2");
+            settings.amplitude[0] = value("amp1"); settings.amplitude[1] = value("amp2");
+            settings.speed = value("speed");
+        };
+        load("swing_normal_", detail_wind_animation_.normal);
+        load("swing_fast_", detail_wind_animation_.fast);
+        detail_wind_animation_.configured = true;
+    }
+    const auto detail_wind = detail_wind_animation_.advance(Device.fTimeGlobal,
+        g_pGamePersistent ? g_pGamePersistent->Environment().wind_strength_factor : 0.f);
+    deferred_.set_detail_wind(detail_wind);
     sun_uniform.options[3] = render_world ? ao_strength : 0.f;
     const uint32_t ao_quality = std::min<uint32_t>(quality_preset,
         static_cast<uint32_t>(std::size(PresetAODirections) - 1));
@@ -3520,6 +3538,7 @@ void VulkanGameDevice::save_pipeline_cache()
 
 void VulkanGameDevice::destroy()
 {
+    detail_wind_animation_ = {};
     frame_generation_available = 0;
     Msg("[renderer-vulkan] teardown game device begin");
     if (window_.device())

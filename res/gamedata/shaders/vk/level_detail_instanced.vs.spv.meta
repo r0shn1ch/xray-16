@@ -1,7 +1,7 @@
 XRAY_VULKAN_SHADER_METADATA_V1
-source=vk/opaque.vs
+source=vk/detail_instanced.vs
 stage=vs
 entry=main
 defines=LEVEL_GEOMETRY=1|VK_INSTANCED_DETAIL=1
-source-fingerprint=b7d7fc0243dcb694
-spirv-fingerprint=cb8d88444297b3b7
+source-fingerprint=e94a6037ea381249
+spirv-fingerprint=8df090eb90b639fb

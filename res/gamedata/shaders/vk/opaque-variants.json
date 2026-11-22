@@ -173,6 +173,6 @@
     { "source": "opaque.vs", "stage": "vs", "output": "vk/level_tree_w.vs.spv", "define": ["VK_TREE_WAVE=1", "LEVEL_GEOMETRY=1"] },
     { "source": "opaque.vs", "stage": "vs", "output": "vk/object_tree_s.vs.spv", "define": ["VK_TREE_STATIC=1", "OBJECT_GEOMETRY=1"] },
     { "source": "opaque.vs", "stage": "vs", "output": "vk/progressive_opaque.vs.spv", "define": ["VK_PROGRESSIVE=1", "LEVEL_GEOMETRY=1"] },
-    { "source": "opaque.vs", "stage": "vs", "output": "vk/level_detail_instanced.vs.spv", "define": ["LEVEL_GEOMETRY=1", "VK_INSTANCED_DETAIL=1"] }
+    { "source": "detail_instanced.vs", "stage": "vs", "output": "vk/level_detail_instanced.vs.spv", "define": ["LEVEL_GEOMETRY=1", "VK_INSTANCED_DETAIL=1"] }
   ]
 }

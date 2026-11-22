@@ -390,7 +390,8 @@ void VulkanGameDevice::record_transparent(const FrameRecordingContext &frame, vo
         float mvp[16];
         std::copy(owner.scene_mvp_.begin(), owner.scene_mvp_.end(), mvp);
         std::vector<float> detail_distances;
-        if (!owner.current_level_->prepare_transparent_details(frame, mvp, detail_distances))
+        if (!owner.current_level_->prepare_transparent_details(frame, mvp, detail_distances,
+                owner.deferred_.detail_wind_amplitude()))
         {
             owner.level_recorded_ = false;
             owner.level_error_ = "Vulkan transparent level detail preparation failed";

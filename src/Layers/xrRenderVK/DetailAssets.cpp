@@ -1,4 +1,5 @@
 #include "DetailAssets.h"
+#include "DetailWind.h"
 
 #include <algorithm>
 #include <cmath>
@@ -37,6 +38,7 @@ bool prototype(LevelBytes source, DetailPrototype& output)
     DetailPrototype item;
     if (!name(source, offset, item.shader) || !name(source, offset, item.texture) ||
         offset > source.size || source.size - offset < 20) return false;
+    item.flags = word(source.data + offset);
     item.min_scale = scalar(source.data + offset + 4);
     item.max_scale = scalar(source.data + offset + 8);
     const uint32_t vertex_count = word(source.data + offset + 12);
@@ -59,6 +61,19 @@ bool prototype(LevelBytes source, DetailPrototype& output)
         vertex.normal[1] = 1.f;
         for (float coord : vertex.position) if (!std::isfinite(coord)) return false;
         for (float coord : vertex.uv) if (!std::isfinite(coord)) return false;
+    }
+    float minimum_y = item.vertices.front().position[1], maximum_y = minimum_y;
+    for (const auto& vertex : item.vertices)
+    {
+        minimum_y = std::min(minimum_y, vertex.position[1]);
+        maximum_y = std::max(maximum_y, vertex.position[1]);
+    }
+    const float height = maximum_y - minimum_y;
+    if (!std::isfinite(height)) return false;
+    for (auto& vertex : item.vertices)
+    {
+        vertex.lightmap_uv[0] = detail_wind_weight(vertex.position[1], height, item.flags);
+        if (!std::isfinite(vertex.position[1] * vertex.lightmap_uv[0])) return false;
     }
     offset += size_t(vertex_count) * 20;
     item.indices.reserve(index_count);

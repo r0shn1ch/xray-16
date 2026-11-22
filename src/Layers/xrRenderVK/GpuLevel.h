@@ -148,11 +148,12 @@ class GpuLevel
                               std::vector<uint32_t> &roots) const;
     void all_level_roots(std::vector<uint32_t> &roots) const;
     bool enable_gpu_details(PFN_vkGetDeviceProcAddr get, const VkPhysicalDeviceLimits& limits, std::string& error);
-    bool record_detail_cull(const FrameRecordingContext& frame, const float (&mvp)[16], std::string& error) const;
+    bool record_detail_cull(const FrameRecordingContext& frame, const float (&mvp)[16], std::string& error,
+        float wind_amplitude = 0.f) const;
     void prepare_details(const Fvector &camera_position, float max_distance = 40.f);
     bool record_details(const FrameRecordingContext &frame, const DeferredPass &pass, const float (&mvp)[16]) const;
     bool prepare_transparent_details(const FrameRecordingContext &frame, const float (&mvp)[16],
-                                     std::vector<float> &sort_distances) const;
+                                     std::vector<float> &sort_distances, float wind_amplitude = 0.f) const;
     bool record_transparent_detail(size_t draw_index, const FrameRecordingContext &frame, const DeferredPass &pass,
                                    const float (&mvp)[16]) const;
     bool record_sun_shadow(const FrameRecordingContext &frame, const DeferredPass &pass,
@@ -173,7 +174,7 @@ class GpuLevel
         VkBuffer packed_vertices{}, packed_indices{};
         uint32_t geometry_batch{UINT32_MAX};
         bool visibility_rasterizable{};
-        float detail_radius{};
+        float detail_radius{}, detail_wind_extent{};
         uint32_t first_vertex{}, first_index{};
         uint64_t vertex_bytes{}, index_bytes{};
         uint64_t cluster_index_bytes{};
@@ -326,7 +327,8 @@ class GpuLevel
     std::vector<DetailGenerateSlot> detail_generation_cells_;
     std::vector<DetailGroundTriangle> detail_generation_triangles_;
     DetailGeneratePass::Parameters detail_generation_params_;
-    bool record_generated_details(const FrameRecordingContext& frame, const float (&mvp)[16], std::string& error) const;
+    bool record_generated_details(const FrameRecordingContext& frame, const float (&mvp)[16], std::string& error,
+        float wind_amplitude) const;
 
     mutable std::array<std::vector<GpuDetailBatch>, FrameContext::FramesInFlight> gpu_detail_batches_;
     mutable std::array<bool, FrameContext::FramesInFlight> gpu_detail_recorded_{};

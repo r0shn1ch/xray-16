@@ -11,6 +11,7 @@ namespace xray::render::vulkan
 struct DetailPrototype
 {
     std::string shader, texture;
+    uint32_t flags{};
     float min_scale{}, max_scale{};
     std::vector<LevelVertex> vertices;
     std::vector<uint32_t> indices;

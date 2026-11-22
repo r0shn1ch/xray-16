@@ -1366,7 +1366,8 @@ void DeferredPass::release_pose_descriptor(VkDescriptorSet &set)
 }
 
 void DeferredPass::push_texture_matrices(const FrameRecordingContext &frame, VkPipelineLayout layout,
-                                         const TextureMatrixSet *matrices, const float *normal_rows, bool tree_wave) const
+                                         const TextureMatrixSet *matrices, const float *normal_rows, bool tree_wave,
+                                         bool detail_wave) const
 {
     // Seven float4 rows: base UV, detail UV, environment UV/direction.
     float rows[28]{};
@@ -1391,10 +1392,12 @@ void DeferredPass::push_texture_matrices(const FrameRecordingContext &frame, VkP
         rows[axis * 4 + 2] =
             pack_model_hemi(normal_rows ? normal_rows[axis * 4 + 3] : -1.f, model_hemi_negative_[axis]);
     if (tree_wave) { rows[2] = tree_wind_.direction[0]; rows[6] = tree_wind_.direction[1]; }
+    if (detail_wave) rows[2] = detail_wind_.phase;
     command_cache_.push(vk_, frame.command_buffer, layout, game_stage_flags_,
                         128, sizeof(rows), rows);
     auto rotation = model_rotation_quaternion(normal_rows);
     if (tree_wave) std::copy_n(tree_wind_.wave, 4, rotation.begin());
+    if (detail_wave) std::copy_n(detail_wind_.directions, 4, rotation.begin());
     command_cache_.push(vk_, frame.command_buffer, layout, game_stage_flags_,
                         240, sizeof(rotation), rotation.data());
 }
@@ -2003,7 +2006,7 @@ bool DeferredPass::record_geometry(const FrameRecordingContext &frame, VkBuffer 
                                 environment_factor);
     }
     push_texture_matrices(frame, layout, matrices, normal_rows,
-        vertex_name && std::strstr(vertex_name, "level_tree_w.vs"));
+        vertex_name && std::strstr(vertex_name, "level_tree_w.vs"), instanced);
     if (!environment_variant)
     {
         const float camera[4]{Device.vCameraPosition.x, Device.vCameraPosition.y, Device.vCameraPosition.z, 1.f};
@@ -2183,7 +2186,7 @@ bool DeferredPass::record_transparent(const FrameRecordingContext &frame, VkBuff
             vk_.cmd_bind_descriptor_sets(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 2, 1,
                                          &draw_weather_set, 0, nullptr);
     }
-    push_texture_matrices(frame, layout, matrices, normal_rows);
+    push_texture_matrices(frame, layout, matrices, normal_rows, false, instanced);
     if (instances)
         vk_.cmd_bind_vertex_buffers(frame.command_buffer, 1, 1, &instances, &instance_offset);
     vk_.cmd_draw_indexed(frame.command_buffer, index_count, 1, first_index, vertex_base, 0);

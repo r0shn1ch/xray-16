@@ -7,6 +7,7 @@
 #include "GeometryCommandCache.h"
 #include "ShaderPairCache.h"
 #include "ShaderReflection.h"
+#include "DetailWind.h"
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -365,6 +366,8 @@ class DeferredPass
     void set_vsm_shadow_pass(VkRenderPass pass, VkRenderPass dynamic_pass = VK_NULL_HANDLE)
     { vsm_shadow_pass_ = pass; vsm_dynamic_shadow_pass_ = dynamic_pass; }
     void set_tree_wind(const TreeWindParameters& wind) { tree_wind_ = wind; }
+    void set_detail_wind(const DetailWindParameters& wind) { detail_wind_ = wind; }
+    float detail_wind_amplitude() const { return detail_wind_.amplitude(); }
     float tree_wind_amplitude() const { return std::hypot(tree_wind_.direction[0], tree_wind_.direction[1]); }
     bool record_geometry(const FrameRecordingContext &frame, VkBuffer vertices, VkBuffer indices, uint32_t index_count,
                          const float (&mvp)[16], VkDescriptorSet material_set, SurfaceMode mode = SurfaceMode::Opaque,
@@ -433,8 +436,9 @@ class DeferredPass
     mutable GeometryCommandCache command_cache_;
     void push_texture_matrices(const FrameRecordingContext &frame, VkPipelineLayout layout,
                                const TextureMatrixSet *matrices, const float *normal_rows = nullptr,
-                               bool tree_wave = false) const;
+                               bool tree_wave = false, bool detail_wave = false) const;
     TreeWindParameters tree_wind_{};
+    DetailWindParameters detail_wind_{};
     struct GamePipeline
     {
         VkPipeline handle{};

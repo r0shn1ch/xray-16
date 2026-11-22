@@ -40,7 +40,8 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
         float camera_mvp[16];
         std::memcpy(camera_mvp, context.mvp_, sizeof(camera_mvp));
         std::string error;
-        if (!context.level_->record_detail_cull(frame, camera_mvp, error) && Device.dwFrame % 300 == 0)
+        if (!context.level_->record_detail_cull(frame, camera_mvp, error, context.pass_->detail_wind_amplitude()) &&
+            Device.dwFrame % 300 == 0)
             Msg("! [renderer-vulkan] GPU details use CPU preparation: %s", error.c_str());
     }
     if (context.render_world_ && context.level_->has_cluster_visibility())
