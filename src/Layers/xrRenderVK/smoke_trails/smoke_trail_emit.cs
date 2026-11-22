@@ -3,7 +3,7 @@
     float g_PrevPosX, g_PrevPosY, g_PrevPosZ, g_CurrPosX;
     float g_CurrPosY, g_CurrPosZ, g_EmitDirX, g_EmitDirY;
     float g_EmitDirZ, g_BaseLifetime, g_LifetimeVariance, g_MaxWidth;
-    uint g_EmitCount, g_MaxPoints; float g_FrameSeed, g_Pad0;
+    uint g_EmitCount, g_MaxPoints; float g_FrameSeed; uint g_Restart;
 };
 [[vk::binding(1, 0)]] RWStructuredBuffer<SmokeSimPoint> g_SimBuffer;
 [[vk::binding(2, 0)]] RWByteAddressBuffer g_StateBuffer;
@@ -13,7 +13,10 @@ void main(uint lane : SV_GroupIndex) {
     uint count = min(g_EmitCount, g_MaxPoints);
     if (lane == 0) {
         g_First = 0;
-        if (count != 0) {
+        if (count != 0 && g_Restart != 0) {
+            g_StateBuffer.Store(0, count);
+            g_StateBuffer.Store(4, count);
+        } else if (count != 0) {
             g_StateBuffer.InterlockedAdd(0, count, g_First);
             uint ignored; g_StateBuffer.InterlockedAdd(4, count, ignored);
         }

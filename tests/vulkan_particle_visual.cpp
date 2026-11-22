@@ -64,13 +64,21 @@ int main()
         assert(!controller.prepare(10, .05f, 1.f).active);
         controller.update(next, direction, .05f, 11);
         const auto b = controller.prepare(11, .05f, 1.05f);
-        assert(b.active && b.emit.count == 2 && b.emit.previous_x == 1.f && b.emit.current_x == 2.f);
+        assert(b.active && b.emit.count == 2 && b.emit.previous_x == 1.f && b.emit.current_x == 2.f && !b.emit.restart);
         controller.commit(b);
         controller.commit(controller.prepare(12, .05f, 1.1f));
         const float moved[]{20.f, 2.f, 3.f};
-        controller.update(moved, direction, .05f, 20);
+        controller.update(moved, direction, 0.f, 20);
         const auto resumed = controller.prepare(20, .05f, 2.f);
-        assert(resumed.emit.previous_x == 20.f && resumed.emit.current_x == 20.f);
+        assert(resumed.emit.previous_x == 20.f && resumed.emit.current_x == 20.f && !resumed.emit.count);
+        controller.commit(resumed);
+        controller.update(moved, direction, .05f, 21);
+        const auto emitted = controller.prepare(21, .05f, 2.05f);
+        assert(emitted.emit.count == 2 && emitted.emit.restart);
+        assert(controller.prepare(21, .05f, 2.05f).emit.restart);
+        controller.commit(emitted);
+        controller.update(moved, direction, .05f, 22);
+        assert(!controller.prepare(22, .05f, 2.1f).emit.restart);
     }
     // A mixed group visits both record callbacks; every child must choose
     // exactly one world phase, including R2 PARTICLE SET versus S_SET SET.

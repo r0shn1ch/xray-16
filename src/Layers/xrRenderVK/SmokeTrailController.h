@@ -16,7 +16,7 @@ public:
         SmokeTrailEmitParams emit{}; SmokeTrailSimParams simulation{};
         SmokeTrailCompactParams compact{}; SmokeTrailDrawParams draw{};
         std::array<float, 3> position{}; float accumulator{};
-        uint32_t sample_frame{}, seed{}; bool active{};
+        uint32_t sample_frame{}, seed{}; bool active{}, restart_pending{};
     };
     void update(const float* position, const float* direction, float dt, uint32_t frame)
     {
@@ -32,7 +32,9 @@ public:
         out.active = has_sample_ && uint32_t(frame - sample_frame_) <= 1 && (!has_committed_ || sample_frame_ != committed_frame_);
         out.position = position_; out.sample_frame = sample_frame_; out.seed = seed_ * 1664525u + 1013904223u;
         const float frame_dt = std::isfinite(dt) ? std::clamp(dt, 0.f, .1f) : 0.f;
-        const auto previous = out.active && has_previous_ && uint32_t(sample_frame_ - committed_frame_) <= 2 ? previous_ : position_;
+        const bool continuous = has_previous_ && uint32_t(sample_frame_ - committed_frame_) <= 2;
+        out.restart_pending = restart_pending_ || (out.active && has_committed_ && !continuous);
+        const auto previous = continuous ? previous_ : position_;
         out.accumulator = accumulator_;
         if (out.active) out.accumulator += 45.f * sample_dt_;
         const uint32_t count = std::min<uint32_t>(static_cast<uint32_t>(out.accumulator), SmokeTrailCompute::MaxPoints);
@@ -43,6 +45,8 @@ public:
         e.direction_x = direction_[0]; e.direction_y = direction_[1]; e.direction_z = direction_[2];
         e.lifetime = 2.5f; e.max_width = .04f; e.count = out.active ? count : 0;
         e.max_points = SmokeTrailCompute::MaxPoints; e.seed = float(out.seed) / 4294967296.f;
+        e.restart = out.restart_pending && e.count != 0;
+        out.restart_pending = out.restart_pending && !e.restart;
         auto& s = out.simulation;
         s.dt = frame_dt; s.gravity = .15f; s.buoyancy = 1.f; s.turbulence = .8f; s.drag = .7f;
         s.time = time; s.max_points = SmokeTrailCompute::MaxPoints; s.heat = 1.f;
@@ -58,7 +62,7 @@ public:
     }
     void commit(const Frame& frame)
     {
-        accumulator_ = frame.accumulator; seed_ = frame.seed;
+        accumulator_ = frame.accumulator; seed_ = frame.seed; restart_pending_ = frame.restart_pending;
         if (frame.active) { previous_ = frame.position; committed_frame_ = frame.sample_frame; has_previous_ = has_committed_ = true; }
         else has_previous_ = false;
     }
@@ -67,6 +71,6 @@ private:
     std::array<float, 3> position_{}, direction_{}, previous_{};
     float sample_dt_{}, accumulator_{};
     uint32_t sample_frame_{}, committed_frame_{}, seed_{};
-    bool has_sample_{}, has_previous_{}, has_committed_{};
+    bool has_sample_{}, has_previous_{}, has_committed_{}, restart_pending_{};
 };
 }

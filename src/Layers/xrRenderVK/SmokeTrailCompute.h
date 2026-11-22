@@ -14,7 +14,7 @@ struct SmokeTrailEmitParams
     float previous_x{}, previous_y{}, previous_z{}, current_x{};
     float current_y{}, current_z{}, direction_x{}, direction_y{};
     float direction_z{}, lifetime{}, lifetime_variance{}, max_width{};
-    uint32_t count{}, max_points{}; float seed{}, padding{};
+    uint32_t count{}, max_points{}; float seed{}; uint32_t restart{};
 };
 struct SmokeTrailSimParams
 {

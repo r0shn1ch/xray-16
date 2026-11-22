@@ -390,6 +390,23 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
         std::abs(first_x - .25f) < .001f && std::abs(second_x - .75f) < .001f && std::abs(distance - .5f) < .001f,
         "smoke trail ordered emission, simulation and compaction");
     vkFreeCommandBuffers(device, pool, 1, &cb);
+    emit.previous_x = 10.f;
+    emit.current_x = 11.f;
+    emit.restart = 1;
+    require(vkAllocateCommandBuffers(device, &ai, &cb) == VK_SUCCESS &&
+        vkBeginCommandBuffer(cb, &begin) == VK_SUCCESS && smoke.record(cb, 0, emit, sim, compact, false, error), error);
+    vkCmdCopyBuffer(cb, smoke.get(SmokeTrailCompute::State).handle(), readback.handle(), 1, &state);
+    vkCmdCopyBuffer(cb, smoke.get(SmokeTrailCompute::ControlPoints).handle(), readback.handle(), 1, &points);
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+    require(vkEndCommandBuffer(cb) == VK_SUCCESS, "restarted smoke command end");
+    require(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS && vkQueueWaitIdle(queue) == VK_SUCCESS,
+        "restarted smoke submit");
+    require(readback.read(0, words, sizeof(words), error), error);
+    std::memcpy(&first_x, &words[8], 4); std::memcpy(&second_x, &words[16], 4);
+    require(words[0] == 2 && words[1] == 2 && words[2] == 2 &&
+        std::abs(first_x - 10.25f) < .001f && std::abs(second_x - 10.75f) < .001f,
+        "restarted smoke ribbon retained control points from before the gap");
+    vkFreeCommandBuffers(device, pool, 1, &cb);
     smoke.destroy();
     FrameImagePool noise_images;
     require(noise_images.initialize(device, memory, {vkCreateImage, vkDestroyImage,
