@@ -293,10 +293,14 @@ uint GpuSpawnChild(inout GpuPapiEmitter parent,uint program,GpuPapiParticle part
     uint stateFirst = g_Reservation.stateFirst + g_Reservation.stateUsed;
     g_Reservation.particleUsed += definition.maxParticles;
     g_Reservation.stateUsed += definition.stateCount;
-    for (uint i = 0; i < definition.maxParticles; ++i)
-        GpuSetAllocationStamp(particleFirst + i,false,particleFirst + definition.maxParticles);
-    for (uint j = 0; j < definition.stateCount; ++j)
-        GpuSetAllocationStamp(stateFirst + j,true,stateFirst + definition.stateCount);
+    // The allocation stamps already point at the reservation end. Only a child
+    // that ends before that boundary needs its own end stamped into the range.
+    if (g_Reservation.particleUsed < g_Reservation.particleCount)
+        for (uint i = 0; i < definition.maxParticles; ++i)
+            GpuSetAllocationStamp(particleFirst + i,false,particleFirst + definition.maxParticles);
+    if (g_Reservation.stateUsed < g_Reservation.stateCount)
+        for (uint j = 0; j < definition.stateCount; ++j)
+            GpuSetAllocationStamp(stateFirst + j,true,stateFirst + definition.stateCount);
     GpuPapiEmitter child;
     uint generation = g_Emitters[index].generation + 1;
     GpuInitializeEmitter(child,program,index,generation,parent.root,particleFirst,stateFirst);
