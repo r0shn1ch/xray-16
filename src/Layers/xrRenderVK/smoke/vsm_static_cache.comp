@@ -14,14 +14,16 @@ void main()
     uint row = gl_GlobalInvocationID.y * width;
     if (gl_GlobalInvocationID.x >= count - row) return;
     uint index = row + gl_GlobalInvocationID.x;
-    table[index] = 0xffffffffu;
+    bool primary_phase = params.limits.w == 0u;
+    if (primary_phase) table[index] = 0xffffffffu;
     uint per_level = axis * axis, level = index / per_level, within = index % per_level;
     ivec2 absolute_page = params.base[level].xy + ivec2(within % axis, within / axis);
     uvec2 toroidal = uvec2(absolute_page) & uvec2(axis - 1u);
     uint slot = level * per_level + toroidal.y * axis + toroidal.x;
     ivec4 state = slots[slot];
-    if (params.limits.y != 0u) { slots[slot].w = 0; state.w = 0; }
-    if (needed[index] == 0u) return;
+    if (primary_phase && params.limits.y != 0u) { slots[slot].w = 0; state.w = 0; }
+    uint request = needed[index];
+    if (request == 0u || ((request & 1u) != 0u) != primary_phase) return;
     bool wrong = state.w == 0 || any(notEqual(state.xy, absolute_page));
     // A forced invalidation may represent changed caster geometry. Do not
     // expose stale content, including when the update budget is exhausted.

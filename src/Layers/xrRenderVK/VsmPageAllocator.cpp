@@ -9,10 +9,11 @@ bool VsmPageAllocator::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, 
     VkDeviceSize max_storage_range, VkPipelineCache cache, std::string& error)
 {
     destroy();
-    if (!device || !get) { error = "VSM page allocator needs a Vulkan device"; return false; }
+    if (!device || !get || frame_slots > UINT32_MAX / 2)
+    { error = "VSM page allocator needs a Vulkan device and valid frame slots"; return false; }
     fill_ = reinterpret_cast<PFN_vkCmdFillBuffer>(get(device, "vkCmdFillBuffer"));
     barrier_ = reinterpret_cast<PFN_vkCmdPipelineBarrier>(get(device, "vkCmdPipelineBarrier"));
-    if (!fill_ || !barrier_ || !pass_.initialize(device, get, frame_slots, 4, 16, max_storage_range,
+    if (!fill_ || !barrier_ || !pass_.initialize(device, get, frame_slots * 2, 4, 20, max_storage_range,
             cache, vsm_allocate_shaders::Dynamic, sizeof(vsm_allocate_shaders::Dynamic), error))
     { if (error.empty()) error = "VSM page allocator procedures unavailable"; destroy(); return false; }
     return true;
@@ -25,7 +26,7 @@ bool VsmPageAllocator::record(VkCommandBuffer command, uint32_t frame_slot, uint
     if (!axis || axis > 65535u || !levels || levels > 65535u)
     { error = "VSM page allocator dimensions are invalid"; return false; }
     const uint64_t count64 = uint64_t(axis) * axis * levels;
-    if (!command || !fill_ || !barrier_ || !count64 || count64 > UINT32_MAX ||
+    if (!command || !fill_ || !barrier_ || frame_slot >= UINT32_MAX / 2 || !count64 || count64 > UINT32_MAX ||
         count64 > uint64_t(65535) * 65535 * 64 || !needed.handle() || !table.handle() ||
         !pages.handle() || !counters.handle() || needed.size() < count64 * 4 || table.size() < count64 * 4 ||
         pages.size() < std::max<uint64_t>(1, physical_pages) * 16 || counters.size() < (uint64_t(levels) + 1) * 4)
@@ -33,7 +34,7 @@ bool VsmPageAllocator::record(VkCommandBuffer command, uint32_t frame_slot, uint
     const uint32_t count = static_cast<uint32_t>(count64);
     const uint32_t groups = static_cast<uint32_t>((count64 + 63) / 64);
     const uint32_t groups_x = std::min(groups, 65535u);
-    const uint32_t constants[]{count, axis, physical_pages, groups_x};
+    uint32_t constants[]{count, axis, physical_pages, groups_x, 0};
     fill_(command, counters.handle(), 0, (VkDeviceSize(levels) + 1) * 4, 0);
     VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -43,8 +44,12 @@ bool VsmPageAllocator::record(VkCommandBuffer command, uint32_t frame_slot, uint
     const std::vector<VkDescriptorBufferInfo> buffers{
         {needed.handle(), 0, needed.size()}, {table.handle(), 0, table.size()},
         {pages.handle(), 0, pages.size()}, {counters.handle(), 0, counters.size()}};
-    return pass_.record(command, frame_slot, buffers, constants, groups_x,
-        (groups + groups_x - 1) / groups_x, error);
+    const uint32_t groups_y = (groups + groups_x - 1) / groups_x;
+    if (!pass_.record(command, frame_slot * 2, buffers, constants, groups_x, groups_y, error))
+        return false;
+    constants[4] = 1;
+    return pass_.record(command, frame_slot * 2 + 1, buffers, constants, groups_x,
+        groups_y, error);
 }
 
 void VsmPageAllocator::destroy()

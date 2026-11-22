@@ -581,7 +581,7 @@ static bool build_triangle_scene(VkPhysicalDevice physical, VkDevice device,
             !vsm_resolve_parameters.initialize(device, sizeof(VsmResolveParameters), storage, coherent, memory, vk.buffers, error) ||
             !vsm_resolve_readback.initialize(device, sizeof(float), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 coherent, memory, vk.buffers, error)) break;
-        const uint32_t requested_pages[]{1, 1, 0, 1, 0, 1, 1, 1};
+        const uint32_t requested_pages[]{2, 2, 0, 1, 0, 2, 1, 3};
         if (!vsm_needed.initialize(device, sizeof(requested_pages), storage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 coherent, memory, vk.buffers, error) ||
             !vsm_needed.write(0, requested_pages, sizeof(requested_pages), error) ||
@@ -1156,8 +1156,8 @@ static bool build_triangle_scene(VkPhysicalDevice physical, VkDevice device,
         for (uint32_t i = 0; i < 8; ++i)
         {
             const auto slot = page_table[i];
-            if (!requested_pages[i] && slot != UINT32_MAX)
-            { error = "VSM allocated an unrequested page"; break; }
+            if (((requested_pages[i] & 1u) != 0) != (slot != UINT32_MAX))
+            { error = "VSM failed to prioritize directly requested pages"; break; }
             if (slot == UINT32_MAX) continue;
             if (slot >= 3 || seen[slot] || page_list[slot][0] != i / 4 ||
                 page_list[slot][1] != i % 2 || page_list[slot][2] != (i % 4) / 2)
@@ -1388,17 +1388,27 @@ static bool build_triangle_scene(VkPhysicalDevice physical, VkDevice device,
         { if (error.empty()) error = "VSM dynamic job readback mismatch"; break; }
         demand.lod_bias = 1;
         demand.page_size = 8;
+        VsmStaticCacheParameters filter_budget{};
+        filter_budget.axis = 2; filter_budget.levels = 2; filter_budget.budget = 1;
         if (vkResetFences(device, 1, &fence) != VK_SUCCESS || vkResetCommandBuffer(command, 0) != VK_SUCCESS ||
             vkBeginCommandBuffer(command, &query_begin) != VK_SUCCESS ||
             !vsm_demand.record(generate_frame, demand, error) ||
+            !vsm_static_cache.reset(command, vsm_cache_slots, error) ||
+            !vsm_static_cache.prepare(command, 0, filter_budget, vsm_needed, vsm_table, vsm_cache_slots,
+                vsm_cache_work, error) ||
             vkEndCommandBuffer(command) != VK_SUCCESS || vkQueueSubmit(queue, 1, &query_submit, fence) != VK_SUCCESS ||
             vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS ||
             !vsm_needed.read(0, page_table, sizeof(page_table), error))
         { if (error.empty()) error = "VSM filter demand failed"; break; }
         for (uint32_t i = 0; i < 8; ++i)
-            if (page_table[i] != (i >= 4 ? 1u : 0u))
+            if (page_table[i] != (i == 7 ? 1u : i >= 4 ? 2u : 0u))
             { error = "VSM filter demand omitted a neighbor or escaped its clipmap level"; break; }
         if (!error.empty()) break;
+        std::vector<VsmPageJob> filter_jobs;
+        if (!read_vsm_static_jobs(vsm_cache_work, 2, 2, 1, 8, filter_jobs, error) ||
+            filter_jobs.size() != 1 || filter_jobs[0].level != 1 ||
+            filter_jobs[0].x != 1 || filter_jobs[0].y != 1)
+        { if (error.empty()) error = "VSM filter neighbors displaced a directly requested static page"; break; }
         demand.page_size = 0;
         if (vkResetFences(device, 1, &fence) != VK_SUCCESS || vkResetCommandBuffer(command, 0) != VK_SUCCESS ||
             vkBeginCommandBuffer(command, &query_begin) != VK_SUCCESS ||
