@@ -136,7 +136,10 @@ bool projected_bounds(mat4 matrix, vec4 sphere, out vec2 minimum, out vec2 maxim
 
 bool occludedByPreviousDepth(vec4 sphere)
 {
-    if (pc.quality.z == 0u || sphere.w <= 0.0) return false;
+    ivec2 source_size = ivec2(pc.quality.zw);
+    if (any(lessThanEqual(source_size, ivec2(0))) || sphere.w <= 0.0) return false;
+    ivec2 base_size = textureSize(previous_hiz, 0);
+    if (any(notEqual(base_size, max(source_size / 2, ivec2(1))))) return false;
     vec2 previous_minimum, previous_maximum, previous_center;
     vec2 current_minimum, current_maximum, current_center;
     float previous_nearest, current_nearest;
@@ -146,7 +149,6 @@ bool occludedByPreviousDepth(vec4 sphere)
             current_minimum, current_maximum, current_center, current_nearest))
         return false;
 
-    ivec2 base_size = textureSize(previous_hiz, 0);
     vec2 pixel_shift = abs((current_center - previous_center) * 0.5 * vec2(base_size));
     if (max(pixel_shift.x, pixel_shift.y) > 2.0 || abs(current_nearest - previous_nearest) > 0.005)
         return false;
@@ -161,9 +163,8 @@ bool occludedByPreviousDepth(vec4 sphere)
     int mip = int(clamp(floor(log2(max(pixel_extent.x, pixel_extent.y))),
         0.0, float(max(mip_count - 1, 0))));
     // Each mip halves the pixel coordinates and folds an odd edge into the last texel.
-    // The source depth size may be odd, so bound both possible sizes from mip zero.
-    ivec2 first_pixel = ivec2(floor(uv_minimum * vec2(base_size * 2)));
-    ivec2 last_pixel = ivec2(floor(uv_maximum * vec2(base_size * 2 + 1)));
+    ivec2 first_pixel = ivec2(floor(uv_minimum * vec2(source_size)));
+    ivec2 last_pixel = ivec2(floor(uv_maximum * vec2(source_size)));
     ivec2 first;
     ivec2 last;
     for (; mip < mip_count; ++mip)

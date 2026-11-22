@@ -321,7 +321,7 @@ bool ClusterVisibility::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get,
 
 bool ClusterVisibility::record_view(VkCommandBuffer command, VkDescriptorSet set, const float (&mvp)[16],
     const float (&camera)[3], float projection_scale, uint32_t output_view, std::string& error,
-    bool hiz_valid) const
+    VkExtent2D hiz_source_extent) const
 {
     if (!command || !set || !std::isfinite(projection_scale) || projection_scale <= 0.f)
     {
@@ -358,7 +358,8 @@ bool ClusterVisibility::record_view(VkCommandBuffer command, VkDescriptorSet set
             std::memcpy(&target_bits, &TargetErrorPixels, sizeof(target_bits));
             push.quality[0] = target_bits;
             push.quality[1] = chunk;
-            push.quality[2] = output_view == 0 && hiz_valid ? 1u : 0u;
+            push.quality[2] = hiz_source_extent.width;
+            push.quality[3] = hiz_source_extent.height;
             push_constants_(command, layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
             dispatch_(command, (chunk_count + LocalSize - 1) / LocalSize, 1, 1);
             chunk += chunk_count;
@@ -464,9 +465,9 @@ bool ClusterVisibility::record(const FrameRecordingContext& frame, const float (
     const auto cull = graph.add_checked_command_pass("cluster DAG camera and sun culling",
         [&, use_hiz](VkCommandBuffer command, std::string& record_error) {
         if (!record_view(command, sets_[frame.frame_index], camera_mvp, camera,
-                projection_scale, 0, record_error, use_hiz) ||
+                projection_scale, 0, record_error, use_hiz ? frame.extent : VkExtent2D{}) ||
             !record_view(command, sets_[frame.frame_index], sun_mvp, camera,
-                shadow_projection_scale, 1, record_error, false))
+                shadow_projection_scale, 1, record_error))
             return false;
         record_error.clear();
         return true;

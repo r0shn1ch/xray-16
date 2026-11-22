@@ -93,7 +93,7 @@ private:
     static_assert(sizeof(PushConstants) == 128);
     bool record_view(VkCommandBuffer command, VkDescriptorSet set, const float (&mvp)[16],
         const float (&camera)[3], float projection_scale, uint32_t output_view,
-        std::string& error, bool hiz_valid = false) const;
+        std::string& error, VkExtent2D hiz_source_extent = {}) const;
 
     VkDevice device_{};
     BufferResource groups_, clusters_;
