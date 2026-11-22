@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="windows-1250" ?>
 <string_table>
-	<string id="st_vk_upscaling"><text>Skalowanie</text></string>	<string id="st_vk_frame_generation"><text>Generowanie klatek (FSR 3.1)</text></string>
+	<string id="st_vk_upscaling"><text>Skalowanie</text></string>	<string id="st_vk_render_scale"><text>Rozdzielczo&#347;&#263; 3D</text></string>	<string id="st_vk_frame_generation"><text>Generowanie klatek (FSR 3.1)</text></string>
 	<string id="st_vk_msaa"><text>MSAA</text></string>
 	<string id="st_vk_texture_mip_bias"><text>Przesuni&#281;cie mip</text></string>
 	<string id="st_vk_dof_focus"><text>Odleg&#322;o&#347;&#263; ostro&#347;ci DOF</text></string>

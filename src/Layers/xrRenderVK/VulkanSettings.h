@@ -84,6 +84,7 @@ inline uint32_t gbuffer_msaa_samples = 0;
 inline uint32_t antialiasing = 1;
 // Scene reconstruction at presentation resolution: bilinear, cubic or temporal.
 inline uint32_t spatial_upscaler = 0;
+inline uint32_t render_scale_percent = 0;
 // Optional FSR 3 frame interpolation (requires the FSR upscaler and dedicated Vulkan queues).
 inline uint32_t frame_generation = 0;
 // Read-only menu capability: the build and selected Vulkan device expose the required queue roles.

@@ -99,11 +99,11 @@ template <typename T> T proc(VkDevice device, PFN_vkGetDeviceProcAddr get, const
     return reinterpret_cast<T>(get(device, name));
 }
 
-VkExtent2D upscaler_scene_extent(VkExtent2D display_extent, uint32_t upscaler)
+VkExtent2D scaled_scene_extent(VkExtent2D display_extent, uint32_t upscaler, uint32_t percent)
 {
-    if (upscaler == 0 || !display_extent.width || !display_extent.height)
+    if (!display_extent.width || !display_extent.height || percent == 100 || (!percent && upscaler == 0))
         return display_extent;
-    const float scale = upscaler == 1 ? .75f : (2.f / 3.f);
+    const double scale = percent ? double(std::clamp(percent, 50u, 100u)) / 100.0 : upscaler == 1 ? .75 : 2.0 / 3.0;
     const auto scaled = [scale](uint32_t value)
     {
         if (value < 2) return value;
@@ -382,7 +382,7 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
         return false;
     scaled_android_window_ = window;
     requested_android_extent_ = extent;
-    scene_extent = upscaler_scene_extent(extent, spatial_upscaler);
+    scene_extent = scaled_scene_extent(extent, spatial_upscaler, render_scale_percent);
     if (!android_presentation_extent(window, extent, error))
         return false;
 #endif
@@ -2832,7 +2832,7 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
 #if defined(XR_PLATFORM_ANDROID)
     if (!android_presentation_extent(scaled_android_window_, extent, error))
         return false;
-    const VkExtent2D scene_extent = upscaler_scene_extent(extent, spatial_upscaler);
+    const VkExtent2D scene_extent = scaled_scene_extent(extent, spatial_upscaler, render_scale_percent);
     if (!(replace_surface ? window_.recreate_surface(extent, scene_extent, error) :
             window_.recreate_frame(extent, scene_extent, error)))
         return false;

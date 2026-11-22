@@ -144,6 +144,13 @@ function opt_video_adv:InitControls(x, y, xml, handler)
 		table.insert(handler.m_preconditions, {func=vulkan_mode, control=_st})
 	end
 
+	if xml.HasNode and xml:HasNode("video_adv:combo_vk_render_scale") then
+		_st = xml:InitStatic("video_adv:templ_item", nil)
+		xml:InitStatic("video_adv:cap_vk_render_scale", _st)
+		xml:InitComboBox("video_adv:combo_vk_render_scale", _st)
+		table.insert(handler.m_preconditions, {func=vulkan_mode, control=_st})
+	end
+
 	if xml.HasNode and xml:HasNode("video_adv:combo_vk_framegen") then
 		_st = xml:InitStatic("video_adv:templ_item", nil)
 		xml:InitStatic("video_adv:cap_vk_framegen", _st)

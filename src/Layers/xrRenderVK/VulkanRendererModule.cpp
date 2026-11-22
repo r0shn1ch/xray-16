@@ -23,6 +23,8 @@ const xr_token quality_tokens[]{{"Minimum", 0}, {"Low", 1}, {"Default", 2}, {"Hi
 const xr_token aa_tokens[]{{"off", 0}, {"FXAA", 1}, {"TAA", 2}, {nullptr, 0}};
 const xr_token msaa_tokens[]{{"off", 0}, {"2x", 2}, {"4x", 4}, {nullptr, 0}};
 const xr_token upscale_tokens[]{{"Bilinear", 0}, {"Cubic", 1}, {"Temporal", 2}, {"FSR 3.1", 3}, {nullptr, 0}};
+const xr_token render_scale_tokens[]{{"Auto", 0}, {"50%", 50}, {"67%", 67}, {"75%", 75},
+    {"83%", 83}, {"100%", 100}, {nullptr, 0}};
 const xr_token frame_generation_tokens[]{{"off", 0}, {"on", 1}, {nullptr, 0}};
 
 class VulkanPreset final : public CCC_Token
@@ -181,11 +183,13 @@ void register_vulkan_options(VulkanLevelRender& renderer)
     static CCC_Token aa("r_vk_aa", &antialiasing, aa_tokens);
     static CCC_Token msaa("r_vk_msaa", &gbuffer_msaa_samples, msaa_tokens);
     static CCC_Token upscaler("r_vk_upscaler", &spatial_upscaler, upscale_tokens);
+    static CCC_Token render_scale("r_vk_render_scale", &render_scale_percent, render_scale_tokens);
     static CCC_Token frame_generation_option("r_vk_frame_generation", &frame_generation,
         frame_generation_tokens);
     Console->AddCommand(&aa);
     Console->AddCommand(&msaa);
     Console->AddCommand(&upscaler);
+    Console->AddCommand(&render_scale);
     Console->AddCommand(&frame_generation_option);
     static CCC_Float detail_time("r_vk_detail_prepare_ms", &detail_prepare_ms, 0.1f, 20.f);
     Console->AddCommand(&detail_time);
