@@ -459,13 +459,14 @@ bool FrameContext::create_swapchain(VkPhysicalDevice physical_device, VkSurfaceK
             (format.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 || format.format == VK_FORMAT_A2R10G10B10_UNORM_PACK32);
     });
     VkFormatProperties linear_format{};
-    if (m_hdr10_requested && m_postprocess && m_requested_scene_extent.width)
+    if (hdr10 != formats.end() && m_postprocess && m_requested_scene_extent.width)
         m_vk.get_format_properties(m_physical_device, VK_FORMAT_R16G16B16A16_SFLOAT, &linear_format);
     constexpr VkFormatFeatureFlags linear_required = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
         VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
         VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
-    const bool use_hdr10 = m_hdr10_requested && hdr10 != formats.end() &&
+    const bool hdr10_available = hdr10 != formats.end() &&
         (linear_format.optimalTilingFeatures & linear_required) == linear_required;
+    const bool use_hdr10 = m_hdr10_requested && hdr10_available;
     if (!use_hdr10 && m_allow_readback && !(capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
     {
         error = "Vulkan surface does not support transfer-source swapchain images";
@@ -614,7 +615,7 @@ bool FrameContext::create_swapchain(VkPhysicalDevice physical_device, VkSurfaceK
     }
     m_format = surface_format.format;
     m_color_space = surface_format.colorSpace;
-    m_hdr10_surface_available = hdr10 != formats.end();
+    m_hdr10_surface_available = hdr10_available;
     m_hdr_metadata_peak = m_hdr_metadata_black = -1.f;
 
     if (!enumerate<VkImage>([&](uint32_t* count, VkImage* values)

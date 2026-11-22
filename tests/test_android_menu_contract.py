@@ -62,8 +62,23 @@ class AndroidMenuContractTest(unittest.TestCase):
             self.assertEqual(shaft_quality.get('list_length'), '5')
             self.assertEqual(shaft_quality.find('options_item').attrib,
                              {'entry': 'r_vk_sun_shafts_quality', 'group': 'mm_opt_video_adv'})
+            for setting, entry in {
+                'hdr10': 'r_vk_hdr10',
+                'hdr_white': 'r_vk_hdr_paper_white',
+                'hdr_peak': 'r_vk_hdr_peak',
+                'hdr_black': 'r_vk_hdr_black',
+            }.items():
+                tag = f'track_vk_{setting}'
+                start = text.index(f'<{tag} ')
+                closing = f'</{tag}>'
+                end = text.index(closing, start) + len(closing)
+                control = ET.fromstring(text[start:end])
+                self.assertEqual(control.find('options_item').get('entry'), entry)
+                self.assertEqual(control.find('options_item').get('depend'),
+                                 'restart' if setting == 'hdr10' else None)
             found += 1
         self.assertGreaterEqual(found, 4)
+        self.assertIn('get_integer("r_vk_hdr10_available")==1', script)
 
     def test_launcher_retains_display_controls_and_leaves_quality_to_the_game(self):
         launcher = (JAVA / "LauncherActivity.java").read_text()

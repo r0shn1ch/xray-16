@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="windows-1251" ?>
 <string_table>
+	<string id="st_vk_hdr10"><text>HDR10 output</text></string>
+	<string id="st_vk_hdr_white"><text>HDR white (nits)</text></string>
+	<string id="st_vk_hdr_peak"><text>HDR peak (nits)</text></string>
+	<string id="st_vk_hdr_black"><text>HDR black (nits)</text></string>
 	<string id="st_vk_upscaling"><text>Upscaling</text></string>	<string id="st_vk_render_scale"><text>3D resolution</text></string>	<string id="st_vk_bloom"><text>Bloom</text></string>	<string id="st_vk_frame_generation"><text>Frame generation (FSR 3.1)</text></string>
 	<string id="st_vk_msaa"><text>MSAA</text></string>
 	<string id="st_vk_texture_mip_bias"><text>Texture mip bias</text></string>

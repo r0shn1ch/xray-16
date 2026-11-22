@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="windows-1251" ?>
 <string_table>
+	<string id="st_vk_hdr10"><text>&#1042;&#1099;&#1074;&#1086;&#1076; HDR10</text></string>
+	<string id="st_vk_hdr_white"><text>&#1041;&#1077;&#1083;&#1099;&#1081; HDR (&#1085;&#1080;&#1090;)</text></string>
+	<string id="st_vk_hdr_peak"><text>&#1055;&#1080;&#1082; HDR (&#1085;&#1080;&#1090;)</text></string>
+	<string id="st_vk_hdr_black"><text>&#1063;&#1105;&#1088;&#1085;&#1099;&#1081; HDR (&#1085;&#1080;&#1090;)</text></string>
 	<string id="st_vk_upscaling"><text>&#1052;&#1072;&#1089;&#1096;&#1090;&#1072;&#1073;&#1080;&#1088;&#1086;&#1074;&#1072;&#1085;&#1080;&#1077;</text></string>	<string id="st_vk_render_scale"><text>&#1056;&#1072;&#1079;&#1088;&#1077;&#1096;&#1077;&#1085;&#1080;&#1077; 3D</text></string>	<string id="st_vk_bloom"><text>&#1057;&#1074;&#1077;&#1095;&#1077;&#1085;&#1080;&#1077;</text></string>	<string id="st_vk_frame_generation"><text>&#1043;&#1077;&#1085;&#1077;&#1088;&#1072;&#1094;&#1080;&#1103; &#1082;&#1072;&#1076;&#1088;&#1086;&#1074; (FSR 3.1)</text></string>
 	<string id="st_vk_msaa"><text>MSAA</text></string>
 	<string id="st_vk_texture_mip_bias"><text>&#1057;&#1084;&#1077;&#1097;&#1077;&#1085;&#1080;&#1077; mip-&#1091;&#1088;&#1086;&#1074;&#1085;&#1103;</text></string>

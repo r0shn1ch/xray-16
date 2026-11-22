@@ -37,6 +37,10 @@ function vulkan_frame_generation_available(render_id)
 	return render_id==7 and get_console():get_integer("r_vk_frame_generation_available")==1
 end
 
+function vulkan_hdr10_available(render_id)
+	return render_id==7 and get_console():get_integer("r_vk_hdr10_available")==1
+end
+
 function mode_1(render_id)
 	return render_id==0
 end
@@ -205,6 +209,16 @@ function opt_video_adv:InitControls(x, y, xml, handler)
 		xml:InitStatic("video_adv:cap_vk_motion_blur", _st)
 		xml:InitTrackBar("video_adv:track_vk_motion_blur", _st)
 		table.insert(handler.m_preconditions, {func=vulkan_mode, control=_st})
+	end
+
+	for _, setting in ipairs({"hdr10", "hdr_white", "hdr_peak", "hdr_black"}) do
+		local track = "video_adv:track_vk_" .. setting
+		if xml.HasNode and xml:HasNode(track) then
+			_st = xml:InitStatic("video_adv:templ_item", nil)
+			xml:InitStatic("video_adv:cap_vk_" .. setting, _st)
+			xml:InitTrackBar(track, _st)
+			table.insert(handler.m_preconditions, {func=vulkan_hdr10_available, control=_st})
+		end
 	end
 
 	if xml.HasNode and xml:HasNode("video_adv:track_vk_bloom") then

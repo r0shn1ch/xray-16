@@ -840,6 +840,7 @@ void register_vulkan_options(VulkanLevelRender& renderer)
     static VulkanReadonlyState rtgi_support("r_vk_rtgi_available", &rtgi_available);
     static VulkanReadonlyState frame_generation_support("r_vk_frame_generation_available",
         &frame_generation_available);
+    static VulkanReadonlyState hdr10_support("r_vk_hdr10_available", &hdr10_output_available);
     apply_vulkan_launch_settings(Core.Params);
     IConsole_Command *options[]{&point_shadows, &spot_shadows, &ros_rays, &sky_scale,
                                 &light_scale,   &light_flow,   &smooth};
@@ -855,6 +856,7 @@ void register_vulkan_options(VulkanLevelRender& renderer)
     Console->AddCommand(&rtgi);
     Console->AddCommand(&rtgi_support);
     Console->AddCommand(&frame_generation_support);
+    Console->AddCommand(&hdr10_support);
     Console->AddCommand(&focus);
     Console->AddCommand(&details);
     Console->AddCommand(&discard_small_objects);

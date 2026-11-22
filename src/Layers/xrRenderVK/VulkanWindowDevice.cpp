@@ -449,6 +449,7 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
         m_frame.presentation_extent().width, m_frame.presentation_extent().height,
         m_frame.extent().width, m_frame.extent().height, m_frame.image_count(),
         static_cast<int>(m_frame.format()), static_cast<int>(m_frame.scene_format()), int(m_frame.hdr10_active()), timestamp_bits);
+    hdr10_output_available = m_frame.hdr10_surface_available() ? 1 : 0;
     error.clear();
     return true;
 }
@@ -470,6 +471,7 @@ bool VulkanWindowDevice::recreate_frame(VkExtent2D extent, VkSampleCountFlagBits
     if (!m_frame.request_scene_samples(scene_samples, error) ||
         !m_frame.recreate(m_physical.handle, m_surface, extent, error))
         return false;
+    hdr10_output_available = m_frame.hdr10_surface_available() ? 1 : 0;
     error.clear();
     return true;
 }
@@ -526,6 +528,7 @@ bool VulkanWindowDevice::recreate_surface(VkExtent2D extent, std::string& error)
 
     if (!m_frame.recreate(m_physical.handle, replacement, extent, error))
         return false;
+    hdr10_output_available = m_frame.hdr10_surface_available() ? 1 : 0;
     error.clear();
     return true;
 }
@@ -540,6 +543,7 @@ bool VulkanWindowDevice::recreate_surface(VkExtent2D extent, VkExtent2D scene_ex
 
 void VulkanWindowDevice::destroy()
 {
+    hdr10_output_available = 0;
     if (m_device && m_wait_idle)
         m_wait_idle(m_device);
     m_frame.destroy();

@@ -355,6 +355,34 @@
             <options_item entry="r_vk_bloom_intensity" group="mm_opt_video_adv"/>
         </track_vk_bloom>
 
+        <cap_vk_hdr10 x="20" y="3" width="135" height="24">
+            <text r="170" g="170" b="170" font="letterica16" align="r" vert_align="c">st_vk_hdr10</text>
+        </cap_vk_hdr10>
+        <track_vk_hdr10 x="180" y="6" width="235" height="16" step="1" is_integer="1">
+            <options_item entry="r_vk_hdr10" group="mm_opt_video_adv" depend="restart"/>
+        </track_vk_hdr10>
+
+        <cap_vk_hdr_white x="20" y="3" width="135" height="24">
+            <text r="170" g="170" b="170" font="letterica16" align="r" vert_align="c">st_vk_hdr_white</text>
+        </cap_vk_hdr_white>
+        <track_vk_hdr_white x="180" y="6" width="235" height="16" step="1">
+            <options_item entry="r_vk_hdr_paper_white" group="mm_opt_video_adv"/>
+        </track_vk_hdr_white>
+
+        <cap_vk_hdr_peak x="20" y="3" width="135" height="24">
+            <text r="170" g="170" b="170" font="letterica16" align="r" vert_align="c">st_vk_hdr_peak</text>
+        </cap_vk_hdr_peak>
+        <track_vk_hdr_peak x="180" y="6" width="235" height="16" step="10">
+            <options_item entry="r_vk_hdr_peak" group="mm_opt_video_adv"/>
+        </track_vk_hdr_peak>
+
+        <cap_vk_hdr_black x="20" y="3" width="135" height="24">
+            <text r="170" g="170" b="170" font="letterica16" align="r" vert_align="c">st_vk_hdr_black</text>
+        </cap_vk_hdr_black>
+        <track_vk_hdr_black x="180" y="6" width="235" height="16" step="0.01">
+            <options_item entry="r_vk_hdr_black" group="mm_opt_video_adv"/>
+        </track_vk_hdr_black>
+
         <cap_r2_sun x="20" y="3" width="135" height="24">
             <text r="170" g="170" b="170" font="letterica16" align="r" vert_align="c">ui_mm_r2_sun</text>
         </cap_r2_sun>
