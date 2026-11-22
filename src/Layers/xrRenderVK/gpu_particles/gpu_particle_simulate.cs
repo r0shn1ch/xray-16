@@ -41,7 +41,9 @@ uint GpuPrepareCommand(inout GpuPapiEmitter emitter,GpuPapiCommand command,uint 
         }
     }
     else if (command.type == 6) {
-        if (!GpuReserveTick(emitter,command.p0)) return 2;
+        // A failed bulk reservation can still leave room for individual children.
+        // Simulate the root and drop only births that cannot get their own resources.
+        g_ReserveChildrenOnDemand = !GpuReserveTick(emitter,command.p0);
         return 3;
     }
     else if (command.type == 7) {
@@ -92,7 +94,7 @@ void main(uint3 groupID : SV_GroupID,uint lane : SV_GroupIndex) {
         if (control == 0) continue;
         if (control == 3) {
             GpuAdvanceRoot(emitter,command.p0,lane);
-            if (lane == 0) GpuReleaseReservation();
+            if (lane == 0 && !g_ReserveChildrenOnDemand) GpuReleaseReservation();
         }
         changed = true;
         boundsDirty = boundsDirty || command.type == 0 || command.type == 1 || command.type == 3 || command.type == 4 || command.type == 6;

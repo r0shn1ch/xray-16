@@ -29,6 +29,7 @@ struct GpuPapiReservation {
     uint childFirst;
 };
 static GpuPapiReservation g_Reservation;
+static bool g_ReserveChildrenOnDemand;
 groupshared GpuPapiEmitter g_GroupEmitter;
 groupshared float4 g_GroupActionState;
 groupshared float g_GroupKillOldTime;
@@ -260,11 +261,16 @@ void GpuChildTransform(inout GpuPapiEmitter child,GpuPapiEmitter parent,GpuPapiP
 }
 uint GpuSpawnChild(inout GpuPapiEmitter parent,uint program,GpuPapiParticle particle,bool attached) {
     if (program == GPU_PAPI_INVALID) return GPU_PAPI_INVALID;
-    uint index = g_Reservation.childFirst;
+    if (program >= g_Papi.programCount) { GpuAllocationError(8u); return GPU_PAPI_INVALID; }
     GpuPapiProgram definition = g_Programs[program];
+    if (g_ReserveChildrenOnDemand &&
+        !GpuReserveResources(definition.maxParticles,definition.stateCount,1))
+        return GPU_PAPI_INVALID;
+    uint index = g_Reservation.childFirst;
     if (index == GPU_PAPI_INVALID || definition.maxParticles > g_Reservation.particleCount - g_Reservation.particleUsed ||
         definition.stateCount > g_Reservation.stateCount - g_Reservation.stateUsed) {
         GpuAllocationError(8u);
+        if (g_ReserveChildrenOnDemand) GpuReleaseReservation();
         return GPU_PAPI_INVALID;
     }
     g_Reservation.childFirst = g_Emitters[index].pad1;
@@ -287,6 +293,7 @@ uint GpuSpawnChild(inout GpuPapiEmitter parent,uint program,GpuPapiParticle part
     child.pad0 = parent.pad0;
     parent.pad0 = index;
     g_Emitters[index] = child;
+    if (g_ReserveChildrenOnDemand) GpuReleaseReservation();
     return index;
 }
 bool GpuAddParticle(inout GpuPapiEmitter emitter,GpuPapiParticle particle) {

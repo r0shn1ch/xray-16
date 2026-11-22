@@ -3,5 +3,5 @@ source=vk/../../../../src/Layers/xrRenderVK/gpu_particles/gpu_particle_simulate.
 stage=cs
 entry=main
 defines=
-source-fingerprint=7b1595157a96470e
-spirv-fingerprint=be9644ab072683db
+source-fingerprint=606a9c0f63287c56
+spirv-fingerprint=56d2c1632b6ee2e2

@@ -693,18 +693,21 @@ int main(int argc, char** argv)
         require(result.statuses[0].generation == 1 && result.statuses[0].serial == 1 && result.errors == 0, "simulation status");
         require(commands.acknowledge(result.statuses, error) && commands.snapshot(batch, error) && batch.commands.empty(), error);
         for (size_t i = 0; i < 28; ++i) require(draw_words[i * 4] == 6 && draw_words[i * 4 + 1] == 0, "draw arguments");
+        for (const uint32_t scenario : {0u, 1u, 2u})
         {
-            // The parent is full, and neither child slot is available. A source-only
-            // tick cannot spawn anything, so it must keep the parent alive.
+            // Test a full parent, then a parent that can emit two particles
+            // with zero and one free child slots respectively.
             fg::GpuPapiEmitter full_emitters[4]{};
             auto& root = full_emitters[0];
             root.active = root.generation = 1;
             root.completedSerial = 1;
             root.flags = GPU_PAPI_PLAYING;
-            root.count = root.capacity = 2;
+            root.capacity = 2;
+            root.count = scenario == 0 ? 2 : 0;
             root.childBirth = 0;
             root.childPlay = root.childDead = root.pad0 = GPU_PAPI_INVALID;
-            full_emitters[1].active = full_emitters[3].active = 1;
+            full_emitters[1].active = 1;
+            full_emitters[3].active = scenario == 2 ? 0 : 1;
             fg::GpuPapiProgram source_program = program;
             source_program.actionCount = 1;
             fg::GpuPapiAction source_action{};
@@ -735,8 +738,10 @@ int main(int argc, char** argv)
                 vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS &&
                 vkQueueWaitIdle(queue) == VK_SUCCESS, "full emitter tick submit");
             require(readback.read(result, error), error);
-            require(result.statuses[0].serial == 2 && !result.statuses[0].retired && result.errors == 0,
-                "a full emitter reserved unused child slots and was retired");
+            require(result.statuses[0].serial == 2 && !result.statuses[0].retired &&
+                result.statuses[0].playing && result.statuses[0].count == (scenario == 2 ? 4 : 2),
+                "child pressure interrupted the root tick or lost an allocatable child");
+            require(result.errors == (scenario == 0 ? 0u : 2u), "unexpected child allocation diagnostics");
         }
         uniforms.reset();
         require(buffers.resize_draw_buckets(f.device, 112, props.limits.maxStorageBufferRange, memory, vk, error), error);
