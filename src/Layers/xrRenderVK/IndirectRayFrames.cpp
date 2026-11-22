@@ -689,7 +689,7 @@ bool IndirectRayFrames::record(const FrameRecordingContext& frame, const LevelRa
     path_trace_parameters.dimensions[2] = alpha_texture_capacity_;
     path_trace_parameters.dimensions[3] = seed;
     path_trace_parameters.control[0] = 2;
-    path_trace_parameters.control[1] = path_trace_history_valid ? 1u : 0u;
+    path_trace_parameters.control[1] = path_trace_history_valid ? (motion_has_previous_depth ? 3u : 1u) : 0u;
     path_trace_parameters.control[2] = 64;
     path_trace_parameters.control[3] = static_cast<uint32_t>(local_lights.size());
     path_trace_parameters.limits[0] = max_distance;
