@@ -28,10 +28,17 @@ vec3 finiteNormal(vec3 normal)
         ? normal * inversesqrt(squaredLength) : vec3(0.0, 1.0, 0.0);
 }
 
+bool finiteUv(vec2 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
 void main()
 {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-    if (any(greaterThanEqual(pixel, textureSize(visibilityImage, 0))))
+    if (any(greaterThanEqual(pixel, textureSize(visibilityImage, 0))) ||
+        any(greaterThanEqual(pixel, imageSize(baseColorImage))) ||
+        any(greaterThanEqual(pixel, imageSize(normalImage))))
         return;
     uint id = texelFetch(visibilityImage, pixel, 0).x;
     if (!visibilityIdValid(id) || visibilityEntry(id) >= uint(entries.length()))
@@ -60,8 +67,10 @@ void main()
 
     mat3x2 texcoords = mat3x2(a.normalYZUv.zw, b.normalYZUv.zw, c.normalYZUv.zw);
     vec2 uv = texcoords * barycentrics.weights;
-    vec4 color = textureGrad(baseColorTextures[nonuniformEXT(entry.materialSlot)], uv,
-        texcoords * barycentrics.dx, texcoords * barycentrics.dy);
+    vec2 uvDx = texcoords * barycentrics.dx;
+    vec2 uvDy = texcoords * barycentrics.dy;
+    if (!finiteUv(uv) || !finiteUv(uvDx) || !finiteUv(uvDy)) return;
+    vec4 color = textureGrad(baseColorTextures[nonuniformEXT(entry.materialSlot)], uv, uvDx, uvDy);
     vec3 normalA = finiteNormal(visibilityNormal(a));
     vec3 normalB = finiteNormal(visibilityNormal(b));
     vec3 normalC = finiteNormal(visibilityNormal(c));
@@ -71,10 +80,16 @@ void main()
     if (entry.lightmapSlot < parameters.materialCount)
     {
         mat3x2 lightmapUv = mat3x2(a.lightmapUvBakedRG.xy, b.lightmapUvBakedRG.xy, c.lightmapUvBakedRG.xy);
-        vec4 baked = textureGrad(baseColorTextures[nonuniformEXT(entry.lightmapSlot)],
-            lightmapUv * barycentrics.weights, lightmapUv * barycentrics.dx, lightmapUv * barycentrics.dy);
-        color.a = baked.g;
-        normalAlpha = baked.a * 0.75;
+        vec2 bakedUv = lightmapUv * barycentrics.weights;
+        vec2 bakedDx = lightmapUv * barycentrics.dx;
+        vec2 bakedDy = lightmapUv * barycentrics.dy;
+        if (finiteUv(bakedUv) && finiteUv(bakedDx) && finiteUv(bakedDy))
+        {
+            vec4 baked = textureGrad(baseColorTextures[nonuniformEXT(entry.lightmapSlot)],
+                bakedUv, bakedDx, bakedDy);
+            color.a = baked.g;
+            normalAlpha = baked.a * 0.75;
+        }
     }
     imageStore(baseColorImage, pixel, color);
     imageStore(normalImage, pixel, vec4(normal, normalAlpha));
