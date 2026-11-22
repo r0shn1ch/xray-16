@@ -105,6 +105,15 @@ int main()
     assert(deleted == 5 && retirement.size() == 1);
     retirement.complete(0);
     assert(deleted == 6 && retirement.size() == 0);
+    ResourceRetirement full_mask_retirement(32);
+    full_mask_retirement.defer_for_slots(1u << 31, [&] { ++deleted; });
+    full_mask_retirement.retire(std::unique_ptr<Retired>(new Retired{&deleted}));
+    const int before_completion = deleted;
+    for (uint32_t slot = 0; slot < 31; ++slot)
+        full_mask_retirement.complete(slot);
+    assert(deleted == before_completion && full_mask_retirement.size() == 2);
+    full_mask_retirement.complete(31);
+    assert(deleted == before_completion + 2 && full_mask_retirement.size() == 0);
     assert(glow_facing({0, 0, 0}, {0, 0, 1}, {0, 0, -1}, .1f) == 0);
     assert(glow_facing({0, 0, 0}, {0, 0, 1}, {0, 0, .05f}, .1f) == 0);
     assert(glow_facing({0, 0, 0}, {0, 0, 1}, {0, 0, 1}, .1f) == 1);

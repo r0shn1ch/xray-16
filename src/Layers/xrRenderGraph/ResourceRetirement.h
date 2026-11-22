@@ -19,7 +19,7 @@ class ResourceRetirement
     uint32_t slots_;
 
   public:
-    explicit ResourceRetirement(uint32_t slots) : slots_(slots < 32 ? slots : 31)
+    explicit ResourceRetirement(uint32_t slots) : slots_(std::min(slots, 32u))
     {
     }
     template <class T> void retire(std::unique_ptr<T> resource)
@@ -71,6 +71,6 @@ class ResourceRetirement
         return entries_.size();
     }
 private:
-    uint32_t all_slots() const { return (1u << slots_) - 1; }
+    uint32_t all_slots() const { return slots_ == 32 ? UINT32_MAX : (1u << slots_) - 1; }
 };
 } // namespace xray::render::framegraph
