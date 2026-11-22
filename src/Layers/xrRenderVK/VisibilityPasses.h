@@ -4,6 +4,7 @@
 #include "BindlessTextureTable.h"
 #include "FrameContext.h"
 #include "Layers/xrRenderGraph/VisibilityId.h"
+#include "Layers/xrRenderGraph/ResourceRetirement.h"
 
 #include <functional>
 
@@ -23,16 +24,16 @@ public:
     struct Target { VkImage image{}; VkImageView view{}; };
     struct Targets
     {
-        Target ids, depth, base_color, normals;
+        Target depth, base_color, normals;
         VkExtent2D extent{};
         VkSampler id_sampler{};
     };
 
-    // Caller owns one target set per in-flight slot and supplies images with
-    // STORAGE, TRANSFER_DST and SAMPLED usage. Previous contents are discarded.
+    // Caller owns the outputs per in-flight slot. The graph allocates the ID image.
     bool record(const FrameRecordingContext& frame, const GpuLevel& level, const Targets& targets,
         const visibility::Camera& camera, const BindlessTextureTable& materials,
-        VkBufferView draw_mask, std::string& error) const;
+        VkBufferView draw_mask, FrameImagePool& pool, framegraph::ResourceRetirement& retirement,
+        std::string& error) const;
 
     bool initialize(VkDevice device, PFN_vkGetDeviceProcAddr get, const VkPhysicalDeviceLimits& limits,
         uint32_t slots, uint32_t batch_count, VkPipelineCache cache, const BindlessTextureTable& materials, const Source& source,
@@ -62,6 +63,9 @@ private:
     uint32_t batch_count_{};
     VkDescriptorSetLayout material_layout_{};
     VkExtent2D max_dispatch_{};
+    VkDevice device_{};
+    PFN_vkCreateImageView create_view_{};
+    PFN_vkDestroyImageView destroy_view_{};
     PFN_vkCmdClearColorImage clear_{};
     PFN_vkCmdPipelineBarrier barrier_{};
 };

@@ -3125,7 +3125,7 @@ void VulkanGameDevice::set_level_visibility(const VisibilityPasses* passes, cons
 
 void VulkanGameDevice::release_visibility_targets(VisibilityPasses::Targets& targets)
 {
-    for (auto* target : {&targets.ids, &targets.depth, &targets.base_color, &targets.normals})
+    for (auto* target : {&targets.depth, &targets.base_color, &targets.normals})
     {
         if (target->view)
             frame_dispatch_.destroy_image_view(window_.device(), target->view, nullptr);
@@ -3138,7 +3138,7 @@ void VulkanGameDevice::release_visibility_targets(VisibilityPasses::Targets& tar
 bool VulkanGameDevice::ensure_visibility_targets(uint32_t slot, VkExtent2D extent, std::string& error)
 {
     auto& targets = visibility_targets_[slot];
-    if (targets.extent.width == extent.width && targets.extent.height == extent.height && targets.ids.view)
+    if (targets.extent.width == extent.width && targets.extent.height == extent.height && targets.depth.view)
         return true;
     const auto device = window_.device();
     const auto physical = window_.physical().handle;
@@ -3195,7 +3195,7 @@ bool VulkanGameDevice::ensure_visibility_targets(uint32_t slot, VkExtent2D exten
         error = "visibility image view creation failed";
         return false;
     };
-    if (!create(targets.ids, VK_FORMAT_R32_UINT) || !create(targets.depth, VK_FORMAT_R32_UINT) ||
+    if (!create(targets.depth, VK_FORMAT_R32_UINT) ||
         !create(targets.base_color, VK_FORMAT_R16G16B16A16_SFLOAT) || !create(targets.normals, VK_FORMAT_R16G16B16A16_SFLOAT))
     {
         release_visibility_targets(targets);
@@ -3268,7 +3268,7 @@ void VulkanGameDevice::record_level_visibility(const FrameRecordingContext& fram
     camera.viewport.extent[1] = static_cast<float>(frame.extent.height);
     if (!self.initialize_visibility_gbuffer(error) || !self.ensure_visibility_targets(frame.frame_index, frame.extent, error) ||
         !self.visibility_passes_->record(frame, level, self.visibility_targets_[frame.frame_index], camera,
-            *self.visibility_materials_, mask_view, error))
+            *self.visibility_materials_, mask_view, self.window_.frame().image_pool(), self.retired_, error))
     {
         Msg("! [renderer-vulkan] visibility buffer recording disabled: %s", error.c_str());
         self.frame_.set_visibility_recorder(nullptr, nullptr);
