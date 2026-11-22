@@ -37,15 +37,25 @@ vec3 current_at(ivec2 pixel, ivec2 extent, float target_depth)
     vec4 weights = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y),
         (1.0 - f.x) * f.y, f.x * f.y);
     float tolerance = max(0.001, 0.02 * target_depth);
-    weights *= vec4(abs(depth_at_source(a, input_size) - target_depth) <= tolerance ? 1.0 : 0.0,
-                    abs(depth_at_source(b, input_size) - target_depth) <= tolerance ? 1.0 : 0.0,
-                    abs(depth_at_source(c, input_size) - target_depth) <= tolerance ? 1.0 : 0.0,
-                    abs(depth_at_source(d, input_size) - target_depth) <= tolerance ? 1.0 : 0.0);
-    float total = dot(weights, vec4(1.0));
+    vec4 difference = abs(vec4(depth_at_source(a, input_size), depth_at_source(b, input_size),
+        depth_at_source(c, input_size), depth_at_source(d, input_size)) - target_depth);
+    vec4 accepted = mix(vec4(0.0), weights, lessThanEqual(difference, vec4(tolerance)));
+    float total = dot(accepted, vec4(1.0));
     if (total <= 1e-5)
-        return texelFetch(current_color, clamp(ivec2(uv * vec2(input_size)), ivec2(0), input_size - 1), 0).rgb;
-    return (texelFetch(current_color, a, 0).rgb * weights.x + texelFetch(current_color, b, 0).rgb * weights.y +
-            texelFetch(current_color, c, 0).rgb * weights.z + texelFetch(current_color, d, 0).rgb * weights.w) / total;
+    {
+        // With different color and depth resolutions there may be no exact
+        // depth match. Prefer the closest surface, using distance to break ties.
+        ivec2 locations[4] = ivec2[4](a, b, c, d);
+        difference = mix(difference, vec4(3.402823e38), isnan(difference));
+        int best = 0;
+        for (int tap = 1; tap < 4; ++tap)
+            if (difference[tap] < difference[best] ||
+                (difference[tap] == difference[best] && weights[tap] > weights[best]))
+                best = tap;
+        return texelFetch(current_color, locations[best], 0).rgb;
+    }
+    return (texelFetch(current_color, a, 0).rgb * accepted.x + texelFetch(current_color, b, 0).rgb * accepted.y +
+            texelFetch(current_color, c, 0).rgb * accepted.z + texelFetch(current_color, d, 0).rgb * accepted.w) / total;
 }
 
 vec4 sample_history(vec2 uv, ivec2 extent, float expected_depth)
