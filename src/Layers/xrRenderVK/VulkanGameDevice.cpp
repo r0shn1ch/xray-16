@@ -353,7 +353,9 @@ bool VulkanGameDevice::gpu_particles_completed(uint32_t slot, uint32_t, void* us
     auto& owner = *static_cast<VulkanGameDevice*>(user);
     if (slot < owner.sky_probe_submitted_end_.size())
     {
-        const uint32_t end = std::exchange(owner.sky_probe_submitted_end_[slot], 0u);
+        owner.sky_probe_completed_end_ = std::max(owner.sky_probe_completed_end_,
+            std::exchange(owner.sky_probe_submitted_end_[slot], 0u));
+        const uint32_t end = owner.sky_probe_completed_end_;
         const size_t first = owner.sky_probe_cpu_.size();
         // Bake slices run on the same graphics queue in submission order.
         // A completed slice makes its prefix available, even if a callback
@@ -2739,6 +2741,7 @@ void VulkanGameDevice::release_ray_frames()
     sky_probe_results_.destroy();
     sky_probe_layout_ = {};
     sky_probe_next_ = 0;
+    sky_probe_completed_end_ = 0;
     sky_probe_submitted_end_ = {};
     sky_probe_cpu_.clear();
     sky_probe_failed_ = false;

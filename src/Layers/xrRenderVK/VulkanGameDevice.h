@@ -372,6 +372,7 @@ class VulkanGameDevice
     framegraph::SkyProbeLayout sky_probe_layout_;
     BufferResource sky_probe_results_;
     uint32_t sky_probe_next_{};
+    uint32_t sky_probe_completed_end_{};
     std::array<uint32_t, FrameContext::FramesInFlight> sky_probe_submitted_end_{};
     std::vector<SkyProbeVisibility> sky_probe_cpu_;
     bool sky_probe_failed_{};
