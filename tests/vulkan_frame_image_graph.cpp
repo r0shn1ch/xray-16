@@ -103,6 +103,21 @@ int main()
         assert(!virtual_graph.compile_resource_lifetimes(lifetimes, error));
         assert(error.find("transient image usage does not support pass copy unflagged image") != std::string::npos);
     }
+    {
+        FrameImageGraph graph;
+        VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        info.extent = {4, 4, 1};
+        info.mipLevels = info.arrayLayers = 1;
+        info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+        FrameImageGraph::Resource attachment;
+        assert(graph.declare_image(info, VK_IMAGE_ASPECT_COLOR_BIT, attachment, error));
+        const auto pass = graph.add_pass("draw virtual attachment", [] {});
+        assert(graph.write_render_pass(pass, attachment, ImageUse::ColorAttachment,
+            ImageUse::Sampled, attachment, error, ImageUse::Sampled));
+        FrameImageGraph::ResourceLifetimes lifetimes;
+        assert(!graph.compile_resource_lifetimes(lifetimes, error));
+        assert(error.find("transient image usage does not support pass draw virtual attachment") != std::string::npos);
+    }
     ImageStateTracker states;
     assert(states.register_image(image, range, ImageUse::Undefined, error));
 

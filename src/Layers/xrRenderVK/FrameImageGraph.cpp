@@ -954,7 +954,7 @@ bool FrameImageGraph::write_render_pass(Pass pass, Resource resource,
     next = {resource.index, uint32_t(image.versions.size()), generation_};
     image.versions.push_back({pass, {}});
     m_passes[pass].writes.push_back({next,
-        initial_use == ImageUse::Undefined ? attachment_use : initial_use, final_use});
+        initial_use == ImageUse::Undefined ? attachment_use : initial_use, final_use, attachment_use});
     error.clear();
     return true;
 }
@@ -1046,7 +1046,8 @@ bool FrameImageGraph::compile_resource_lifetimes(ResourceLifetimes& lifetimes, s
     const auto record_image = [&](const Access& access, uint32_t index)
     {
         const auto usage = m_images[access.resource.index].transient_info.usage;
-        const auto required = required_image_usage(access.use) | required_image_usage(access.final_use);
+        const auto required = required_image_usage(access.use) | required_image_usage(access.final_use) |
+            required_image_usage(access.attachment_use);
         if (usage && ((usage & required) != required || access.use == ImageUse::Present ||
                 access.final_use == ImageUse::Present))
         {

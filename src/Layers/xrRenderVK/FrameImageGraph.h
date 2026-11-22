@@ -243,6 +243,7 @@ private:
         Resource resource;
         ImageUse use = ImageUse::Undefined;
         ImageUse final_use = ImageUse::Undefined;
+        ImageUse attachment_use = ImageUse::Undefined;
     };
     struct Buffer
     {
