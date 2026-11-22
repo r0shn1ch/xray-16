@@ -85,8 +85,18 @@ int main()
         assert(staged_buffer.expired() && !virtual_graph.buffer_handle(written_buffer) &&
             !virtual_graph.buffer_handle(second_buffer));
         assert(error.find("handle already in use") != std::string::npos);
-        assert(virtual_graph.materialize_buffers(allocate, error));
+        assert(!virtual_graph.materialize_resources(allocate, [](const auto&, auto&, auto&) {
+            return false;
+        }, error));
+        assert(staged_buffer.expired() && !virtual_graph.buffer_handle(written_buffer) &&
+            !virtual_graph.buffer_handle(second_buffer) && !virtual_graph.image_handle(written_image));
+        assert(virtual_graph.materialize_resources(allocate, [](const auto&, auto& out, auto&) {
+            out.handle = (VkImage)(uintptr_t)1;
+            out.owner = std::make_shared<int>(0);
+            return true;
+        }, error));
         assert(virtual_graph.buffer_handle(written_buffer) && virtual_graph.buffer_handle(second_buffer));
+        assert(virtual_graph.image_handle(written_image));
         const auto copy = virtual_graph.add_pass("copy unflagged image", [] { return true; });
         assert(virtual_graph.read(copy, written_image, ImageUse::TransferSource, error));
         FrameImageGraph::ResourceLifetimes lifetimes;

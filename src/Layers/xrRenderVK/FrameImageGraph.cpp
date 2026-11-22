@@ -635,6 +635,27 @@ VkImage FrameImageGraph::image_handle(Resource resource) const
     return resource.version < image.versions.size() ? image.image : VK_NULL_HANDLE;
 }
 
+bool FrameImageGraph::materialize_resources(const AllocateBuffer& allocate_buffer,
+    const AllocateImage& allocate_image, std::string& error)
+{
+    std::vector<size_t> unbound_buffers;
+    for (size_t index = 0; index < m_buffers.size(); ++index)
+        if (!m_buffers[index].buffer) unbound_buffers.push_back(index);
+    if (!materialize_buffers(allocate_buffer, error)) return false;
+    if (materialize_images(allocate_image, error)) return true;
+
+    for (size_t index : unbound_buffers)
+    {
+        auto& buffer = m_buffers[index];
+        buffer.buffer = VK_NULL_HANDLE;
+        buffer.allocation.reset();
+        buffer.sharing_mode = VK_SHARING_MODE_EXCLUSIVE;
+        buffer.sharing_queue_families.clear();
+        buffer.initial_queue = default_queue_;
+    }
+    return false;
+}
+
 FrameImageGraph::Pass FrameImageGraph::add_pass(const char* name, Record record)
 {
     return add_pass(name, default_queue_, std::move(record));

@@ -150,6 +150,8 @@ public:
         Resource& resource, std::string& error);
     bool materialize_images(const AllocateImage& allocate, std::string& error);
     bool materialize_images(FrameImagePool& pool, std::string& error);
+    bool materialize_resources(const AllocateBuffer& allocate_buffer, const AllocateImage& allocate_image,
+        std::string& error);
     VkImage image_handle(Resource resource) const;
     // Call after recording the last use. The slots must cover every submitted use.
     void retire_allocations(framegraph::ResourceRetirement& retirement, uint32_t slots);
