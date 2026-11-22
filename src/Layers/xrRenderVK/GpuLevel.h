@@ -313,6 +313,7 @@ class GpuLevel
     {
         BufferResource cells, triangles, placed;
         std::vector<uint32_t> uploaded_cell_ids;
+        std::vector<uint32_t> model_capacities;
         uint64_t ground_generation{};
     };
     mutable std::array<DetailGenerationFrame, FrameContext::FramesInFlight> detail_generation_frames_;

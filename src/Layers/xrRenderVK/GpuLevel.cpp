@@ -2185,6 +2185,20 @@ bool GpuLevel::record_generated_details(const FrameRecordingContext& frame, cons
         data.uploaded_cell_ids.reserve(detail_generation_cells_.size());
         for (const auto& cell : detail_generation_cells_)
             data.uploaded_cell_ids.push_back(cell.data[0]);
+        data.model_capacities.assign(batches.size(), 0);
+        for (const auto& cell : detail_generation_cells_)
+        {
+            uint64_t counted = 0;
+            for (unsigned i = 0; i < 4; ++i)
+            {
+                const uint32_t model = (cell.data[1] >> (8 * i)) & 255u;
+                if (model < data.model_capacities.size() && model < 63u && !(counted & (uint64_t(1) << model)))
+                {
+                    data.model_capacities[model] += per_cell;
+                    counted |= uint64_t(1) << model;
+                }
+            }
+        }
         data.ground_generation = detail_ground_generation_;
     }
     if (!ensure(data.placed, VkDeviceSize(candidates) * sizeof(GeneratedDetail), storage, local) ||
@@ -2192,24 +2206,10 @@ bool GpuLevel::record_generated_details(const FrameRecordingContext& frame, cons
             detail_generation_prototypes_, data.placed, detail_generation_params_, error))
         return false;
 
-    std::vector<uint32_t> capacities(batches.size(), 0);
-    for (const auto& cell : detail_generation_cells_)
-    {
-        uint64_t counted = 0;
-        for (unsigned i = 0; i < 4; ++i)
-        {
-            const uint32_t model = (cell.data[1] >> (8 * i)) & 255u;
-            if (model < capacities.size() && model < 63u && !(counted & (uint64_t(1) << model)))
-            {
-                capacities[model] += per_cell;
-                counted |= uint64_t(1) << model;
-            }
-        }
-    }
     for (size_t model = 0; model < batches.size(); ++model)
     {
         auto& batch = batches[model];
-        batch.count = detail_meshes_[model].mode == SurfaceMode::Transparent ? 0 : capacities[model];
+        batch.count = detail_meshes_[model].mode == SurfaceMode::Transparent ? 0 : data.model_capacities[model];
         if (!batch.count)
             continue;
         if (!ensure(batch.instances, VkDeviceSize(batch.count) * sizeof(DetailInstance),
