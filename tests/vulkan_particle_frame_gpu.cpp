@@ -690,7 +690,7 @@ static void exercise_detail_interaction(VkPhysicalDevice physical, VkDevice devi
     require(vkCreateSampler(device,&sampler,nullptr,&views.sampler)==VK_SUCCESS,"interaction sampler");
     BufferResource entity_buffer, readback;
     constexpr auto host=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    require(entity_buffer.initialize(device,sizeof(DetailInteractionEntity),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+    require(entity_buffer.initialize(device,64*sizeof(DetailInteractionEntity),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         host,memory,buffers,error) && readback.initialize(device,8*8*8,VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         host,memory,buffers,error),error);
     DetailInteractionEntity entity{{3.5f,0.f,3.5f},2.f,{2.f,0.f,0.f},1.f};
@@ -764,16 +764,29 @@ static void exercise_detail_interaction(VkPhysicalDevice physical, VkDevice devi
         }
         std::cout << "GPU detail heightmap surfaces, binary cell lookup, scrolling and holes passed\n";
     }
-    for (unsigned step=0; step<7; ++step)
+    for (unsigned step=0; step<9; ++step)
     {
         auto params=base; params.previous_valid=step>0;
         if (step>=1 && step<=4) params.entity_count=0;
         if (step>=2 && step<=4) params.delta=0;
         if (step==3) { params.origin[0]=1.f; params.shift[0]=1; }
         if (step==4) { params.origin[0]=1000.f; params.previous_valid=0; }
-        if (step>=5) { params.previous_valid=0; entity.position[1]=5.f; }
+        if (step>=5 && step<=6) { params.previous_valid=0; entity.position[1]=5.f; }
         if (step==6) { entity.position[1]=0.f; entity.position[0]=std::numeric_limits<float>::quiet_NaN(); }
-        require(entity_buffer.write(0,&entity,sizeof(entity),error),error);
+        if (step>=7)
+        {
+            params.previous_valid=0; params.entity_count=64;
+            std::array<DetailInteractionEntity,64> many{};
+            for (auto& other : many) other={{100.f,0.f,100.f},1.f,{0.f,0.f,0.f},1.f};
+            const DetailInteractionEntity contact{{3.5f,0.f,3.5f},2.f,{2.f,0.f,0.f},1.f};
+            if (step==7)
+            {
+                many[0]=contact; many[32]=contact; many[32].velocity[0]=-2.f;
+            }
+            else many[63]=contact;
+            require(entity_buffer.write(0,many.data(),sizeof(many),error),error);
+        }
+        else require(entity_buffer.write(0,&entity,sizeof(entity),error),error);
         VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
         allocate.commandPool=pool; allocate.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY; allocate.commandBufferCount=1;
         VkCommandBuffer command{};
@@ -824,9 +837,72 @@ static void exercise_detail_interaction(VkPhysicalDevice physical, VkDevice devi
                 for (size_t channel=0; channel<4; ++channel)
                     require(output[(row*8+7)*4+channel]==0,"interaction exposed strip must clear");
         }
-        if (step>=4)
+        if (step>=4 && step<=6)
             for (uint16_t value : output) require((value&0x7fffu)==0,"interaction teleport, height and invalid entity rejection");
+        if (step>=7)
+            require(std::abs(half(output[center])-base.contact_rate)<.001f && half(output[center+1])==0.f &&
+                std::abs(half(output[center+2])-12.f)<.001f,
+                "tile contact selection or deterministic tie ordering failed");
         previous=output;
+    }
+    {
+        // A contact straddling the boundary between two 8x8 workgroups must
+        // influence both tiles. The heightmap covers 16 m at 2 m/texel.
+        VkImage big[2]{}; VkImageView big_views[2]{};
+        ImageStateTracker big_states;
+        for (unsigned i=0; i<2; ++i)
+        {
+            VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            info.imageType=VK_IMAGE_TYPE_2D; info.format=VK_FORMAT_R16G16B16A16_SFLOAT;
+            info.extent={16,16,1}; info.mipLevels=info.arrayLayers=1; info.samples=VK_SAMPLE_COUNT_1_BIT;
+            info.usage=VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            require(images.acquire(info,big[i],error),error);
+            VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            view.image=big[i]; view.viewType=VK_IMAGE_VIEW_TYPE_2D; view.format=info.format; view.subresourceRange=color;
+            require(vkCreateImageView(device,&view,nullptr,&big_views[i])==VK_SUCCESS &&
+                big_states.register_image(big[i],color,ImageUse::Undefined,error),error);
+        }
+        BufferResource big_readback;
+        require(big_readback.initialize(device,16*16*8,VK_BUFFER_USAGE_TRANSFER_DST_BIT,host,memory,buffers,error),error);
+        DetailInteractionEntity boundary{{8.f,0.f,3.5f},1.f,{0.f,0.f,0.f},1.f};
+        require(entity_buffer.write(0,&boundary,sizeof(boundary),error),error);
+        DetailInteractionParameters params{};
+        const float center16[]{8.f,8.f};
+        require(detail_interaction_parameters(params,center16,origin,false,.04f,1.f,.5f,1,origin,2.f,16,1.f),
+            "boundary interaction parameters");
+        VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        allocation.commandPool=pool; allocation.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY; allocation.commandBufferCount=1;
+        VkCommandBuffer command{};
+        require(vkAllocateCommandBuffers(device,&allocation,&command)==VK_SUCCESS,"boundary command allocation");
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        require(vkBeginCommandBuffer(command,&begin)==VK_SUCCESS &&
+            big_states.transition(command,big[0],ImageUse::StorageRead,{vkCmdPipelineBarrier},error) &&
+            big_states.transition(command,big[1],ImageUse::StorageWrite,{vkCmdPipelineBarrier},error) &&
+            interaction.record(command,0,entity_buffer,big_views[0],views.views[2],views.sampler,big_views[1],params,error) &&
+            big_states.transition(command,big[1],ImageUse::TransferSource,{vkCmdPipelineBarrier},error),error);
+        VkBufferImageCopy copy{0,0,0,{VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},{0,0,0},{16,16,1}};
+        vkCmdCopyImageToBuffer(command,big[1],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,big_readback.handle(),1,&copy);
+        VkMemoryBarrier host_barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        host_barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT; host_barrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
+        vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,
+            0,1,&host_barrier,0,nullptr,0,nullptr);
+        require(vkEndCommandBuffer(command)==VK_SUCCESS,"boundary command end");
+        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO}; submit.commandBufferCount=1; submit.pCommandBuffers=&command;
+        require(vkQueueSubmit(queue,1,&submit,VK_NULL_HANDLE)==VK_SUCCESS && vkQueueWaitIdle(queue)==VK_SUCCESS,
+            "boundary command submit");
+        std::array<uint16_t,16*16*4> result{};
+        require(big_readback.read(0,result.data(),sizeof(result),error),error);
+        const float expected=base.contact_rate*std::pow(.5f,.75f);
+        require(std::abs(half(result[(3*16+7)*4])+expected)<.001f &&
+            std::abs(half(result[(3*16+8)*4])-expected)<.001f &&
+            half(result[(3*16+6)*4])==0.f && half(result[(3*16+9)*4])==0.f,
+            "tile boundary contact was lost or leaked");
+        vkFreeCommandBuffers(device,pool,1,&command);
+        for (unsigned i=0; i<2; ++i)
+        {
+            vkDestroyImageView(device,big_views[i],nullptr);
+            require(images.release(big[i]),"release boundary image");
+        }
     }
     {
         FrameDispatch image_dispatch{};
