@@ -94,7 +94,7 @@ void rasterizeTriangle(vec4 a, vec4 b, vec4 c, uint id)
         c = vertex;
         area = -area;
     }
-    ivec2 imageExtent = min(imageSize(depthBits), imageSize(visibilityImage));
+    ivec2 imageExtent = imageSize(depthBits);
     vec2 first = max(ceil(min(min(p0, p1), p2) - 0.5), vec2(0.0));
     vec2 last = min(floor(max(max(p0, p1), p2) - 0.5), vec2(imageExtent - 1));
     if (any(greaterThan(first, last)))
@@ -211,6 +211,8 @@ void rasterizeDrawTriangle(DrawEntry entry, uint triangle, uint id)
 
 void main()
 {
+    if (any(notEqual(imageSize(depthBits), imageSize(visibilityImage))))
+        return;
     uint draw = gl_WorkGroupID.x + gl_WorkGroupID.y * gl_NumWorkGroups.x;
     uint capacity = min(uint(commands.length()), uint(entries.length()));
     if (draw >= parameters.drawCount || parameters.firstDraw >= capacity || draw >= capacity - parameters.firstDraw)

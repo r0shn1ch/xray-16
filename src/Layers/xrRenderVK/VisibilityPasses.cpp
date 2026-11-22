@@ -5,6 +5,7 @@
 #include "LevelModels.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace xray::render::vulkan
@@ -78,8 +79,15 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
     const auto& batches = level.visibility_draw_ranges();
     const auto entries = level.visibility_draw_entries();
     const auto commands = level.visibility_camera_commands(frame.frame_index);
-    if (frame.frame_index >= slots_ || frame.frame_index >= 31 || batches.size() != batch_count_ || !entries.buffer || !commands.buffer ||
-        !targets.extent.width || !targets.extent.height || !targets.id_sampler || materials.layout() != material_layout_)
+    const auto finite = [](float value) { return std::isfinite(value); };
+    if (frame.frame_index >= slots_ || frame.frame_index >= 32 || batches.size() != batch_count_ ||
+        !entries.buffer || !commands.buffer || !targets.extent.width || !targets.extent.height ||
+        targets.extent.width != frame.extent.width || targets.extent.height != frame.extent.height ||
+        !targets.id_sampler || materials.layout() != material_layout_ ||
+        !std::all_of(camera.view_projection, camera.view_projection + 16, finite) ||
+        !finite(camera.viewport.origin[0]) || !finite(camera.viewport.origin[1]) ||
+        !finite(camera.viewport.extent[0]) || !finite(camera.viewport.extent[1]) ||
+        camera.viewport.extent[0] <= 0.f || camera.viewport.extent[1] <= 0.f)
     {
         error = "invalid visibility frame inputs";
         return false;

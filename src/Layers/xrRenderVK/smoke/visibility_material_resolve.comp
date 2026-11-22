@@ -36,9 +36,9 @@ bool finiteUv(vec2 value)
 void main()
 {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-    if (any(greaterThanEqual(pixel, textureSize(visibilityImage, 0))) ||
-        any(greaterThanEqual(pixel, imageSize(baseColorImage))) ||
-        any(greaterThanEqual(pixel, imageSize(normalImage))))
+    ivec2 extent = textureSize(visibilityImage, 0);
+    if (any(greaterThanEqual(pixel, extent)) || any(notEqual(extent, imageSize(baseColorImage))) ||
+        any(notEqual(extent, imageSize(normalImage))))
         return;
     uint id = texelFetch(visibilityImage, pixel, 0).x;
     if (!visibilityIdValid(id) || visibilityEntry(id) >= uint(entries.length()))
