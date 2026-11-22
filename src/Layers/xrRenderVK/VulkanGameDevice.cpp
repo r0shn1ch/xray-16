@@ -2936,9 +2936,10 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
     };
     if (preselect_msaa && !window_.frame().request_scene_samples(selected_msaa.samples, error))
         return false;
+    bool msaa_fallback = false;
     if (!recreate_with_surface_recovery())
     {
-        if (!preselect_msaa || selected_msaa.samples == VK_SAMPLE_COUNT_1_BIT ||
+        if (window_.frame().scene_samples() == VK_SAMPLE_COUNT_1_BIT ||
             window_.frame().device_lost() || window_.frame().surface_lost())
             return false;
         Msg("! [renderer-vulkan] %ux MSAA scene creation failed; retrying single-sample: %s",
@@ -2946,11 +2947,13 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
         selected_msaa = {};
         if (!window_.frame().request_scene_samples(selected_msaa.samples, error) || !recreate_with_surface_recovery())
             return false;
+        gbuffer_msaa_configured_ = false;
+        msaa_fallback = true;
     }
 
     auto &frame = window_.frame();
     const auto &physical = window_.physical();
-    if (!initialize_gbuffer_targets(error, preselect_msaa && !replace_surface ? &selected_msaa : nullptr))
+    if (!initialize_gbuffer_targets(error, msaa_fallback || (preselect_msaa && !replace_surface) ? &selected_msaa : nullptr))
         return false;
     frame.set_frame_generation_ui(Fsr3Upscaler::frame_generation_ui_active_callback,
         Fsr3Upscaler::register_frame_generation_ui_callback, &fsr3_upscaler_);
