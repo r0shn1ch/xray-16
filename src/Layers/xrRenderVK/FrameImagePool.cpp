@@ -208,7 +208,20 @@ bool FrameImagePool::acquire(const VkImageCreateInfo& info, VkImage& image, std:
     allocation.allocationSize = requirements.size;
     allocation.memoryTypeIndex = type;
     VkDeviceMemory memory{};
-    if (vk_.allocate_memory(device_, &allocation, nullptr, &memory) != VK_SUCCESS)
+    VkResult allocated = vk_.allocate_memory(device_, &allocation, nullptr, &memory);
+    if (allocated == VK_ERROR_OUT_OF_DEVICE_MEMORY)
+    {
+        const auto before = entries_.size();
+        entries_.erase(std::remove_if(entries_.begin(), entries_.end(), [&](Entry& entry) {
+            if (entry.in_use)
+                return false;
+            destroy(entry);
+            return true;
+        }), entries_.end());
+        if (entries_.size() != before)
+            allocated = vk_.allocate_memory(device_, &allocation, nullptr, &memory);
+    }
+    if (allocated != VK_SUCCESS)
     {
         vk_.destroy_image(device_, created, nullptr);
         error = "frame image pool could not allocate memory";

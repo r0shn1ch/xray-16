@@ -18,6 +18,7 @@ template <class T> T handle(uintptr_t id)
 }
 uintptr_t next_image = 10, next_memory = 100;
 unsigned created{}, destroyed{}, allocated{}, freed{};
+bool fail_next_allocation{};
 std::vector<std::pair<VkSharingMode, std::vector<uint32_t>>> image_sharing;
 VkResult VKAPI_CALL create_image(VkDevice, const VkImageCreateInfo* info, const VkAllocationCallbacks*, VkImage* image)
 {
@@ -38,6 +39,8 @@ void VKAPI_CALL requirements(VkDevice, VkImage, VkMemoryRequirements* result)
 }
 VkResult VKAPI_CALL allocate(VkDevice, const VkMemoryAllocateInfo*, const VkAllocationCallbacks*, VkDeviceMemory* memory)
 {
+    if (std::exchange(fail_next_allocation, false))
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     *memory = handle<VkDeviceMemory>(next_memory++);
     ++allocated;
     return VK_SUCCESS;
@@ -119,6 +122,14 @@ int main()
     assert(pool.acquire(sampled, reused, error) && reused == new_image);
     assert(pool.release(reused) && pool.release(exact));
     assert(pool.acquire(sampled, reused, error) && reused == exact);
+
+    const auto freed_before_pressure = freed;
+    sampled.extent.width = 256;
+    fail_next_allocation = true;
+    VkImage recovered{};
+    assert(pool.acquire(sampled, recovered, error));
+    assert(freed == freed_before_pressure + 2);
+    assert(pool.release(second) && pool.release(incompatible) && pool.release(exact));
 
     pool.reset();
     assert(destroyed == created && freed == allocated);
