@@ -62,6 +62,10 @@ void main(uint3 groupID : SV_GroupID,uint lane : SV_GroupIndex) {
     if (range.y == 0) return;
     uint index = g_Commands[range.x].emitter;
     uint rootID = index / 2;
+    if ((index & 1u) != 0u || rootID >= g_Papi.phase || index >= g_Papi.emitterCapacity) {
+        if (lane == 0) GpuAllocationError(8u);
+        return;
+    }
     GpuPapiEmitter emitter = (GpuPapiEmitter)0;
     if (lane == 0) emitter = g_Emitters[index];
     GpuSyncEmitter(emitter,lane);

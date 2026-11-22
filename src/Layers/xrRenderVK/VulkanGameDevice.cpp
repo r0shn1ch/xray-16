@@ -740,7 +740,8 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
                 read_engine_shader, error,
                 frame_buffer_pool_.initialized() ? &frame_buffer_pool_ : nullptr))
         {
-            gpu_particle_emitters_ = std::make_unique<GpuParticleEmitters>(runtime->programs(), runtime->commands(), capacity.roots);
+            gpu_particle_emitters_ = std::make_unique<GpuParticleEmitters>(runtime->programs(), runtime->commands(),
+                capacity.roots, capacity.particles, capacity.action_states);
             gpu_particles_ = std::move(runtime);
             auto graphics = std::make_unique<GpuParticleGraphics>();
             if (graphics->initialize(device, get, physical.properties.limits, physical.memory, buffer_upload_.buffer,
