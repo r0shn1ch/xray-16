@@ -460,7 +460,7 @@ bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string
 
 static bool update_particle_group_item(std::vector<uint8_t>& library, const std::string& name,
     size_t item_index, float begin, float end, std::string& error, const std::string* replacement,
-    std::optional<ParticleGroupItemOperation> operation)
+    std::optional<ParticleGroupItemOperation> operation, bool add = false)
 {
     if (!operation && (!std::isfinite(begin) || !std::isfinite(end) || begin < 0.f || end <= begin))
     {
@@ -477,7 +477,7 @@ static bool update_particle_group_item(std::vector<uint8_t>& library, const std:
         return false;
     }
     const auto* definition = catalog.group(name);
-    if (!definition || item_index >= definition->effects.size())
+    if (!definition || (!add && item_index >= definition->effects.size()))
     {
         error = "Group effect entry not found: " + name;
         return false;
@@ -496,12 +496,65 @@ static bool update_particle_group_item(std::vector<uint8_t>& library, const std:
         std::string candidate;
         if (!group_name.name(candidate) || candidate != name)
             continue;
-        if (effects.data || !unique_chunks(parts) || !(effects = find(parts, 4)).data)
+        if (record.data || !unique_chunks(parts))
         {
             error = "Ambiguous or invalid group record: " + name;
             return false;
         }
         record = entry.second;
+        effects = find(parts, 4);
+    }
+    constexpr size_t max_catalog_bytes = 64 * 1024 * 1024;
+    if (add && record.data)
+    {
+        Cursor cursor{effects};
+        uint32_t count = 0;
+        if (effects.data && (!cursor.integer(count) || count >= 1024))
+        {
+            error = "The group has reached the particle effect limit.";
+            return false;
+        }
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            ParticleGroupItem item;
+            size_t timing_offset;
+            if (!read_group_item(cursor, item, timing_offset))
+            {
+                error = "Invalid group effect entry: " + name;
+                return false;
+            }
+        }
+        const auto prefix = effects.data ? 0u : 12u;
+        std::vector<uint8_t> bytes(prefix + replacement->size() + 4 + 12, 0);
+        if (bytes.size() > max_catalog_bytes - library.size())
+        {
+            error = "Particle catalog exceeds the size limit.";
+            return false;
+        }
+        std::copy(replacement->begin(), replacement->end(), bytes.begin() + prefix);
+        auto* timing = bytes.data() + prefix + replacement->size() + 4;
+        put_real(timing, begin);
+        put_real(timing + 4, end);
+        put32(timing + 8, 1u << 2); // Enabled
+        if (!effects.data)
+        {
+            put32(bytes.data(), 4);
+            put32(bytes.data() + 4, static_cast<uint32_t>(bytes.size() - 8));
+            put32(bytes.data() + 8, 1);
+        }
+        const size_t table_offset = table.data - input.data;
+        const size_t record_offset = record.data - input.data;
+        const size_t effects_offset = effects.data ? effects.data - input.data : record_offset + record.size;
+        library.insert(library.begin() + effects_offset + cursor.at, bytes.begin(), bytes.end());
+        put32(library.data() + table_offset - 4, static_cast<uint32_t>(table.size + bytes.size()));
+        put32(library.data() + record_offset - 4, static_cast<uint32_t>(record.size + bytes.size()));
+        if (effects.data)
+        {
+            put32(library.data() + effects_offset - 4, static_cast<uint32_t>(effects.size + bytes.size()));
+            put32(library.data() + effects_offset, count + 1);
+        }
+        error.clear();
+        return true;
     }
     Cursor cursor{effects};
     uint32_t count;
@@ -526,7 +579,6 @@ static bool update_particle_group_item(std::vector<uint8_t>& library, const std:
                 put32(library.data() + record_offset - 4, static_cast<uint32_t>(record.size - removed + added));
                 put32(library.data() + effects_offset - 4, static_cast<uint32_t>(effects.size - removed + added));
             };
-            constexpr size_t max_catalog_bytes = 64 * 1024 * 1024;
             if (operation)
             {
                 const auto start = effects_offset + item_start;
@@ -592,5 +644,11 @@ bool change_particle_group_items(std::vector<uint8_t>& library, const std::strin
     size_t item_index, ParticleGroupItemOperation operation, std::string& error)
 {
     return update_particle_group_item(library, name, item_index, 0.f, 0.f, error, nullptr, operation);
+}
+
+bool add_particle_group_item(std::vector<uint8_t>& library, const std::string& group_name,
+    const std::string& effect_name, float begin, float end, std::string& error)
+{
+    return update_particle_group_item(library, group_name, 0, begin, end, error, &effect_name, {}, true);
 }
 } // namespace xray::render::vulkan

@@ -310,6 +310,7 @@ public:
                             {
                                 preview_.reset();
                                 group_item_ = SIZE_MAX;
+                                adding_group_item_ = false;
                             }
                             selected_ = SIZE_MAX;
                             selected_group_ = i;
@@ -376,6 +377,16 @@ private:
     {
         auto& group = catalog_.groups[selected_group_];
         ImGui::Text("%zu effects", group.effects.size());
+        ImGui::BeginDisabled(catalog_.effects.empty());
+        if (ImGui::Button("New entry"))
+        {
+            adding_group_item_ = true;
+            group_item_ = SIZE_MAX;
+            group_effect_ = catalog_.effects.front().name;
+            group_begin_ = 0.f;
+            group_end_ = 1.f;
+        }
+        ImGui::EndDisabled();
         const char* selection = group_item_ < group.effects.size()
             ? group.effects[group_item_].effect.c_str() : "Select an effect";
         if (ImGui::BeginCombo("Group effect", selection))
@@ -388,6 +399,7 @@ private:
                 if (ImGui::Selectable(label.c_str(), group_item_ == i))
                 {
                     group_item_ = i;
+                    adding_group_item_ = false;
                     group_begin_ = item.begin;
                     group_end_ = item.end;
                     group_effect_ = item.effect;
@@ -396,9 +408,8 @@ private:
             }
             ImGui::EndCombo();
         }
-        if (group_item_ >= group.effects.size())
+        if (!adding_group_item_ && group_item_ >= group.effects.size())
             return;
-        const auto& item = group.effects[group_item_];
         if (ImGui::BeginCombo("Main effect", group_effect_.c_str()))
         {
             ImGuiListClipper clipper;
@@ -418,6 +429,23 @@ private:
         }
         ImGui::InputFloat("Start (s)", &group_begin_, .1f, 1.f, "%.3f");
         ImGui::InputFloat("End (s)", &group_end_, .1f, 1.f, "%.3f");
+        if (adding_group_item_)
+        {
+            ImGui::BeginDisabled(!std::isfinite(group_begin_) || !std::isfinite(group_end_) ||
+                group_begin_ < 0.f || group_end_ <= group_begin_);
+            if (ImGui::Button("Add entry to draft") &&
+                add_particle_group_item(library_, group.name, group_effect_, group_begin_, group_end_, message_))
+            {
+                group.effects.push_back({group_effect_, {}, {}, {}, group_begin_, group_end_, 1u << 2});
+                group_item_ = group.effects.size() - 1;
+                adding_group_item_ = false;
+                preview_.reset();
+                dirty_ = true;
+            }
+            ImGui::EndDisabled();
+            return;
+        }
+        const auto& item = group.effects[group_item_];
         ImGui::BeginDisabled(!std::isfinite(group_begin_) || !std::isfinite(group_end_) ||
             group_begin_ < 0.f || group_end_ <= group_begin_ ||
             (group_begin_ == item.begin && group_end_ == item.end && group_effect_ == item.effect));
@@ -586,6 +614,7 @@ private:
         selected_ = SIZE_MAX;
         selected_group_ = SIZE_MAX;
         group_item_ = SIZE_MAX;
+        adding_group_item_ = false;
         preview_.reset();
     }
 
@@ -602,6 +631,7 @@ private:
     size_t selected_{SIZE_MAX};
     size_t selected_group_{SIZE_MAX};
     size_t group_item_{SIZE_MAX};
+    bool adding_group_item_{};
     std::string group_effect_;
     float group_begin_{}, group_end_{};
     int limit_{};

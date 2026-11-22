@@ -60,4 +60,6 @@ bool edit_particle_group_item(std::vector<uint8_t>& library, const std::string& 
 enum class ParticleGroupItemOperation { Duplicate, Remove };
 bool change_particle_group_items(std::vector<uint8_t>& library, const std::string& name,
     size_t item_index, ParticleGroupItemOperation operation, std::string& error);
+bool add_particle_group_item(std::vector<uint8_t>& library, const std::string& group_name,
+    const std::string& effect_name, float begin, float end, std::string& error);
 } // namespace xray::render::vulkan

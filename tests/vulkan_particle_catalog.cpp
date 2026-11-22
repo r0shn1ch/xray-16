@@ -100,6 +100,19 @@ int main()
     assert(change_particle_group_items(retimed, "campfire_group", 0, ParticleGroupItemOperation::Remove, error));
     assert(parse_particle_catalog({retimed.data(), retimed.size()}, catalog, error));
     assert(catalog.group("campfire_group")->effects.empty());
+    assert(add_particle_group_item(retimed, "campfire_group", original, .25f, 1.5f, error));
+    assert(parse_particle_catalog({retimed.data(), retimed.size()}, catalog, error));
+    const auto& appended = catalog.group("campfire_group")->effects;
+    assert(appended.size() == 1 && appended[0].effect == original && appended[0].begin == .25f &&
+        appended[0].end == 1.5f && appended[0].flags == 4);
+    Bytes no_items_groups, no_items_library;
+    chunk(no_items_groups, 0, group_header);
+    chunk(no_items_library, 1, version);
+    chunk(no_items_library, 3, effects);
+    chunk(no_items_library, 4, no_items_groups);
+    assert(add_particle_group_item(no_items_library, "campfire_group", original, 0.f, 1.f, error));
+    assert(parse_particle_catalog({no_items_library.data(), no_items_library.size()}, catalog, error));
+    assert(catalog.group("campfire_group")->effects.size() == 1);
     Bytes edited = library;
     IReader editor_input(library.data(), library.size());
     assert(editable_particle_library_bytes(editor_input, edited, error) && edited == library);
