@@ -10,15 +10,17 @@ bool GpuParticlePrograms::intern(const ParticleEffectDef& definition, uint32_t& 
     if (definition.name.empty()) { error = "GPU particle definition has no name"; return false; }
     const auto found = ids_.find(definition.name);
     if (found != ids_.end()) { id = found->second; error.clear(); return true; }
-    if (programs_.size() >= UINT32_MAX)
-    { error = "GPU particle program table overflow"; return false; }
+    if (programs_.size() >= limits_.programs)
+    { error = "GPU particle program table capacity exhausted"; return false; }
     fg::GpuPapiProgram program{};
     xr_vector<fg::GpuPapiAction> translated;
     xr_string reason;
     if (!TranslateGpuParticleDefinition(definition, program, translated, reason))
     { error = reason.c_str(); return false; }
-    if (translated.size() > UINT32_MAX - actions_.size())
-    { error = "GPU particle action table overflow"; return false; }
+    if (program.maxParticles > limits_.particles || program.stateCount > limits_.action_states)
+    { error = "GPU particle program exceeds particle or action-state capacity"; return false; }
+    if (translated.size() > limits_.actions - actions_.size())
+    { error = "GPU particle action table capacity exhausted"; return false; }
     program.actionFirst = static_cast<uint32_t>(actions_.size());
     program.materialID = GPU_PAPI_INVALID;
     const auto index = static_cast<uint32_t>(programs_.size());

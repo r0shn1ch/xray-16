@@ -12,6 +12,12 @@ struct ParticleEffectDef;
 class GpuParticlePrograms
 {
 public:
+    struct Limits
+    {
+        uint32_t particles, action_states, programs, actions;
+    };
+    GpuParticlePrograms() = default;
+    explicit GpuParticlePrograms(Limits limits) : limits_(limits) {}
     bool intern(const ParticleEffectDef& definition, uint32_t& id, std::string& error);
     bool set_material(uint32_t id, uint32_t material, uint32_t blend, uint32_t variant, std::string& error);
     const std::vector<fg::GpuPapiProgram>& programs() const { return programs_; }
@@ -23,6 +29,7 @@ public:
     void mark_uploaded(uint64_t revision) { if (revision == revision_) dirty_ = false; }
     void clear();
 private:
+    Limits limits_{UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
     std::vector<fg::GpuPapiProgram> programs_;
     std::vector<fg::GpuPapiAction> actions_;
     std::vector<std::string> names_;

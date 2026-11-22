@@ -28,6 +28,7 @@ bool GpuParticleRuntime::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get
         slots_.push_back(std::move(slot));
     }
     commands_ = std::make_unique<GpuParticleCommands>(capacity.roots);
+    programs_ = GpuParticlePrograms({capacity.particles, capacity.action_states, capacity.programs, capacity.actions});
     capacity_ = capacity; error.clear(); return true;
 }
 bool GpuParticleRuntime::record(uint32_t index, VkCommandBuffer command, const std::vector<uint32_t>& visible,

@@ -5,10 +5,8 @@
 
 namespace xray::render::vulkan
 {
-GpuParticleEmitters::GpuParticleEmitters(GpuParticlePrograms& programs, GpuParticleCommands& commands,
-    uint32_t roots, uint32_t particle_capacity, uint32_t action_state_capacity)
-    : programs_(programs), commands_(commands), roots_(roots),
-      particle_capacity_(particle_capacity), action_state_capacity_(action_state_capacity) {}
+GpuParticleEmitters::GpuParticleEmitters(GpuParticlePrograms& programs, GpuParticleCommands& commands, uint32_t roots)
+    : programs_(programs), commands_(commands), roots_(roots) {}
 const GpuParticleEmitters::Root* GpuParticleEmitters::find(Handle handle) const
 {
     const uint32_t low = static_cast<uint32_t>(handle), generation = static_cast<uint32_t>(handle >> 32);
@@ -28,9 +26,6 @@ bool GpuParticleEmitters::create(const ParticleEffectDef& definition, Handle& ha
     { error = "GPU particle root emitter capacity exhausted"; return false; }
     uint32_t program = 0, generation = 0, serial = 0;
     if (!programs_.intern(definition, program, error)) return false;
-    const auto& compiled = programs_.programs()[program];
-    if (compiled.maxParticles > particle_capacity_ || compiled.stateCount > action_state_capacity_)
-    { error = "GPU particle root program exceeds particle or action-state capacity"; return false; }
     if (!commands_.begin_generation(static_cast<uint32_t>(index), error)) return false;
     fg::GpuPapiCommand create{}; create.type = 0; create.p0 = program;
     if (!commands_.enqueue(static_cast<uint32_t>(index), create, error) ||

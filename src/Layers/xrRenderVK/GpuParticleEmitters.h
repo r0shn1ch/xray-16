@@ -14,8 +14,7 @@ class GpuParticleEmitters
 {
 public:
     using Handle = uint64_t;
-    GpuParticleEmitters(GpuParticlePrograms& programs, GpuParticleCommands& commands,
-        uint32_t roots, uint32_t particle_capacity, uint32_t action_state_capacity);
+    GpuParticleEmitters(GpuParticlePrograms& programs, GpuParticleCommands& commands, uint32_t roots);
     bool register_program(const ParticleEffectDef& definition, uint32_t& id, std::string& error)
     { return programs_.intern(definition, id, error); }
     bool create(const ParticleEffectDef& definition, Handle& handle, std::string& error);
@@ -41,8 +40,6 @@ private:
     bool enqueue(Handle handle, fg::GpuPapiCommand command, bool lifecycle, std::string& error);
     GpuParticlePrograms& programs_; GpuParticleCommands& commands_;
     std::vector<Root> roots_;
-    uint32_t particle_capacity_;
-    uint32_t action_state_capacity_;
     bool enabled_{true};
 };
 }
