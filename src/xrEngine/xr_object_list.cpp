@@ -6,6 +6,7 @@
 #include "xr_object_list.h"
 
 #include "xr_object.h"
+#include "GrassInteractionCollector.h"
 #include "xrCore/net_utils.h"
 
 #include "CustomHUD.h"
@@ -214,6 +215,7 @@ void CObjectList::clear_crow_vec(Objects& o)
 void CObjectList::Update(bool bForce)
 {
     ZoneScoped;
+    bool grass_frame = false;
 #if defined(XR_PLATFORM_ANDROID)
     const u64 updateStart = CPU::QPC();
 #endif
@@ -237,6 +239,9 @@ void CObjectList::Update(bool bForce)
         // Clients
         if (Device.fTimeDelta > EPS_S || bForce)
         {
+            const float focus[]{Device.vCameraPosition.x,Device.vCameraPosition.y,Device.vCameraPosition.z};
+            xray::grass::begin_frame(Device.dwFrame,Device.dwTimeGlobal,focus);
+            grass_frame = true;
             // Select Crow-Mode
             stats.Updated = 0;
 
@@ -351,6 +356,7 @@ void CObjectList::Update(bool bForce)
         }
         destroy_queue.clear();
     }
+    if (grass_frame) xray::grass::publish_frame();
 #if defined(XR_PLATFORM_ANDROID)
     // The existing frame trace groups all engine work under "update".
     // Measure the object list separately so a CPU optimization can be
@@ -488,12 +494,14 @@ return (it==map_NETID.end())?0:it->second;
 */
 void CObjectList::Load()
 {
+    xray::grass::reset();
     R_ASSERT(/*map_NETID.empty() &&*/ objects_active.empty() && destroy_queue.empty() && objects_sleeping.empty());
 }
 
 void CObjectList::Unload()
 {
     ZoneScoped;
+    xray::grass::reset();
 
     if (objects_sleeping.size() || objects_active.size())
         Msg("! objects-leaked: %d", objects_sleeping.size() + objects_active.size());
@@ -539,6 +547,7 @@ void CObjectList::Destroy(IGameObject* game_obj)
 {
     if (nullptr == game_obj)
         return;
+    xray::grass::forget(game_obj);
     net_Unregister(game_obj);
 
     {

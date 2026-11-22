@@ -1,5 +1,7 @@
 #include "pch_script.h"
 #include "GameObject.h"
+#include "PhysicsShellHolder.h"
+#include "xrEngine/GrassInteractionCollector.h"
 
 #include "Include/xrRender/RenderVisual.h"
 #include "xrPhysics/PhysicsShell.h"
@@ -1408,7 +1410,20 @@ void CGameObject::UpdateCL()
 }
 
 void CGameObject::PreUpdateCL() { m_client_updated = false; }
-void CGameObject::PostUpdateCL(bool /*bUpdateCL_disabled*/) { m_client_updated = true;}
+void CGameObject::PostUpdateCL(bool /*bUpdateCL_disabled*/)
+{
+    m_client_updated = true;
+    auto* physics = cast_physics_shell_holder();
+    if (!physics || H_Parent() || getDestroy() || !Visual()) return;
+    const auto& position = Position();
+    const auto& bounds = BoundingBox();
+    xray::grass::Sample sample;
+    sample.instance = static_cast<IGameObject*>(this); sample.object_id = ID();
+    sample.position[0] = position.x; sample.position[1] = position.y; sample.position[2] = position.z;
+    sample.radius = .5f * (std::max)(bounds.vMax.x-bounds.vMin.x,bounds.vMax.z-bounds.vMin.z);
+    sample.mass = cast_entity() ? physics->GetMass() : 0.f;
+    xray::grass::submit(sample);
+}
 
 void CGameObject::on_matrix_change(const Fmatrix& previous) { obstacle().on_move(); }
 #ifdef DEBUG

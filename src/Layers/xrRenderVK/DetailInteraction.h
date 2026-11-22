@@ -2,14 +2,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include "../../xrEngine/GrassInteractionTypes.h"
 
 namespace xray::render::vulkan
 {
-struct DetailInteractionEntity
-{
-    float position[3]{}, radius{};
-    float velocity[3]{}, weight{};
-};
+using DetailInteractionEntity = xray::grass::Entity;
 static_assert(sizeof(DetailInteractionEntity) == 32);
 
 struct DetailInteractionParameters

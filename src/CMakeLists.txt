@@ -101,6 +101,9 @@ if (XRAY_BUILD_VULKAN_TESTS)
     target_include_directories(vulkan_temporal_jitter_test PRIVATE
         "${XRAY_SOURCE_DIR}/Externals/Vulkan-Headers/include")
     xray_add_vulkan_state_test(vulkan_object_motion_history_test tests/vulkan_object_motion_history.cpp)
+    xray_add_vulkan_state_test(engine_grass_interaction_test tests/engine_grass_interaction.cpp)
+    find_package(Threads REQUIRED)
+    target_link_libraries(engine_grass_interaction_test PRIVATE Threads::Threads)
     xray_add_vulkan_state_test(vulkan_pipeline_cache_test tests/vulkan_pipeline_cache.cpp)
     target_sources(vulkan_pipeline_cache_test PRIVATE
         "${XRAY_SOURCE_DIR}/src/Layers/xrRenderVK/EmbeddedShaderFingerprint.cpp")
