@@ -67,6 +67,7 @@ class AndroidMenuContractTest(unittest.TestCase):
                 'hdr_white': 'r_vk_hdr_paper_white',
                 'hdr_peak': 'r_vk_hdr_peak',
                 'hdr_black': 'r_vk_hdr_black',
+                'hdr_pattern': 'r_vk_hdr_calibration_pattern',
             }.items():
                 tag = f'track_vk_{setting}'
                 start = text.index(f'<{tag} ')

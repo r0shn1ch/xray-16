@@ -4,6 +4,7 @@
 	<string id="st_vk_hdr_white"><text>Biel HDR (nity)</text></string>
 	<string id="st_vk_hdr_peak"><text>Szczyt HDR (nity)</text></string>
 	<string id="st_vk_hdr_black"><text>Czer&#324; HDR (nity)</text></string>
+	<string id="st_vk_hdr_pattern"><text>Wzorzec HDR</text></string>
 	<string id="st_vk_upscaling"><text>Skalowanie</text></string>	<string id="st_vk_render_scale"><text>Rozdzielczo&#347;&#263; 3D</text></string>	<string id="st_vk_bloom"><text>Po&#347;wiata</text></string>	<string id="st_vk_frame_generation"><text>Generowanie klatek (FSR 3.1)</text></string>
 	<string id="st_vk_msaa"><text>MSAA</text></string>
 	<string id="st_vk_texture_mip_bias"><text>Przesuni&#281;cie mip</text></string>

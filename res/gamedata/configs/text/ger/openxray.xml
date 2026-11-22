@@ -4,6 +4,7 @@
 	<string id="st_vk_hdr_white"><text>HDR-Wei&#223; (Nits)</text></string>
 	<string id="st_vk_hdr_peak"><text>HDR-Spitze (Nits)</text></string>
 	<string id="st_vk_hdr_black"><text>HDR-Schwarz (Nits)</text></string>
+	<string id="st_vk_hdr_pattern"><text>HDR-Testbild</text></string>
 	<string id="st_vk_upscaling"><text>Hochskalierung</text></string>	<string id="st_vk_render_scale"><text>3D-Aufl&#246;sung</text></string>	<string id="st_vk_bloom"><text>Leuchten</text></string>	<string id="st_vk_frame_generation"><text>Frame Generation (FSR 3.1)</text></string>
 	<string id="st_vk_msaa"><text>MSAA</text></string>
 	<string id="st_vk_texture_mip_bias"><text>Mip-Bias</text></string>

@@ -4,6 +4,7 @@
 	<string id="st_vk_hdr_white"><text>B&#237;l&#225; HDR (nity)</text></string>
 	<string id="st_vk_hdr_peak"><text>Max. HDR (nity)</text></string>
 	<string id="st_vk_hdr_black"><text>&#268;ern&#225; HDR (nity)</text></string>
+	<string id="st_vk_hdr_pattern"><text>Test HDR</text></string>
 	<string id="st_vk_upscaling"><text>Zv&#283;t&#353;en&#237;</text></string>	<string id="st_vk_render_scale"><text>Rozli&#353;en&#237; 3D</text></string>	<string id="st_vk_bloom"><text>Z&#225;&#345;e</text></string>	<string id="st_vk_frame_generation"><text>Generov&#225;n&#237; sn&#237;mk&#367; (FSR 3.1)</text></string>
 	<string id="st_vk_msaa"><text>MSAA</text></string>
 	<string id="st_vk_texture_mip_bias"><text>Posun mipmapy</text></string>

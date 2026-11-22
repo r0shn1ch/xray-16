@@ -383,6 +383,13 @@
             <options_item entry="r_vk_hdr_black" group="mm_opt_video_adv"/>
         </track_vk_hdr_black>
 
+        <cap_vk_hdr_pattern x="20" y="3" width="135" height="24">
+            <text r="170" g="170" b="170" font="letterica16" align="r" vert_align="c">st_vk_hdr_pattern</text>
+        </cap_vk_hdr_pattern>
+        <track_vk_hdr_pattern x="180" y="6" width="235" height="16" step="1" is_integer="1">
+            <options_item entry="r_vk_hdr_calibration_pattern" group="mm_opt_video_adv"/>
+        </track_vk_hdr_pattern>
+
         <cap_r2_sun x="20" y="3" width="135" height="24">
             <text r="170" g="170" b="170" font="letterica16" align="r" vert_align="c">ui_mm_r2_sun</text>
         </cap_r2_sun>
