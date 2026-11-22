@@ -209,7 +209,7 @@ int main(int argc, char** argv)
     require(readback.initialize(fixture.device, command_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             memory, buffers, error), error);
-    const std::array<float, 2> clear_depths{1.f, 1.f};
+    const std::array<float, 3> clear_depths{1.f, 1.f, std::numeric_limits<float>::quiet_NaN()};
     require(depth_upload.initialize(fixture.device, sizeof(clear_depths), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             memory, buffers, error), error);
@@ -341,30 +341,38 @@ int main(int argc, char** argv)
     sampler_info.maxLod = float(hiz_levels - 1);
     require(vkCreateSampler(fixture.device, &sampler_info, nullptr, &hiz_sampling.sampler) == VK_SUCCESS,
         "Hi-Z sampler creation failed");
+    HiZSampling truncated_hiz{fixture.device};
+    hiz_view_info.subresourceRange.levelCount = 1;
+    require(vkCreateImageView(fixture.device, &hiz_view_info, nullptr, &truncated_hiz.view) == VK_SUCCESS,
+        "truncated Hi-Z view creation failed");
 
     frame.extent = {65, 65};
     const FrameImageSharing hiz_sharing;
-    for (const bool has_gap : {false, true})
+    enum class DepthCase { Blocked, Gap, Invalid, Truncated };
+    for (const auto scenario : {DepthCase::Blocked, DepthCase::Gap, DepthCase::Invalid, DepthCase::Truncated})
     {
+        const bool first_frame = scenario == DepthCase::Blocked;
+        const bool truncated = scenario == DepthCase::Truncated;
         require(vkResetCommandBuffer(command, 0) == VK_SUCCESS &&
                 vkBeginCommandBuffer(command, &begin) == VK_SUCCESS,
             "Hi-Z command-buffer reset failed");
         VkImageMemoryBarrier hiz_barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-        hiz_barrier.srcAccessMask = has_gap ? VK_ACCESS_SHADER_READ_BIT : 0;
+        hiz_barrier.srcAccessMask = first_frame ? 0 : VK_ACCESS_SHADER_READ_BIT;
         hiz_barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        hiz_barrier.oldLayout = has_gap ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+        hiz_barrier.oldLayout = first_frame ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         hiz_barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         hiz_barrier.srcQueueFamilyIndex = hiz_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         hiz_barrier.image = hiz_image;
         hiz_barrier.subresourceRange = hiz_range;
-        vkCmdPipelineBarrier(command, has_gap ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT :
-            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
+        vkCmdPipelineBarrier(command, first_frame ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT :
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
             0, nullptr, 1, &hiz_barrier);
-        if (has_gap)
+        if (scenario == DepthCase::Gap || scenario == DepthCase::Invalid)
         {
+            const VkDeviceSize sample_offset = scenario == DepthCase::Invalid ? 2 * sizeof(float) : 0;
             const std::array<VkBufferImageCopy, 2> gaps{{
-                {0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 2, 0, 1}, {4, 3, 0}, {1, 1, 1}},
-                {sizeof(float), 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 3, 0, 1}, {2, 1, 0}, {1, 1, 1}}}};
+                {sample_offset, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 2, 0, 1}, {4, 3, 0}, {1, 1, 1}},
+                {sample_offset, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 3, 0, 1}, {2, 1, 0}, {1, 1, 1}}}};
             vkCmdCopyBufferToImage(command, depth_upload.handle(), hiz_image, hiz_barrier.newLayout,
                 static_cast<uint32_t>(gaps.size()), gaps.data());
         }
@@ -380,7 +388,8 @@ int main(int argc, char** argv)
         vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             0, 0, nullptr, 0, nullptr, 1, &hiz_barrier);
         require(visibility.record(frame, identity, sun_mvp, camera, 60.f, 64, error,
-            identity, hiz_image, hiz_sampling.view, hiz_sampling.sampler, &hiz_sharing, hiz_levels, true), error);
+            identity, hiz_image, truncated ? truncated_hiz.view : hiz_sampling.view,
+            hiz_sampling.sampler, &hiz_sharing, truncated ? 1u : hiz_levels, true), error);
         command_read.offset = 0;
         command_read.size = command_bytes;
         vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -392,10 +401,9 @@ int main(int argc, char** argv)
                 vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS &&
                 vkQueueWaitIdle(queue) == VK_SUCCESS, "Cluster DAG Hi-Z dispatch did not complete");
         require(readback.read(0, commands.data(), sizeof(commands), error), error);
-        if (!same_command(commands[0], has_gap ? 3 : 0, has_gap ? 1 : 0, 104, 3))
+        if (!same_command(commands[0], first_frame ? 0 : 3, first_frame ? 0 : 1, 104, 3))
         {
-            std::cerr << (has_gap ? "Hi-Z skipped a clear intermediate texel"
-                                  : "Hi-Z did not reject a fully occluded cluster") << '\n';
+            std::cerr << "Unexpected visibility in Hi-Z scenario " << static_cast<int>(scenario) << '\n';
             return 1;
         }
     }
