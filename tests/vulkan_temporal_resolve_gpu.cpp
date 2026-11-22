@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
+#include <iostream>
 #include <string>
 #include <vector>
 
@@ -131,7 +132,7 @@ float half_to_float(uint16_t bits)
 }
 }
 
-int main(int argc, char** argv)
+int main(int argc, char** argv) try
 {
     Fixture vk;
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
@@ -414,9 +415,11 @@ int main(int argc, char** argv)
         if (iteration == 9 && std::abs(half_to_float(values[4])) > .01f)
             throw std::runtime_error("temporal resolve reused history for a changing LOD billboard facet");
         const float red = half_to_float(values[0]);
-        const float expected = iteration == 0 ? .25f :
-            (iteration == 1 ? .225f : (iteration == 3 ? .9f : (iteration == 5 || iteration == 7 ? 1.f : 0.f)));
-        if ((iteration == 6 && red < .55f) || (iteration != 6 && std::abs(red - expected) > .01f))
+        // At the depth edge only one of two equal-weight history taps survives.
+        const float expected = iteration == 0 ? .25f : iteration == 1 ? .225f :
+            iteration == 3 ? .9f : iteration == 6 ? 1.f / 3.f :
+            iteration == 5 || iteration == 7 ? 1.f : 0.f;
+        if (std::abs(red - expected) > .01f)
             throw std::runtime_error("temporal resolve mismatch at frame " + std::to_string(iteration) +
                 ": " + std::to_string(red));
         if (iteration == 4 && std::abs(half_to_float(values[3]) - .2f) > .01f)
@@ -435,4 +438,9 @@ int main(int argc, char** argv)
     temporal.destroy();
     indirect_temporal.destroy();
     upscaled_temporal.destroy();
+}
+catch (const std::exception& error)
+{
+    std::cerr << error.what() << '\n';
+    return 1;
 }
