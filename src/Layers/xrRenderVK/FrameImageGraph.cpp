@@ -325,6 +325,11 @@ bool FrameImageGraph::read_buffer(Pass pass, BufferResource resource,
         return false;
     }
     const Buffer& buffer = m_buffers[resource.index];
+    if (!resource.version && buffer.transient_usage)
+    {
+        error = "Frame image graph: transient buffer read requires a written version";
+        return false;
+    }
     if (buffer.versions[resource.version].producer == pass)
     {
         error = "Frame image graph: a pass cannot read its own buffer output";
@@ -384,6 +389,11 @@ bool FrameImageGraph::read_write_buffer(Pass pass, BufferResource resource,
     BufferUse use, BufferResource& next, std::string& error)
 {
     if (!valid_buffer(pass, resource, error)) return false;
+    if (!resource.version && m_buffers[resource.index].transient_usage)
+    {
+        error = "Frame image graph: transient buffer read/write requires a written version";
+        return false;
+    }
     if (use != BufferUse::ComputeReadWrite)
     {
         error = "Frame image graph: invalid buffer read/write use";
@@ -711,6 +721,11 @@ bool FrameImageGraph::read(Pass pass, Resource resource, ImageUse use, std::stri
 {
     if (!valid(pass, resource, error))
         return false;
+    if (!resource.version && m_images[resource.index].transient_info.sType == VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO)
+    {
+        error = "Frame image graph: transient image read requires a written version";
+        return false;
+    }
     if (use != ImageUse::TransferSource && use != ImageUse::Sampled &&
         use != ImageUse::ComputeSampled && use != ImageUse::SampledGraphicsCompute &&
         use != ImageUse::DepthStencilReadOnly && use != ImageUse::StorageRead &&
@@ -840,6 +855,11 @@ bool FrameImageGraph::read_write(Pass pass, Resource resource, Resource& next, s
 {
     if (!valid(pass, resource, error))
         return false;
+    if (!resource.version && m_images[resource.index].transient_info.sType == VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO)
+    {
+        error = "Frame image graph: transient image read/write requires a written version";
+        return false;
+    }
     if (use != ImageUse::StorageReadWrite && use != ImageUse::ColorAttachment)
     {
         error = "Frame image graph: invalid read/write use";

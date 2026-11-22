@@ -31,6 +31,29 @@ int main()
     const auto command = reinterpret_cast<VkCommandBuffer>(uintptr_t(2));
     const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     std::string error;
+    {
+        FrameImageGraph virtual_graph;
+        FrameImageGraph::Resource image;
+        FrameImageGraph::BufferResource buffer;
+        VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        info.extent = {4, 4, 1};
+        info.mipLevels = info.arrayLayers = 1;
+        info.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        assert(virtual_graph.declare_image(info, VK_IMAGE_ASPECT_COLOR_BIT, image, error));
+        assert(virtual_graph.declare_buffer(64, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, buffer, error));
+        const auto write = virtual_graph.add_pass("initialize virtual resources", [] { return true; });
+        const auto read = virtual_graph.add_pass("read virtual resources", [] { return true; });
+        FrameImageGraph::Resource written_image;
+        FrameImageGraph::BufferResource written_buffer;
+        assert(!virtual_graph.read(read, image, ImageUse::ComputeSampled, error));
+        assert(!virtual_graph.read_write(read, image, written_image, error));
+        assert(!virtual_graph.read_buffer(read, buffer, BufferUse::ComputeRead, error));
+        assert(!virtual_graph.read_write_buffer(read, buffer, BufferUse::ComputeReadWrite, written_buffer, error));
+        assert(virtual_graph.write(write, image, ImageUse::StorageWrite, written_image, error));
+        assert(virtual_graph.write_buffer(write, buffer, BufferUse::ComputeWrite, written_buffer, error));
+        assert(virtual_graph.read(read, written_image, ImageUse::ComputeSampled, error));
+        assert(virtual_graph.read_buffer(read, written_buffer, BufferUse::ComputeRead, error));
+    }
     ImageStateTracker states;
     assert(states.register_image(image, range, ImageUse::Undefined, error));
 
