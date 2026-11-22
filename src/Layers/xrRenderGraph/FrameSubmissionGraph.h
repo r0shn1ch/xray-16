@@ -52,6 +52,11 @@ public:
                 error.clear();
                 return true;
             }
+        if (passes_[consumer].submission)
+        {
+            error = "Frame submission graph: cannot add a dependency to a submitted pass";
+            return false;
+        }
         if (has_path(consumer, producer))
         {
             error = "Frame submission graph: dependency would create a cycle";
@@ -80,6 +85,11 @@ public:
                     error.clear();
                     return true;
                 }
+            if (passes_[consumer].submission)
+            {
+                error = "Frame submission graph: cannot add a dependency to a submitted pass";
+                return false;
+            }
             dependencies.push_back({InvalidPass, source_queue, submission, true});
         }
         error.clear();
