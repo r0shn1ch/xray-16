@@ -17,6 +17,7 @@ enum class ImageUse
     TransferDestination,
     TransferDestinationGeneral,
     Sampled,
+    VertexSampled,
     ComputeSampled,
     SampledGraphicsCompute,
     StorageRead,
@@ -39,6 +40,7 @@ inline bool image_use_supported_on_queue(ImageUse use, VkQueueFlags flags)
     case ImageUse::TransferDestinationGeneral:
         return (flags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT)) != 0;
     case ImageUse::Sampled:
+    case ImageUse::VertexSampled:
     case ImageUse::ColorAttachment:
     case ImageUse::ColorAttachmentWriteTransferSource:
     case ImageUse::DepthStencilAttachment:

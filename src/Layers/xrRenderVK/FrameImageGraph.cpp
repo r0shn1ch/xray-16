@@ -22,6 +22,7 @@ VkImageUsageFlags required_image_usage(ImageUse use)
     case ImageUse::TransferDestination:
     case ImageUse::TransferDestinationGeneral: return VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     case ImageUse::Sampled:
+    case ImageUse::VertexSampled:
     case ImageUse::ComputeSampled:
     case ImageUse::SampledGraphicsCompute: return VK_IMAGE_USAGE_SAMPLED_BIT;
     case ImageUse::StorageRead:
@@ -853,7 +854,7 @@ bool FrameImageGraph::read(Pass pass, Resource resource, ImageUse use, std::stri
         error = "Frame image graph: transient image read requires a written version";
         return false;
     }
-    if (use != ImageUse::TransferSource && use != ImageUse::Sampled &&
+    if (use != ImageUse::TransferSource && use != ImageUse::Sampled && use != ImageUse::VertexSampled &&
         use != ImageUse::ComputeSampled && use != ImageUse::SampledGraphicsCompute &&
         use != ImageUse::DepthStencilReadOnly && use != ImageUse::StorageRead &&
         use != ImageUse::Present)
@@ -935,6 +936,7 @@ bool FrameImageGraph::write_render_pass(Pass pass, Resource resource,
     case ImageUse::TransferDestination:
     case ImageUse::TransferDestinationGeneral:
     case ImageUse::Sampled:
+    case ImageUse::VertexSampled:
     case ImageUse::ComputeSampled:
     case ImageUse::SampledGraphicsCompute:
     case ImageUse::StorageRead:

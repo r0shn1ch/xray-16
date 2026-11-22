@@ -39,6 +39,9 @@ ImageUseInfo describe(ImageUse use)
     case ImageUse::Sampled:
         return {VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT};
+    case ImageUse::VertexSampled:
+        return {VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+            VK_PIPELINE_STAGE_VERTEX_SHADER_BIT};
     case ImageUse::ComputeSampled:
         return {VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT};
@@ -85,6 +88,7 @@ bool valid_use(ImageUse use)
     case ImageUse::TransferDestination:
     case ImageUse::TransferDestinationGeneral:
     case ImageUse::Sampled:
+    case ImageUse::VertexSampled:
     case ImageUse::ComputeSampled:
     case ImageUse::SampledGraphicsCompute:
     case ImageUse::StorageRead:

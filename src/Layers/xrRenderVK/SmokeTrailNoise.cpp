@@ -116,10 +116,13 @@ bool SmokeTrailNoise::record(VkCommandBuffer command, uint32_t slot, float time,
 {
     if (!command || slot >= uniforms_.size() || !image_ || !std::isfinite(time) || !std::isfinite(tile_scale) || tile_scale <= 0.f)
     { error = "invalid smoke noise frame"; return false; }
-    if (semaphore_handoff && request_submission_command_buffer)
+    const bool generated_groups = semaphore_handoff && request_submission_command_buffer;
+    const bool graph_graphics = !semaphore_handoff && recording_queue == FrameSubmissionGraph::Queue::Graphics &&
+        (queue_flags & VK_QUEUE_GRAPHICS_BIT);
+    if (generated_groups || graph_graphics)
     {
-        if (!submission_graph || compute_submission_pass == FrameSubmissionGraph::InvalidPass ||
-            graphics_continuation_pass == FrameSubmissionGraph::InvalidPass)
+        if (generated_groups && (!submission_graph || compute_submission_pass == FrameSubmissionGraph::InvalidPass ||
+            graphics_continuation_pass == FrameSubmissionGraph::InvalidPass))
         {
             error = "smoke noise generated groups have no frame submission mapping";
             return false;
@@ -165,15 +168,22 @@ bool SmokeTrailNoise::record(VkCommandBuffer command, uint32_t slot, float time,
             return false;
         const auto sample = graph.add_pass("sample smoke noise image",
             FrameSubmissionGraph::Queue::Graphics, {});
-        if (!graph.read(sample, uploaded_image, ImageUse::Sampled, error))
+        if (!graph.read(sample, uploaded_image, ImageUse::VertexSampled, error))
             return false;
         if (transient && !graph.materialize_buffers(*buffer_pool, error))
             return false;
 
         ImageStateTracker image_states;
         if (!image_states.register_image(image_, range,
-                first ? ImageUse::Undefined : ImageUse::Sampled, error))
+                first ? ImageUse::Undefined : ImageUse::VertexSampled, error))
             return false;
+        if (graph_graphics)
+        {
+            const bool recorded = graph.execute(command, image_states, {barrier_}, error, queue_flags, false, recording_queue);
+            if (transient)
+                graph.retire_allocations(*retirement, 1u << slot);
+            return recorded;
+        }
         std::vector<FrameImageGraph::QueueGroup> queue_groups;
         std::vector<FrameSubmissionGraph::Pass> submission_for_pass;
         if (!graph.generate_submission_groups(*submission_graph,
@@ -235,7 +245,7 @@ bool SmokeTrailNoise::record(VkCommandBuffer command, uint32_t slot, float time,
             return false;
         const auto draw = graph.add_pass("sample smoke noise image",
             FrameSubmissionGraph::Queue::Graphics, {});
-        if (!graph.read(draw, sampled_image, ImageUse::Sampled, error) ||
+        if (!graph.read(draw, sampled_image, ImageUse::VertexSampled, error) ||
             !graph.connect_submission_dependencies(*submission_graph,
                 [compute_submission_pass, graphics_continuation_pass](FrameSubmissionGraph::Queue queue) {
                     if (queue == FrameSubmissionGraph::Queue::Compute) return compute_submission_pass;
