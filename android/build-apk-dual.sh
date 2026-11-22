@@ -85,12 +85,13 @@ if [ ! -f "$slang_root64/lib/libslang-compiler.so" ]; then
 fi
 
 native_build_dir="$build_dir/native"
-if [ "${XRAY_ANDROID_SKIP_NATIVE_BUILD:-OFF}" != ON ]; then
 glslc_bin=${GLSLC_BIN:-glslc}
 if ! command -v "$glslc_bin" >/dev/null 2>&1; then
-    echo "glslc is required to compile the embedded Vulkan shaders" >&2
+    echo "glslc is required to compile Vulkan shaders" >&2
     exit 2
 fi
+python3 "$repo_dir/tools/compile_vulkan_visibility_shaders.py" --glslc "$glslc_bin"
+if [ "${XRAY_ANDROID_SKIP_NATIVE_BUILD:-OFF}" != ON ]; then
 # Build external and embedded gameplay modules from the same source before
 # compiling native code; otherwise the embedded cutout fallback lags a build.
 python3 "$repo_dir/tools/compile_vulkan_shader.py" --compiler glslc --dxc "$glslc_bin" \
