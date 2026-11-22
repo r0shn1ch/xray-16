@@ -298,6 +298,29 @@ int main()
     group.time_limit = .5f;
     group.effects.push_back({"smoke", "smoke", "", "", 0.f, .1f, 7u});
     group.effects.push_back({"smoke", "", "", "", .2f, .4f, 5u});
+    {
+        GpuParticlePrograms failed_programs;
+        GpuParticleCommands failed_commands(1);
+        GpuParticleEmitters failed_emitters(failed_programs, failed_commands, 1);
+        VulkanParticleEffect failed(catalog, def);
+        assert(failed.attach_gpu_emitter(failed_emitters, program_error));
+        failed.Play();
+        GpuParticleCommands::Batch submitted;
+        assert(failed_commands.snapshot(submitted, program_error) && submitted.commands.size() == 2);
+        std::vector<xray::render::fg::GpuPapiStatus> rejected(1);
+        rejected[0].generation = 1; rejected[0].serial = 2;
+        rejected[0].error = rejected[0].retired = 1;
+        assert(failed_commands.acknowledge(rejected, program_error) && failed_emitters.apply(rejected, program_error));
+        failed.OnFrame(33);
+        assert(!failed.gpu_emitter_handle() && failed.IsPlaying() && !failed.gpu_draw_compatible());
+        failed.Stop(FALSE);
+        failed.Play();
+        failed.OnFrame(33);
+        assert(failed.IsPlaying() && !failed.gpu_emitter_handle());
+        failed.Stop(FALSE);
+        assert(failed.attach_gpu_emitter(failed_emitters, program_error));
+        assert(failed.gpu_emitter_handle() && !failed.gpu_draw_compatible());
+    }
     GpuParticlePrograms mirror_programs;
     GpuParticleCommands mirror_commands(2);
     GpuParticleEmitters mirror_emitters(mirror_programs, mirror_commands, 2);
