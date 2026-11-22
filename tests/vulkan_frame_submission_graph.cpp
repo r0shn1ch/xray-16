@@ -56,6 +56,19 @@ int main()
     }
     {
         using namespace xray::render::framegraph;
+        ResourceVersionSequence transient(false);
+        uint32_t version = 99;
+        assert(!transient.read(0, 0) && !transient.write(0, 0, true, version) && version == 99);
+        assert(transient.write(0, 0, false, version) && version == 1);
+        assert(!transient.read(1, 0));
+        assert(transient.read(1, 1));
+        assert(!transient.write(0, 2, false, version) && version == 1);
+        assert(transient.write(1, 2, true, version) && version == 2);
+        assert(transient.versions()[1].readers == (std::vector<uint32_t>{1, 2}));
+        ResourceVersionSequence imported(true);
+        assert(imported.read(0, 0));
+        assert(imported.write(0, 1, true, version) && version == 1);
+
         ResourceDependencyGraph graph(5);
         // Two readers of a written version must finish before its overwrite.
         const std::vector<ResourceVersion> resource{{INVALID_INDEX, {}}, {0, {1, 2}}, {3, {4}}};

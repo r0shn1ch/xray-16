@@ -203,7 +203,7 @@ bool FrameImageGraph::import_buffer(VkBuffer buffer, VkDeviceSize offset, VkDevi
     }
     resource = {uint32_t(m_buffers.size()), 0, generation_};
     m_buffers.push_back({buffer, offset, size, initial_use, initial_queue, initial_submission,
-        initial_producer_pass, sharing_mode, std::move(sharing_queue_families), {{}}});
+        initial_producer_pass, sharing_mode, std::move(sharing_queue_families), framegraph::ResourceVersionSequence{true}});
     error.clear();
     return true;
 }
@@ -217,6 +217,7 @@ bool FrameImageGraph::declare_buffer(const BufferDescription& description,
         return false;
     }
     Buffer buffer;
+    buffer.versions = framegraph::ResourceVersionSequence{false};
     buffer.size = description.size;
     buffer.transient_description = description;
     buffer.initial_queue = default_queue_;
@@ -438,7 +439,8 @@ bool FrameImageGraph::read_buffer(Pass pass, BufferResource resource,
             error = "Frame image graph: overlapping buffer ranges may be accessed only once per pass";
             return false;
         }
-    m_buffers[resource.index].versions[resource.version].readers.push_back(pass);
+    if (!m_buffers[resource.index].versions.read(resource.version, pass))
+    { error = "Frame image graph: invalid buffer version read"; return false; }
     m_passes[pass].buffer_reads.push_back({resource, use});
     return true;
 }
@@ -470,8 +472,10 @@ bool FrameImageGraph::write_buffer(Pass pass, BufferResource resource,
         error = "Frame image graph: buffer write requires latest version";
         return false;
     }
-    next = {resource.index, uint32_t(buffer.versions.size()), generation_};
-    buffer.versions.push_back({pass, {}});
+    uint32_t version{};
+    if (!buffer.versions.write(resource.version, pass, false, version))
+    { error = "Frame image graph: invalid buffer version write"; return false; }
+    next = {resource.index, version, generation_};
     m_passes[pass].buffer_writes.push_back({next, use});
     return true;
 }
@@ -508,9 +512,10 @@ bool FrameImageGraph::read_write_buffer(Pass pass, BufferResource resource,
         error = "Frame image graph: buffer read/write requires latest version";
         return false;
     }
-    buffer.versions[resource.version].readers.push_back(pass);
-    next = {resource.index, uint32_t(buffer.versions.size()), generation_};
-    buffer.versions.push_back({pass, {}});
+    uint32_t version{};
+    if (!buffer.versions.write(resource.version, pass, true, version))
+    { error = "Frame image graph: invalid buffer version read/write"; return false; }
+    next = {resource.index, version, generation_};
     m_passes[pass].buffer_writes.push_back({next, use});
     return true;
 }
@@ -574,7 +579,7 @@ bool FrameImageGraph::import_image(VkImage image, const VkImageSubresourceRange&
     }
     resource = {uint32_t(m_images.size()), 0, generation_};
     m_images.push_back({image, range, initial_queue, initial_use, initial_submission,
-        initial_producer_pass, sharing_mode, std::move(sharing_queue_families), {{}}});
+        initial_producer_pass, sharing_mode, std::move(sharing_queue_families), framegraph::ResourceVersionSequence{true}});
     error.clear();
     return true;
 }
@@ -593,6 +598,7 @@ bool FrameImageGraph::declare_image(const VkImageCreateInfo& info, VkImageAspect
     }
 
     Image image;
+    image.versions = framegraph::ResourceVersionSequence{false};
     image.range = {aspects, 0, info.mipLevels, 0, info.arrayLayers};
     image.initial_queue = default_queue_;
     image.sharing_mode = info.sharingMode;
@@ -883,7 +889,8 @@ bool FrameImageGraph::read(Pass pass, Resource resource, ImageUse use, std::stri
             error = "Frame image graph: overlapping image subresources may be accessed only once per pass";
             return false;
         }
-    m_images[resource.index].versions[resource.version].readers.push_back(pass);
+    if (!m_images[resource.index].versions.read(resource.version, pass))
+    { error = "Frame image graph: invalid image version read"; return false; }
     m_passes[pass].reads.push_back({resource, use});
     return true;
 }
@@ -918,8 +925,10 @@ bool FrameImageGraph::write(Pass pass, Resource resource, ImageUse use,
         error = "Frame image graph: write requires the latest resource version";
         return false;
     }
-    next = {resource.index, uint32_t(image.versions.size()), generation_};
-    image.versions.push_back({pass, {}});
+    uint32_t version{};
+    if (!image.versions.write(resource.version, pass, false, version))
+    { error = "Frame image graph: invalid image version write"; return false; }
+    next = {resource.index, version, generation_};
     m_passes[pass].writes.push_back({next, use});
     return true;
 }
@@ -975,8 +984,10 @@ bool FrameImageGraph::write_render_pass(Pass pass, Resource resource,
         error = "Frame image graph: write requires the latest resource version";
         return false;
     }
-    next = {resource.index, uint32_t(image.versions.size()), generation_};
-    image.versions.push_back({pass, {}});
+    uint32_t version{};
+    if (!image.versions.write(resource.version, pass, false, version))
+    { error = "Frame image graph: invalid render-pass version write"; return false; }
+    next = {resource.index, version, generation_};
     m_passes[pass].writes.push_back({next,
         initial_use == ImageUse::Undefined ? attachment_use : initial_use, final_use, attachment_use});
     error.clear();
@@ -1016,9 +1027,10 @@ bool FrameImageGraph::read_write(Pass pass, Resource resource, Resource& next, s
         error = "Frame image graph: read_write requires the latest resource version";
         return false;
     }
-    image.versions[resource.version].readers.push_back(pass);
-    next = {resource.index, uint32_t(image.versions.size()), generation_};
-    image.versions.push_back({pass, {}});
+    uint32_t version{};
+    if (!image.versions.write(resource.version, pass, true, version))
+    { error = "Frame image graph: invalid image version read/write"; return false; }
+    next = {resource.index, version, generation_};
     m_passes[pass].writes.push_back({next, use});
     return true;
 }

@@ -246,7 +246,7 @@ private:
         FrameSubmissionGraph::Pass initial_producer_pass = FrameSubmissionGraph::InvalidPass;
         VkSharingMode sharing_mode = VK_SHARING_MODE_EXCLUSIVE;
         std::vector<uint32_t> sharing_queue_families;
-        std::vector<Version> versions{{}};
+        framegraph::ResourceVersionSequence versions{};
         VkImageCreateInfo transient_info{};
         std::shared_ptr<void> allocation;
         VkImageView view = VK_NULL_HANDLE;
@@ -268,7 +268,7 @@ private:
         FrameSubmissionGraph::Pass initial_producer_pass = FrameSubmissionGraph::InvalidPass;
         VkSharingMode sharing_mode = VK_SHARING_MODE_EXCLUSIVE;
         std::vector<uint32_t> sharing_queue_families;
-        std::vector<Version> versions{{}};
+        framegraph::ResourceVersionSequence versions{};
         BufferDescription transient_description{};
         std::shared_ptr<void> allocation;
     };

@@ -15,6 +15,50 @@ struct ResourceVersion
     std::vector<uint32_t> readers;
 };
 
+// Shared SSA-style version tracking for imported and transient resources.
+// Backends validate physical ranges and access states before calling this.
+class ResourceVersionSequence
+{
+public:
+    explicit ResourceVersionSequence(bool imported = true) : imported_(imported) {}
+
+    bool read(uint32_t version, uint32_t pass)
+    {
+        if (!readable(version, pass)) return false;
+        versions_[version].readers.push_back(pass);
+        return true;
+    }
+
+    bool write(uint32_t version, uint32_t pass, bool preserve, uint32_t& output)
+    {
+        if (pass == INVALID_INDEX || version >= versions_.size() || version + 1 != versions_.size() ||
+            versions_.size() >= INVALID_INDEX || (preserve && !readable(version, pass)))
+            return false;
+        if (preserve) versions_[version].readers.push_back(pass);
+        output = static_cast<uint32_t>(versions_.size());
+        versions_.push_back({pass, {}});
+        return true;
+    }
+
+    const std::vector<ResourceVersion>& versions() const { return versions_; }
+    operator const std::vector<ResourceVersion>&() const { return versions_; }
+    size_t size() const { return versions_.size(); }
+    const ResourceVersion& operator[](size_t index) const { return versions_[index]; }
+    const ResourceVersion& front() const { return versions_.front(); }
+    auto begin() const { return versions_.begin(); }
+    auto end() const { return versions_.end(); }
+    bool imported() const { return imported_; }
+
+private:
+    bool readable(uint32_t version, uint32_t pass) const
+    {
+        return pass != INVALID_INDEX && version < versions_.size() &&
+            (imported_ || version != 0) && versions_[version].producer != pass;
+    }
+    std::vector<ResourceVersion> versions_{{}};
+    bool imported_;
+};
+
 struct ResourceLifetime
 {
     uint32_t first_use = INVALID_INDEX;
