@@ -2157,8 +2157,10 @@ bool GpuLevel::record_generated_details(const FrameRecordingContext& frame, cons
         return ensure(buffer, bytes, storage, host) && buffer.write(0, source.data(), bytes, error);
     };
     const uint32_t grid = detail_generation_params_.grid_size;
+    uint32_t candidates{};
+    if (!detail_generate_->candidate_count(detail_generation_params_, candidates, error))
+        return false;
     const uint32_t per_cell = grid * grid;
-    const uint32_t candidates = detail_generation_params_.slot_count * per_cell;
     if (!detail_generation_prototypes_.handle())
     {
         std::vector<std::array<float, 2>> scales;

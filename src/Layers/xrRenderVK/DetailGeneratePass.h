@@ -46,26 +46,39 @@ public:
         std::memcpy(words.data(), binary.data(), binary.size());
         max_groups_x_ = limits.maxComputeWorkGroupCount[0];
         max_groups_y_ = limits.maxComputeWorkGroupCount[1];
+        max_candidates_ = limits.maxStorageBufferRange / sizeof(GeneratedDetail);
         return compute_.initialize(device, get, slots, 4, sizeof(Parameters), limits.maxStorageBufferRange,
             cache, words.data(), binary.size(), error);
+    }
+
+    bool candidate_count(const Parameters& params, uint32_t& count, std::string& error) const
+    {
+        const uint64_t per_cell = uint64_t(params.grid_size) * params.grid_size;
+        if (!per_cell || !params.slot_count || per_cell > max_candidates_ / params.slot_count)
+        {
+            error = "GPU detail candidates exceed storage buffer capacity";
+            return false;
+        }
+        count = static_cast<uint32_t>(per_cell * params.slot_count);
+        return true;
     }
 
     bool record(VkCommandBuffer command, uint32_t slot, const BufferResource& slots,
         const BufferResource& ground, const BufferResource& prototypes, const BufferResource& output,
         const Parameters& params, std::string& error) const
     {
-        const uint64_t candidates = uint64_t(params.grid_size) * params.grid_size;
-        if (!candidates || !params.slot_count || params.slot_count > slots.size() / sizeof(DetailGenerateSlot) ||
-            candidates > output.size() / sizeof(GeneratedDetail) / params.slot_count)
+        uint32_t count{};
+        if (!candidate_count(params, count, error)) return false;
+        if (params.slot_count > slots.size() / sizeof(DetailGenerateSlot) ||
+            count > output.size() / sizeof(GeneratedDetail))
         {
             error = "invalid GPU detail generation range";
             return false;
         }
-        const uint64_t count = candidates * params.slot_count;
         const uint64_t groups = (count - 1) / 64 + 1;
         const uint32_t groups_x = static_cast<uint32_t>(std::min<uint64_t>(groups, max_groups_x_));
         const uint64_t groups_y = groups_x ? (groups - 1) / groups_x + 1 : 0;
-        if (!groups_y || groups_y > max_groups_y_ || count > UINT32_MAX)
+        if (!groups_y || groups_y > max_groups_y_)
         {
             error = "GPU detail generation exceeds dispatch capacity";
             return false;
@@ -79,5 +92,6 @@ public:
 private:
     StorageComputePass compute_;
     uint32_t max_groups_x_{}, max_groups_y_{};
+    uint32_t max_candidates_{};
 };
 }
