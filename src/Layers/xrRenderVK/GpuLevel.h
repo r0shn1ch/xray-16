@@ -5,6 +5,7 @@
 #include "DeferredPass.h"
 #include "EngineLevelModels.h"
 #include "GameTextureFactory.h"
+#include "TransparentDrawOrder.h"
 #include "LevelPassGraph.h"
 #include "LevelHierarchyBounds.h"
 #include "ClusterLodBuilder.h"
@@ -156,7 +157,11 @@ class GpuLevel
     void prepare_details(const Fvector &camera_position, float max_distance = 40.f);
     bool record_details(const FrameRecordingContext &frame, const DeferredPass &pass, const float (&mvp)[16]) const;
     bool prepare_transparent_details(const FrameRecordingContext &frame, const float (&mvp)[16],
-                                     std::vector<float> &sort_distances, float wind_amplitude = 0.f) const;
+                                     float wind_amplitude = 0.f) const;
+    bool append_transparent_details(uint32_t frame_index, std::vector<TransparentDrawRef>& draws) const;
+    bool record_transparent_detail_velocity(size_t draw_index, const FrameRecordingContext& frame,
+        const ObjectVelocityPass& pass, const float (&current_mvp)[16], const float (&previous_mvp)[16],
+        const DetailWindParameters& current_wind, const DetailWindParameters& previous_wind) const;
     bool record_transparent_detail(size_t draw_index, const FrameRecordingContext &frame, const DeferredPass &pass,
                                    const float (&mvp)[16]) const;
     bool record_sun_shadow(const FrameRecordingContext &frame, const DeferredPass &pass,
@@ -342,6 +347,7 @@ class GpuLevel
     {
         uint8_t model;
         uint32_t instance;
+        float distance;
     };
     mutable std::array<std::vector<TransparentDetailDraw>, FrameContext::FramesInFlight> transparent_detail_draws_;
     std::vector<LevelVisual> visuals_;

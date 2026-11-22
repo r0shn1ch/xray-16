@@ -24,7 +24,9 @@ def generate(compiler):
             ('ParticleVelocityVertex', 'object_velocity_particle.vert', 'vert', []),
             ('ParticleVelocityFragment', 'object_velocity_particle.frag', 'frag', []),
             ('Fragment', 'object_velocity.frag', 'frag', []),
-            ('CutoutFragment', 'object_velocity.frag', 'frag', ['-DXRAY_OBJECT_VELOCITY_CUTOUT'])]:
+            ('CutoutFragment', 'object_velocity.frag', 'frag', ['-DXRAY_OBJECT_VELOCITY_CUTOUT']),
+            ('TransparentFragment', 'object_velocity.frag', 'frag',
+                ['-DXRAY_OBJECT_VELOCITY_CUTOUT', '-DXRAY_OBJECT_VELOCITY_TRANSPARENT'])]:
             source = SHADERS / source_name
             output = Path(directory) / f'{name}.spv'
             if source_name.endswith('.hlsl'):

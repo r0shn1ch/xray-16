@@ -14,6 +14,10 @@ layout(push_constant) uniform Cutout
 #endif
 void main()
 {
+    float dynamic_marker = 1.0;
+#ifdef XRAY_OBJECT_VELOCITY_TRANSPARENT
+    dynamic_marker = 2.0 + gl_FragCoord.z;
+#endif
 #ifdef XRAY_OBJECT_VELOCITY_CUTOUT
     vec4 coordinate = vec4(texcoord, 0.0, 1.0);
     vec2 base_uv = vec2(dot(coordinate, cutout.base_u), dot(coordinate, cutout.base_v));
@@ -21,11 +25,11 @@ void main()
 #endif
     if (previous_clip.w <= 1e-6)
     {
-        velocity = vec4(0.0, 0.0, -1.0, 1.0);
+        velocity = vec4(0.0, 0.0, -1.0, dynamic_marker);
         return;
     }
     vec2 current_uv = current_clip.xy / current_clip.w * 0.5 + 0.5;
     vec2 previous_uv = previous_clip.xy / previous_clip.w * 0.5 + 0.5;
     // Alpha is a conservative dynamic-depth marker consumed when building Hi-Z.
-    velocity = vec4(previous_uv - current_uv, previous_clip.z / previous_clip.w, 1.0);
+    velocity = vec4(previous_uv - current_uv, previous_clip.z / previous_clip.w, dynamic_marker);
 }

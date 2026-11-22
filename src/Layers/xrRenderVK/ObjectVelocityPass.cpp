@@ -129,7 +129,7 @@ bool ObjectVelocityPass::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get
     if (create_layout(device_, &layout_info, nullptr, &layout_) != VK_SUCCESS)
         return fail("object velocity pipeline layout creation failed");
     ShaderModule vertex, detail_vertex, skinned_vertex, lod_vertex, particle_velocity_vertex, particle_velocity_fragment,
-        fragment, cutout_fragment, lod_fragment;
+        fragment, cutout_fragment, transparent_fragment, lod_fragment;
     const ShaderModuleDispatch shader_dispatch{
         procedure<PFN_vkCreateShaderModule>(device, get, "vkCreateShaderModule"),
         procedure<PFN_vkDestroyShaderModule>(device, get, "vkDestroyShaderModule")};
@@ -143,6 +143,9 @@ bool ObjectVelocityPass::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get
     if (material_layout && !cutout_fragment.initialize(device_, shader_dispatch,
             object_velocity_shaders::CutoutFragment, sizeof(object_velocity_shaders::CutoutFragment), error))
     { const std::string reason = "object velocity cutout shader: " + error; return fail(reason.c_str()); }
+    if (material_layout && !transparent_fragment.initialize(device_, shader_dispatch,
+            object_velocity_shaders::TransparentFragment, sizeof(object_velocity_shaders::TransparentFragment), error))
+    { const std::string reason = "object velocity transparent shader: " + error; return fail(reason.c_str()); }
     if (material_layout &&
         (!particle_velocity_vertex.initialize(device_, shader_dispatch, object_velocity_shaders::ParticleVelocityVertex,
              sizeof(object_velocity_shaders::ParticleVelocityVertex), error) ||
@@ -236,6 +239,11 @@ bool ObjectVelocityPass::initialize(VkDevice device, PFN_vkGetDeviceProcAddr get
         stages[1].module = cutout_fragment.handle();
         if (create_pipeline(device_, cache, 1, &pipeline_info, nullptr, &detail_cutout_pipeline_) != VK_SUCCESS)
             return fail("object velocity detail cutout pipeline creation failed");
+        stages[1].module = transparent_fragment.handle();
+        depth_state.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        if (create_pipeline(device_, cache, 1, &pipeline_info, nullptr, &detail_transparent_pipeline_) != VK_SUCCESS)
+            return fail("object velocity detail transparent pipeline creation failed");
+        depth_state.depthCompareOp = VK_COMPARE_OP_EQUAL;
     }
     input.pVertexBindingDescriptions = bindings;
     input.pVertexAttributeDescriptions = attributes;
@@ -396,14 +404,16 @@ void ObjectVelocityPass::draw(const FrameRecordingContext& frame, VkBuffer verti
 bool ObjectVelocityPass::draw_details(const FrameRecordingContext& frame, VkBuffer vertices, VkBuffer indices,
     uint32_t index_count, VkBuffer instances, uint32_t instance_count, const float* current_mvp,
     const float* previous_mvp, const DetailWindParameters& current_wind, const DetailWindParameters& previous_wind,
-    VkDescriptorSet material, float alpha_ref, const float* base_rows, VkBuffer indirect_commands) const
+    VkDescriptorSet material, float alpha_ref, const float* base_rows, VkBuffer indirect_commands,
+    bool transparent, VkDeviceSize instance_offset) const
 {
-    const auto pipeline = material ? detail_cutout_pipeline_ : detail_pipeline_;
+    const auto pipeline = transparent ? detail_transparent_pipeline_ : material ? detail_cutout_pipeline_ : detail_pipeline_;
     if (!pipeline || !frame.command_buffer || !vertices || !indices || !index_count || !instances ||
-        !instance_count || !current_mvp || !previous_mvp) return false;
+        !instance_count || !current_mvp || !previous_mvp || (transparent && !material) ||
+        instance_offset % sizeof(DetailInstance) || (indirect_commands && instance_offset)) return false;
     bind_pipeline_(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     const VkBuffer buffers[]{vertices, instances};
-    const VkDeviceSize offsets[]{0, 0};
+    const VkDeviceSize offsets[]{0, instance_offset};
     bind_vertices_(frame.command_buffer, 0, 2, buffers, offsets);
     bind_indices_(frame.command_buffer, indices, 0, VK_INDEX_TYPE_UINT32);
     float data[56]{};
@@ -533,6 +543,7 @@ void ObjectVelocityPass::destroy()
     {
         if (detail_pipeline_ && destroy_pipeline_) destroy_pipeline_(device_, detail_pipeline_, nullptr);
         if (detail_cutout_pipeline_ && destroy_pipeline_) destroy_pipeline_(device_, detail_cutout_pipeline_, nullptr);
+        if (detail_transparent_pipeline_ && destroy_pipeline_) destroy_pipeline_(device_, detail_transparent_pipeline_, nullptr);
         if (skinned_cutout_pipeline_ && destroy_pipeline_)
             destroy_pipeline_(device_, skinned_cutout_pipeline_, nullptr);
         if (skinned_pipeline_ && destroy_pipeline_) destroy_pipeline_(device_, skinned_pipeline_, nullptr);
@@ -556,6 +567,7 @@ void ObjectVelocityPass::destroy()
     pipeline_ = VK_NULL_HANDLE;
     cutout_pipeline_ = VK_NULL_HANDLE;
     detail_pipeline_ = detail_cutout_pipeline_ = VK_NULL_HANDLE;
+    detail_transparent_pipeline_ = VK_NULL_HANDLE;
     lod_pipeline_ = VK_NULL_HANDLE;
     particle_velocity_pipeline_ = VK_NULL_HANDLE;
     particle_transparent_velocity_pipeline_ = VK_NULL_HANDLE;

@@ -4,6 +4,7 @@
 #include "src/Layers/xrRenderVK/ModelGeometry.h"
 #include "src/Layers/xrRenderVK/DeferredPass.h"
 #include "src/Layers/xrRenderVK/DetailInstance.h"
+#include "src/Layers/xrRenderVK/TransparentDrawOrder.h"
 #include <vulkan/vulkan.h>
 #include <array>
 #include <cstdlib>
@@ -156,6 +157,12 @@ int run_test(int argc, char** argv)
     const bool wind_velocity = argc > 2 && std::string(argv[2]) == "wind";
     const std::string mode = argc > 2 ? argv[2] : "";
     const bool detail_velocity = mode.find("detail") == 0;
+    const bool detail_transparent = mode.find("detail_transparent") == 0;
+    const bool detail_occluded = mode == "detail_transparent_occluded";
+    const bool detail_offset = mode == "detail_transparent_offset";
+    const bool detail_layers = mode == "detail_transparent_layers";
+    const uint8_t detail_alpha = mode == "detail_transparent_empty" ? 0 :
+        mode == "detail_transparent_faint" ? 1 : mode == "detail_transparent_partial" ? 64 : 255;
     const bool detail_still = mode == "detail_still";
     const DetailWindParameters detail_current{{.1f, 0.f, .1f, 0.f}, .12f};
     const DetailWindParameters detail_previous = mode == "detail_reset" ? detail_current :
@@ -163,11 +170,11 @@ int run_test(int argc, char** argv)
     const bool offset_velocity = argc > 2 && std::string(argv[2]) == "offset";
     const bool cutout_velocity = argc > 2 &&
         (std::string(argv[2]) == "cutout" || std::string(argv[2]) == "cutout_solid" ||
-         mode == "detail_cutout" || mode == "detail_cutout_solid");
+         mode == "detail_cutout" || mode == "detail_cutout_solid" || detail_transparent);
     const bool indirect_velocity = mode == "indirect" || mode == "detail_indirect";
     const bool skinned_cutout = argc > 2 && std::string(argv[2]) == "skinned_cutout";
     const bool solid_cutout = argc > 2 &&
-        (std::string(argv[2]) == "cutout_solid" || skinned_cutout || mode == "detail_cutout_solid");
+        (std::string(argv[2]) == "cutout_solid" || skinned_cutout || mode == "detail_cutout_solid" || detail_transparent);
     const bool blended_skinning = argc > 2 && std::string(argv[2]) == "skinned_blend";
     const bool skinned_velocity = argc > 2 &&
         (std::string(argv[2]) == "skinned" || blended_skinning || skinned_cutout);
@@ -347,7 +354,7 @@ int run_test(int argc, char** argv)
         write.pImageInfo = &descriptor;
         vkUpdateDescriptorSets(vk.device, 1, &write, 0, nullptr);
         vk.buffer(8, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vk.cutout_upload, vk.cutout_upload_memory);
-        const uint8_t texel[]{255, 255, 255, 0, 255, 255, 255, 255};
+        const uint8_t texel[]{255, 255, 255, 0, 255, 255, 255, detail_transparent ? detail_alpha : uint8_t(255)};
         void* texel_data{};
         check(vkMapMemory(vk.device, vk.cutout_upload_memory, 0, sizeof(texel), 0, &texel_data));
         std::memcpy(texel_data, texel, sizeof(texel));
@@ -435,6 +442,8 @@ int run_test(int argc, char** argv)
         triangle[base + 1].position[0] = 3.f; triangle[base + 1].position[1] = -1.f;
         triangle[base + 2].position[0] = -1.f; triangle[base + 2].position[1] = 3.f;
         for (uint32_t i = base; i < base + 3; ++i) triangle[i].position[2] = .5f;
+        if (detail_occluded)
+            for (auto& vertex : triangle) vertex.position[2] = .75f;
         if (wind_velocity)
             for (uint32_t i = base; i < base + 3; ++i)
             { triangle[i].lightmap_uv[0] = 1.f; triangle[i].lightmap_uv[1] = triangle[i].position[1] - 1.f; }
@@ -472,11 +481,13 @@ int run_test(int argc, char** argv)
         }
         if (detail_velocity)
         {
-            const auto instance = detail_instance(0.f, 0.f, 0.f, 0.f, 1.f);
-            vk.buffer(sizeof(instance), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            const DetailInstance instances[]{detail_instance(detail_offset ? 100.f : 0.f, 0.f, 0.f, 0.f, 1.f),
+                detail_instance(0.f, 0.f, detail_layers ? -.25f : 0.f, 0.f, 1.f)};
+            const auto bytes = sizeof(DetailInstance) * (detail_offset || detail_layers ? 2 : 1);
+            vk.buffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                 vk.previous_vertices, vk.previous_vertex_memory);
-            check(vkMapMemory(vk.device, vk.previous_vertex_memory, 0, sizeof(instance), 0, &mapped));
-            std::memcpy(mapped, &instance, sizeof(instance));
+            check(vkMapMemory(vk.device, vk.previous_vertex_memory, 0, bytes, 0, &mapped));
+            std::memcpy(mapped, instances, bytes);
             vkUnmapMemory(vk.device, vk.previous_vertex_memory);
         }
         check(vkMapMemory(vk.device, vk.index_memory, 0, sizeof(triangle_indices), 0, &mapped));
@@ -551,10 +562,23 @@ int run_test(int argc, char** argv)
             previous_wind.direction[0] = .5f;
             if (detail_velocity)
             {
-                if (!object_pass.draw_details(frame, vk.vertices, vk.indices, 3, vk.previous_vertices, 1,
-                        current.data(), previous.data(), detail_current, detail_previous, vk.cutout_set, .5f,
+                const auto draw_detail = [&](VkDeviceSize offset) {
+                    return object_pass.draw_details(frame, vk.vertices, vk.indices, 3, vk.previous_vertices, 1,
+                        current.data(), previous.data(), detail_current, detail_previous, vk.cutout_set,
+                        detail_transparent ? .01f : .5f,
                         solid_cutout ? shifted_uv : nullptr,
-                        indirect_velocity ? vk.indirect_commands : VK_NULL_HANDLE))
+                        indirect_velocity ? vk.indirect_commands : VK_NULL_HANDLE, detail_transparent,
+                        offset);
+                };
+                if (detail_layers)
+                {
+                    std::vector<TransparentDrawRef> draws{{1.f, false, 1, false, true}, {4.f, false, 0, false, true}};
+                    sort_transparent_draws(draws);
+                    for (const auto& draw : draws)
+                        if (!draw_detail(draw.index * sizeof(DetailInstance)))
+                            throw std::runtime_error("transparent detail layer rejected");
+                }
+                else if (!draw_detail(detail_offset ? sizeof(DetailInstance) : 0))
                     throw std::runtime_error("detail velocity draw rejected");
             }
             else if (skinned_velocity)
@@ -594,10 +618,14 @@ int run_test(int argc, char** argv)
         const uint32_t stride = rgba ? 4 : 2;
         for (uint32_t pixel = 0; pixel < 4; ++pixel)
         {
-            if (detail_velocity && iteration == 1 && pixel != 2 && (!cutout_velocity || solid_cutout))
+            const bool detail_covered = detail_transparent ? detail_alpha >= 3 && (!detail_occluded || pixel == 2) : pixel != 2;
+            const bool object_pixel = object_velocity && (!cutout_velocity || solid_cutout) &&
+                (!detail_transparent || detail_covered);
+            if (detail_velocity && iteration == 1 && detail_covered && (!cutout_velocity || solid_cutout))
             {
-                const float root[3]{};
-                const float positions[3][3]{{-1.f, -1.f, .5f}, {3.f, -1.f, .5f}, {-1.f, 3.f, .5f}};
+                const float root[3]{0.f, 0.f, detail_layers ? -.25f : 0.f};
+                const float z = detail_occluded ? .75f : detail_layers ? .25f : .5f;
+                const float positions[3][3]{{-1.f, -1.f, z}, {3.f, -1.f, z}, {-1.f, 3.f, z}};
                 std::array<float, 3> current_x{}, previous_x{};
                 for (unsigned i = 0; i < 3; ++i)
                 {
@@ -619,15 +647,16 @@ int run_test(int argc, char** argv)
                         sign * std::ldexp(float(value & 1023), -24);
                 };
                 if (std::abs(half(values[pixel * stride]) - expected) > .002f ||
-                    half(values[pixel * stride + 1]) != 0.f || values[pixel * stride + 2] != 0x3800 ||
-                    values[pixel * stride + 3] != 0x3c00)
+                    half(values[pixel * stride + 1]) != 0.f ||
+                    std::abs(half(values[pixel * stride + 2]) - z) > .001f ||
+                    std::abs(half(values[pixel * stride + 3]) - (detail_transparent ? 2.f + z : 1.f)) > .001f)
                     throw std::runtime_error("detail wind velocity differs from CPU barycentric reference");
                 continue;
             }
             const uint16_t expected_x = iteration == 1 && pixel != 2 ?
-                (object_velocity && (!cutout_velocity || solid_cutout) ? 0x3400 : 0x3000) : 0;
+                (object_pixel ? 0x3400 : 0x3000) : 0;
             const uint16_t actual_x = values[pixel * stride];
-            const bool x_matches = object_velocity && (!cutout_velocity || solid_cutout) &&
+            const bool x_matches = object_pixel &&
                 iteration == 1 && pixel != 2 ?
                 std::abs(int(actual_x) - int(expected_x)) <= 2 : actual_x == expected_x;
             if (!x_matches || values[pixel * stride + 1] != 0)
@@ -640,6 +669,8 @@ int run_test(int argc, char** argv)
                 if (values[pixel * stride + 2] != expected_depth)
                     throw std::runtime_error("motion previous-depth mismatch at iteration " +
                         std::to_string(iteration) + " pixel " + std::to_string(pixel));
+                if (detail_transparent && values[pixel * stride + 3] != 0)
+                    throw std::runtime_error("masked or occluded detail changed the background motion marker");
             }
         }
         vkUnmapMemory(vk.device, vk.readback_memory);

@@ -387,18 +387,12 @@ void VulkanGameDevice::record_transparent(const FrameRecordingContext &frame, vo
     }
     if (owner.current_level_)
     {
-        float mvp[16];
-        std::copy(owner.scene_mvp_.begin(), owner.scene_mvp_.end(), mvp);
-        std::vector<float> detail_distances;
-        if (!owner.current_level_->prepare_transparent_details(frame, mvp, detail_distances,
-                owner.deferred_.detail_wind_amplitude()))
+        if (!owner.current_level_->append_transparent_details(frame.frame_index, draws))
         {
             owner.level_recorded_ = false;
             owner.level_error_ = "Vulkan transparent level detail preparation failed";
             return;
         }
-        for (size_t i = 0; i < detail_distances.size(); ++i)
-            draws.push_back({detail_distances[i], false, i, false, true});
     }
     sort_transparent_draws(draws);
     for (const TransparentDrawRef &draw : draws)
@@ -990,26 +984,46 @@ bool VulkanGameDevice::record_object_velocity(const FrameRecordingContext &frame
     }
     if (owner.models_recorded_ && owner.level_recorded_)
     {
-        std::vector<TransparentDrawRef> particle_draws;
+        std::vector<TransparentDrawRef> transparent_motion_draws;
         for (size_t i = 0; i < owner.particle_draws_.size(); ++i)
         {
             const ParticleDraw& particle = owner.particle_draws_[i];
             if (particle.hud) continue;
             if (particle.visual->getType() == 8)
-                particle_draws.push_back({particle.sort_distance, false, i, true, false,
+                transparent_motion_draws.push_back({particle.sort_distance, false, i, true, false,
                     static_cast<VulkanParticleEffect *>(particle.visual)->priority()});
             else if (particle.visual->getType() == 9)
             {
                 const auto *group = static_cast<VulkanParticleGroup *>(particle.visual);
                 for (uint8_t priority = 1; priority <= 3; ++priority)
                     if (group->has_priority(priority))
-                        particle_draws.push_back({particle.sort_distance, false, i, true, false, priority});
+                        transparent_motion_draws.push_back({particle.sort_distance, false, i, true, false, priority});
             }
         }
-        sort_transparent_draws(particle_draws);
-        const bool particle_history_valid = owner.motion_.history_valid();
-        for (const TransparentDrawRef& item : particle_draws)
+        if (owner.current_level_ && !owner.current_level_->append_transparent_details(frame.frame_index, transparent_motion_draws))
         {
+            owner.level_recorded_ = false;
+            owner.level_error_ = "Vulkan transparent detail motion metadata is unavailable";
+        }
+        sort_transparent_draws(transparent_motion_draws);
+        const bool particle_history_valid = owner.motion_.history_valid();
+        for (const TransparentDrawRef& item : transparent_motion_draws)
+        {
+            if (item.detail)
+            {
+                float current[16], previous[16];
+                std::copy(owner.scene_mvp_.begin(), owner.scene_mvp_.end(), current);
+                std::copy_n(particle_history_valid ? owner.motion_.previous_view_projection() : current, 16, previous);
+                if (!owner.current_level_->record_transparent_detail_velocity(item.index, frame, owner.object_velocity_,
+                        current, previous, owner.current_detail_wind_,
+                        particle_history_valid ? owner.previous_detail_wind_ : owner.current_detail_wind_))
+                {
+                    owner.level_recorded_ = false;
+                    owner.level_error_ = "Vulkan transparent detail velocity recording failed";
+                    break;
+                }
+                continue;
+            }
             const ParticleDraw& particle = owner.particle_draws_[item.index];
             float current_particle_mvp[16];
             std::copy(particle.mvp.begin(), particle.mvp.end(), current_particle_mvp);

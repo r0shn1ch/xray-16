@@ -2437,11 +2437,10 @@ bool GpuLevel::record_details(const FrameRecordingContext &frame, const Deferred
 }
 
 bool GpuLevel::prepare_transparent_details(const FrameRecordingContext &frame, const float (&mvp)[16],
-                                           std::vector<float> &sort_distances, float wind_amplitude) const
+                                           float wind_amplitude) const
 {
     if (frame.frame_index >= transparent_detail_instances_.size())
         return false;
-    sort_distances.clear();
     auto &draws = transparent_detail_draws_[frame.frame_index];
     draws.clear();
     std::vector<const DetailPlacement *> visible;
@@ -2473,8 +2472,7 @@ bool GpuLevel::prepare_transparent_details(const FrameRecordingContext &frame, c
     {
         if (instances.size() >= UINT32_MAX)
             return false;
-        draws.push_back({placement->model, static_cast<uint32_t>(instances.size())});
-        sort_distances.push_back(distance(placement));
+        draws.push_back({placement->model, static_cast<uint32_t>(instances.size()), distance(placement)});
         instances.push_back(detail_instance(placement->x, placement->y, placement->z, placement->yaw, placement->scale));
     }
     auto &buffer = transparent_detail_instances_[frame.frame_index];
@@ -2489,6 +2487,37 @@ bool GpuLevel::prepare_transparent_details(const FrameRecordingContext &frame, c
         return false;
     }
     return true;
+}
+
+bool GpuLevel::append_transparent_details(uint32_t frame_index, std::vector<TransparentDrawRef>& draws) const
+{
+    if (frame_index >= transparent_detail_draws_.size()) return false;
+    const auto& prepared = transparent_detail_draws_[frame_index];
+    for (size_t i = 0; i < prepared.size(); ++i)
+        draws.push_back({prepared[i].distance, false, i, false, true});
+    return true;
+}
+
+bool GpuLevel::record_transparent_detail_velocity(size_t draw_index, const FrameRecordingContext& frame,
+    const ObjectVelocityPass& pass, const float (&current_mvp)[16], const float (&previous_mvp)[16],
+    const DetailWindParameters& current_wind, const DetailWindParameters& previous_wind) const
+{
+    if (frame.frame_index >= transparent_detail_draws_.size() ||
+        draw_index >= transparent_detail_draws_[frame.frame_index].size()) return false;
+    const auto& draw = transparent_detail_draws_[frame.frame_index][draw_index];
+    const auto& mesh = detail_meshes_[draw.model];
+    float rows[8]{1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f};
+    if (mesh.matrices.enabled[0])
+    {
+        const auto matrix = mesh.matrices.values[0].evaluate(Device.fTimeGlobal,
+            reinterpret_cast<const float*>(&Device.mView));
+        for (size_t row = 0; row < 2; ++row)
+            std::copy(matrix[row].begin(), matrix[row].end(), rows + row * 4);
+    }
+    return pass.draw_details(frame, mesh.vertex_buffer(), mesh.index_buffer(), mesh.index_count,
+        transparent_detail_instances_[frame.frame_index].handle(), 1, current_mvp, previous_mvp,
+        current_wind, previous_wind, mesh.material, .01f, rows, VK_NULL_HANDLE, true,
+        VkDeviceSize(draw.instance) * sizeof(DetailInstance));
 }
 
 bool GpuLevel::record_transparent_detail(size_t draw_index, const FrameRecordingContext &frame,

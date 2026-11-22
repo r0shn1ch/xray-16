@@ -40,6 +40,14 @@ void DeferredFrame::geometry(const FrameRecordingContext &frame, void *user_data
         float camera_mvp[16];
         std::memcpy(camera_mvp, context.mvp_, sizeof(camera_mvp));
         std::string error;
+        // This slot's fence has completed. Upload transparent detail instances
+        // before either motion or color can submit commands consuming them.
+        if (!context.level_->prepare_transparent_details(frame, camera_mvp, context.pass_->detail_wind_amplitude()))
+        {
+            Msg("! [renderer-vulkan] transparent detail preparation failed");
+            context.recorded_ = false;
+            return;
+        }
         if (!context.level_->record_detail_cull(frame, camera_mvp, error, context.pass_->detail_wind_amplitude()) &&
             Device.dwFrame % 300 == 0)
             Msg("! [renderer-vulkan] GPU details use CPU preparation: %s", error.c_str());

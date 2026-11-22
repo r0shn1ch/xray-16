@@ -41,7 +41,8 @@ public:
         VkBuffer instances, uint32_t instance_count, const float* current_mvp, const float* previous_mvp,
         const DetailWindParameters& current_wind, const DetailWindParameters& previous_wind,
         VkDescriptorSet material = VK_NULL_HANDLE, float alpha_ref = .5f, const float* base_rows = nullptr,
-        VkBuffer indirect_commands = VK_NULL_HANDLE) const;
+        VkBuffer indirect_commands = VK_NULL_HANDLE, bool transparent = false,
+        VkDeviceSize instance_offset = 0) const;
     void draw_lod(const FrameRecordingContext& frame, VkBuffer vertices, VkBuffer indices,
         uint32_t index_count, uint32_t first_index, const float* mvp,
         VkDescriptorSet material, float alpha_ref, float blend) const;
@@ -62,6 +63,7 @@ private:
     VkPipeline pipeline_{};
     VkPipeline cutout_pipeline_{};
     VkPipeline detail_pipeline_{}, detail_cutout_pipeline_{};
+    VkPipeline detail_transparent_pipeline_{};
     VkPipeline lod_pipeline_{};
     VkPipeline particle_velocity_pipeline_{};
     VkPipeline particle_transparent_velocity_pipeline_{};
