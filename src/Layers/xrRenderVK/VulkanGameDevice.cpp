@@ -394,10 +394,9 @@ bool VulkanGameDevice::initialize(SDL_Window *window, VkExtent2D extent, std::st
     if (!extent.width || !extent.height)
         return false;
     scaled_android_window_ = window;
-    requested_android_extent_ = extent;
-    scene_extent = scaled_scene_extent(extent, spatial_upscaler, render_scale_percent);
     if (!android_presentation_extent(window, extent, error))
         return false;
+    scene_extent = scaled_scene_extent(extent, spatial_upscaler, render_scale_percent);
 #endif
     readback_enabled_ = window_.initialize(window, extent, true, error, true, true, true, scene_extent,
 #if defined(XR_PLATFORM_ANDROID) && defined(XRAY_HAS_FSR3_ANDROID)
@@ -3576,7 +3575,6 @@ void VulkanGameDevice::destroy()
         if (!set_android_buffer_extent(scaled_android_window_, {}, ignored))
             Msg("! [renderer-vulkan] restore Android buffer geometry: %s", ignored.c_str());
         scaled_android_window_ = nullptr;
-        requested_android_extent_ = {};
     }
 #endif
     Msg("[renderer-vulkan] teardown window end");

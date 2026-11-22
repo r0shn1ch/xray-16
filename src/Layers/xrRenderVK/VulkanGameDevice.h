@@ -331,7 +331,6 @@ class VulkanGameDevice
     static bool gpu_particles_completed(uint32_t slot, uint32_t image, void* user, std::string& error);
 #if defined(XR_PLATFORM_ANDROID)
     SDL_Window *scaled_android_window_{};
-    VkExtent2D requested_android_extent_{};
 #endif
     FrameDispatch frame_dispatch_{};
     TextureUploadDispatch texture_dispatch_{};
