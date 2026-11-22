@@ -342,6 +342,11 @@ int run_test(int argc, char** argv)
         vkUnmapMemory(vk.device, vk.readback_memory);
     }
     check(vkDeviceWaitIdle(vk.device));
+    if (!pyramid.history_valid() || pyramid.previous_image() != pyramid.image(0))
+        throw std::runtime_error("Hi-Z history was not published after recording");
+    pyramid.commit_history();
+    if (pyramid.history_valid() || pyramid.previous_image() || pyramid.previous_view())
+        throw std::runtime_error("Hi-Z history survived a frame without a pyramid");
     const VkImage reused_image = pyramid.image(0);
     pyramid.destroy();
     if (!pyramid.initialize(vk.physical, vk.device, vkGetDeviceProcAddr, {5, 3},

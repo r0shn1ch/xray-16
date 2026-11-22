@@ -385,7 +385,11 @@ bool HiZPyramid::record(const FrameRecordingContext& frame, bool reject_dynamic_
 void HiZPyramid::commit_history(bool dynamic_mask_recorded)
 {
     if (pending_image_index_ >= targets_.size())
+    {
+        // The camera history can advance even when no depth pyramid was recorded.
+        reset_history();
         return;
+    }
     targets_[pending_image_index_].initialized = true;
     last_image_index_ = pending_image_index_;
     pending_image_index_ = UINT32_MAX;

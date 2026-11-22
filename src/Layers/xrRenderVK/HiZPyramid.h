@@ -37,7 +37,7 @@ public:
     void reset_history()
     {
         history_valid_ = false;
-        last_dynamic_safe_ = false;
+        last_dynamic_safe_ = pending_dynamic_safe_ = false;
         last_image_index_ = pending_image_index_ = UINT32_MAX;
     }
     uint32_t levels() const { return levels_; }
