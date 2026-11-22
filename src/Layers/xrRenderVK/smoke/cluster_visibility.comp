@@ -110,6 +110,8 @@ bool projected_bounds(mat4 matrix, vec4 sphere, out vec2 minimum, out vec2 maxim
     out vec2 center, out float nearest_depth)
 {
     vec4 clip = matrix * vec4(sphere.xyz, 1.0);
+    // World geometry flips clip-space Y before writing the depth sampled here.
+    clip.y = -clip.y;
     vec3 rowX = vec3(matrix[0][0], matrix[1][0], matrix[2][0]);
     vec3 rowY = vec3(matrix[0][1], matrix[1][1], matrix[2][1]);
     vec3 rowZ = vec3(matrix[0][2], matrix[1][2], matrix[2][2]);
