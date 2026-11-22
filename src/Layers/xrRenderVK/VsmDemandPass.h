@@ -12,7 +12,8 @@ struct VsmDemandParameters
     float level[6][4]{}; // light-space origin xy, width, reserved
     uint32_t axis{}, levels{}, step{}, lod_bias{};
     uint32_t page_size{}; // Zero requests only receiver pages.
-    uint32_t reserved[3]{};
+    float near_depth{}, inverse_depth_range{}; // Zero inverse range disables depth clipping.
+    uint32_t reserved{};
 };
 static_assert(sizeof(VsmDemandParameters) == 256);
 

@@ -52,9 +52,9 @@ bool build_vsm_clipmap(const float (&inverse_view_projection)[16], const float (
     std::copy_n(light_view, 16, next.demand.light_view);
     std::copy_n(light_view, 16, next.resolve.light_view);
     std::copy_n(light_view, 16, next.projection.light_view);
-    next.projection.near_depth = next.resolve.near_depth = near_depth;
+    next.projection.near_depth = next.resolve.near_depth = next.demand.near_depth = near_depth;
     next.projection.far_depth = far_depth;
-    next.resolve.inverse_depth_range = 1.f / (far_depth - near_depth);
+    next.resolve.inverse_depth_range = next.demand.inverse_depth_range = 1.f / (far_depth - near_depth);
     const double x = double(light_view[0]) * camera_world[0] + double(light_view[4]) * camera_world[1] +
         double(light_view[8]) * camera_world[2] + light_view[12];
     const double y = double(light_view[1]) * camera_world[0] + double(light_view[5]) * camera_world[1] +

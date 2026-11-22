@@ -102,7 +102,9 @@ bool VsmDemandPass::record(const FrameRecordingContext& frame, const VsmDemandPa
     if (!pipeline_ || !frame.command_buffer || frame.image_index >= sets_.size() ||
         frame.extent.width != extent_.width || frame.extent.height != extent_.height ||
         !params.axis || params.axis > 65535 || !params.levels || params.levels > 6 ||
-        !params.step || params.step > 65535 || params.lod_bias >= params.levels)
+        !params.step || params.step > 65535 || params.lod_bias >= params.levels ||
+        !std::isfinite(params.near_depth) || !std::isfinite(params.inverse_depth_range) ||
+        params.inverse_depth_range < 0.f)
     { error = "invalid VSM demand recording request"; return false; }
     const uint64_t pages = uint64_t(params.axis) * params.axis * params.levels;
     if (pages > UINT32_MAX || needed_[frame.image_index]->size() < pages * 4 ||
