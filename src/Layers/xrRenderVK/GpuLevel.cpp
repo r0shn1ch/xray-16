@@ -575,7 +575,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                         cluster_window.vertex_count = 0;
                     Mesh::ClusterWindow window;
                     if (!build_cluster_lod(model, cluster_window, window.data, cluster_error) ||
-                        window.data.indices.empty())
+                        (source_window.index_count && window.data.indices.empty()))
                     {
                         if (cluster_error.empty())
                             cluster_error = "progressive level window produced no cluster indices";
@@ -1046,7 +1046,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                     {
                         Mesh::ClusterWindow window;
                         if (!build_cluster_lod(*model.fast, source_window, window.data, cluster_error) ||
-                            window.data.indices.empty())
+                            (source_window.index_count && window.data.indices.empty()))
                         {
                             if (cluster_error.empty())
                                 cluster_error = "progressive depth proxy produced no cluster indices";
@@ -1844,7 +1844,7 @@ bool GpuLevel::record_sun_shadow(const FrameRecordingContext &frame, const Defer
                         }
                     }
                 }
-                if (mesh.mode != SurfaceMode::Transparent && mesh.index_count &&
+                if (mesh.mode != SurfaceMode::Transparent && window.index_count &&
                     !cluster_rendered && !pass.record_sun_shadow(frame, mesh.vertex_buffer(), mesh.index_buffer(), window.index_count, sun_mvp,
                                             mesh.material, mesh.mode == SurfaceMode::AlphaTest,
                                             mesh.first_index + window.offset, float(mesh.alpha_ref) / 255.f,
@@ -2622,7 +2622,7 @@ bool GpuLevel::record_visual(size_t index, const FrameRecordingContext &frame, c
         const char *fragment = first.fragment.c_str();
         const bool visibility_owns_geometry = visibility_rasterized && phase == GeometryPhase::OpaqueAndAlphaTest &&
             (window_cluster ? window_cluster->visibility_rasterizable : mesh.visibility_rasterizable);
-        if (selected && !visibility_owns_geometry)
+        if (selected && window.index_count && !visibility_owns_geometry)
         {
             const float camera[4]{Device.vCameraPosition.x, Device.vCameraPosition.y, Device.vCameraPosition.z, 0.f};
             float factor[4]{1.f, 1.f, 1.f, 1.f};
@@ -2952,10 +2952,11 @@ bool GpuLevel::record_tree_velocity(const FrameRecordingContext& frame, const Ob
                     for (size_t row = 0; row < 2; ++row)
                         std::copy(matrix[row].begin(), matrix[row].end(), rows + row * 4);
                 }
-                pass.draw(frame, mesh.vertex_buffer(), mesh.vertex_buffer(), mesh.index_buffer(),
-                    window.index_count, mesh.first_index + window.offset, static_cast<int32_t>(mesh.first_vertex),
-                    current_mvp, previous_mvp, mesh.mode == SurfaceMode::AlphaTest ? mesh.material : VK_NULL_HANDLE,
-                    float(mesh.alpha_ref) / 255.f, rows, &current_wind, &previous_wind);
+                if (window.index_count)
+                    pass.draw(frame, mesh.vertex_buffer(), mesh.vertex_buffer(), mesh.index_buffer(),
+                        window.index_count, mesh.first_index + window.offset, static_cast<int32_t>(mesh.first_vertex),
+                        current_mvp, previous_mvp, mesh.mode == SurfaceMode::AlphaTest ? mesh.material : VK_NULL_HANDLE,
+                        float(mesh.alpha_ref) / 255.f, rows, &current_wind, &previous_wind);
             }
         }
         for (uint32_t child : visual.children) if (!self(self, child)) return false;
@@ -3135,7 +3136,7 @@ bool GpuLevel::record_object_velocity_visual(size_t index, const FrameRecordingC
                     }
                 }
             }
-            if (!clustered)
+            if (!clustered && window.index_count)
                 pass.draw(frame, mesh.vertex_buffer(), mesh.vertex_buffer(), mesh.index_buffer(),
                     window.index_count, mesh.first_index + window.offset,
                     static_cast<int32_t>(mesh.first_vertex), current_mvp, previous_mvp,
@@ -3170,7 +3171,7 @@ bool GpuLevel::record_hud_visual(size_t index, const FrameRecordingContext &fram
         const Mesh &base = meshes_[visual.mesh];
         const Mesh &mesh = base;
         const SlideWindow window = select_slide_window(mesh.windows, lod, mesh.index_count);
-        if (!pass.record_hud(frame, mesh.vertex_buffer(), mesh.index_buffer(), window.index_count, mvp, mesh.material,
+        if (window.index_count && !pass.record_hud(frame, mesh.vertex_buffer(), mesh.index_buffer(), window.index_count, mvp, mesh.material,
                              mesh.first_index + window.offset, nullptr, nullptr, 0.f, nullptr, mesh.first_vertex,
                              &mesh.matrices))
             return false;

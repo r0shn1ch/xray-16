@@ -222,13 +222,19 @@ bool build_cluster_lod(const LevelModel& mesh, const SlideWindow& window,
     ClusterLodData& result, std::string& error)
 {
     result = {};
-    if (mesh.vertices.empty() || mesh.indices.empty() || !window.index_count || window.index_count % 3 != 0 ||
+    if (mesh.vertices.empty() || mesh.indices.empty() || window.index_count % 3 != 0 ||
         window.offset > mesh.indices.size() || window.index_count > mesh.indices.size() - window.offset ||
         mesh.vertices.size() > std::numeric_limits<unsigned int>::max() ||
         window.index_count > std::numeric_limits<unsigned int>::max())
     {
         error = "cluster LOD input has an invalid vertex or triangle index range";
         return false;
+    }
+    // A terminal progressive LOD may have vertices but no remaining faces.
+    if (!window.index_count)
+    {
+        error.clear();
+        return true;
     }
     const uint32_t* indices = mesh.indices.data() + window.offset;
     for (size_t i = 0; i < window.index_count; ++i)
@@ -329,11 +335,16 @@ bool build_cluster_lod(const ModelGeometry& mesh, const SlideWindow& window,
 {
     result = {};
     if (mesh.vertices.empty() || mesh.indices.empty() || mesh.type == 4 || mesh.type == 5 ||
-        !window.index_count || window.index_count % 3 || window.offset > mesh.indices.size() ||
+        window.index_count % 3 || window.offset > mesh.indices.size() ||
         window.index_count > mesh.indices.size() - window.offset)
     {
-        error = "cluster LOD model window is empty, skinned, or outside its index buffer";
+        error = "cluster LOD model window is skinned or outside its index buffer";
         return false;
+    }
+    if (!window.index_count)
+    {
+        error.clear();
+        return true;
     }
     for (size_t i = window.offset; i < size_t(window.offset) + window.index_count; ++i)
         if (mesh.indices[i] >= mesh.vertices.size() ||

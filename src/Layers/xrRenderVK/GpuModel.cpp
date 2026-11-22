@@ -208,7 +208,8 @@ bool GpuModel::add_meshes(ModelGeometry &&geometry, const std::string &inherited
                     ? SlideWindow{0, static_cast<uint32_t>(mesh.geometry.indices.size()), 0}
                     : mesh.geometry.windows[window_index];
                 ClusterLodData data;
-                if (!build_cluster_lod(mesh.geometry, window, data, cluster_error) || data.indices.empty())
+                if (!build_cluster_lod(mesh.geometry, window, data, cluster_error) ||
+                    (window.index_count && data.indices.empty()))
                 {
                     if (cluster_error.empty()) cluster_error = "cluster DAG window produced no indices";
                     cluster_windows_ready = false;
@@ -217,7 +218,7 @@ bool GpuModel::add_meshes(ModelGeometry &&geometry, const std::string &inherited
                 Mesh::ClusterWindow cluster_window;
                 uint32_t cluster_index_count = 0;
                 if (!append_packed_cluster_indices(packed_cluster_indices, data, cluster_window.first_index,
-                        cluster_index_count, cluster_error) || !cluster_index_count)
+                        cluster_index_count, cluster_error))
                 {
                     cluster_windows_ready = false;
                     break;
@@ -524,6 +525,8 @@ bool GpuModel::record(const FrameRecordingContext &frame, const DeferredPass &pa
         }
         const size_t window_index = select_slide_window_index(mesh.geometry.windows, lod);
         const SlideWindow window = select_slide_window(mesh.geometry.windows, lod, mesh.index_count());
+        if (!window.index_count)
+            continue;
         if (gpu_skinning)
         {
             const bool hud = phase == GeometryPhase::Hud;
@@ -724,6 +727,8 @@ bool GpuModel::record_object_velocity(const FrameRecordingContext& frame, const 
             continue;
         const size_t window_index = select_slide_window_index(mesh.geometry.windows, lod);
         const SlideWindow window = select_slide_window(mesh.geometry.windows, lod, mesh.index_count());
+        if (!window.index_count)
+            continue;
         const bool cutout = mesh.geometry.mode == SurfaceMode::AlphaTest;
         float base_rows[8]{1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f};
         if (cutout && mesh.matrices.enabled[0])
@@ -881,6 +886,8 @@ bool GpuModel::record_shadow(const FrameRecordingContext &frame, const DeferredP
         }
         const size_t window_index = select_slide_window_index(mesh.geometry.windows, lod);
         const auto window = select_slide_window(mesh.geometry.windows, lod, mesh.index_count());
+        if (!window.index_count)
+            continue;
         const Mesh::ClusterWindow* cluster_window = window_index < mesh.cluster_lod_windows.size()
             ? &mesh.cluster_lod_windows[window_index] : nullptr;
         if (!skinned && world_transform && cluster_window && mesh.cluster_indices.handle() &&

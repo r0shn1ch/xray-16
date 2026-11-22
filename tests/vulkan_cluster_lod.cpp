@@ -168,6 +168,28 @@ int main()
             assert(index >= vertex_count && index < vertex_count * 2);
         }
     }
+    // geomX progressive meshes can end at two vertices and zero triangles.
+    // Retain that window without discarding the preceding cluster windows.
+    const SlideWindow empty_window{0, 0, 2};
+    ClusterLodData empty_level_lod = level_second_window;
+    ClusterLodData empty_model_lod = second_window_lod;
+    error = "previous failure";
+    assert(build_cluster_lod(progressive, empty_window, empty_level_lod, error));
+    assert(error.empty() && empty_level_lod.groups.empty() && empty_level_lod.clusters.empty() &&
+        empty_level_lod.indices.empty());
+    assert(build_cluster_lod(ogf, empty_window, empty_model_lod, error));
+    assert(error.empty() && empty_model_lod.groups.empty() && empty_model_lod.clusters.empty() &&
+        empty_model_lod.indices.empty());
+    const auto packed_before_empty = packed_window_indices;
+    uint32_t empty_base = UINT32_MAX, empty_count = UINT32_MAX;
+    assert(append_packed_cluster_indices(packed_window_indices, empty_level_lod,
+        empty_base, empty_count, error));
+    assert(empty_base == packed_before_empty.size() && empty_count == 0);
+    assert(packed_window_indices == packed_before_empty);
+    const SlideWindow invalid_empty_window{static_cast<uint32_t>(progressive.indices.size() + 1), 0, 2};
+    assert(!build_cluster_lod(progressive, invalid_empty_window, empty_level_lod, error));
+    assert(!build_cluster_lod(ogf, invalid_empty_window, empty_model_lod, error));
+
     SlideWindow invalid_window{static_cast<uint32_t>(progressive.indices.size()), 3, 0};
     ClusterLodData invalid_window_lod;
     assert(!build_cluster_lod(progressive, invalid_window, invalid_window_lod, error));
