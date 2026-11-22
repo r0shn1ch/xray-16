@@ -1776,6 +1776,9 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         static_cast<uint32_t>(std::size(PresetAODirections) - 1));
     sun_uniform.ao_settings[0] = static_cast<float>(ao_directions_override ?
         ao_directions_override : PresetAODirections[ao_quality]);
+    const auto ao_scene_extent = window_.frame().extent();
+    sun_uniform.ao_settings[1] = float(ao_scene_extent.width) / std::max(1u, output_size.width);
+    sun_uniform.ao_settings[2] = float(ao_scene_extent.height) / std::max(1u, output_size.height);
     if (render_world && Core.Params)
     {
         // The old argument remains accepted for existing custom launchers.

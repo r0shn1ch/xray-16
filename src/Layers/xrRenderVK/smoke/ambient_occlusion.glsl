@@ -26,6 +26,10 @@ float ambient_occlusion(float depth, vec2 uv, vec3 normal)
     ivec2 center = clamp(ivec2(uv * vec2(size)), ivec2(0), size - 1);
     vec3 position = ao_world_position(uv, depth);
     int direction_count = clamp(int(shadow.ao_settings.x + 0.5), 4, maximum_ao_directions);
+    // The rings are specified in presentation pixels.
+    vec2 scene_scale = shadow.ao_settings.yz;
+    if (any(lessThanEqual(scene_scale, vec2(0.0))))
+        scene_scale = vec2(1.0);
     float occlusion = 0.0;
     for (int ring = 0; ring < ao_ring_count; ++ring)
     {
@@ -33,7 +37,8 @@ float ambient_occlusion(float depth, vec2 uv, vec3 normal)
         {
             if (i >= direction_count)
                 break;
-            ivec2 pixel = clamp(center + ao_directions[i] * ao_ring_radii[ring],
+            ivec2 offset = ivec2(round(vec2(ao_directions[i] * ao_ring_radii[ring]) * scene_scale));
+            ivec2 pixel = clamp(center + offset,
                 ivec2(0), size - 1);
             float sample_depth = texelFetch(resolved_depth_buffer, pixel, 0).r;
             if (sample_depth >= 0.99999)

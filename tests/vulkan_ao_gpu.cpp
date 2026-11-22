@@ -268,7 +268,7 @@ int main(int argc, char** argv)
     std::array<float, uniform_floats> uniform{};
     for (int i : {0, 5, 10, 15}) uniform[i] = 1.f;
     uniform[35] = 2.f;
-    std::array<float, 8> result{};
+    std::array<float, 10> result{};
     for (uint32_t iteration = 0; iteration < result.size(); ++iteration)
     {
         std::vector<float> input(Side * Side, iteration == 0 ? .5f : .8f);
@@ -277,11 +277,19 @@ int main(int argc, char** argv)
                 input[y * Side + x] = .5f;
         uniform[35] = iteration == 2 ? .75f : iteration == 3 ? 0.f : 2.f;
         uniform[44] = iteration < 4 ? 16.f : iteration < 6 ? 4.f : 12.f;
+        uniform[45] = uniform[46] = iteration == 9 ? .5f : 1.f;
         if (iteration >= 4)
         {
             for (uint32_t y = 0; y < Side; ++y)
                 for (uint32_t x = 0; x < Side; ++x)
                     input[y * Side + x] = (iteration % 2 ? x < 31 : x > 33) ? .8f : .5f;
+        }
+        if (iteration >= 8)
+        {
+            uniform[44] = 4.f;
+            for (uint32_t y = 0; y < Side; ++y)
+                for (uint32_t x = 0; x < Side; ++x)
+                    input[y * Side + x] = x >= 40 ? .8f : .5f;
         }
         void* mapped{};
         check(vkMapMemory(vk.device, vk.upload_memory, 0, ImageBytes, 0, &mapped));
@@ -334,5 +342,7 @@ int main(int argc, char** argv)
     for (unsigned first : {4u, 6u})
         if (result[first] >= .99f || std::abs(result[first] - result[first + 1]) > 1e-4f)
             throw std::runtime_error("AO quality tier sampled opposite sides asymmetrically");
+    if (result[8] >= .99f || std::abs(result[9] - 1.f) > 1e-4f)
+        throw std::runtime_error("AO ring radius did not follow scene scale");
     return 0;
 }
