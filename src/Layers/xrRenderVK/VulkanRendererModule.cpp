@@ -811,6 +811,7 @@ void register_vulkan_options(VulkanLevelRender& renderer)
     static CCC_Float legacy_tone_lowlum("r2_tonemap_lowlum", &tonemap_low_luminance, .0001f, 1.f);
     static CCC_Float wallmark_lifetime("r__wallmark_ttl", &wallmark_ttl, 1.f, 600.f);
     static CCC_Float bloom_strength("r_vk_bloom_intensity", &bloom_intensity, 0.f, 2.f);
+    static CCC_Integer hdr10_output("r_vk_hdr10", &hdr10_enabled, 0, 1);
     static CCC_Float hdr_paper_white("r_vk_hdr_paper_white", &hdr_paper_white_nits, 80.f, 1000.f);
     static CCC_Float hdr_peak("r_vk_hdr_peak", &hdr_peak_nits, 80.f, 10000.f);
     static CCC_Float hdr_black("r_vk_hdr_black", &hdr_black_nits, 0.f, 10.f);
@@ -880,6 +881,7 @@ void register_vulkan_options(VulkanLevelRender& renderer)
     Console->AddCommand(&legacy_tone_lowlum);
     Console->AddCommand(&wallmark_lifetime);
     Console->AddCommand(&bloom_strength);
+    Console->AddCommand(&hdr10_output);
     Console->AddCommand(&hdr_paper_white);
     Console->AddCommand(&hdr_peak);
     Console->AddCommand(&hdr_black);

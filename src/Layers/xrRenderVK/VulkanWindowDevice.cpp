@@ -1,5 +1,6 @@
 #include "xrCore/stdafx.h"
 #include "VulkanWindowDevice.h"
+#include "VulkanSettings.h"
 #include "xrCore/log.h"
 
 #include <SDL.h>
@@ -13,6 +14,16 @@
 
 namespace xray::render::vulkan
 {
+namespace
+{
+bool requested_hdr10()
+{
+    const char* override_value = SDL_getenv("XRAY_VK_HDR10");
+    if (override_value && std::strcmp(override_value, "1") == 0)
+        return true;
+    return hdr10_enabled != 0;
+}
+}
 #if defined(XRAY_HAS_NVRHI_VULKAN)
 void initialize_nvrhi_vulkan_dispatch(VkInstance instance, PFN_vkGetInstanceProcAddr get_instance_proc,
     VkDevice device);
@@ -421,7 +432,6 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
         swapchain_context.scene_extent = scene_extent.width ? scene_extent : extent;
     }
     const char* linear_scene = SDL_getenv("XRAY_VK_HDR_LINEAR_SCENE");
-    const char* hdr10 = SDL_getenv("XRAY_VK_HDR10");
     if (!m_frame.initialize(m_physical.handle, m_device, m_surface, m_queue,
             m_physical.graphics_present_family, extent, frame_dispatch, error,
             allow_readback, use_depth, preserve_prepass_depth, postprocess,
@@ -433,7 +443,7 @@ bool VulkanWindowDevice::initialize(SDL_Window* window, VkExtent2D extent,
             separate_transfer,
             m_physical.transfer_queue_flags, m_physical.compute_queue_family,
             m_physical.transfer_queue_family, linear_scene && std::strcmp(linear_scene, "1") == 0,
-            hdr10 && std::strcmp(hdr10, "1") == 0))
+            requested_hdr10()))
         return fail();
     SDL_Log("[renderer-vulkan] swapchain.ready extent=%ux%u scene=%ux%u images=%zu format=%d scene_format=%d HDR10=%d timestamps=%u bits",
         m_frame.presentation_extent().width, m_frame.presentation_extent().height,

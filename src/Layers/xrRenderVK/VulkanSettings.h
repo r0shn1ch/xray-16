@@ -55,6 +55,7 @@ inline float tonemap_adaptation_speed = 1.5f;
 inline float tonemap_low_luminance = .0001f;
 inline float wallmark_ttl = 50.f;
 inline float bloom_intensity = .14f;
+inline int hdr10_enabled = 0;
 inline float hdr_paper_white_nits = 203.f;
 inline float hdr_peak_nits = 1000.f;
 inline float hdr_black_nits = 0.f;
