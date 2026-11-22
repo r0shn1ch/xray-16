@@ -23,6 +23,9 @@ public:
         const BufferResource* triangles{};
         uint32_t count{}, width{}, height{};
         int32_t offset_x{}, offset_z{};
+        // Must change whenever cell or triangle contents change, regardless of
+        // which fenced upload buffer holds the same logical ground stream.
+        uint64_t revision{};
     };
     struct Output
     {
@@ -145,13 +148,22 @@ public:
             return pending_states_.transition(frame.command_buffer, images_[i], use, dispatch, error,
                 frame.command_queue_flags);
         };
+        GroundKey key{};
         if (source.count)
+        {
+            key.revision=source.revision; key.count=source.count;
+            key.width=source.width; key.height=source.height;
+            key.offset_x=source.offset_x; key.offset_z=source.offset_z;
+            key.origin={ground.origin[0],ground.origin[1]};
+        }
+        const bool update_ground=!ground_valid_ || !(key==ground_key_);
+        if (update_ground && source.count)
         {
             if (!transition(2, ImageUse::StorageWrite) ||
                 !ground_->record(frame.command_buffer, frame.frame_index, *source.cells, *source.triangles,
                     views_[2], ground, error)) return false;
         }
-        else
+        else if (update_ground)
         {
             if (!transition(2, ImageUse::TransferDestination)) return false;
             VkClearColorValue empty{}; empty.float32[0] = -1e10f;
@@ -164,7 +176,7 @@ public:
                 views_[previous], views_[2], sampler_, views_[current], params, error) ||
             !transition(previous, ImageUse::ComputeSampled) ||
             !transition(current, ImageUse::ComputeSampled)) return false;
-        pending_ = true; pending_last_ = current;
+        pending_ = true; pending_last_ = current; pending_ground_key_=key;
         pending_origin_ = {params.origin[0], params.origin[1]};
         output.image = images_[current]; output.view = views_[current];
         output.previous_image = images_[previous]; output.previous_view = views_[previous]; output.sampler = sampler_;
@@ -179,6 +191,7 @@ public:
     {
         if (!pending_) return;
         states_ = std::move(pending_states_); last_ = pending_last_; previous_origin_ = pending_origin_;
+        ground_key_=pending_ground_key_; ground_valid_=true;
         valid_ = true; pending_ = false;
     }
     void discard() { pending_ = false; }
@@ -194,8 +207,21 @@ public:
         }
         images_ = {}; views_ = {}; sampler_ = {}; device_ = {}; pool_ = nullptr;
         states_ = {}; pending_states_ = {}; previous_origin_ = {}; valid_ = pending_ = false; last_ = 0;
+        ground_key_ = {}; pending_ground_key_ = {}; ground_valid_ = false;
     }
 private:
+    struct GroundKey
+    {
+        uint64_t revision{};
+        uint32_t count{},width{},height{};
+        int32_t offset_x{},offset_z{};
+        std::array<float,2> origin{};
+        bool operator==(const GroundKey& other) const
+        {
+            return revision==other.revision && count==other.count && width==other.width && height==other.height &&
+                offset_x==other.offset_x && offset_z==other.offset_z && origin==other.origin;
+        }
+    };
     static VkImageSubresourceRange color_range() { return {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}; }
     VkDevice device_{};
     FrameDispatch vk_{};
@@ -212,6 +238,8 @@ private:
     uint32_t size_{}, height_size_{}, last_{}, pending_last_{};
     float texel_size_{}, height_texel_size_{};
     std::array<float, 2> previous_origin_{}, pending_origin_{};
+    GroundKey ground_key_{},pending_ground_key_{};
+    bool ground_valid_{};
     bool valid_{}, pending_{};
 };
 }

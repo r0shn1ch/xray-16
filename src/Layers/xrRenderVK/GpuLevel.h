@@ -167,6 +167,7 @@ class GpuLevel
         const BufferResource* triangles{};
         uint32_t cell_count{}, width{}, height{};
         int32_t offset_x{}, offset_z{};
+        uint64_t revision{};
     };
     // Host uploads are allowed only after this frame slot's fence. The same
     // immutable source buffers feed generation and the interaction heightmap.

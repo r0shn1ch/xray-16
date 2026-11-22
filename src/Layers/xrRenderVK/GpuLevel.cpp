@@ -2112,6 +2112,7 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
             [](size_t index, const DetailGenerateSlot& slot) { return index == slot.data[0]; });
         if (!unchanged)
         {
+            ++detail_ground_generation_;
             detail_generation_cells_.clear();
             detail_generation_triangles_.clear();
             for (size_t index : cells)
@@ -2197,6 +2198,7 @@ bool GpuLevel::detail_ground_source(uint32_t frame_index, DetailGroundSource& so
     source.cell_count=detail_ground_cell_count_;
     source.width=details_.width; source.height=details_.height;
     source.offset_x=details_.offset_x; source.offset_z=details_.offset_z;
+    source.revision=detail_ground_generation_;
     if (!source.cell_count) return true;
     auto& data=detail_generation_frames_[frame_index];
     const bool same_inputs=data.ground_generation==detail_ground_generation_ &&
@@ -2258,7 +2260,7 @@ bool GpuLevel::record_detail_interaction(const FrameRecordingContext& frame, std
     DetailGroundSource source;
     if (!detail_ground_source(frame.frame_index,source,error)) return false;
     DetailInteractionField::Ground ground{source.cells,source.triangles,source.cell_count,
-        source.width,source.height,source.offset_x,source.offset_z};
+        source.width,source.height,source.offset_x,source.offset_z,source.revision};
     auto contacts=xray::grass::snapshot();
     // The collector orders objects nearest-first; the field shader has a
     // bounded per-pixel loop and consumes only its first 64 contacts.

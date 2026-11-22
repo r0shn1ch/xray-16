@@ -912,7 +912,7 @@ static void exercise_detail_interaction(VkPhysicalDevice physical, VkDevice devi
         image_dispatch.cmd_pipeline_barrier = vkCmdPipelineBarrier;
         DetailInteractionField field;
         require(field.initialize(physical,device,vkGetDeviceProcAddr,limits,memory,buffers,image_dispatch,
-            images,1,VK_NULL_HANDLE,error,8,1.f,1.f),error);
+            images,2,VK_NULL_HANDLE,error,8,1.f,1.f),error);
         DetailBendPass bend;
         require(bend.initialize(device,vkGetDeviceProcAddr,limits,2,VK_NULL_HANDLE,error),error);
         BufferResource bend_instances, indirect_instances, indirect_args;
@@ -931,9 +931,11 @@ static void exercise_detail_interaction(VkPhysicalDevice physical, VkDevice devi
             triangles.initialize(device,sizeof(ground_triangles),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,host,memory,buffers,error) &&
             cells.write(0,&ground_slot,sizeof(ground_slot),error) &&
             triangles.write(0,ground_triangles,sizeof(ground_triangles),error),error);
-        DetailInteractionField::Ground ground{&cells,&triangles,1,4,4,0,0};
+        DetailInteractionField::Ground ground{&cells,&triangles,1,4,4,0,0,1};
         std::vector<DetailInteractionEntity> contacts{{{.5f,0.f,.5f},1.f,{1.f,0.f,0.f},1.f}};
+        float field_camera[]{4.f,4.f};
         float last_bend=0.f;
+        uint32_t field_slot=0;
         const auto record = [&](bool discard, bool empty_ground, bool contact) {
             VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
             allocate.commandPool=pool; allocate.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY; allocate.commandBufferCount=1;
@@ -942,12 +944,13 @@ static void exercise_detail_interaction(VkPhysicalDevice physical, VkDevice devi
             VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
             require(vkBeginCommandBuffer(command,&begin)==VK_SUCCESS,"field command begin");
             FrameRecordingContext frame{}; frame.command_buffer=command;
+            frame.frame_index=field_slot; field_slot^=1u;
             frame.command_queue_flags=VK_QUEUE_GRAPHICS_BIT|VK_QUEUE_COMPUTE_BIT;
             DetailInteractionField::Output output{};
             const DetailInteractionField::Ground no_ground{};
             const std::vector<DetailInteractionEntity> no_contacts;
             require(field.record(frame,empty_ground ? no_ground : ground,contact ? contacts : no_contacts,
-                camera,.04f,1.f,.5f,output,error),error);
+                field_camera,.04f,1.f,.5f,output,error),error);
             if (discard)
             {
                 field.discard();
@@ -955,7 +958,7 @@ static void exercise_detail_interaction(VkPhysicalDevice physical, VkDevice devi
                 vkFreeCommandBuffers(device,pool,1,&command);
                 return 0.f;
             }
-            const DetailInstance blades[]{detail_instance(.5f,0.f,.5f,0.f,1.f),
+            const DetailInstance blades[]{detail_instance(contacts[0].position[0],0.f,.5f,0.f,1.f),
                 detail_instance(7.5f,0.f,7.5f,0.f,1.f)};
             DetailInstance indirect_blades[]{blades[0],blades[1]};
             indirect_blades[1].interaction[0]=9.f;
@@ -1023,6 +1026,28 @@ static void exercise_detail_interaction(VkPhysicalDevice physical, VkDevice devi
         record(true,false,true); // A discarded recording cannot advance image layouts/history.
         const float initial=record(false,false,true);
         require(initial > .1f,"terrain and contact field were not composed");
+        auto raised=std::array<DetailGroundTriangle,2>{ground_triangles[0],ground_triangles[1]};
+        for (auto& triangle : raised) triangle.a[1]=triangle.b[1]=triangle.c[1]=4.f;
+        require(triangles.write(0,raised.data(),sizeof(raised),error),error);
+        field.reset_history();
+        require(record(false,false,true)>.1f,"unchanged terrain revision did not reuse its heightmap");
+        ++ground.revision;
+        record(true,false,true); // A discarded rebuild cannot publish its terrain revision.
+        field.reset_history();
+        require(record(false,false,true)==0.f,"changed terrain revision or discarded rebuild was lost");
+        require(triangles.write(0,ground_triangles,sizeof(ground_triangles),error),error);
+        ++ground.revision;
+        field.reset_history();
+        require(record(false,false,true)>.1f,"terrain did not recover after a second revision");
+        require(triangles.write(0,raised.data(),sizeof(raised),error),error);
+        field_camera[0]=5.f; contacts[0].position[0]=1.5f;
+        field.reset_history();
+        require(record(false,false,true)==0.f,"moving the terrain window did not rebuild the heightmap");
+        require(triangles.write(0,ground_triangles,sizeof(ground_triangles),error),error);
+        ++ground.revision;
+        field_camera[0]=4.f; contacts[0].position[0]=.5f;
+        field.reset_history();
+        require(record(false,false,true)>.1f,"terrain did not recover after moving the window");
         const float recovering=record(false,true,false);
         require(recovering > 0.f,"spring history was not carried across submissions");
         field.reset_history();
