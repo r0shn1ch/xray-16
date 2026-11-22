@@ -326,6 +326,7 @@ int run_test(int argc, char** argv)
         submit.commandBufferCount = 1;
         submit.pCommandBuffers = &vk.command;
         check(vkQueueSubmit(vk.queue, 1, &submit, VK_NULL_HANDLE));
+        pyramid.commit_history();
         check(vkQueueWaitIdle(vk.queue));
         check(vkMapMemory(vk.device, vk.readback_memory, 0, 3 * sizeof(float), 0, &mapped));
         const std::array<float, 3> expected = iteration == 0

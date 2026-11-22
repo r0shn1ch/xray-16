@@ -2106,7 +2106,10 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
         hiz_unsupported_dynamic_previous_ = false;
     }
     else
+    {
+        hiz_.commit_history();
         hiz_unsupported_dynamic_previous_ = unsupported_dynamic_occluders || !hiz_dynamic_mask_recorded_;
+    }
     if (indirect_recorded_image_ != UINT32_MAX)
     {
         indirect_frames_.mark_output_recorded(indirect_recorded_image_);

@@ -263,6 +263,7 @@ bool HiZPyramid::create_target(Target& target, std::string& error)
 
 bool HiZPyramid::record(const FrameRecordingContext& frame, bool reject_dynamic_occluders)
 {
+    pending_image_index_ = UINT32_MAX;
     if (!ready() || !frame.command_buffer || frame.image_index >= targets_.size()) return false;
     Target& target = targets_[frame.image_index];
     const bool use_generated_compute = frame.compute_command_buffer && frame.submission_graph &&
@@ -376,11 +377,20 @@ bool HiZPyramid::record(const FrameRecordingContext& frame, bool reject_dynamic_
     else if (!graph.execute(frame.command_buffer, states, {images_.cmd_pipeline_barrier}, error,
             frame.command_queue_flags, frame.semaphore_handoff, frame.command_queue))
         return false;
-    target.initialized = true;
-    last_image_index_ = frame.image_index;
-    history_valid_ = true;
-    last_dynamic_safe_ = reject_dynamic_occluders;
+    pending_image_index_ = frame.image_index;
+    pending_dynamic_safe_ = reject_dynamic_occluders;
     return true;
+}
+
+void HiZPyramid::commit_history()
+{
+    if (pending_image_index_ >= targets_.size())
+        return;
+    targets_[pending_image_index_].initialized = true;
+    last_image_index_ = pending_image_index_;
+    pending_image_index_ = UINT32_MAX;
+    history_valid_ = true;
+    last_dynamic_safe_ = pending_dynamic_safe_;
 }
 
 VkImageView HiZPyramid::view(uint32_t index) const

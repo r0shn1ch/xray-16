@@ -25,6 +25,7 @@ public:
         VkPipelineCache cache, std::string& error, FrameImagePool* image_pool = nullptr,
         const FrameImageSharing* sharing = nullptr);
     bool record(const FrameRecordingContext& frame, bool reject_dynamic_occluders);
+    void commit_history();
     VkImage image(uint32_t image_index) const;
     VkImageView view(uint32_t image_index) const;
     VkImage previous_image() const { return history_valid_ ? image(last_image_index_) : VK_NULL_HANDLE; }
@@ -33,7 +34,12 @@ public:
     VkSampler sampler() const { return sampler_; }
     bool history_valid() const { return history_valid_ && last_image_index_ < targets_.size(); }
     bool previous_view_is_dynamic_safe() const { return history_valid() && last_dynamic_safe_; }
-    void reset_history() { history_valid_ = false; last_dynamic_safe_ = false; last_image_index_ = UINT32_MAX; }
+    void reset_history()
+    {
+        history_valid_ = false;
+        last_dynamic_safe_ = false;
+        last_image_index_ = pending_image_index_ = UINT32_MAX;
+    }
     uint32_t levels() const { return levels_; }
     VkExtent2D extent() const { return extent_; }
     bool ready() const { return pipeline_ != VK_NULL_HANDLE; }
@@ -75,6 +81,8 @@ private:
     std::vector<VkImage> depth_images_;
     std::vector<VkImage> motion_images_;
     uint32_t last_image_index_{UINT32_MAX};
+    uint32_t pending_image_index_{UINT32_MAX};
+    bool pending_dynamic_safe_{};
     bool history_valid_{};
     bool last_dynamic_safe_{};
 };
