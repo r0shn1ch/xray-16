@@ -1094,6 +1094,7 @@ void VulkanLevelRender::Reset(SDL_Window *window, u32 &width, u32 &height, float
         xrDebug::Fatal(DEBUG_INFO, "Vulkan swapchain recreation failed: %s", error.c_str());
         return;
     }
+    refresh_engine_shader_defines();
     const VkExtent2D extent = game_device_->window().frame().presentation_extent();
     width = extent.width;
     height = extent.height;

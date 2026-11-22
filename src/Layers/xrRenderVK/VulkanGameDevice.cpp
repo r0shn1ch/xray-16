@@ -2706,6 +2706,7 @@ void VulkanGameDevice::release_ray_frames()
 
 bool VulkanGameDevice::initialize_gbuffer_targets(std::string& error)
 {
+    gbuffer_msaa_request_ = gbuffer_msaa_samples;
     const auto& physical = window_.physical();
     auto& frame = window_.frame();
     GBufferMsaaConfig negotiated{};
@@ -2798,6 +2799,9 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
         return false;
     }
 
+    const auto previous_samples = targets_.samples();
+    if (gbuffer_msaa_request_ != gbuffer_msaa_samples)
+        gbuffer_msaa_configured_ = false;
     if (gpu_particle_graphics_) gpu_particle_graphics_->clear_pipelines();
     smoke_draw_.reset();
     trail_draw_.reset();
@@ -2859,6 +2863,8 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
 
     auto &frame = window_.frame();
     const auto &physical = window_.physical();
+    if (!initialize_gbuffer_targets(error))
+        return false;
     frame.set_frame_generation_ui(Fsr3Upscaler::frame_generation_ui_active_callback,
         Fsr3Upscaler::register_frame_generation_ui_callback, &fsr3_upscaler_);
     FrameImagePool* image_pool = frame.image_pool().initialized() ? &frame.image_pool() : nullptr;
@@ -2867,8 +2873,6 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
     Msg("[renderer-vulkan] resolution reset scene=%ux%u presentation=%ux%u", frame.extent().width,
         frame.extent().height, frame.presentation_extent().width, frame.presentation_extent().height);
 #endif
-    if (!initialize_gbuffer_targets(error))
-        return false;
     if (gpu_particle_graphics_)
     {
         gpu_particle_graphics_->rebind_gbuffer_samples(targets_.samples());
@@ -2967,6 +2971,41 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
                                               rain_shadows_.render_pass());
     deferred_.set_local_shadow_graph_passes(local_shadows_.graph_render_pass(),
         local_shadows_.graph_load_render_pass(), local_shadows_.load_render_pass());
+    if (previous_samples != targets_.samples())
+    {
+        const auto device = window_.device();
+        const auto get = window_.device_proc();
+        const ShaderModuleDispatch shaders{
+            proc<PFN_vkCreateShaderModule>(device, get, "vkCreateShaderModule"),
+            proc<PFN_vkDestroyShaderModule>(device, get, "vkDestroyShaderModule")};
+        DeferredShaderFactory factory;
+        if (!factory.rebuild_scene(device, shaders, targets_.samples(), targets_.render_pass(), frame.render_pass(),
+                deferred_, shader_resources_, error, local_shadows_.render_pass()))
+            return false;
+        ShaderModule scene_vertex, scene_fragment, ui_vertex, ui_fragment;
+        if (!scene_vertex.initialize(device, shaders, scene_shaders::SceneVertex, sizeof(scene_shaders::SceneVertex), error) ||
+            !scene_fragment.initialize(device, shaders, scene_shaders::SceneFragment, sizeof(scene_shaders::SceneFragment), error) ||
+            !ui_vertex.initialize(device, shaders, scene_shaders::UiVertex, sizeof(scene_shaders::UiVertex), error) ||
+            !ui_fragment.initialize(device, shaders, scene_shaders::UiFragment, sizeof(scene_shaders::UiFragment), error) ||
+            !ui_pass_.rebuild_scene_pipelines(frame.render_pass(), scene_vertex.handle(), scene_fragment.handle(),
+                ui_vertex.handle(), ui_fragment.handle(), targets_.samples(), true, error))
+            return false;
+        light_grid_.destroy();
+        if (physical.graphics_queue_flags & VK_QUEUE_COMPUTE_BIT)
+        {
+            ScenePassDispatch dispatch;
+            if (!load_scene_pass_dispatch(device, get, dispatch, error))
+                return false;
+            dispatch.gbuffer_samples = targets_.samples();
+            dispatch.pipeline_cache = pipeline_cache_.handle();
+            if (!light_grid_.initialize(device, get, frame.render_pass(), deferred_.gbuffer_layout(), physical.memory,
+                    buffer_upload_.buffer, dispatch, shaders, frame_dispatch_.cmd_pipeline_barrier, error))
+            {
+                Msg("! [renderer-vulkan] light grid unavailable after MSAA change: %s", error.c_str());
+                error.clear();
+            }
+        }
+    }
     if (motion_.color_attachment_ready())
     {
         std::vector<VkImageView> velocity_views, geometry_depth_views;

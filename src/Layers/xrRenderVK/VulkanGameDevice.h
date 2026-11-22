@@ -338,6 +338,7 @@ class VulkanGameDevice
     GBufferTargets targets_;
     GBufferMsaaConfig gbuffer_msaa_config_{};
     bool gbuffer_msaa_configured_{};
+    uint32_t gbuffer_msaa_request_{1};
     RayFrameResources ray_frames_;
     VsmFrameResources vsm_frames_;
     TreeWindParameters current_tree_wind_{}, previous_tree_wind_{};
