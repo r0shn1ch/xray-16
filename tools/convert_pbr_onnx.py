@@ -244,6 +244,8 @@ def main():
     parser.add_argument("--output-name")
     parser.add_argument("--albedo-output", type=Path)
     parser.add_argument("--parallax-output", type=Path, help="use <material>_parallax.dds for engine discovery")
+    parser.add_argument("--export-albedo", action="store_true", help="write <material>_albedo.dds next to each diffuse input")
+    parser.add_argument("--export-parallax", action="store_true", help="write <material>_parallax.dds next to each diffuse input")
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
     model_set = args.model.is_dir()
@@ -257,12 +259,16 @@ def main():
         base = diffuse.stem
         if len(base) > 2 and base.endswith("_d"):
             base = base[:-2]
-        destinations.append(args.output or diffuse.with_name(base + "_pbr.dds"))
+        destinations.append((
+            args.output or diffuse.with_name(base + "_pbr.dds"),
+            args.albedo_output or (diffuse.with_name(base + "_albedo.dds") if args.export_albedo else None),
+            args.parallax_output or (diffuse.with_name(base + "_parallax.dds") if args.export_parallax else None),
+        ))
     if model_set and args.output_name is not None:
         parser.error("--output-name applies to single-model conversion")
-    if not model_set and (args.albedo_output or args.parallax_output):
+    if not model_set and (args.albedo_output or args.parallax_output or args.export_albedo or args.export_parallax):
         parser.error("separate albedo and parallax exports require a model directory")
-    paths = destinations + [path for path in (args.albedo_output, args.parallax_output) if path is not None]
+    paths = [path for outputs in destinations for path in outputs if path is not None]
     inputs = {path.resolve() for path in (args.model, *args.diffuse, *normals) if path is not None}
     for path in paths:
         if path.suffix.lower() != ".dds":
@@ -274,14 +280,14 @@ def main():
             parser.error(f"output exists: {path}")
 
     sessions = {} if len(args.diffuse) > 1 else None
-    for diffuse, normal, destination in zip(args.diffuse, normals, destinations):
+    for diffuse, normal, (destination, albedo_path, parallax_path) in zip(args.diffuse, normals, destinations):
         outputs = []
         if model_set:
             packed, albedo, parallax = run_openxray_models(args.model, diffuse, normal, sessions)
-            if args.albedo_output:
-                outputs.append((args.albedo_output, albedo, True))
-            if args.parallax_output:
-                outputs.append((args.parallax_output, parallax, False))
+            if albedo_path:
+                outputs.append((albedo_path, albedo, True))
+            if parallax_path:
+                outputs.append((parallax_path, parallax, False))
         else:
             packed = run_model(args.model, diffuse, normal, args.output_name, sessions)
         outputs.append((destination, packed, False))
