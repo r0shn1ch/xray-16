@@ -211,22 +211,18 @@ bool ScenePass::initialize(VkDevice device, VkRenderPass render_pass,
     const VkDescriptorSetLayout ui_layouts[]{m_ui_descriptor_layout, m_ui_descriptor_layout};
     layout.setLayoutCount = 2;
     layout.pSetLayouts = ui_layouts;
-    if (m_vk.create_pipeline_layout(device, &layout, nullptr, &m_ui_layout) != VK_SUCCESS ||
-        !make_pipeline(device, render_pass, m_scene_layout, scene_vertex, scene_fragment,
-            false, use_depth, m_vk, 0, m_scene_pipeline, false, dispatch.gbuffer_samples))
+    if (m_vk.create_pipeline_layout(device, &layout, nullptr, &m_ui_layout) != VK_SUCCESS)
     {
-        error = "could not create Vulkan geometry, lighting or UI pipeline";
+        error = "could not create Vulkan UI pipeline layout";
         destroy();
         return false;
     }
-    for (int mode = 0; mode < 11; ++mode)
-        if (!make_pipeline(device, render_pass, m_ui_layout, ui_vertex, ui_fragment,
-                true, use_depth, m_vk, mode, m_ui_pipelines[mode], false, dispatch.gbuffer_samples))
-        {
-            error = "could not create Vulkan UI blend pipeline mode=" + std::to_string(mode);
-            destroy();
-            return false;
-        }
+    if (!rebuild_scene_pipelines(render_pass, scene_vertex, scene_fragment, ui_vertex, ui_fragment,
+            dispatch.gbuffer_samples, use_depth, error))
+    {
+        destroy();
+        return false;
+    }
     if (presentation_pass)
         for (int mode = 0; mode < 11; ++mode)
             if (!make_pipeline(device, presentation_pass, m_ui_layout, ui_vertex, ui_fragment,
@@ -236,14 +232,51 @@ bool ScenePass::initialize(VkDevice device, VkRenderPass render_pass,
                 destroy();
                 return false;
             }
-    if (use_depth)
-        for (int mode=0;mode<11;++mode)
-            if (!make_pipeline(device,render_pass,m_ui_layout,ui_vertex,ui_fragment,
-                    true,true,m_vk,mode,m_world_ui_pipelines[mode],true,dispatch.gbuffer_samples))
-            {
-                error="could not create world UI depth pipeline mode="+std::to_string(mode);
-                destroy();return false;
-            }
+    error.clear();
+    return true;
+}
+
+bool ScenePass::rebuild_scene_pipelines(VkRenderPass render_pass, VkShaderModule scene_vertex,
+    VkShaderModule scene_fragment, VkShaderModule ui_vertex, VkShaderModule ui_fragment,
+    VkSampleCountFlagBits samples, bool use_depth, std::string& error)
+{
+    if (!m_device || !m_scene_layout || !m_ui_layout || !render_pass ||
+        !scene_vertex || !scene_fragment || !ui_vertex || !ui_fragment)
+    {
+        error = "Vulkan scene pipeline rebuild requires layouts, shaders and a render pass";
+        return false;
+    }
+    VkPipeline scene{};
+    VkPipeline ui[11]{}, world_ui[11]{};
+    const auto release = [&](VkPipeline pipeline)
+    {
+        if (pipeline)
+            m_vk.destroy_pipeline(m_device, pipeline, nullptr);
+    };
+    bool built = make_pipeline(m_device, render_pass, m_scene_layout, scene_vertex, scene_fragment,
+        false, use_depth, m_vk, 0, scene, false, samples);
+    for (int mode = 0; built && mode < 11; ++mode)
+        built = make_pipeline(m_device, render_pass, m_ui_layout, ui_vertex, ui_fragment,
+            true, use_depth, m_vk, mode, ui[mode], false, samples);
+    for (int mode = 0; use_depth && built && mode < 11; ++mode)
+        built = make_pipeline(m_device, render_pass, m_ui_layout, ui_vertex, ui_fragment,
+            true, true, m_vk, mode, world_ui[mode], true, samples);
+    if (built)
+    {
+        std::swap(scene, m_scene_pipeline);
+        std::swap(ui, m_ui_pipelines);
+        std::swap(world_ui, m_world_ui_pipelines);
+        m_render_pass = render_pass;
+        m_vk.gbuffer_samples = samples;
+    }
+    release(scene);
+    for (const auto pipeline : ui) release(pipeline);
+    for (const auto pipeline : world_ui) release(pipeline);
+    if (!built)
+    {
+        error = "could not build Vulkan scene and UI pipelines for " + std::to_string(samples) + " samples";
+        return false;
+    }
     error.clear();
     return true;
 }

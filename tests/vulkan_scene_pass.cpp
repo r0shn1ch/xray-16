@@ -34,6 +34,8 @@ VkResult VKAPI_CALL create_pipeline(VkDevice, VkPipelineCache, uint32_t,
     const VkGraphicsPipelineCreateInfo* info, const VkAllocationCallbacks*, VkPipeline* pipeline)
 {
     const bool native=info->renderPass==handle<VkRenderPass>(90);
+    assert(info->pMultisampleState->rasterizationSamples ==
+        (info->renderPass == handle<VkRenderPass>(91) ? VK_SAMPLE_COUNT_4_BIT : VK_SAMPLE_COUNT_1_BIT));
     const bool ui=info->pVertexInputState->vertexAttributeDescriptionCount==4;
     static unsigned ui_mode=0;if(!ui)ui_mode=0;
     const int mode=ui?int(ui_mode++%11):-1;
@@ -220,6 +222,22 @@ int main()
         6,texture,nullptr,0,0,0.f,{960,540},1,texture,true));
     assert(!pass.record_geometry(native_frame,handle<VkBuffer>(20),handle<VkBuffer>(21),
         VK_INDEX_TYPE_UINT16,3,constants));
+    auto multisample_frame = frame;
+    multisample_frame.render_pass = handle<VkRenderPass>(91);
+    const auto rebuild = [&] {
+        return pass.rebuild_scene_pipelines(multisample_frame.render_pass, handle<VkShaderModule>(3),
+            handle<VkShaderModule>(4), handle<VkShaderModule>(5), handle<VkShaderModule>(6),
+            VK_SAMPLE_COUNT_4_BIT, true, error);
+    };
+    ui_result = VK_ERROR_INITIALIZATION_FAILED;
+    assert(!rebuild());
+    expected_width = 960;
+    expected_height = 540;
+    assert(pass.record_ui(frame, handle<VkBuffer>(20), handle<VkBuffer>(21), VK_INDEX_TYPE_UINT16, 6, texture));
+    ui_result = VK_SUCCESS;
+    assert(rebuild());
+    assert(pass.record_ui(multisample_frame, handle<VkBuffer>(20), handle<VkBuffer>(21), VK_INDEX_TYPE_UINT16,
+        6, texture));
     pass.release_ui_texture_set(texture);
     pass.destroy();
     assert(pipelines==destroyed_pipelines && layouts==destroyed_layouts);

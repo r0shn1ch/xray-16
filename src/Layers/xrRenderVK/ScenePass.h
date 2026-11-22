@@ -82,6 +82,10 @@ public:
         VkShaderModule ui_vertex, VkShaderModule ui_fragment,
         const ScenePassDispatch& dispatch, std::string& error, bool use_depth = false,
         VkRenderPass presentation_pass = VK_NULL_HANDLE);
+    // The caller waits for outstanding draws before replacing the pipelines.
+    bool rebuild_scene_pipelines(VkRenderPass render_pass, VkShaderModule scene_vertex,
+        VkShaderModule scene_fragment, VkShaderModule ui_vertex, VkShaderModule ui_fragment,
+        VkSampleCountFlagBits samples, bool use_depth, std::string& error);
     bool record_geometry(const FrameRecordingContext& frame, VkBuffer vertices, VkBuffer indices,
         VkIndexType index_type, uint32_t index_count, const SceneConstants& constants,
         VkDeviceSize vertex_offset = 0, VkDeviceSize index_offset = 0) const;
