@@ -377,6 +377,8 @@ private:
     std::array<nvrhi::CommandListHandle, FramesInFlight> m_nvrhi_compute_command_lists{};
     std::array<std::array<std::vector<nvrhi::CommandListHandle>, 3>, FramesInFlight>
         m_nvrhi_frame_graph_command_lists{};
+    bool m_async_compute_available = false;
+    bool m_async_copy_available = false;
     bool m_async_compute_enabled = false;
     bool m_async_copy_enabled = false;
     uint64_t m_last_graphics_submission{};

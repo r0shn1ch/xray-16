@@ -318,8 +318,8 @@ bool FrameContext::initialize(VkPhysicalDevice physical_device, VkDevice device,
 
     m_device = device;
     m_nvrhi_device = std::move(nvrhi_device);
-    m_async_compute_enabled = async_compute_queue && bool(m_nvrhi_device);
-    m_async_copy_enabled = async_copy_queue && bool(m_nvrhi_device);
+    m_async_compute_available = async_compute_queue && bool(m_nvrhi_device);
+    m_async_copy_available = async_copy_queue && bool(m_nvrhi_device);
     m_graphics_queue_flags = graphics_queue_flags;
     m_compute_queue_flags = compute_queue_flags;
     m_copy_queue_flags = copy_queue_flags;
@@ -1701,6 +1701,9 @@ void FrameContext::clear_depth(VkCommandBuffer command) const
 
 bool FrameContext::create_commands(std::string& error)
 {
+    // A previous command-list allocation failure may have been transient.
+    m_async_compute_enabled = m_async_compute_available;
+    m_async_copy_enabled = m_async_copy_available;
     if (!m_command_pool)
     {
         VkCommandPoolCreateInfo pool_info{};
@@ -3636,8 +3639,8 @@ void FrameContext::destroy()
     m_nvrhi_command_lists = {};
     m_nvrhi_compute_command_lists = {};
     m_nvrhi_frame_graph_command_lists = {};
-    m_async_compute_enabled = false;
-    m_async_copy_enabled = false;
+    m_async_compute_available = m_async_compute_enabled = false;
+    m_async_copy_available = m_async_copy_enabled = false;
     m_last_graphics_submission = 0;
     m_nvrhi_graphics_list_index = 0;
     if (m_device)
