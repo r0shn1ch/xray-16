@@ -668,6 +668,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
             mesh.terrain = source.terrain;
             mesh.surface = source.surface;
             mesh.visibility_material_supported = source.visibility_material_supported;
+            mesh.visibility_clamp = source.visibility_clamp;
             mesh.visibility_material_class = source.visibility_material_class;
             mesh.single_detail = source.single_detail;
             mesh.environment = source.environment;
@@ -866,6 +867,8 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
               !metadata.parallax_texture.empty()) ||
              definition.emissive);
         mesh.surface = surface_roles;
+        mesh.visibility_clamp = definition.class_name == "S_SET   " && definition.pass.clamp &&
+            (surface_roles || (!mesh.lightmapped && !mesh.single_detail && !mesh.terrain && !mesh.environment));
         mesh.visibility_material_supported = true;
         mesh.visibility_material_class = std::clamp((float(metadata.material) + metadata.material_weight) / 3.f, 0.f, 1.f);
         bool surface_ready = false;
@@ -1353,11 +1356,12 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
             std::vector<visibility::DrawEntry> entries(static_cast<size_t>(cluster_draw_count));
             prepared.visibility_draw_ranges_.resize(prepared.geometry_batches_.size());
             std::unordered_map<std::string, uint32_t> texture_slots;
-            const auto texture_slot = [&](std::string name, bool lightmap, bool linear = false) {
-                const auto [slot, inserted] = texture_slots.try_emplace((lightmap ? "L:" : linear ? "P:" : "B:") + name,
+            const auto texture_slot = [&](std::string name, bool lightmap, bool linear = false, bool clamp = false) {
+                const auto [slot, inserted] = texture_slots.try_emplace(
+                    (lightmap ? "L:" : linear ? "P:" : "B:") + std::string(clamp ? "C:" : "W:") + name,
                     static_cast<uint32_t>(prepared.visibility_textures_.size()));
                 if (inserted)
-                    prepared.visibility_textures_.push_back({std::move(name), lightmap, linear});
+                    prepared.visibility_textures_.push_back({std::move(name), lightmap, linear, clamp});
                 return slot->second;
             };
             const auto append_entries = [&](const Mesh& mesh, const ClusterLodData& hierarchy,
@@ -1431,13 +1435,13 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                 if (begin == std::string::npos)
                     continue;
                 diffuse = diffuse.substr(begin, diffuse.find_last_not_of(" \t\r\n") - begin + 1);
-                const auto base_slot = texture_slot(std::move(diffuse), false);
+                const auto base_slot = texture_slot(std::move(diffuse), false, false, mesh.visibility_clamp);
                 const auto lightmap_slot = mesh.lightmapped ? texture_slot(mesh.lightmap_texture_name, true) : UINT32_MAX;
                 const auto optional_slot = [&](const std::string& name) {
-                    return name.empty() ? UINT32_MAX : texture_slot(name, false, true);
+                    return name.empty() ? UINT32_MAX : texture_slot(name, false, true, mesh.visibility_clamp);
                 };
                 const auto optional_normal_slot = [&](const std::string& name) {
-                    return name.empty() ? UINT32_MAX : texture_slot(name, false);
+                    return name.empty() ? UINT32_MAX : texture_slot(name, false, false, mesh.visibility_clamp);
                 };
                 const std::array<uint32_t, 4> pbr_slots{optional_slot(mesh.pbr_texture),
                     optional_slot(mesh.metallic_texture), optional_slot(mesh.roughness_texture), optional_slot(mesh.ao_texture)};
@@ -1448,7 +1452,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                     optional_normal_slot(mesh.visibility_external_normal)};
                 const uint32_t parallax_slot = optional_slot(mesh.parallax_texture);
                 const std::array<uint32_t, 3> detail_slots{
-                    mesh.single_detail ? texture_slot(mesh.visibility_detail_texture, false) : UINT32_MAX,
+                    mesh.single_detail ? texture_slot(mesh.visibility_detail_texture, false, false, mesh.visibility_clamp) : UINT32_MAX,
                     optional_normal_slot(mesh.visibility_detail_bump),
                     mesh.visibility_detail_bump.empty() ? UINT32_MAX : optional_normal_slot(mesh.visibility_detail_bump + "#")};
                 if (mesh.windows.empty())

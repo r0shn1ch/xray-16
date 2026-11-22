@@ -102,6 +102,7 @@ class GameTextureFactory
         return sampler_;
     }
     VkSampler lightmap_sampler() const { return lightmap_sampler_; }
+    VkSampler clamp_sampler() const { return ui_sampler_; }
     // Release only after the consumer has stopped recording the descriptor.
     // The last release waits for submitted frames before freeing GPU objects.
     void release_material(VkDescriptorSet set, DeferredPass &pass);

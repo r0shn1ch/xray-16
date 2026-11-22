@@ -2181,7 +2181,8 @@ bool VulkanLevelRender::rebind_visibility_samplers(std::string& error)
     { error = "visibility sampler update has inconsistent material state"; return false; }
     for (uint32_t slot = 0; slot < names.size(); ++slot)
     {
-        const auto sampler = names[slot].lightmap ? textures_->lightmap_sampler() : textures_->sampler();
+        const auto sampler = names[slot].lightmap ? textures_->lightmap_sampler() :
+            names[slot].clamp ? textures_->clamp_sampler() : textures_->sampler();
         if (!visibility_materials_.write(slot, visibility_material_views_[slot], sampler, error, VK_IMAGE_LAYOUT_GENERAL))
             return false;
     }
