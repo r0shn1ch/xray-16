@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cmath>
 #include <charconv>
+#include <filesystem>
 #include <string_view>
 #include <unordered_set>
 
@@ -237,7 +238,7 @@ bool load_particle_document(std::vector<uint8_t>& library, std::string& error, p
 }
 
 bool export_particle_document(const std::vector<uint8_t>& library, std::string& message,
-    pcstr copy_stem = particle_export_name)
+    pcstr copy_stem = particle_export_name, bool replace_copy = false)
 {
     std::string filename;
     if (!particle_copy_filename(copy_stem, filename, message))
@@ -245,20 +246,32 @@ bool export_particle_document(const std::vector<uint8_t>& library, std::string& 
     string_path path;
     FS.update_path(path, "$app_data_root$", filename.c_str());
     convert_path_separators(path);
-    FILE* file = std::fopen(path, "wbx");
+    const std::string output = replace_copy ? std::string(path) + ".tmp" : path;
+    FILE* file = std::fopen(output.c_str(), "wbx");
     if (!file)
     {
         const int error = errno;
-        message = std::string(error == EEXIST ? "Copy already exists: " : "Could not create copy: ") + path;
+        message = std::string(error == EEXIST ? "Output already exists: " : "Could not create output: ") + output;
         return false;
     }
     const bool wrote = std::fwrite(library.data(), 1, library.size(), file) == library.size();
     const bool closed = std::fclose(file) == 0;
     if (!wrote || !closed)
     {
-        std::remove(path);
+        std::remove(output.c_str());
         message = std::string("incomplete particle export: ") + path;
         return false;
+    }
+    if (replace_copy)
+    {
+        std::error_code error;
+        std::filesystem::rename(output, path, error);
+        if (error)
+        {
+            std::remove(output.c_str());
+            message = "Could not save particle copy: " + error.message();
+            return false;
+        }
     }
     message = std::string("Exported particle library to ") + path;
     return true;
@@ -287,8 +300,14 @@ public:
             if (ImGui::Button("Export copy") && export_particle_document(library_, message_, copy_name_))
             {
                 saved_library_ = library_;
+                saved_copy_name_ = copy_name_;
                 dirty_ = false;
             }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!dirty_ || saved_copy_name_.empty());
+            if (ImGui::Button("Save opened copy"))
+                save_copy();
             ImGui::EndDisabled();
             ImGui::SameLine();
             ImGui::BeginDisabled(!dirty_);
@@ -717,7 +736,27 @@ private:
     {
         std::vector<uint8_t> bytes;
         if (load_particle_document(bytes, message_, copy_stem) && load_draft(bytes))
+        {
             saved_library_ = std::move(bytes);
+            saved_copy_name_ = copy_stem ? copy_stem : "";
+        }
+    }
+
+    void save_copy()
+    {
+        std::vector<uint8_t> current;
+        if (!load_particle_document(current, message_, saved_copy_name_.c_str()))
+            return;
+        if (current != saved_library_)
+        {
+            message_ = "The saved copy changed on disk. Export the draft under a new name.";
+            return;
+        }
+        if (export_particle_document(library_, message_, saved_copy_name_.c_str(), true))
+        {
+            saved_library_ = library_;
+            dirty_ = false;
+        }
     }
 
     bool load_draft(const std::vector<uint8_t>& bytes)
@@ -739,6 +778,7 @@ private:
     VulkanLevelRender& renderer_;
     std::vector<uint8_t> library_;
     std::vector<uint8_t> saved_library_;
+    std::string saved_copy_name_;
     ParticleCatalog catalog_;
     std::string message_;
     std::string gpu_compatibility_;
