@@ -80,6 +80,9 @@ int main()
         std::array<float, 6> sampled{};
         assert(xray::render::vulkan::sample_sky_probes(sky, prefix, position, sampled));
         assert(sampled == prefix[1].faces);
+        assert(sky.initialize({1000000.f, 0.f, 0.f}, {1000000.f, 0.f, 0.f}, .001f, 8));
+        std::array<float, 3> neighbor{};
+        assert(sky.position(0, position) && sky.position(1, neighbor) && neighbor[0] > position[0]);
     }
     const auto blade = detail_instance(10, 2, 3, 1.57079632679f, 2);
     const float point[]{1, 0, 0};

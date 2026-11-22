@@ -48,18 +48,23 @@ struct SkyProbeLayout
                     break;
                 }
                 dims[axis] = static_cast<uint32_t>(samples);
+                const double end = double(minimum[axis]) + step * (dims[axis] - 1);
+                if (end > std::numeric_limits<float>::max())
+                    return false;
+                // The grid is baked at float positions. Step past the
+                // largest float spacing inside this axis so nodes stay distinct.
+                const float magnitude = std::max(std::abs(minimum[axis]), std::abs(static_cast<float>(end)));
+                if (step <= double(magnitude) - std::nextafter(magnitude, 0.f))
+                {
+                    total = 0;
+                    break;
+                }
                 total *= dims[axis];
             }
             if (total)
                 break;
         }
         origin = minimum;
-        for (unsigned axis = 0; axis < spans.size(); ++axis)
-            if (double(minimum[axis]) + step * (dims[axis] - 1) > std::numeric_limits<float>::max())
-            {
-                *this = {};
-                return false;
-            }
         dimensions = dims;
         spacing = static_cast<float>(step);
         count = total;
