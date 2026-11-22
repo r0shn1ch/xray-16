@@ -55,4 +55,6 @@ struct ParticleSpriteMaterial
 bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string& name,
     uint32_t max_particles, std::string& error, std::optional<float> time_limit = {},
     const ParticleSpriteMaterial* material = nullptr);
+bool edit_particle_group_timing(std::vector<uint8_t>& library, const std::string& name,
+    size_t item_index, float begin, float end, std::string& error);
 } // namespace xray::render::vulkan

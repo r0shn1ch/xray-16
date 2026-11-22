@@ -15,6 +15,18 @@ uint32_t get32(const uint8_t* p)
     return uint32_t(p[0]) | (uint32_t(p[1]) << 8) |
         (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
 }
+void put32(uint8_t* dest, uint32_t value)
+{
+    for (unsigned i = 0; i < sizeof(value); ++i)
+        dest[i] = static_cast<uint8_t>(value >> (i * 8));
+}
+
+void put_real(uint8_t* dest, float value)
+{
+    uint32_t bits;
+    std::memcpy(&bits, &value, sizeof(bits));
+    put32(dest, bits);
+}
 
 struct Cursor
 {
@@ -182,6 +194,14 @@ bool effect(LevelBytes bytes, ParticleEffectDef& def, std::string& reason)
     return true;
 }
 
+bool read_group_item(Cursor& r, ParticleGroupItem& item, size_t& timing_offset)
+{
+    if (!r.name(item.effect) || !r.name(item.on_play) || !r.name(item.on_birth) || !r.name(item.on_dead))
+        return false;
+    timing_offset = r.at;
+    return r.real(item.begin) && r.real(item.end) && r.integer(item.flags);
+}
+
 bool group(LevelBytes bytes, ParticleGroupDef& def, std::string& reason)
 {
     std::vector<std::pair<uint32_t, LevelBytes>> parts;
@@ -208,9 +228,9 @@ bool group(LevelBytes bytes, ParticleGroupDef& def, std::string& reason)
         for (uint32_t i = 0; i < count; ++i)
         {
             ParticleGroupItem item;
-            if (!r.name(item.effect) || !r.name(item.on_play) || !r.name(item.on_birth) ||
-                !r.name(item.on_dead) || !r.real(item.begin) || !r.real(item.end) ||
-                !r.integer(item.flags)) { reason = "effect entry " + std::to_string(i); return false; }
+            size_t timing_offset;
+            if (!read_group_item(r, item, timing_offset))
+            { reason = "effect entry " + std::to_string(i); return false; }
             def.effects.push_back(std::move(item));
         }
     }
@@ -369,11 +389,7 @@ bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string
     // Updating the original chunk preserves fields and action opcodes that
     // the runtime does not interpret, including unknown legacy chunks.
     const auto offset = [&](const uint8_t* field) { return static_cast<size_t>(field - input.data); };
-    const auto write = [](uint8_t* dest, uint32_t value)
-    {
-        for (unsigned i = 0; i < sizeof(value); ++i)
-            dest[i] = static_cast<uint8_t>(value >> (i * 8));
-    };
+    const auto write = put32;
     std::vector<uint8_t> updated(record.data, record.data + record.size);
     const auto local_offset = [&](LevelBytes field) { return static_cast<size_t>(field.data - record.data); };
     write(updated.data() + local_offset(target), max_particles);
@@ -440,5 +456,66 @@ bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string
     write(library.data() + record_offset - 4, static_cast<uint32_t>(updated.size()));
     error.clear();
     return true;
+}
+
+bool edit_particle_group_timing(std::vector<uint8_t>& library, const std::string& name,
+    size_t item_index, float begin, float end, std::string& error)
+{
+    if (!std::isfinite(begin) || !std::isfinite(end) || begin < 0.f || end <= begin)
+    {
+        error = "Group effect end must be greater than its nonnegative start.";
+        return false;
+    }
+    const LevelBytes input{library.data(), library.size()};
+    ParticleCatalog catalog;
+    if (!parse_particle_catalog(input, catalog, error))
+        return false;
+    const auto* definition = catalog.group(name);
+    if (!definition || item_index >= definition->effects.size())
+    {
+        error = "Group effect entry not found: " + name;
+        return false;
+    }
+    std::vector<std::pair<uint32_t, LevelBytes>> root, groups, parts;
+    chunks(input, root);
+    chunks(find(root, 4), groups);
+    LevelBytes effects{};
+    for (const auto& entry : groups)
+    {
+        parts.clear();
+        if (!chunks(entry.second, parts))
+            continue;
+        Cursor group_name{find(parts, 2)};
+        std::string candidate;
+        if (!group_name.name(candidate) || candidate != name)
+            continue;
+        if (effects.data || !unique_chunks(parts) || !(effects = find(parts, 4)).data)
+        {
+            error = "Ambiguous or invalid group record: " + name;
+            return false;
+        }
+    }
+    Cursor cursor{effects};
+    uint32_t count;
+    if (cursor.integer(count))
+    {
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            ParticleGroupItem item;
+            size_t timing_offset;
+            if (!read_group_item(cursor, item, timing_offset))
+                break;
+            // Unsupported effects are hidden in the editor, but remain in the file.
+            if (!catalog.effect(item.effect) || item_index-- != 0)
+                continue;
+            auto* dest = library.data() + (effects.data - input.data) + timing_offset;
+            put_real(dest, begin);
+            put_real(dest + 4, end);
+            error.clear();
+            return true;
+        }
+    }
+    error = "Group effect timing record not found: " + name;
+    return false;
 }
 } // namespace xray::render::vulkan

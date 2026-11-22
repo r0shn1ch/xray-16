@@ -46,6 +46,7 @@ int main()
     chunk(group, 1, group_version);
     name(data, "campfire_group"); chunk(group, 2, data); data.clear();
     put_u32(data, 0); chunk(group, 3, data); data.clear();
+    const Bytes group_header = group;
     put_u32(data, 1);
     name(data, "campfire"); name(data, ""); name(data, ""); name(data, "");
     real(data, 0.f); real(data, 2.f); put_u32(data, 5);
@@ -60,6 +61,26 @@ int main()
     assert(catalog.effect("campfire") && catalog.effect("campfire")->max_particles == 64);
     assert(catalog.effect("campfire")->collision_friction == 1.f);
     assert(catalog.group("campfire_group") && catalog.group("campfire_group")->effects.size() == 1);
+    Bytes timing_items, timing_groups, timing_library;
+    put_u32(timing_items, 2);
+    name(timing_items, "unavailable");
+    for (int i = 0; i < 3; ++i) name(timing_items, "");
+    real(timing_items, 0.f); real(timing_items, 1.f); put_u32(timing_items, 4);
+    timing_items.insert(timing_items.end(), data.begin() + 4, data.end());
+    Bytes timing_group = group_header;
+    chunk(timing_group, 4, timing_items);
+    chunk(timing_groups, 0, timing_group);
+    chunk(timing_library, 1, version);
+    chunk(timing_library, 3, effects);
+    chunk(timing_library, 4, timing_groups);
+    Bytes retimed = timing_library;
+    assert(!edit_particle_group_timing(retimed, "campfire_group", 0, 3.f, 2.f, error) && retimed == timing_library);
+    assert(edit_particle_group_timing(retimed, "campfire_group", 0, .5f, 4.f, error));
+    assert(parse_particle_catalog({retimed.data(), retimed.size()}, catalog, error));
+    const auto* retimed_group = catalog.group("campfire_group");
+    assert(retimed_group && retimed_group->effects.size() == 1 && retimed_group->effects[0].begin == .5f &&
+        retimed_group->effects[0].end == 4.f && retimed_group->time_limit == 4.f);
+    assert(edit_particle_group_timing(retimed, "campfire_group", 0, 0.f, 2.f, error) && retimed == timing_library);
     Bytes edited = library;
     IReader editor_input(library.data(), library.size());
     assert(editable_particle_library_bytes(editor_input, edited, error) && edited == library);

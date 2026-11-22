@@ -307,7 +307,10 @@ public:
                         if (ImGui::Selectable(label.c_str(), selected_group_ == i))
                         {
                             if (selected_group_ != i)
+                            {
                                 preview_.reset();
+                                group_item_ = SIZE_MAX;
+                            }
                             selected_ = SIZE_MAX;
                             selected_group_ = i;
                         }
@@ -358,8 +361,7 @@ public:
                 }
                 else if (selected_group_ < catalog_.groups.size())
                 {
-                    const auto& group = catalog_.groups[selected_group_];
-                    ImGui::Text("%zu effects", group.effects.size());
+                    draw_group_timing();
                     draw_preview();
                 }
             }
@@ -370,6 +372,48 @@ public:
     }
 
 private:
+    void draw_group_timing()
+    {
+        const auto& group = catalog_.groups[selected_group_];
+        ImGui::Text("%zu effects", group.effects.size());
+        const char* selection = group_item_ < group.effects.size()
+            ? group.effects[group_item_].effect.c_str() : "Select an effect";
+        if (ImGui::BeginCombo("Group effect", selection))
+        {
+            for (size_t i = 0; i < group.effects.size(); ++i)
+            {
+                const auto& item = group.effects[i];
+                ImGui::PushID(&item);
+                if (ImGui::Selectable(item.effect.c_str(), group_item_ == i))
+                {
+                    group_item_ = i;
+                    group_begin_ = item.begin;
+                    group_end_ = item.end;
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        if (group_item_ >= group.effects.size())
+            return;
+        const auto& item = group.effects[group_item_];
+        ImGui::InputFloat("Start (s)", &group_begin_, .1f, 1.f, "%.3f");
+        ImGui::InputFloat("End (s)", &group_end_, .1f, 1.f, "%.3f");
+        ImGui::BeginDisabled(!std::isfinite(group_begin_) || !std::isfinite(group_end_) ||
+            group_begin_ < 0.f || group_end_ <= group_begin_ ||
+            (group_begin_ == item.begin && group_end_ == item.end));
+        if (ImGui::Button("Apply timing to draft") &&
+            edit_particle_group_timing(library_, group.name, group_item_, group_begin_, group_end_, message_))
+        {
+            auto& edited = catalog_.groups[selected_group_].effects[group_item_];
+            edited.begin = group_begin_;
+            edited.end = group_end_;
+            preview_.reset();
+            dirty_ = true;
+        }
+        ImGui::EndDisabled();
+    }
+
     void draw_preview()
     {
         const bool group = selected_group_ < catalog_.groups.size();
@@ -503,6 +547,7 @@ private:
         catalog_ = std::move(catalog);
         selected_ = SIZE_MAX;
         selected_group_ = SIZE_MAX;
+        group_item_ = SIZE_MAX;
         preview_.reset();
     }
 
@@ -518,6 +563,8 @@ private:
     float preview_zoom_{32.f};
     size_t selected_{SIZE_MAX};
     size_t selected_group_{SIZE_MAX};
+    size_t group_item_{SIZE_MAX};
+    float group_begin_{}, group_end_{};
     int limit_{};
     float duration_{1.f};
     bool duration_enabled_{};
