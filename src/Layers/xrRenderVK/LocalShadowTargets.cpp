@@ -256,7 +256,7 @@ void LocalShadowTargets::layout_tiles(const std::array<TileRequest, LocalShadowS
     for (uint32_t slot : slots)
     {
         const auto request = requests[slot];
-        if (!request.faces)
+        if (!request.faces || !request.resolution)
             continue;
         std::array<uint32_t, LocalShadowFaces> nodes{};
         if (!atlas.AllocateFaces(atlas.LevelOf(request.resolution), request.faces, nodes))
@@ -280,8 +280,11 @@ void LocalShadowTargets::layout_tiles(const std::array<TileRequest, LocalShadowS
             for (uint32_t face = 0; face < std::min(requests[slot].faces, LocalShadowFaces); ++face)
             {
                 auto& tile = packed[slot * LocalShadowFaces + face];
-                tile.offset = fixed_tiles_[slot * LocalShadowFaces + face].offset;
-                tile.extent = {requests[slot].resolution, requests[slot].resolution};
+                const auto& reserved = fixed_tiles_[slot * LocalShadowFaces + face];
+                if (!requests[slot].resolution)
+                    continue;
+                const uint32_t size = std::min(requests[slot].resolution, reserved.extent.width);
+                tile = {reserved.offset, {size, size}};
             }
     }
 

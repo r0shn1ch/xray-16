@@ -203,6 +203,15 @@ int main()
     targets.remember_face(1, 1, matrix);
     targets.layout_tiles(requests);
     assert(targets.cached_face(1, 1, matrix));
+    requests[0] = {4096, LocalShadowFaces};
+    requests[1] = {0, LocalShadowFaces};
+    targets.layout_tiles(requests);
+    for (uint32_t face = 0; face < LocalShadowFaces; ++face)
+    {
+        assert(targets.face_extent(0, face).width == LocalShadowSize);
+        assert(targets.face_extent(1, face).width == 0);
+    }
+    assert(!targets.cached_face(1, 1, matrix));
     targets.destroy();
     assert(framebuffers == 0 && passes == 0 && vk_mock::images.empty() && vk_mock::buffers.empty() &&
            vk_mock::allocations.empty());
