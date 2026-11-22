@@ -30,7 +30,12 @@ public:
         const std::vector<VkImage>& color_images, const std::vector<VkImage>& depth_images,
         const std::vector<VkImage>& motion_images, FrameImagePool& image_pool,
         std::string& error, FrameImageSharing sharing = {});
-    void request_frame_generation(bool requested) { frame_generation_requested_ = requested; }
+    void request_frame_generation(bool requested)
+    {
+        if (frame_generation_requested_ != requested)
+            interpolation_history_valid_ = interpolation_prepared_ = false;
+        frame_generation_requested_ = requested;
+    }
     bool frame_generation_active() const { return frame_generation_context_; }
     void reset_for_reinitialize();
     void destroy();
@@ -43,7 +48,11 @@ public:
             reset_history();
         active_ = active;
     }
-    void reset_history() { history_valid_ = false; }
+    void reset_history()
+    {
+        history_valid_ = interpolation_history_valid_ = false;
+        upscale_recorded_ = interpolation_prepared_ = false;
+    }
     void commit_frame()
     {
         if (!active_ || !upscale_recorded_)

@@ -513,7 +513,7 @@ bool Fsr3Upscaler::record(const FrameRecordingContext& frame, std::string& error
     {
         error = "ffxFsr3ContextDispatchUpscale failed with code " +
             std::to_string(static_cast<int>(result));
-        history_valid_ = false;
+        reset_history();
         if (frame_generation_frame_enabled_) configure_frame_generation(false);
         return false;
     }
@@ -539,7 +539,6 @@ bool Fsr3Upscaler::record(const FrameRecordingContext& frame, std::string& error
         {
             Msg("! [renderer-vulkan][FSR3] frame-generation prepare failed with code %d",
                 static_cast<int>(prepare_result));
-            history_valid_ = false;
             configure_frame_generation(false);
             if (!frame_generation_config_valid_)
             {
