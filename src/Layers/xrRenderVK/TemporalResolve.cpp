@@ -252,8 +252,16 @@ bool TemporalResolve::record_standalone(const FrameRecordingContext& frame)
     return true;
 }
 
-void TemporalResolve::record_callback(const FrameRecordingContext& frame, void* user)
-{ if (user) static_cast<TemporalResolve*>(user)->record(frame); }
+bool TemporalResolve::record_callback(const FrameRecordingContext& frame, void* user, std::string& error)
+{
+    if (!user || !static_cast<TemporalResolve*>(user)->record(frame))
+    {
+        error = "Temporal resolve has invalid frame inputs";
+        return false;
+    }
+    error.clear();
+    return true;
+}
 bool TemporalResolve::history_valid_callback(void* user)
 { return user && static_cast<TemporalResolve*>(user)->history_valid(); }
 bool TemporalResolve::active_callback(void* user)

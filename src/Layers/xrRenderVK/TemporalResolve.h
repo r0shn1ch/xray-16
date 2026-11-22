@@ -29,7 +29,7 @@ public:
     // Standalone mode owns history-image transitions; commit after submission.
     bool record_standalone(const FrameRecordingContext& frame);
     void commit_standalone() { layouts_initialized_ |= recorded_; commit_frame(); }
-    static void record_callback(const FrameRecordingContext& frame, void* user);
+    static bool record_callback(const FrameRecordingContext& frame, void* user, std::string& error);
     static bool history_valid_callback(void* user);
     static bool active_callback(void* user);
     static uint32_t output_slot_callback(void* user);

@@ -267,7 +267,7 @@ public:
         void* data,
         std::string& error);
     bool attach_temporal_resolve(const std::array<VkImage, 2>& history_images,
-        const std::vector<VkImage>& motion_images, FrameRecorder recorder,
+        const std::vector<VkImage>& motion_images, FrameCheckedRecorder recorder,
         FrameHistoryValid active, FrameOutputSlot output_slot, void* data,
         std::string& error, VkExtent2D history_extent = {});
     bool attach_fsr3_upscale(const std::vector<VkImage>& output_images,
@@ -459,7 +459,7 @@ private:
     std::array<VkImage, 2> m_temporal_images{};
     VkExtent2D m_temporal_extent{};
     std::vector<VkImage> m_temporal_motion_images;
-    FrameRecorder m_temporal_recorder{};
+    FrameCheckedRecorder m_temporal_recorder{};
     FrameHistoryValid m_temporal_active{};
     FrameOutputSlot m_temporal_output_slot{};
     void* m_temporal_data{};

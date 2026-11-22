@@ -1488,7 +1488,7 @@ bool FrameContext::attach_temporal_exposure(VkImage image, FrameRecorder recorde
 }
 
 bool FrameContext::attach_temporal_resolve(const std::array<VkImage, 2>& history_images,
-    const std::vector<VkImage>& motion_images, FrameRecorder recorder,
+    const std::vector<VkImage>& motion_images, FrameCheckedRecorder recorder,
     FrameHistoryValid active, FrameOutputSlot output_slot, void* data,
     std::string& error, VkExtent2D history_extent)
 {
@@ -2818,11 +2818,11 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
                 return false;
             const auto resolve_queue = record_async_compute ? FrameSubmissionGraph::Queue::Compute :
                 FrameSubmissionGraph::Queue::Graphics;
-            const auto resolve = graph.add_command_pass("temporal color resolve", resolve_queue,
-                [&](VkCommandBuffer recording_command) {
+            const auto resolve = graph.add_checked_command_pass("temporal color resolve", resolve_queue,
+                [&](VkCommandBuffer recording_command, std::string& record_error) {
                 const FrameRecordingContext context = make_frame_recording_context(callback_context,
                     recording_command, VK_NULL_HANDLE, VK_NULL_HANDLE, m_extent, 0, {}, resolve_queue);
-                m_temporal_recorder(context, m_temporal_data);
+                return m_temporal_recorder(context, m_temporal_data, record_error);
             });
             if (!graph.read(resolve, mips[0], ImageUse::ComputeSampled, error) ||
                 !graph.read(resolve, motion, ImageUse::ComputeSampled, error) ||

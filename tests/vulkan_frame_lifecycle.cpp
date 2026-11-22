@@ -184,8 +184,8 @@ void VKAPI_PTR depth_free(VkDevice, VkDeviceMemory, const VkAllocationCallbacks 
 VkResult VKAPI_PTR depth_bind(VkDevice, VkImage, VkDeviceMemory, VkDeviceSize) { return VK_SUCCESS; }
 std::vector<int> pass_order;
 struct TemporalTestState { int stage; bool active; uint32_t output; };
-void temporal_record(const FrameRecordingContext&, void* data)
-{ pass_order.push_back(static_cast<TemporalTestState*>(data)->stage); }
+bool temporal_record(const FrameRecordingContext&, void* data, std::string& error)
+{ pass_order.push_back(static_cast<TemporalTestState*>(data)->stage); error.clear(); return true; }
 bool temporal_active(void* data)
 { return static_cast<TemporalTestState*>(data)->active; }
 uint32_t temporal_output(void* data)
