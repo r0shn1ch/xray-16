@@ -1771,13 +1771,11 @@ bool FrameContext::create_commands(std::string& error)
         {
             try
             {
-                nvrhi::CommandListParameters parameters;
-                parameters.enableImmediateExecution = false;
-                parameters.queueType = nvrhi::CommandQueue::Compute;
                 for (auto& command_list : m_nvrhi_compute_command_lists)
                 {
                     if (!command_list)
-                        command_list = m_nvrhi_device->createCommandList(parameters);
+                        command_list = framegraph::create_nvrhi_command_list(*m_nvrhi_device.Get(),
+                            FrameSubmissionGraph::Queue::Compute);
                     if (!command_list)
                     {
                         m_async_compute_enabled = false;

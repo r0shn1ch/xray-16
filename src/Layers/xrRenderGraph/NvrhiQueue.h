@@ -38,6 +38,11 @@ inline nvrhi::CommandListHandle create_nvrhi_command_list(nvrhi::IDevice& device
 inline uint64_t submit_nvrhi_command_list(nvrhi::IDevice& device, nvrhi::ICommandList* list,
     FrameSubmissionGraph::Queue queue)
 {
-    return device.executeCommandList(list, to_nvrhi_queue(queue));
+    if (!list)
+        throw std::invalid_argument("NVRHI command list is unavailable");
+    const auto native_queue = to_nvrhi_queue(queue);
+    if (list->getDesc().queueType != native_queue)
+        throw std::invalid_argument("NVRHI command list queue does not match the render graph pass");
+    return device.executeCommandList(list, native_queue);
 }
 }
