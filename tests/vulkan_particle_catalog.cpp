@@ -61,6 +61,16 @@ int main()
     assert(catalog.effect("campfire") && catalog.effect("campfire")->max_particles == 64);
     assert(catalog.effect("campfire")->collision_friction == 1.f);
     assert(catalog.group("campfire_group") && catalog.group("campfire_group")->effects.size() == 1);
+    Bytes group_duration = library;
+    assert(edit_particle_group_duration(group_duration, "campfire_group", 1.5f, error));
+    assert(parse_particle_catalog({group_duration.data(), group_duration.size()}, catalog, error));
+    assert(catalog.group("campfire_group")->time_limit == 1.5f);
+    const auto explicit_duration_size = group_duration.size();
+    assert(edit_particle_group_duration(group_duration, "campfire_group", 0.f, error));
+    assert(group_duration.size() == explicit_duration_size);
+    assert(parse_particle_catalog({group_duration.data(), group_duration.size()}, catalog, error));
+    assert(catalog.group("campfire_group")->authored_time_limit == 0.f &&
+        catalog.group("campfire_group")->time_limit == 2.f);
     Bytes timing_items, timing_groups, timing_library;
     put_u32(timing_items, 2);
     name(timing_items, "unavailable");

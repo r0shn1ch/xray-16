@@ -35,6 +35,7 @@ struct ParticleGroupDef
     std::string name;
     uint32_t flags{};
     float time_limit{};
+    float authored_time_limit{};
     std::vector<ParticleGroupItem> effects;
 };
 
@@ -65,4 +66,6 @@ bool change_particle_group_items(std::vector<uint8_t>& library, const std::strin
     size_t item_index, ParticleGroupItemOperation operation, std::string& error);
 bool add_particle_group_item(std::vector<uint8_t>& library, const std::string& group_name,
     const std::string& effect_name, float begin, float end, std::string& error);
+bool edit_particle_group_duration(std::vector<uint8_t>& library, const std::string& group_name,
+    float seconds, std::string& error);
 } // namespace xray::render::vulkan

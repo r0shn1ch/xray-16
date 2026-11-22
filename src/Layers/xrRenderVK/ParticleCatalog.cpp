@@ -217,7 +217,8 @@ bool group(LevelBytes bytes, ParticleGroupDef& def, std::string& reason)
     if (limit.data)
     {
         Cursor r{limit};
-        if (!r.real(def.time_limit)) { reason = "time limit"; return false; }
+        if (!r.real(def.authored_time_limit)) { reason = "time limit"; return false; }
+        def.time_limit = def.authored_time_limit;
     }
     const auto effects = find(parts, 4);
     if (effects.data)
@@ -461,9 +462,10 @@ bool edit_particle_effect_limit(std::vector<uint8_t>& library, const std::string
 static bool update_particle_group_item(std::vector<uint8_t>& library, const std::string& name,
     size_t item_index, float begin, float end, std::string& error, const std::string* replacement,
     std::optional<ParticleGroupItemOperation> operation, bool add = false,
-    const ParticleGroupChildEdits& children = {})
+    const ParticleGroupChildEdits& children = {}, std::optional<float> group_duration = {})
 {
-    if (!operation && (!std::isfinite(begin) || !std::isfinite(end) || begin < 0.f || end <= begin))
+    if (!operation && !group_duration &&
+        (!std::isfinite(begin) || !std::isfinite(end) || begin < 0.f || end <= begin))
     {
         error = "Group effect end must be greater than its nonnegative start.";
         return false;
@@ -486,7 +488,7 @@ static bool update_particle_group_item(std::vector<uint8_t>& library, const std:
         }
     }
     const auto* definition = catalog.group(name);
-    if (!definition || (!add && item_index >= definition->effects.size()))
+    if (!definition || (!add && !group_duration && item_index >= definition->effects.size()))
     {
         error = "Group effect entry not found: " + name;
         return false;
@@ -495,7 +497,7 @@ static bool update_particle_group_item(std::vector<uint8_t>& library, const std:
     chunks(input, root);
     const auto table = find(root, 4);
     chunks(table, groups);
-    LevelBytes record{}, effects{};
+    LevelBytes record{}, effects{}, duration{};
     for (const auto& entry : groups)
     {
         parts.clear();
@@ -512,8 +514,36 @@ static bool update_particle_group_item(std::vector<uint8_t>& library, const std:
         }
         record = entry.second;
         effects = find(parts, 4);
+        duration = find(parts, 5);
     }
     constexpr size_t max_catalog_bytes = 64 * 1024 * 1024;
+    if (group_duration && record.data)
+    {
+        if (duration.data)
+        {
+            auto* field = library.data() + (duration.data - input.data);
+            put_real(field, *group_duration);
+        }
+        else if (*group_duration > 0.f)
+        {
+            uint8_t field[12];
+            if (sizeof(field) > max_catalog_bytes - library.size())
+            {
+                error = "Particle catalog exceeds the size limit.";
+                return false;
+            }
+            put32(field, 5);
+            put32(field + 4, 4);
+            put_real(field + 8, *group_duration);
+            const size_t table_offset = table.data - input.data;
+            const size_t record_offset = record.data - input.data;
+            library.insert(library.begin() + record_offset + record.size, field, field + sizeof(field));
+            put32(library.data() + table_offset - 4, static_cast<uint32_t>(table.size + sizeof(field)));
+            put32(library.data() + record_offset - 4, static_cast<uint32_t>(record.size + sizeof(field)));
+        }
+        error.clear();
+        return true;
+    }
     if (add && record.data)
     {
         Cursor cursor{effects};
@@ -681,5 +711,16 @@ bool add_particle_group_item(std::vector<uint8_t>& library, const std::string& g
     const std::string& effect_name, float begin, float end, std::string& error)
 {
     return update_particle_group_item(library, group_name, 0, begin, end, error, &effect_name, {}, true);
+}
+
+bool edit_particle_group_duration(std::vector<uint8_t>& library, const std::string& group_name,
+    float seconds, std::string& error)
+{
+    if (!std::isfinite(seconds) || seconds < 0.f)
+    {
+        error = "Group duration must be nonnegative.";
+        return false;
+    }
+    return update_particle_group_item(library, group_name, 0, 0.f, 0.f, error, nullptr, {}, false, {}, seconds);
 }
 } // namespace xray::render::vulkan

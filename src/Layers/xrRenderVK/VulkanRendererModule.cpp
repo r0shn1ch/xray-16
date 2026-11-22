@@ -312,6 +312,7 @@ public:
                                 preview_.reset();
                                 group_item_ = SIZE_MAX;
                                 adding_group_item_ = false;
+                                group_duration_ = std::max(0.f, group.authored_time_limit);
                             }
                             selected_ = SIZE_MAX;
                             selected_group_ = i;
@@ -400,6 +401,17 @@ private:
     {
         auto& group = catalog_.groups[selected_group_];
         ImGui::Text("%zu effects", group.effects.size());
+        ImGui::InputFloat("Group duration (s, 0 = automatic)", &group_duration_, .1f, 1.f, "%.3f");
+        ImGui::BeginDisabled(!std::isfinite(group_duration_) || group_duration_ < 0.f ||
+            group_duration_ == std::max(0.f, group.authored_time_limit));
+        if (ImGui::Button("Apply group duration") &&
+            edit_particle_group_duration(library_, group.name, group_duration_, message_))
+        {
+            group.authored_time_limit = group_duration_;
+            preview_.reset();
+            dirty_ = true;
+        }
+        ImGui::EndDisabled();
         ImGui::BeginDisabled(catalog_.effects.empty());
         if (ImGui::Button("New entry"))
         {
@@ -674,6 +686,7 @@ private:
     std::string group_effect_;
     std::array<std::string, 3> group_children_;
     float group_begin_{}, group_end_{};
+    float group_duration_{};
     int limit_{};
     float duration_{1.f};
     bool duration_enabled_{};
