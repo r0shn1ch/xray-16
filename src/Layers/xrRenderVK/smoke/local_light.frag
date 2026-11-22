@@ -120,8 +120,8 @@ float visibility(vec3 world, vec3 delta, vec3 normal)
     vec2 gradient = abs(determinant) > 1e-12 ?
         vec2(uy.y * dx.z - ux.y * dy.z, ux.x * dy.z - uy.x * dx.z) / determinant : vec2(0);
     ivec4 tile = light.shadow_tiles[face];
-    int layer = tile.z > 0 ? tile.w : int(light.shadow_params.x) + face;
-    ivec2 size = tile.z > 0 ? ivec2(tile.z) : textureSize(shadow_array, 0).xy;
+    if (tile.z <= 0) return 1.0;
+    ivec2 size = ivec2(tile.z);
     vec2 grid = uv * vec2(size) - 0.5;
     ivec2 center = ivec2(floor(grid));
     vec2 fraction = grid - vec2(center);
@@ -134,7 +134,7 @@ float visibility(vec3 world, vec3 delta, vec3 normal)
             ivec2 pixel = clamp(center + ivec2(x,y), ivec2(0), size - 1);
             float tap_depth = reference_depth + clamp(dot(gradient, (vec2(pixel) + .5) / vec2(size) - uv), -.01, .01);
             lit += (tap_depth <=
-                texelFetch(shadow_array, ivec3(pixel + tile.xy, layer), 0).r ? 1.0 : 0.0) * w;
+                texelFetch(shadow_array, ivec3(pixel + tile.xy, tile.w), 0).r ? 1.0 : 0.0) * w;
             total += w;
         }
     return lit / max(total, 1e-6);
@@ -157,14 +157,9 @@ float volume_shadow(vec3 world, vec3 delta)
     if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) ||
         projected.z <= 0.0 || projected.z >= 1.0) return 1.0;
     ivec4 tile = light.shadow_tiles[face];
-    float nearest_depth;
-    if (tile.z > 0)
-    {
-        ivec2 pixel = clamp(ivec2(uv * float(tile.z)), ivec2(0), ivec2(tile.z - 1));
-        nearest_depth = texelFetch(shadow_array, ivec3(tile.xy + pixel, tile.w), 0).r;
-    }
-    else
-        nearest_depth = textureLod(shadow_array, vec3(uv, light.shadow_params.x + float(face)), 0.0).r;
+    if (tile.z <= 0) return 1.0;
+    ivec2 pixel = clamp(ivec2(uv * float(tile.z)), ivec2(0), ivec2(tile.z - 1));
+    float nearest_depth = texelFetch(shadow_array, ivec3(tile.xy + pixel, tile.w), 0).r;
     return projected.z <= nearest_depth + 0.0001 ? 1.0 : 0.0;
 }
 

@@ -307,16 +307,25 @@ bool LocalShadowTargets::write_light(uint32_t image, uint32_t index, const Local
     if (image >= image_count_ || index >= targets_[image].constants.size() / uniform_stride_)
         return false;
     LocalLightUniform uniform = value;
-    const uint32_t base = static_cast<uint32_t>(value.shadow_params[0]);
-    if (value.shadow_params[2] > .5f && base <= tiles_.size() - LocalShadowFaces)
-        for (uint32_t face = 0; face < LocalShadowFaces; ++face)
+    uniform.shadow_params[2] = 0.f;
+    const float requested_base = value.shadow_params[0];
+    if (value.shadow_params[2] > .5f && requested_base >= 0.f &&
+        requested_base <= static_cast<float>(tiles_.size() - LocalShadowFaces))
+    {
+        const uint32_t base = static_cast<uint32_t>(requested_base);
+        if (requested_base == static_cast<float>(base) && base % LocalShadowFaces == 0)
         {
-            const auto& tile = tiles_[base + face];
-            uniform.shadow_tiles[face][0] = tile.offset.x;
-            uniform.shadow_tiles[face][1] = tile.offset.y;
-            uniform.shadow_tiles[face][2] = int32_t(tile.extent.width);
-            uniform.shadow_tiles[face][3] = 0;
+            uniform.shadow_params[2] = value.shadow_params[2];
+            for (uint32_t face = 0; face < LocalShadowFaces; ++face)
+            {
+                const auto& tile = tiles_[base + face];
+                uniform.shadow_tiles[face][0] = tile.offset.x;
+                uniform.shadow_tiles[face][1] = tile.offset.y;
+                uniform.shadow_tiles[face][2] = int32_t(tile.extent.width);
+                uniform.shadow_tiles[face][3] = 0;
+            }
         }
+    }
     return targets_[image].constants.write(VkDeviceSize(index) * uniform_stride_, &uniform, sizeof(uniform), error);
 }
 
