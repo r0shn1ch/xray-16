@@ -287,20 +287,28 @@ VkBuffer FrameImageGraph::buffer_handle(BufferResource resource) const
 
 void FrameImageGraph::retire_allocations(framegraph::ResourceRetirement& retirement, uint32_t slots)
 {
-    const auto retire = [&](auto& resource, auto& handle) {
-        if (!resource.allocation)
-            return;
-        retirement.defer_for_slots(slots, [owner = resource.allocation]() mutable { owner.reset(); });
-        resource.allocation.reset();
-        handle = VK_NULL_HANDLE;
-    };
+    std::vector<std::shared_ptr<void>> owners;
+    for (const auto& buffer : m_buffers)
+        if (buffer.allocation) owners.push_back(buffer.allocation);
+    for (const auto& image : m_images)
+        if (image.allocation) owners.push_back(image.allocation);
+    if (owners.empty())
+        return;
+    retirement.defer_for_slots(slots, [owners = std::move(owners)]() mutable { owners.clear(); });
+
     for (auto& buffer : m_buffers)
-        retire(buffer, buffer.buffer);
+        if (buffer.allocation)
+        {
+            buffer.buffer = VK_NULL_HANDLE;
+            buffer.allocation.reset();
+        }
     for (auto& image : m_images)
-    {
-        retire(image, image.image);
-        image.view = VK_NULL_HANDLE;
-    }
+        if (image.allocation)
+        {
+            image.image = VK_NULL_HANDLE;
+            image.view = VK_NULL_HANDLE;
+            image.allocation.reset();
+        }
 }
 
 bool FrameImageGraph::valid_buffer(Pass pass, BufferResource resource, std::string& error) const

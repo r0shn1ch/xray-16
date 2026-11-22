@@ -106,6 +106,14 @@ int main()
         FrameImageGraph::ResourceLifetimes lifetimes;
         assert(!virtual_graph.compile_resource_lifetimes(lifetimes, error));
         assert(error.find("transient image usage does not support pass copy unflagged image") != std::string::npos);
+        xray::render::framegraph::ResourceRetirement retirement(2);
+        virtual_graph.retire_allocations(retirement, 3);
+        assert(retirement.size() == 1 && !staged_buffer.expired());
+        assert(!virtual_graph.buffer_handle(written_buffer) && !virtual_graph.image_view(written_image));
+        retirement.complete(0);
+        assert(!staged_buffer.expired());
+        retirement.complete(1);
+        assert(retirement.size() == 0 && staged_buffer.expired());
     }
     {
         FrameImageGraph graph;
