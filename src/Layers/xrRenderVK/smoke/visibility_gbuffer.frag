@@ -11,13 +11,18 @@ layout(location = 2) out vec4 surfaceBuffer;
 void main()
 {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
-    if (any(greaterThanEqual(pixel, textureSize(resolvedNormal, 0))))
+    if (any(greaterThanEqual(pixel, textureSize(resolvedNormal, 0))) ||
+        any(greaterThanEqual(pixel, textureSize(resolvedBaseColor, 0))) ||
+        any(greaterThanEqual(pixel, textureSize(visibilityDepth, 0))))
         discard;
     vec4 normal = texelFetch(resolvedNormal, pixel, 0);
-    if (all(equal(normal.xyz, vec3(0.0))))
+    if (all(equal(normal.xyz, vec3(0.0))) || any(isnan(normal)) || any(isinf(normal)))
         discard;
 
-    gl_FragDepth = uintBitsToFloat(texelFetch(visibilityDepth, pixel, 0).r);
+    float depth = uintBitsToFloat(texelFetch(visibilityDepth, pixel, 0).r);
+    if (!(depth >= 0.0 && depth <= 1.0))
+        discard;
+    gl_FragDepth = depth;
     albedo = texelFetch(resolvedBaseColor, pixel, 0);
     normalBuffer = vec4(normal.xyz * 0.5 + 0.5, normal.a);
     // The flat opaque/lightmapped materials admitted to visibility raster use
