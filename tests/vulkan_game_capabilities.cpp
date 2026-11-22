@@ -223,6 +223,28 @@ int main()
     ray_acceleration.maxDescriptorSetUpdateAfterBindAccelerationStructures = 0;
     assert(ray_query_texture_capacity(ray_properties, ray_indexing, ray_acceleration) == 0);
 
+    VkPhysicalDeviceProperties visibility_properties{};
+    visibility_properties.limits.maxPerStageDescriptorStorageBuffers = 4;
+    visibility_properties.limits.maxDescriptorSetStorageBuffers = 4;
+    visibility_properties.limits.maxPerStageDescriptorStorageImages = 3;
+    visibility_properties.limits.maxDescriptorSetStorageImages = 3;
+    VkPhysicalDeviceDescriptorIndexingProperties visibility_indexing{};
+    visibility_indexing.maxPerStageDescriptorUpdateAfterBindStorageBuffers = 4;
+    visibility_indexing.maxDescriptorSetUpdateAfterBindStorageBuffers = 4;
+    visibility_indexing.maxPerStageDescriptorUpdateAfterBindStorageImages = 3;
+    visibility_indexing.maxDescriptorSetUpdateAfterBindStorageImages = 3;
+    visibility_indexing.maxPerStageDescriptorUpdateAfterBindSampledImages = 64;
+    visibility_indexing.maxPerStageDescriptorUpdateAfterBindSamplers = 64;
+    visibility_indexing.maxDescriptorSetUpdateAfterBindSampledImages = 64;
+    visibility_indexing.maxDescriptorSetUpdateAfterBindSamplers = 64;
+    visibility_indexing.maxUpdateAfterBindDescriptorsInAllPools = 128;
+    visibility_indexing.maxPerStageUpdateAfterBindResources = 100;
+    assert(visibility_texture_capacity(visibility_properties, visibility_indexing) == 63);
+    visibility_indexing.maxPerStageUpdateAfterBindResources = 20;
+    assert(visibility_texture_capacity(visibility_properties, visibility_indexing) == 13);
+    visibility_indexing.maxPerStageDescriptorUpdateAfterBindStorageImages = 2;
+    assert(visibility_texture_capacity(visibility_properties, visibility_indexing) == 0);
+
     PhysicalDevice selected;
     selected.handle = fake_gpu;
     selected.graphics_present_family = 0;

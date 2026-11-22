@@ -106,4 +106,6 @@ bool probe_bindless_texture_availability(VkPhysicalDevice device,
 uint32_t ray_query_texture_capacity(const VkPhysicalDeviceProperties& properties,
     const VkPhysicalDeviceDescriptorIndexingProperties& indexing,
     const VkPhysicalDeviceAccelerationStructurePropertiesKHR& acceleration);
+uint32_t visibility_texture_capacity(const VkPhysicalDeviceProperties& properties,
+    const VkPhysicalDeviceDescriptorIndexingProperties& indexing);
 }

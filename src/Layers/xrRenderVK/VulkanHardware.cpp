@@ -172,6 +172,34 @@ bool probe_timeline_semaphore_availability(VkPhysicalDevice device,
     return timeline.timelineSemaphore == VK_TRUE;
 }
 
+uint32_t visibility_texture_capacity(const VkPhysicalDeviceProperties& properties,
+    const VkPhysicalDeviceDescriptorIndexingProperties& indexing)
+{
+    // Raster uses four storage buffers, two storage images and one uniform
+    // texel buffer; resolve uses three of each plus the sampled ID image.
+    constexpr uint32_t storage_buffers = 4, storage_images = 3, other_resources = 7;
+    if (properties.limits.maxPerStageDescriptorStorageBuffers < storage_buffers ||
+        properties.limits.maxDescriptorSetStorageBuffers < storage_buffers ||
+        properties.limits.maxPerStageDescriptorStorageImages < storage_images ||
+        properties.limits.maxDescriptorSetStorageImages < storage_images ||
+        indexing.maxPerStageDescriptorUpdateAfterBindStorageBuffers < storage_buffers ||
+        indexing.maxDescriptorSetUpdateAfterBindStorageBuffers < storage_buffers ||
+        indexing.maxPerStageDescriptorUpdateAfterBindStorageImages < storage_images ||
+        indexing.maxDescriptorSetUpdateAfterBindStorageImages < storage_images ||
+        indexing.maxPerStageDescriptorUpdateAfterBindSampledImages <= 1 ||
+        indexing.maxPerStageDescriptorUpdateAfterBindSamplers <= 1 ||
+        indexing.maxDescriptorSetUpdateAfterBindSampledImages <= 1 ||
+        indexing.maxDescriptorSetUpdateAfterBindSamplers <= 1 ||
+        indexing.maxPerStageUpdateAfterBindResources <= other_resources)
+        return 0;
+    return std::min({indexing.maxPerStageDescriptorUpdateAfterBindSampledImages - 1,
+        indexing.maxPerStageDescriptorUpdateAfterBindSamplers - 1,
+        indexing.maxDescriptorSetUpdateAfterBindSampledImages - 1,
+        indexing.maxDescriptorSetUpdateAfterBindSamplers - 1,
+        indexing.maxPerStageUpdateAfterBindResources - other_resources,
+        indexing.maxUpdateAfterBindDescriptorsInAllPools});
+}
+
 uint32_t ray_query_texture_capacity(const VkPhysicalDeviceProperties& properties,
     const VkPhysicalDeviceDescriptorIndexingProperties& indexing,
     const VkPhysicalDeviceAccelerationStructurePropertiesKHR& acceleration)

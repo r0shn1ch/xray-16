@@ -2119,10 +2119,8 @@ bool VulkanLevelRender::prepare_visibility_materials(const VulkanWindowDevice& w
     get_properties(window.physical().handle, &properties);
     const uint64_t count = uint64_t(names.size()) + cubes.size();
     const uint64_t total = uint64_t(ray_materials_.capacity()) + ray_diffuse_materials_.capacity() + count;
-    const auto per_stage = std::min({indexing.maxPerStageDescriptorUpdateAfterBindSamplers,
-        indexing.maxPerStageDescriptorUpdateAfterBindSampledImages,
-        indexing.maxDescriptorSetUpdateAfterBindSamplers, indexing.maxDescriptorSetUpdateAfterBindSampledImages});
-    if (count >= per_stage || count > UINT32_MAX || total > indexing.maxUpdateAfterBindDescriptorsInAllPools)
+    const auto capacity = visibility_texture_capacity(properties.properties, indexing);
+    if (count > capacity || count > UINT32_MAX || total > indexing.maxUpdateAfterBindDescriptorsInAllPools)
     {
         error = "visibility materials exceed descriptor indexing limits";
         return false;
