@@ -16,6 +16,7 @@
 #include "src/Layers/xrRenderVK/DetailCellCullPass.h"
 #include "src/Layers/xrRenderVK/DetailInteractionPass.h"
 #include "src/Layers/xrRenderVK/DetailGroundHeightPass.h"
+#include "src/Layers/xrRenderVK/DetailInteractionField.h"
 #include "src/Layers/xrRenderVK/GpuParticleBuffers.h"
 #include "src/Layers/xrRenderVK/GpuParticleCompute.h"
 #include "src/Layers/xrRenderVK/GpuParticleFrame.h"
@@ -651,7 +652,7 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
     std::cout << "GPU smoke trail, cell selection, indirect detail generation and culling passed\n";
 }
 
-static void exercise_detail_interaction(VkDevice device, VkQueue queue, VkCommandPool pool,
+static void exercise_detail_interaction(VkPhysicalDevice physical, VkDevice device, VkQueue queue, VkCommandPool pool,
     const VkPhysicalDeviceLimits& limits, const VkPhysicalDeviceMemoryProperties& memory,
     const BufferResourceDispatch& buffers)
 {
@@ -826,6 +827,91 @@ static void exercise_detail_interaction(VkDevice device, VkQueue queue, VkComman
             for (uint16_t value : output) require((value&0x7fffu)==0,"interaction teleport, height and invalid entity rejection");
         previous=output;
     }
+    {
+        FrameDispatch image_dispatch{};
+        image_dispatch.get_format_properties = vkGetPhysicalDeviceFormatProperties;
+        image_dispatch.create_image_view = vkCreateImageView;
+        image_dispatch.destroy_image_view = vkDestroyImageView;
+        image_dispatch.cmd_pipeline_barrier = vkCmdPipelineBarrier;
+        DetailInteractionField field;
+        require(field.initialize(physical,device,vkGetDeviceProcAddr,limits,memory,buffers,image_dispatch,
+            images,1,VK_NULL_HANDLE,error,8,1.f,1.f),error);
+        DetailGenerateSlot ground_slot{}; ground_slot.bounds[2]=-1.f; ground_slot.bounds[3]=2.f;
+        ground_slot.data[3]=2;
+        const DetailGroundTriangle ground_triangles[]{
+            {{0,0,0,0},{0,0,2,0},{2,0,0,0}}, {{2,0,0,0},{0,0,2,0},{2,0,2,0}}};
+        BufferResource cells, triangles;
+        require(cells.initialize(device,sizeof(ground_slot),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,host,memory,buffers,error) &&
+            triangles.initialize(device,sizeof(ground_triangles),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,host,memory,buffers,error) &&
+            cells.write(0,&ground_slot,sizeof(ground_slot),error) &&
+            triangles.write(0,ground_triangles,sizeof(ground_triangles),error),error);
+        DetailInteractionField::Ground ground{&cells,&triangles,1,4,4,0,0};
+        std::vector<DetailInteractionEntity> contacts{{{.5f,0.f,.5f},1.f,{1.f,0.f,0.f},1.f}};
+        const auto record = [&](bool discard, bool empty_ground, bool contact) {
+            VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+            allocate.commandPool=pool; allocate.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY; allocate.commandBufferCount=1;
+            VkCommandBuffer command{};
+            require(vkAllocateCommandBuffers(device,&allocate,&command)==VK_SUCCESS,"field command allocation");
+            VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            require(vkBeginCommandBuffer(command,&begin)==VK_SUCCESS,"field command begin");
+            FrameRecordingContext frame{}; frame.command_buffer=command;
+            frame.command_queue_flags=VK_QUEUE_GRAPHICS_BIT|VK_QUEUE_COMPUTE_BIT;
+            DetailInteractionField::Output output{};
+            const DetailInteractionField::Ground no_ground{};
+            const std::vector<DetailInteractionEntity> no_contacts;
+            require(field.record(frame,empty_ground ? no_ground : ground,contact ? contacts : no_contacts,
+                camera,.04f,1.f,.5f,output,error),error);
+            if (discard)
+            {
+                field.discard();
+                require(vkEndCommandBuffer(command)==VK_SUCCESS,"discarded field end");
+                vkFreeCommandBuffers(device,pool,1,&command);
+                return 0.f;
+            }
+            VkImageMemoryBarrier image_barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            image_barrier.srcAccessMask=VK_ACCESS_SHADER_READ_BIT; image_barrier.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+            image_barrier.oldLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            image_barrier.newLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            image_barrier.srcQueueFamilyIndex=image_barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+            image_barrier.image=output.image; image_barrier.subresourceRange=color;
+            vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0,0,nullptr,0,nullptr,1,&image_barrier);
+            VkBufferMemoryBarrier buffer_barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+            buffer_barrier.srcAccessMask=VK_ACCESS_HOST_READ_BIT|VK_ACCESS_TRANSFER_WRITE_BIT;
+            buffer_barrier.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+            buffer_barrier.srcQueueFamilyIndex=buffer_barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+            buffer_barrier.buffer=readback.handle(); buffer_barrier.size=VK_WHOLE_SIZE;
+            vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_HOST_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,1,&buffer_barrier,0,nullptr);
+            VkBufferImageCopy copy{0,0,0,{VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},{0,0,0},{8,8,1}};
+            vkCmdCopyImageToBuffer(command,output.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,readback.handle(),1,&copy);
+            image_barrier.srcAccessMask=VK_ACCESS_TRANSFER_READ_BIT; image_barrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
+            image_barrier.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            image_barrier.newLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+                0,0,nullptr,0,nullptr,1,&image_barrier);
+            buffer_barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT; buffer_barrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
+            vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,
+                0,0,nullptr,1,&buffer_barrier,0,nullptr);
+            require(vkEndCommandBuffer(command)==VK_SUCCESS,"field end");
+            VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO}; submit.commandBufferCount=1; submit.pCommandBuffers=&command;
+            require(vkQueueSubmit(queue,1,&submit,VK_NULL_HANDLE)==VK_SUCCESS,"field submit");
+            field.commit();
+            require(vkQueueWaitIdle(queue)==VK_SUCCESS,"field completion");
+            std::array<uint16_t,8*8*4> value{};
+            require(readback.read(0,value.data(),sizeof(value),error),error);
+            vkFreeCommandBuffers(device,pool,1,&command);
+            return half(value[0]);
+        };
+        record(true,false,true); // A discarded recording cannot advance image layouts/history.
+        const float initial=record(false,false,true);
+        require(initial > .1f,"terrain and contact field were not composed");
+        const float recovering=record(false,true,false);
+        require(recovering > 0.f,"spring history was not carried across submissions");
+        field.reset_history();
+        require(record(false,true,true)==0.f,"empty terrain or reset history produced contact");
+        std::cout << "GPU detail field terrain, history, empty ground and discarded recording passed\n";
+    }
     std::cout << "GPU detail interaction contact, spring recovery, pause, scrolling and history reset passed\n";
 }
 
@@ -986,7 +1072,7 @@ int main(int argc, char** argv)
         BufferResourceDispatch vk{vkCreateBuffer, vkDestroyBuffer, vkGetBufferMemoryRequirements, vkAllocateMemory,
             vkFreeMemory, vkBindBufferMemory, vkMapMemory, vkUnmapMemory};
         exercise_deferred_startup(f.device, props.limits, shader_directory);
-        exercise_detail_interaction(f.device,queue,f.pool,props.limits,memory,vk);
+        exercise_detail_interaction(physical,f.device,queue,f.pool,props.limits,memory,vk);
         if (collision_shader) exercise_collision_shader(physical, f.device, queue, f.pool, props.limits, memory, vk, collision_shader);
         std::string error;
         GpuParticleCompute compute;
