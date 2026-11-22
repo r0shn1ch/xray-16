@@ -17,9 +17,11 @@
 #include <SDL.h>
 #include <cstring>
 #include <algorithm>
+#include <cerrno>
 #include <cstdio>
 #include <cmath>
 #include <charconv>
+#include <string_view>
 
 namespace xray::render::vulkan
 {
@@ -181,14 +183,32 @@ private:
     VulkanLevelRender& renderer_;
 };
 
-bool load_particle_document(std::vector<uint8_t>& library, std::string& error)
+constexpr pcstr particle_export_name = "particles_edited";
+
+bool particle_copy_filename(pcstr stem, std::string& filename, std::string& error)
 {
+    const std::string_view name(stem);
+    if (name.empty() || name.size() > 63 || !std::all_of(name.begin(), name.end(), [](char c)
+        { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-'; }))
+    {
+        error = "Use up to 63 lowercase letters, digits, underscores or hyphens for the copy name.";
+        return false;
+    }
+    filename = std::string(name) + ".xr";
+    return true;
+}
+
+bool load_particle_document(std::vector<uint8_t>& library, std::string& error, pcstr copy_stem = nullptr)
+{
+    std::string filename = "particles.xr";
+    if (copy_stem && !particle_copy_filename(copy_stem, filename, error))
+        return false;
     string_path path;
-    FS.update_path(path, _game_data_, "particles.xr");
+    FS.update_path(path, copy_stem ? "$app_data_root$" : _game_data_, filename.c_str());
     IReader* source = FS.r_open(path);
     if (!source)
     {
-        error = "could not open particles.xr";
+        error = std::string("Could not open particle library: ") + path;
         return false;
     }
     const bool loaded = editable_particle_library_bytes(*source, library, error);
@@ -196,15 +216,20 @@ bool load_particle_document(std::vector<uint8_t>& library, std::string& error)
     return loaded;
 }
 
-bool export_particle_document(const std::vector<uint8_t>& library, std::string& message)
+bool export_particle_document(const std::vector<uint8_t>& library, std::string& message,
+    pcstr copy_stem = particle_export_name)
 {
+    std::string filename;
+    if (!particle_copy_filename(copy_stem, filename, message))
+        return false;
     string_path path;
-    FS.update_path(path, "$app_data_root$", "particles_edited.xr");
+    FS.update_path(path, "$app_data_root$", filename.c_str());
     convert_path_separators(path);
     FILE* file = std::fopen(path, "wbx");
     if (!file)
     {
-        message = std::string("could not create export (existing files are preserved): ") + path;
+        const int error = errno;
+        message = std::string(error == EEXIST ? "Copy already exists: " : "Could not create copy: ") + path;
         return false;
     }
     const bool wrote = std::fwrite(library.data(), 1, library.size(), file) == library.size();
@@ -228,13 +253,17 @@ public:
     {
         if (ImGui::Begin(tool_name(), &get_open_state(), get_default_window_flags()))
         {
+            ImGui::InputText("Copy name", copy_name_, sizeof(copy_name_));
             ImGui::BeginDisabled(dirty_);
             if (ImGui::Button("Open particles.xr"))
                 open();
+            ImGui::SameLine();
+            if (ImGui::Button("Open copy"))
+                open(copy_name_);
             ImGui::EndDisabled();
             ImGui::SameLine();
-            ImGui::BeginDisabled(!dirty_);
-            if (ImGui::Button("Export copy") && export_particle_document(library_, message_))
+            ImGui::BeginDisabled(library_.empty());
+            if (ImGui::Button("Export copy") && export_particle_document(library_, message_, copy_name_))
                 dirty_ = false;
             ImGui::EndDisabled();
             if (!message_.empty())
@@ -346,11 +375,11 @@ private:
         draw->PopClipRect();
     }
 
-    void open()
+    void open(pcstr copy_stem = nullptr)
     {
         std::vector<uint8_t> bytes;
         ParticleCatalog catalog;
-        if (!load_particle_document(bytes, message_) ||
+        if (!load_particle_document(bytes, message_, copy_stem) ||
             !parse_particle_catalog({bytes.data(), bytes.size()}, catalog, message_))
             return;
         library_ = std::move(bytes);
@@ -362,6 +391,7 @@ private:
     std::vector<uint8_t> library_;
     ParticleCatalog catalog_;
     std::string message_;
+    char copy_name_[64]{"particles_edited"};
     ImGuiTextFilter filter_;
     std::unique_ptr<VulkanParticleEffect> preview_;
     float preview_zoom_{32.f};
