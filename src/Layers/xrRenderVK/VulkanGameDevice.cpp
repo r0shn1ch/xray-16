@@ -1389,7 +1389,11 @@ void VulkanGameDevice::begin_frame()
         frame_buffer_pool_.tick();
     object_motion_.begin_frame();
     const VkExtent2D extent = window_.frame().extent();
-    const bool fsr3_selected = spatial_upscaler == 3 && fsr3_upscaler_.matches_render_extent(extent);
+    float jitter_x = 0.f, jitter_y = 0.f;
+    const bool fsr3_selected = spatial_upscaler == 3 && extent.width && extent.height &&
+        fsr3_upscaler_.matches_render_extent(extent) &&
+        fsr3_upscaler_.jitter_offset(temporal_jitter_uses_fsr_ ? temporal_sample_index_ : 0u, jitter_x, jitter_y) &&
+        std::isfinite(jitter_x) && std::isfinite(jitter_y);
     if (temporal_jitter_uses_fsr_ != fsr3_selected)
     {
         temporal_sample_index_ = 0;
@@ -1402,18 +1406,8 @@ void VulkanGameDevice::begin_frame()
     temporal_jitter_ndc_ = {};
     if (fsr3_selected)
     {
-        float jitter_x = 0.f, jitter_y = 0.f;
-        if (extent.width && extent.height &&
-            fsr3_upscaler_.jitter_offset(temporal_sample_index_, jitter_x, jitter_y))
-        {
-            temporal_jitter_ndc_ = {2.f * jitter_x / float(extent.width),
-                -2.f * jitter_y / float(extent.height)};
-        }
-        else
-        {
-            temporal_jitter_active_ = false;
-            jitter_x = jitter_y = 0.f;
-        }
+        temporal_jitter_ndc_ = {2.f * jitter_x / float(extent.width),
+            -2.f * jitter_y / float(extent.height)};
         fsr3_upscaler_.set_jitter(jitter_x, jitter_y);
     }
     else if (temporal_jitter_active_)
@@ -1604,7 +1598,7 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
     }
     // Resolve the saved console value each frame. Menus and loading screens
     // bypass AA, and changing AA needs neither vid_restart nor a new pipeline.
-    const bool fsr3_active = render_world && temporal_jitter_active_ &&
+    const bool fsr3_active = render_world && temporal_jitter_uses_fsr_ &&
         spatial_upscaler == 3 && fsr3_upscaler_.matches_render_extent(window_.frame().extent());
     fsr3_upscaler_.set_active(fsr3_active);
     temporal_.set_active(render_world && temporal_jitter_active_ && !fsr3_active);
