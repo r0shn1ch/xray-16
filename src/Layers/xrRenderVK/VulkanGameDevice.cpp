@@ -2904,6 +2904,7 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
     sun_shaft_passes_.clear();
     bloom_bright_passes_.clear();
     bloom_upsample_passes_.clear();
+    frame_generation_available = 0;
     if (!window_.frame().release_swapchain())
     {
         error = "could not release Vulkan framebuffers before scene depth";
@@ -3141,6 +3142,11 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
     if (!create_postprocess(error))
         return false;
 
+#if defined(XR_PLATFORM_ANDROID) && defined(XRAY_HAS_FSR3_ANDROID)
+    const bool generation_requested = frame_generation != 0 && spatial_upscaler == 3;
+    frame_generation_available = window_.frame_generation_queues().enabled && !frame.hdr10_active() &&
+        (!generation_requested || fsr3_upscaler_.frame_generation_active()) ? 1 : 0;
+#endif
     reset_required_ = false;
     error.clear();
     return true;
