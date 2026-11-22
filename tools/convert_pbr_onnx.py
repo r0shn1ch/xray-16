@@ -62,7 +62,8 @@ def run_model(model, diffuse, normal, output_name, sessions=None):
     if all(output.name != output_name for output in outputs):
         raise ValueError(f"unknown model output {output_name!r}")
     packed, = session.run([output_name], {inputs[0].name: tensor})
-    if packed.dtype != np.float32 or packed.shape != (1, 3, *rgb.shape[:2]) or not np.isfinite(packed).all():
+    if (not isinstance(packed, np.ndarray) or packed.dtype != np.float32 or
+            packed.shape != (1, 3, *rgb.shape[:2]) or not np.isfinite(packed).all()):
         raise ValueError("model must output finite float32 [1,3,H,W] at the input resolution")
     return pack_pbr(packed)
 
@@ -142,7 +143,8 @@ def run_openxray_models(directory, diffuse, normal, sessions=None):
     def infer(name, outputs, **inputs):
         session = model_session(directory / (name + ".onnx"), sessions)
         data = session.run(outputs, {key: np.ascontiguousarray(value) for key, value in inputs.items()})
-        if any(tensor.dtype != np.float32 or not np.isfinite(tensor).all() for tensor in data):
+        if any(not isinstance(tensor, np.ndarray) or tensor.dtype != np.float32 or
+               not tensor.size or not np.isfinite(tensor).all() for tensor in data):
             raise ValueError(f"{name} returned invalid float32 data")
         return data
 
