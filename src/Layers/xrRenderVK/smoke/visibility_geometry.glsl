@@ -38,12 +38,17 @@ vec3 visibilityNormal(PackedVertex vertex)
 
 bool visibilityVertices(DrawEntry entry, uint triangle, out uvec3 vertexIndex)
 {
-    uint index = triangle * 3u;
     uint capacity = uint(indices.length());
-    if (index + 3u > entry.indexCount || entry.firstIndex > capacity || index + 3u > capacity - entry.firstIndex)
+    if (entry.firstIndex > capacity ||
+        triangle >= min(entry.indexCount, capacity - entry.firstIndex) / 3u)
         return false;
-    uint start = entry.firstIndex + index;
-    vertexIndex = uvec3(indices[start], indices[start + 1u], indices[start + 2u]) + uint(entry.vertexOffset);
+    uint start = entry.firstIndex + triangle * 3u;
+    uvec3 raw = uvec3(indices[start], indices[start + 1u], indices[start + 2u]);
+    vertexIndex = raw + uint(entry.vertexOffset);
+    // Signed base-vertex offsets are valid, but a wrapped index must never
+    // alias a vertex in another mesh in the same packed geometry buffer.
+    if (entry.vertexOffset < 0 ? any(greaterThan(vertexIndex, raw)) : any(lessThan(vertexIndex, raw)))
+        return false;
     return all(lessThan(vertexIndex, uvec3(vertices.length())));
 }
 
