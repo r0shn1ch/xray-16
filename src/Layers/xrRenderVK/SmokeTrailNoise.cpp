@@ -171,7 +171,14 @@ bool SmokeTrailNoise::record(VkCommandBuffer command, uint32_t slot, float time,
         if (!graph.read(sample, uploaded_image, ImageUse::VertexSampled, error))
             return false;
         if (transient && !graph.materialize_buffers(*buffer_pool, error))
-            return false;
+        {
+            // No commands have been recorded yet. Rebuild with the persistent
+            // scratch buffer and its existing synchronization requirements.
+            return record(command, slot, time, tile_scale, first, error, queue_flags,
+                semaphore_handoff, submission_graph, compute_submission_pass, graphics_continuation_pass,
+                previous_graphics_submission, recording_queue, graphics_queue_flags,
+                std::move(request_submission_command_buffer), nullptr, retirement);
+        }
 
         ImageStateTracker image_states;
         if (!image_states.register_image(image_, range,
