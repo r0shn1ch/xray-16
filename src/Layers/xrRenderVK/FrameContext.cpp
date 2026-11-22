@@ -2790,7 +2790,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
             const auto upscale_queue = record_async_compute ? FrameSubmissionGraph::Queue::Compute :
                 FrameSubmissionGraph::Queue::Graphics;
             const auto upscale = graph.add_checked_command_pass("FSR3 temporal upscale", upscale_queue,
-                [&](VkCommandBuffer recording_command, std::string& record_error) {
+                [&, upscale_queue](VkCommandBuffer recording_command, std::string& record_error) {
                 const FrameRecordingContext context = make_frame_recording_context(callback_context,
                     recording_command, VK_NULL_HANDLE, VK_NULL_HANDLE, m_extent, 0, {}, upscale_queue);
                 return m_fsr3_recorder(context, m_fsr3_data, record_error);
@@ -2819,7 +2819,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
             const auto resolve_queue = record_async_compute ? FrameSubmissionGraph::Queue::Compute :
                 FrameSubmissionGraph::Queue::Graphics;
             const auto resolve = graph.add_checked_command_pass("temporal color resolve", resolve_queue,
-                [&](VkCommandBuffer recording_command, std::string& record_error) {
+                [&, resolve_queue](VkCommandBuffer recording_command, std::string& record_error) {
                 const FrameRecordingContext context = make_frame_recording_context(callback_context,
                     recording_command, VK_NULL_HANDLE, VK_NULL_HANDLE, m_extent, 0, {}, resolve_queue);
                 return m_temporal_recorder(context, m_temporal_data, record_error);
@@ -2873,7 +2873,7 @@ bool FrameContext::render_frame(const VkClearColorValue& clear, FrameStatus& sta
             const auto adapt_queue = record_async_compute ? FrameSubmissionGraph::Queue::Compute :
                 FrameSubmissionGraph::Queue::Graphics;
             const auto adapt = graph.add_command_pass("temporal exposure", adapt_queue,
-                [&](VkCommandBuffer recording_command) {
+                [&, adapt_queue](VkCommandBuffer recording_command) {
                 const FrameRecordingContext context = make_frame_recording_context(callback_context,
                     recording_command, VK_NULL_HANDLE, VK_NULL_HANDLE, m_extent, 0, {}, adapt_queue);
                 m_exposure_recorder(context, m_exposure_data);
