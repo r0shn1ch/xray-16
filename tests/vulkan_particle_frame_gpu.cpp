@@ -501,16 +501,19 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
     DetailGeneratePass generate;
     require(generate.initialize(device, vkGetDeviceProcAddr, limits, 1, VK_NULL_HANDLE, source, error), error);
     const std::array<DetailGenerateSlot, 2> cells{{
-        {{0, 0, 0, 2}, {0, 0x3f3f3f00u, 0, 1}, {0x0f0f0f0fu}},
+        {{0, 0, 0, 2}, {0, 0x3f3f3f00u, 0, 3}, {0x0f0f0f0fu}},
         {{0, 0, 0, 2}, {0, 0x3f3f3f00u, 0, 0}, {0x0f0f0f0fu}}}};
-    const DetailGroundTriangle triangle{{0, 1, 0, 0}, {0, 1, 2, 0}, {2, 1, 0, 0}};
+    const DetailGroundTriangle triangles[]{
+        {{0, .75f, 0, 0}, {0, .75f, 2, 0}, {2, .75f, 0, 0}},
+        {{0, .5f, 0, 0}, {0, 1.5f, 2, 0}, {2, 1.5f, 0, 0}},
+        {{0, 2, 0, 0}, {2, 2, 0, 0}, {0, 2, 2, 0}}};
     const std::array<float, 2> scales{2, 3};
     BufferResource cell_data, ground, prototype, generated;
     const auto upload_data = [&](BufferResource& buffer, const void* data, size_t bytes) {
         return buffer.initialize(device, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, host_memory, memory, vk, error) &&
             buffer.write(0, data, bytes, error);
     };
-    require(upload_data(cell_data, cells.data(), sizeof(cells)) && upload_data(ground, &triangle, sizeof(triangle)) &&
+    require(upload_data(cell_data, cells.data(), sizeof(cells)) && upload_data(ground, triangles, sizeof(triangles)) &&
         upload_data(prototype, scales.data(), sizeof(scales)) &&
         generated.initialize(device, 2 * sizeof(GeneratedDetail), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
             host_memory, memory, vk, error), error);
