@@ -24,8 +24,9 @@ float depth_at_source(ivec2 pixel, ivec2 input_size)
 vec3 load_current_color(ivec2 pixel)
 {
     vec3 color = texelFetch(current_color, pixel, 0).rgb;
-    return mix(color, vec3(0.0), bvec3(isnan(color.x) || isinf(color.x),
+    color = mix(color, vec3(0.0), bvec3(isnan(color.x) || isinf(color.x),
         isnan(color.y) || isinf(color.y), isnan(color.z) || isinf(color.z)));
+    return clamp(color, vec3(-65504.0), vec3(65504.0));
 }
 
 vec3 current_at(ivec2 pixel, ivec2 extent, float target_depth)
@@ -67,7 +68,7 @@ vec3 current_at(ivec2 pixel, ivec2 extent, float target_depth)
 
 bool valid_history_tap(vec4 tap, float expected_depth, float tolerance)
 {
-    return abs(tap.a - expected_depth) <= tolerance &&
+    return tap.a >= 0.0 && tap.a <= 1.0 && abs(tap.a - expected_depth) <= tolerance &&
         !any(isnan(tap.rgb)) && !any(isinf(tap.rgb));
 }
 
@@ -117,11 +118,11 @@ void main()
     vec4 velocity = texelFetch(velocity_image, velocity_pixel, 0);
     bool valid_depth = depth >= 0.0 && depth <= 1.0;
     float history_depth = valid_depth ? depth : -1.0;
-    if (velocity.w >= 2.0 && velocity.w <= 3.0)
+    if (valid_depth && velocity.w >= 2.0 && velocity.w <= 3.0)
         history_depth = velocity.w - 2.0;
     vec3 current = current_at(pixel, extent, depth);
     vec3 result = current;
-    if (params.history_valid != 0 && valid_depth)
+    if (params.history_valid != 0 && valid_depth && all(equal(textureSize(previous_color, 0), extent)))
     {
         vec2 motion = velocity.xy;
         vec2 reprojected_motion = motion + current_jitter - previous_jitter;
