@@ -19,12 +19,16 @@ struct Fixture
     VkInstance instance{};
     VkDevice device{};
     VkCommandPool command_pool{};
+    VkImageView hiz_view{};
+    VkSampler hiz_sampler{};
 
     ~Fixture()
     {
         if (device)
         {
             vkDeviceWaitIdle(device);
+            if (hiz_sampler) vkDestroySampler(device, hiz_sampler, nullptr);
+            if (hiz_view) vkDestroyImageView(device, hiz_view, nullptr);
             if (command_pool) vkDestroyCommandPool(device, command_pool, nullptr);
             vkDestroyDevice(device, nullptr);
         }
@@ -36,6 +40,18 @@ void require(bool condition, const std::string& message)
 {
     if (!condition) throw std::runtime_error(message);
 }
+
+struct HiZSampling
+{
+    VkDevice device{};
+    VkImageView view{};
+    VkSampler sampler{};
+    ~HiZSampling()
+    {
+        if (sampler) vkDestroySampler(device, sampler, nullptr);
+        if (view) vkDestroyImageView(device, view, nullptr);
+    }
+};
 
 struct DeviceDrain
 {
@@ -169,7 +185,7 @@ int main(int argc, char** argv)
         {{0.f, 0.f, .5f, .1f}, 10.f, {}},
         {{0.f, 0.f, .5f, .1f}, 10.f, {}}};
     const std::vector<ClusterCullRecord> clusters{
-        {{0.f, 0.f, .5f, .1f}, -1, 0, 4, 3},
+        {{.2f, 0.f, .5f, .1f}, -1, 0, 4, 3},
         {{4.f, 0.f, .5f, .1f}, -1, 0, 20, 6},
         {{0.f, 0.f, .5f, .1f}, -1, 0, 4, 3},
         {{4.f, 0.f, .5f, .1f}, -1, 0, 20, 6}};
@@ -186,10 +202,18 @@ int main(int argc, char** argv)
             properties.limits.maxStorageBufferRange, error), error);
 
     BufferResource readback;
+    BufferResource depth_upload;
+    FrameImagePool hiz_pool;
+    HiZSampling hiz_sampling{fixture.device};
     const VkDeviceSize command_bytes = sizeof(VkDrawIndexedIndirectCommand) * command_count * 2;
     require(readback.initialize(fixture.device, command_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             memory, buffers, error), error);
+    const std::array<float, 2> clear_depths{1.f, 1.f};
+    require(depth_upload.initialize(fixture.device, sizeof(clear_depths), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            memory, buffers, error), error);
+    require(depth_upload.write(0, clear_depths.data(), sizeof(clear_depths), error), error);
     DeviceDrain device_drain{fixture.device};
 
     VkCommandBufferAllocateInfo command_allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
@@ -289,7 +313,95 @@ int main(int argc, char** argv)
             same_command(commands[3], 0, 0, 220, 7),
         "local-shadow culling did not refresh both progressive-window command ranges");
 
+    // A 65x65 source yields a 32x32 base. At mip 2 the first cluster spans
+    // columns 3 through 5. A clear texel in column 4 must prevent occlusion.
+    constexpr uint32_t hiz_levels = 4;
+    require(hiz_pool.initialize(fixture.device, memory, {vkCreateImage, vkDestroyImage,
+        vkGetImageMemoryRequirements, vkAllocateMemory, vkFreeMemory, vkBindImageMemory}),
+        "Hi-Z image pool initialization failed");
+    VkImageCreateInfo hiz_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    hiz_info.imageType = VK_IMAGE_TYPE_2D;
+    hiz_info.format = VK_FORMAT_R32_SFLOAT;
+    hiz_info.extent = {32, 32, 1};
+    hiz_info.mipLevels = hiz_levels;
+    hiz_info.arrayLayers = 1;
+    hiz_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    hiz_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    VkImage hiz_image{};
+    require(hiz_pool.acquire(hiz_info, hiz_image, error), error);
+    const VkImageSubresourceRange hiz_range{VK_IMAGE_ASPECT_COLOR_BIT, 0, hiz_levels, 0, 1};
+    VkImageViewCreateInfo hiz_view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    hiz_view_info.image = hiz_image;
+    hiz_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    hiz_view_info.format = hiz_info.format;
+    hiz_view_info.subresourceRange = hiz_range;
+    require(vkCreateImageView(fixture.device, &hiz_view_info, nullptr, &hiz_sampling.view) == VK_SUCCESS,
+        "Hi-Z image view creation failed");
+    VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    sampler_info.maxLod = float(hiz_levels - 1);
+    require(vkCreateSampler(fixture.device, &sampler_info, nullptr, &hiz_sampling.sampler) == VK_SUCCESS,
+        "Hi-Z sampler creation failed");
+
+    frame.extent = {65, 65};
+    const FrameImageSharing hiz_sharing;
+    for (const bool has_gap : {false, true})
+    {
+        require(vkResetCommandBuffer(command, 0) == VK_SUCCESS &&
+                vkBeginCommandBuffer(command, &begin) == VK_SUCCESS,
+            "Hi-Z command-buffer reset failed");
+        VkImageMemoryBarrier hiz_barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        hiz_barrier.srcAccessMask = has_gap ? VK_ACCESS_SHADER_READ_BIT : 0;
+        hiz_barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        hiz_barrier.oldLayout = has_gap ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+        hiz_barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        hiz_barrier.srcQueueFamilyIndex = hiz_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        hiz_barrier.image = hiz_image;
+        hiz_barrier.subresourceRange = hiz_range;
+        vkCmdPipelineBarrier(command, has_gap ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT :
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
+            0, nullptr, 1, &hiz_barrier);
+        if (has_gap)
+        {
+            const std::array<VkBufferImageCopy, 2> gaps{{
+                {0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 2, 0, 1}, {4, 3, 0}, {1, 1, 1}},
+                {sizeof(float), 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 3, 0, 1}, {2, 1, 0}, {1, 1, 1}}}};
+            vkCmdCopyBufferToImage(command, depth_upload.handle(), hiz_image, hiz_barrier.newLayout,
+                static_cast<uint32_t>(gaps.size()), gaps.data());
+        }
+        else
+        {
+            const VkClearColorValue blocked{{.1f, 0.f, 0.f, 0.f}};
+            vkCmdClearColorImage(command, hiz_image, hiz_barrier.newLayout, &blocked, 1, &hiz_range);
+        }
+        hiz_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        hiz_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        hiz_barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        hiz_barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &hiz_barrier);
+        require(visibility.record(frame, identity, sun_mvp, camera, 60.f, 64, error,
+            identity, hiz_image, hiz_sampling.view, hiz_sampling.sampler, &hiz_sharing, hiz_levels, true), error);
+        command_read.offset = 0;
+        command_read.size = command_bytes;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 0, nullptr, 1, &command_read, 0, nullptr);
+        vkCmdCopyBuffer(command, visibility.command_buffer(frame.frame_index), readback.handle(), 1, &command_copy);
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+            0, 1, &host_read, 0, nullptr, 0, nullptr);
+        require(vkEndCommandBuffer(command) == VK_SUCCESS &&
+                vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS &&
+                vkQueueWaitIdle(queue) == VK_SUCCESS, "Cluster DAG Hi-Z dispatch did not complete");
+        require(readback.read(0, commands.data(), sizeof(commands), error), error);
+        if (!same_command(commands[0], has_gap ? 3 : 0, has_gap ? 1 : 0, 104, 3))
+        {
+            std::cerr << (has_gap ? "Hi-Z skipped a clear intermediate texel"
+                                  : "Hi-Z did not reject a fully occluded cluster") << '\n';
+            return 1;
+        }
+    }
+    vkDestroyImageView(fixture.device, hiz_sampling.view, nullptr);
+    hiz_sampling.view = VK_NULL_HANDLE;
     vkFreeCommandBuffers(fixture.device, fixture.command_pool, 1, &command);
-    std::cout << properties.deviceName << ": camera, sun and local-shadow indirect culling passed\n";
+    std::cout << properties.deviceName << ": camera, sun, local-shadow and Hi-Z indirect culling passed\n";
     return 0;
 }
