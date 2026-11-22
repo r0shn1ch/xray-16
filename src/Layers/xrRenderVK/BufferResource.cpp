@@ -18,7 +18,7 @@ struct BufferMemoryBlock
     VkDeviceMemory memory{};
     uint32_t memory_type{};
     VkDeviceSize size{};
-    VkDeviceSize next{};
+    std::vector<std::pair<VkDeviceSize, VkDeviceSize>> ranges;
     PFN_vkFreeMemory free_memory{};
     PFN_vkUnmapMemory unmap_memory{};
     void* mapped{};
@@ -39,6 +39,19 @@ std::vector<std::weak_ptr<BufferMemoryBlock>>& pool_blocks()
     return *blocks;
 }
 
+void release_pooled(std::shared_ptr<BufferMemoryBlock>& block, VkDeviceSize offset)
+{
+    {
+        std::lock_guard lock(pool_mutex());
+        auto& ranges = block->ranges;
+        const auto range = std::lower_bound(ranges.begin(), ranges.end(), offset,
+            [](const auto& candidate, VkDeviceSize start) { return candidate.first < start; });
+        if (range != ranges.end() && range->first == offset)
+            ranges.erase(range);
+    }
+    block.reset();
+}
+
 bool allocate_pooled(VkDevice device, uint32_t memory_type, const VkMemoryRequirements& requirements,
     bool host_visible, const BufferResourceDispatch& vk, std::shared_ptr<BufferMemoryBlock>& block,
     VkDeviceSize& offset, std::string& error, VkResult* allocation_result)
@@ -52,14 +65,26 @@ bool allocate_pooled(VkDevice device, uint32_t memory_type, const VkMemoryRequir
         if (!candidate) { it = blocks.erase(it); continue; }
         ++it;
         if (candidate->device != device || candidate->memory_type != memory_type ||
-            static_cast<bool>(candidate->mapped) != host_visible ||
-            candidate->next > std::numeric_limits<VkDeviceSize>::max() - (alignment - 1)) continue;
-        const VkDeviceSize aligned = (candidate->next + alignment - 1) / alignment * alignment;
-        if (aligned > candidate->size || requirements.size > candidate->size - aligned) continue;
-        offset = aligned;
-        candidate->next = aligned + requirements.size;
-        block = std::move(candidate);
-        return true;
+            static_cast<bool>(candidate->mapped) != host_visible) continue;
+        VkDeviceSize free_start = 0;
+        auto& ranges = candidate->ranges;
+        for (auto range = ranges.begin(); ; ++range)
+        {
+            if (free_start > std::numeric_limits<VkDeviceSize>::max() - (alignment - 1))
+                break;
+            const VkDeviceSize aligned = (free_start + alignment - 1) / alignment * alignment;
+            const VkDeviceSize free_end = range == ranges.end() ? candidate->size : range->first;
+            if (aligned <= free_end && requirements.size <= free_end - aligned)
+            {
+                ranges.emplace(range, aligned, aligned + requirements.size);
+                offset = aligned;
+                block = std::move(candidate);
+                return true;
+            }
+            if (range == ranges.end())
+                break;
+            free_start = range->second;
+        }
     }
     constexpr VkDeviceSize block_size = 8u * 1024u * 1024u;
     const VkDeviceSize capacity = std::max(block_size, requirements.size);
@@ -93,10 +118,10 @@ bool allocate_pooled(VkDevice device, uint32_t memory_type, const VkMemoryRequir
     block->memory = memory;
     block->memory_type = memory_type;
     block->size = info.allocationSize;
-    block->next = requirements.size;
     block->free_memory = vk.free_memory;
     block->unmap_memory = vk.unmap_memory;
     block->mapped = mapped;
+    block->ranges.emplace_back(0, requirements.size);
     blocks.push_back(block);
     offset = 0;
     return true;
@@ -191,6 +216,7 @@ BufferResource& BufferResource::operator=(BufferResource&& other) noexcept
         m_size = other.m_size;
         m_mapped = other.m_mapped;
         m_pool_block = std::move(other.m_pool_block);
+        m_pool_offset = other.m_pool_offset;
         m_vk = other.m_vk;
         other.m_device = VK_NULL_HANDLE;
         other.m_buffer = VK_NULL_HANDLE;
@@ -363,7 +389,7 @@ bool BufferResource::initialize(VkDevice device, VkDeviceSize size, VkBufferUsag
     if (dispatch.bind_buffer_memory(device, buffer, memory, binding_offset) != VK_SUCCESS)
     {
         dispatch.destroy_buffer(device, buffer, nullptr);
-        if (pool_block) pool_block.reset();
+        if (pool_block) release_pooled(pool_block, binding_offset);
         else dispatch.free_memory(device, memory, nullptr);
         set_vulkan_error("vkBindBufferMemory failed for buffer resource");
         return false;
@@ -377,7 +403,7 @@ bool BufferResource::initialize(VkDevice device, VkDeviceSize size, VkBufferUsag
         if (dispatch.map_memory(device, memory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS || !mapped)
         {
             dispatch.destroy_buffer(device, buffer, nullptr);
-            if (pool_block) pool_block.reset();
+            if (pool_block) release_pooled(pool_block, binding_offset);
             else dispatch.free_memory(device, memory, nullptr);
             set_vulkan_error("vkMapMemory failed for host-visible buffer resource");
             return false;
@@ -392,6 +418,7 @@ bool BufferResource::initialize(VkDevice device, VkDeviceSize size, VkBufferUsag
     m_size = size;
     m_mapped = mapped;
     m_pool_block = std::move(pool_block);
+    m_pool_offset = binding_offset;
     m_vk = dispatch;
     error.clear();
     return true;
@@ -437,7 +464,7 @@ void BufferResource::destroy()
             m_vk.unmap_memory(m_device, m_memory);
         if (m_device && m_buffer && m_vk.destroy_buffer)
             m_vk.destroy_buffer(m_device, m_buffer, nullptr);
-        if (m_pool_block) m_pool_block.reset();
+        if (m_pool_block) release_pooled(m_pool_block, m_pool_offset);
         else if (m_device && m_memory && m_vk.free_memory)
             m_vk.free_memory(m_device, m_memory, nullptr);
     }

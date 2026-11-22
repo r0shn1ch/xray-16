@@ -38,6 +38,8 @@ VkResult submit_result = VK_SUCCESS;
 VkResult fence_status = VK_SUCCESS;
 VkResult wait_result = VK_SUCCESS;
 bool fail_next_allocation{};
+bool test_suballocation{};
+std::vector<VkDeviceSize> bound_offsets;
 
 VkResult VKAPI_CALL create_buffer(VkDevice, const VkBufferCreateInfo* info,
     const VkAllocationCallbacks*, VkBuffer* buffer)
@@ -71,7 +73,7 @@ void VKAPI_CALL get_buffer_requirements(VkDevice, VkBuffer buffer, VkMemoryRequi
 VkResult VKAPI_CALL allocate_memory(VkDevice, const VkMemoryAllocateInfo* info,
     const VkAllocationCallbacks*, VkDeviceMemory* memory)
 {
-    assert(info->allocationSize == 16);
+    assert(info->allocationSize == (test_suballocation ? 8u * 1024u * 1024u : 16u));
     assert(info->memoryTypeIndex < 2);
     if (std::exchange(fail_next_allocation, false))
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
@@ -86,7 +88,10 @@ void VKAPI_CALL free_memory(VkDevice, VkDeviceMemory, const VkAllocationCallback
 
 VkResult VKAPI_CALL bind_buffer_memory(VkDevice, VkBuffer, VkDeviceMemory, VkDeviceSize offset)
 {
-    assert(offset == 0);
+    if (test_suballocation)
+        bound_offsets.push_back(offset);
+    else
+        assert(offset == 0);
     return VK_SUCCESS;
 }
 
@@ -310,4 +315,15 @@ int main()
     assert(frame_buffers.acquire(8, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host_memory, false, recovered, error));
     assert(freed_memories == freed_before_pressure + 1);
     assert(recovered != active && frame_buffers.release(active) && frame_buffers.release(recovered));
+
+    test_suballocation = true;
+    constexpr auto usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    std::array<BufferResource, 3> suballocations;
+    for (auto& buffer : suballocations)
+        assert(buffer.initialize(device, 8, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, memory,
+            dispatch.buffer, error, true));
+    suballocations[1].destroy();
+    assert(suballocations[1].initialize(device, 8, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, memory,
+        dispatch.buffer, error, true));
+    assert((bound_offsets == std::vector<VkDeviceSize>{0, 16, 32, 16}));
 }

@@ -72,6 +72,7 @@ private:
     VkDeviceSize m_size = 0;
     void* m_mapped = nullptr;
     std::shared_ptr<BufferMemoryBlock> m_pool_block;
+    VkDeviceSize m_pool_offset{};
     BufferResourceDispatch m_vk{};
 };
 }
