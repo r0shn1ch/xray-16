@@ -121,7 +121,10 @@ void main()
     if (settings.add.w > 0.0)
     {
         float depth = texture(depth_image, texcoord).r;
-        float defocus = abs(depth - settings.tint.w) / max(1.0 - settings.tint.w, 0.01);
+        // Perspective depth packs most of the playable distance range near 1.
+        // Normalize by the focus disparity so far focus distances retain blur.
+        float focus_disparity = max(1.0 - settings.tint.w, 0.00001);
+        float defocus = abs(depth - settings.tint.w) / focus_disparity;
         float amount = smoothstep(0.03, 0.7, defocus) * settings.add.w;
         if (amount > 0.001)
         {
@@ -140,8 +143,9 @@ void main()
                     vec2 neighbor = clamp(texcoord + taps[i] * pixel * radius,
                         pixel * 0.5, 1.0 - pixel * 0.5);
                     float neighbor_depth = texture(depth_image, neighbor).r;
-                    float weight = ring_weight *
-                        (1.0 - smoothstep(0.002, 0.03, abs(neighbor_depth - depth)));
+                    float disparity = max(1.0 - depth, focus_disparity);
+                    float weight = ring_weight * (1.0 - smoothstep(0.025, 0.35,
+                        abs(neighbor_depth - depth) / disparity));
                     blurred += aa_sample(neighbor) * weight;
                     total += weight;
                 }

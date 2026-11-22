@@ -337,10 +337,10 @@ int main(int argc, char** argv) try
     constants.bloom[0] = 1.f;
     composite.set_constants(constants);
     constants.bloom[0] = 0.f;
-    constants.tint[3] = .5f;
+    constants.tint[3] = .998f;
     constants.add[3] = 1.f;
     dof.set_constants(constants);
-    constants.tint[3] = .8f;
+    constants.tint[3] = .9998f;
     focused.set_constants(constants);
     PostProcessConstants scale_constants;
     scale_constants.bloom[0] = 0.f;
@@ -376,7 +376,7 @@ int main(int argc, char** argv) try
     std::memcpy(mapped, pixels.data(), pixels.size());
     vkUnmapMemory(vk.device, upload_memory);
     std::array<float, 64> depth_pixels{};
-    depth_pixels.fill(.8f);
+    depth_pixels.fill(.9998f);
     check(vkMapMemory(vk.device, depth_upload_memory, 0, scene_bytes, 0, &mapped));
     std::memcpy(mapped, depth_pixels.data(), scene_bytes);
     vkUnmapMemory(vk.device, depth_upload_memory);
