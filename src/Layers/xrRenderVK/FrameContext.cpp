@@ -593,10 +593,16 @@ bool FrameContext::create_swapchain(VkPhysicalDevice physical_device, VkSurfaceK
             m_vk = native_dispatch;
         }
     }
-    if (!m_swapchain && m_vk.create_swapchain(m_device, &info, nullptr, &m_swapchain) != VK_SUCCESS)
+    if (!m_swapchain)
     {
-        error = "vkCreateSwapchainKHR failed";
-        return false;
+        const VkResult result = m_vk.create_swapchain(m_device, &info, nullptr, &m_swapchain);
+        if (result != VK_SUCCESS)
+        {
+            m_device_lost = result == VK_ERROR_DEVICE_LOST;
+            m_surface_lost = result == VK_ERROR_SURFACE_LOST_KHR;
+            error = "vkCreateSwapchainKHR failed: " + std::to_string(result);
+            return false;
+        }
     }
     m_format = surface_format.format;
     m_color_space = surface_format.colorSpace;

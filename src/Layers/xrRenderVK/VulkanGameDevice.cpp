@@ -2737,7 +2737,7 @@ bool VulkanGameDevice::initialize_gbuffer_targets(std::string& error, const GBuf
     if (frame.scene_samples() != requested_scene_samples &&
         !window_.recreate_frame(presentation_extent, requested_scene_samples, error))
     {
-        if (gbuffer_msaa_configured_ || !msaa)
+        if (gbuffer_msaa_configured_ || !msaa || frame.device_lost() || frame.surface_lost())
             return false;
         Msg("! [renderer-vulkan] %ux MSAA scene creation failed; retrying single-sample: %s",
             gbuffer_msaa_samples, error.c_str());
@@ -2860,7 +2860,8 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
         return false;
     if (!recreate())
     {
-        if (!preselect_msaa || selected_msaa.samples == VK_SAMPLE_COUNT_1_BIT)
+        if (!preselect_msaa || selected_msaa.samples == VK_SAMPLE_COUNT_1_BIT ||
+            window_.frame().device_lost() || window_.frame().surface_lost())
             return false;
         Msg("! [renderer-vulkan] %ux MSAA scene creation failed; retrying single-sample: %s",
             gbuffer_msaa_samples, error.c_str());

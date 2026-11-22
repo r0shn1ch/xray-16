@@ -25,6 +25,7 @@ unsigned allocated_memory{}, freed_memory{};
 unsigned created_frame_color_images{};
 bool fail_multisample_image{};
 unsigned multisample_images_created{};
+VkResult swapchain_create_result = VK_SUCCESS;
 unsigned blit_count{};
 VkOffset3D temporal_source_extent{}, temporal_destination_extent{};
 int fail_image_after = -1;
@@ -65,6 +66,8 @@ VkResult VKAPI_PTR create_chain(VkDevice, const VkSwapchainCreateInfoKHR* info,
     const VkAllocationCallbacks*, VkSwapchainKHR* out)
 {
     assert(!active_swapchain && info->imageExtent.width && info->imageExtent.height);
+    if (swapchain_create_result != VK_SUCCESS)
+        return swapchain_create_result;
     active_swapchain = *out = handle<VkSwapchainKHR>(++next_handle);
     ++swapchain_creates;
     return VK_SUCCESS;
@@ -678,6 +681,16 @@ int main()
     assert(frame.request_scene_samples(VK_SAMPLE_COUNT_1_BIT, error));
     assert(frame.recreate(physical, surface, extent_before_msaa, error));
     assert(frame.scene_samples() == VK_SAMPLE_COUNT_1_BIT);
+    swapchain_create_result = VK_ERROR_SURFACE_LOST_KHR;
+    assert(!frame.recreate(physical, surface, extent_before_msaa, error));
+    assert(frame.surface_lost() && !frame.device_lost());
+    swapchain_create_result = VK_SUCCESS;
+    assert(frame.recreate(physical, surface, extent_before_msaa, error));
+    assert(!frame.surface_lost());
+    swapchain_create_result = VK_ERROR_DEVICE_LOST;
+    assert(!frame.recreate(physical, surface, extent_before_msaa, error));
+    assert(frame.device_lost() && !frame.surface_lost());
+    swapchain_create_result = VK_SUCCESS;
     frame.destroy();
     assert(allocated_images.empty() && viewed_images.empty() && allocated_memory==freed_memory);
     // Frame-generation UI is registered only after the display graph declares
