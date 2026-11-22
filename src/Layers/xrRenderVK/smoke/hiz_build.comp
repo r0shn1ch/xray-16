@@ -14,6 +14,8 @@ void main()
     ivec2 size = imageSize(destination);
     if (any(greaterThanEqual(dst, size))) return;
     ivec2 source_size = textureSize(source_depth, 0);
+    ivec2 mask_size = options.reject_dynamic_occluders != 0u
+        ? textureSize(dynamic_occluder_mask, 0) : ivec2(0);
     ivec2 base = dst * 2;
     float farthest = 0.0;
     // Vulkan floors each mip dimension. Include the odd edge in its last block.
@@ -26,9 +28,18 @@ void main()
             float depth = texelFetch(source_depth, ivec2(x, y), 0).r;
             if (!(depth >= 0.0 && depth <= 1.0))
                 depth = 1.0;
-            if (options.reject_dynamic_occluders != 0u &&
-                texelFetch(dynamic_occluder_mask, ivec2(x, y), 0).a > 0.5)
-                depth = 1.0;
+            if (options.reject_dynamic_occluders != 0u)
+            {
+                ivec2 pixel = ivec2(x, y);
+                if (any(greaterThanEqual(pixel, mask_size)))
+                    depth = 1.0;
+                else
+                {
+                    float dynamic_mask = texelFetch(dynamic_occluder_mask, pixel, 0).a;
+                    if (!(dynamic_mask >= 0.0 && dynamic_mask <= 0.5))
+                        depth = 1.0;
+                }
+            }
             farthest = max(farthest, depth);
         }
     imageStore(destination, dst, vec4(farthest));
