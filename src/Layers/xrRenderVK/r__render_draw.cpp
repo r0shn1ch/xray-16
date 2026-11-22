@@ -882,9 +882,10 @@ bool VulkanGameDevice::record_object_velocity(const FrameRecordingContext &frame
     {
         if (draw.hud)
             continue;
-        const float* previous_mvp = draw.has_previous_mvp ? draw.previous_mvp.data() : draw.mvp.data();
+        const bool previous_valid = owner.motion_.history_valid() && draw.has_previous_mvp;
+        const float* previous_mvp = previous_valid ? draw.previous_mvp.data() : draw.mvp.data();
         if (!draw.model->record_object_velocity(frame, owner.object_velocity_, draw.mvp.data(),
-                previous_mvp, draw.skeleton, draw.lod, owner.model_error_, draw.world.data()))
+                previous_mvp, draw.skeleton, draw.lod, owner.model_error_, draw.world.data(), previous_valid))
         {
             owner.models_recorded_ = false;
             break;
@@ -897,8 +898,9 @@ bool VulkanGameDevice::record_object_velocity(const FrameRecordingContext &frame
                 continue;
             float current[16], previous[16];
             std::copy(draw.mvp.begin(), draw.mvp.end(), current);
-            std::copy(draw.has_previous_mvp ? draw.previous_mvp.begin() : draw.mvp.begin(),
-                draw.has_previous_mvp ? draw.previous_mvp.end() : draw.mvp.end(), previous);
+            const bool previous_valid = owner.motion_.history_valid() && draw.has_previous_mvp;
+            std::copy(previous_valid ? draw.previous_mvp.begin() : draw.mvp.begin(),
+                previous_valid ? draw.previous_mvp.end() : draw.mvp.end(), previous);
             if (!owner.current_level_->record_object_velocity_visual(draw.index, frame,
                     owner.object_velocity_, current, previous, draw.lod, draw.instance != nullptr))
             {

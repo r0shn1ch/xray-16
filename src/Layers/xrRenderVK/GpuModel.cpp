@@ -713,7 +713,7 @@ bool GpuModel::record(const FrameRecordingContext &frame, const DeferredPass &pa
 
 bool GpuModel::record_object_velocity(const FrameRecordingContext& frame, const ObjectVelocityPass& pass,
     const float* current_mvp, const float* previous_mvp, const IKinematics* instance,
-    float lod, std::string& error, const float* world_transform) const
+    float lod, std::string& error, const float* world_transform, bool previous_pose_valid) const
 {
     static_assert(FrameContext::FramesInFlight == 2);
     if (!pass.ready() || !current_mvp || !previous_mvp || frame.frame_index >= FrameContext::FramesInFlight)
@@ -743,12 +743,12 @@ bool GpuModel::record_object_velocity(const FrameRecordingContext& frame, const 
             const auto found = mesh.poses.find(instance);
             if (!instance || found == mesh.poses.end() || !mesh.skinned_vertices.handle() ||
                 !found->second.descriptors[frame.frame_index] ||
-                !found->second.descriptors[frame.frame_index ^ 1])
+                (previous_pose_valid && !found->second.descriptors[frame.frame_index ^ 1]))
                 continue;
             pass.draw_skinned(frame, mesh.skinned_vertices.handle(), mesh.indices.handle(),
                 window.index_count, window.offset, current_mvp, previous_mvp,
                 found->second.descriptors[frame.frame_index],
-                found->second.descriptors[frame.frame_index ^ 1],
+                found->second.descriptors[previous_pose_valid ? frame.frame_index ^ 1 : frame.frame_index],
                 cutout ? mesh.material : VK_NULL_HANDLE, float(mesh.alpha_ref) / 255.f, base_rows);
             continue;
         }
@@ -761,7 +761,7 @@ bool GpuModel::record_object_velocity(const FrameRecordingContext& frame, const 
                 found == mesh.instance_vertices.end())
                 continue;
             current_vertices = found->second[frame.frame_index].handle();
-            previous_vertices = found->second[frame.frame_index ^ 1].handle();
+            previous_vertices = found->second[previous_pose_valid ? frame.frame_index ^ 1 : frame.frame_index].handle();
             if (!previous_vertices) continue;
         }
         if (!current_vertices || !mesh.indices.handle())

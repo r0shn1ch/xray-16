@@ -83,7 +83,8 @@ class GpuModel
                        const float *world_transform = nullptr);
     bool record_object_velocity(const FrameRecordingContext& frame, const ObjectVelocityPass& pass,
         const float* current_mvp, const float* previous_mvp, const IKinematics* instance,
-        float lod, std::string& error, const float* world_transform = nullptr) const;
+        float lod, std::string& error, const float* world_transform = nullptr,
+        bool previous_pose_valid = true) const;
     bool has_secondary_priority() const;
     // The caller retains this model until builds and queries using these addresses retire.
     bool collect_static_ray_geometry(std::vector<RayModelGeometry>& output, std::string& error);
