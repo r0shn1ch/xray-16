@@ -2,6 +2,7 @@
 
 #include "FGTypes.h"
 #include <cstddef>
+#include <limits>
 #include <set>
 #include <utility>
 #include <vector>
@@ -62,6 +63,18 @@ void add_resource_dependencies(const std::vector<ResourceVersion>& versions, Add
 inline bool sort_passes(const std::vector<std::set<uint32_t>>& edges,
     std::vector<uint32_t> indegree, std::vector<uint32_t>& order)
 {
+    if (edges.size() != indegree.size() || edges.size() > std::numeric_limits<uint32_t>::max())
+        return false;
+    std::vector<uint32_t> actual_indegree(edges.size());
+    for (const auto& consumers : edges)
+        for (uint32_t consumer : consumers)
+        {
+            if (consumer >= edges.size() || actual_indegree[consumer] == UINT32_MAX)
+                return false;
+            ++actual_indegree[consumer];
+        }
+    if (actual_indegree != indegree)
+        return false;
     std::set<uint32_t> ready;
     for (uint32_t pass = 0; pass < edges.size(); ++pass)
         if (!indegree[pass]) ready.insert(pass);

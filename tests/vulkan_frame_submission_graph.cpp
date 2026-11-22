@@ -1,4 +1,5 @@
 #include "src/Layers/xrRenderVK/FrameContext.h"
+#include "src/Layers/xrRenderGraph/ResourceDependencies.h"
 
 #include <cassert>
 #include <cstdint>
@@ -19,6 +20,19 @@ template <typename T> T handle(uintptr_t value)
 
 int main()
 {
+    {
+        using xray::render::framegraph::sort_passes;
+        std::vector<std::set<uint32_t>> edges{{1}, {}};
+        std::vector<uint32_t> order{77};
+        assert(!sort_passes(edges, {0}, order) && order == std::vector<uint32_t>{77});
+        assert(!sort_passes(edges, {0, 0}, order) && order == std::vector<uint32_t>{77});
+        edges[0].insert(2);
+        assert(!sort_passes(edges, {0, 1}, order) && order == std::vector<uint32_t>{77});
+        edges[0].erase(2);
+        assert(sort_passes(edges, {0, 1}, order) && order == (std::vector<uint32_t>{0, 1}));
+        edges[1].insert(0);
+        assert(!sort_passes(edges, {1, 1}, order) && order == (std::vector<uint32_t>{0, 1}));
+    }
     FrameSubmissionGraph graph;
     const auto first = graph.add_pass("first", FrameSubmissionGraph::Queue::Compute);
     const auto second = graph.add_pass("second", FrameSubmissionGraph::Queue::Graphics);
