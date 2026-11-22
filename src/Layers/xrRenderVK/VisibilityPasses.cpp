@@ -77,7 +77,10 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
     std::string& error) const
 {
     const auto& batches = level.visibility_draw_ranges();
-    const auto entries = level.visibility_draw_entries();
+    VkDescriptorBufferInfo entries{};
+    bool entries_host_written = false;
+    if (!level.visibility_draw_entries(frame.frame_index, entries, entries_host_written, error))
+        return false;
     const auto commands = level.visibility_camera_commands(frame.frame_index);
     const auto finite = [](float value) { return std::isfinite(value); };
     if (frame.frame_index >= slots_ || frame.frame_index >= 32 || batches.size() != batch_count_ ||
@@ -126,7 +129,7 @@ bool VisibilityPasses::record(const FrameRecordingContext& frame, const GpuLevel
     const auto import_buffer = [&](const VkDescriptorBufferInfo& buffer, BufferUse use, GraphBuffer& resource) {
         return graph.import_buffer(buffer.buffer, buffer.offset, buffer.range, use, resource, error);
     };
-    if (!import_buffer(entries, BufferUse::ComputeRead, draw_entries) ||
+    if (!import_buffer(entries, entries_host_written ? BufferUse::HostWrite : BufferUse::ComputeRead, draw_entries) ||
         !import_buffer(commands, BufferUse::IndirectAndComputeRead, draw_commands) ||
         !import_buffer({draw_mask.handle(), 0, draw_mask.size()}, BufferUse::HostWrite, mask))
         return false;

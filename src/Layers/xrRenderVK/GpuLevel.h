@@ -43,8 +43,8 @@ class GpuLevel
     const std::vector<VisibilityDrawRange>& visibility_draw_ranges() const { return visibility_draw_ranges_; }
     struct VisibilityTexture { std::string name; bool lightmap; bool linear; };
     const std::vector<VisibilityTexture>& visibility_textures() const { return visibility_textures_; }
-    VkDescriptorBufferInfo visibility_draw_entries() const
-    { return {visibility_draw_entries_.handle(), 0, visibility_draw_entries_.size()}; }
+    bool visibility_draw_entries(uint32_t frame, VkDescriptorBufferInfo& entries,
+        bool& host_written, std::string& error) const;
     VkDescriptorBufferInfo visibility_camera_commands(uint32_t frame) const
     { return cluster_visibility_.camera_commands(frame); }
     bool visibility_geometry(uint32_t batch, VkDescriptorBufferInfo& vertices, VkDescriptorBufferInfo& indices) const;
@@ -313,6 +313,14 @@ class GpuLevel
     };
     std::vector<GeometryBatch> geometry_batches_;
     BufferResource visibility_draw_entries_;
+    struct VisibilityMatrixRange
+    {
+        uint32_t first, count;
+        TextureMatrixSet matrices;
+    };
+    std::vector<VisibilityMatrixRange> visibility_matrix_ranges_;
+    mutable std::vector<visibility::DrawEntry> visibility_dynamic_entries_;
+    mutable std::array<BufferResource, FrameContext::FramesInFlight> visibility_frame_entries_;
     std::vector<VisibilityDrawRange> visibility_draw_ranges_;
     std::vector<VisibilityTexture> visibility_textures_;
     // CPU-authored indirect arguments use one fenced buffer per frame slot.

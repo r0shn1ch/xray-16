@@ -38,6 +38,52 @@
 
 namespace xray::render::vulkan
 {
+bool GpuLevel::visibility_draw_entries(uint32_t frame, VkDescriptorBufferInfo& result,
+    bool& host_written, std::string& error) const
+{
+    result = {};
+    host_written = false;
+    if (visibility_matrix_ranges_.empty())
+    {
+        result = {visibility_draw_entries_.handle(), 0, visibility_draw_entries_.size()};
+        return result.buffer != VK_NULL_HANDLE;
+    }
+    if (frame >= visibility_frame_entries_.size() || visibility_dynamic_entries_.empty())
+    {
+        error = "invalid animated visibility frame";
+        return false;
+    }
+    const auto* view = reinterpret_cast<const float*>(&Device.mView);
+    for (const auto& range : visibility_matrix_ranges_)
+    {
+        if (range.first > visibility_dynamic_entries_.size() ||
+            range.count > visibility_dynamic_entries_.size() - range.first)
+        {
+            error = "invalid animated visibility draw range";
+            return false;
+        }
+        std::array<std::array<float, 4>, 3> base{{{{1, 0, 0, 0}}, {{0, 1, 0, 0}}, {{0, 0, 1, 0}}}};
+        auto detail = base;
+        if (range.matrices.enabled[0]) base = range.matrices.values[0].evaluate(Device.fTimeGlobal, view);
+        if (range.matrices.enabled[1]) detail = range.matrices.values[1].evaluate(Device.fTimeGlobal, view);
+        for (uint32_t i = 0; i < range.count; ++i)
+        {
+            auto& entry = visibility_dynamic_entries_[range.first + i];
+            entry.base_u_x = base[0][0]; entry.base_u_y = base[0][1]; entry.base_u_offset = base[0][3];
+            entry.base_v_x = base[1][0]; entry.base_v_y = base[1][1]; entry.base_v_offset = base[1][3];
+            entry.detail_u_x = detail[0][0]; entry.detail_u_y = detail[0][1]; entry.detail_u_offset = detail[0][3];
+            entry.detail_v_x = detail[1][0]; entry.detail_v_y = detail[1][1]; entry.detail_v_offset = detail[1][3];
+        }
+    }
+    auto& buffer = visibility_frame_entries_[frame];
+    if (!buffer.write(0, visibility_dynamic_entries_.data(),
+            visibility_dynamic_entries_.size() * sizeof(visibility::DrawEntry), error))
+        return false;
+    result = {buffer.handle(), 0, buffer.size()};
+    host_written = true;
+    error.clear();
+    return true;
+}
 namespace
 {
 #if defined(XR_PLATFORM_ANDROID)
@@ -1350,6 +1396,8 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                         mesh.emissive ? 1.f : 0.f};
                 }
                 auto& range = prepared.visibility_draw_ranges_[mesh.geometry_batch];
+                if (mesh.matrices.enabled[0] || (mesh.single_detail && mesh.matrices.enabled[1]))
+                    prepared.visibility_matrix_ranges_.push_back({first_draw, draw_count, mesh.matrices});
                 if (!range.draw_count)
                     range = {mesh.geometry_batch, first_draw, draw_count};
                 else
@@ -1383,8 +1431,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
                 if ((mesh.mode != SurfaceMode::Opaque && !cutout) || !mesh.packed_cluster_indices || mesh.secondary_opaque ||
                     !mesh.visibility_material_supported || mesh.terrain || mesh.environment ||
                     mesh.environment_constant || mesh.laemb || mesh.lod_atlas || mesh.tree ||
-                    mesh.tessellation || mesh.fog || mesh.depth_proxy || mesh.matrices.enabled[0] ||
-                    (mesh.single_detail && mesh.matrices.enabled[1]) ||
+                    mesh.tessellation || mesh.fog || mesh.depth_proxy ||
                     mesh.pass_graph.count != 1 ||
                     !simple_shader ||
                     mesh.material_id >= models.materials.size())
@@ -1437,6 +1484,25 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
             }
             if (prepared.visibility_draw_ranges_.empty())
                 prepared.visibility_textures_.clear();
+            else if (!prepared.visibility_matrix_ranges_.empty())
+            {
+                prepared.visibility_dynamic_entries_ = std::move(entries);
+                for (auto& frame_entries : prepared.visibility_frame_entries_)
+                    if (!frame_entries.initialize(device, entry_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                            memory, upload.buffer, error))
+                    {
+                        Msg("! [renderer-vulkan] animated visibility materials unavailable: %s", error.c_str());
+                        prepared.visibility_draw_ranges_.clear();
+                        prepared.visibility_textures_.clear();
+                        prepared.visibility_dynamic_entries_.clear();
+                        prepared.visibility_matrix_ranges_.clear();
+                        for (auto& allocated : prepared.visibility_frame_entries_) allocated.destroy();
+                        prepared.visibility_draw_entries_.destroy();
+                        error.clear();
+                        break;
+                    }
+            }
         }
     }
     if (cluster_draw_count && pass.supports_multi_draw_indirect() && !prepared.cluster_visibility_.ready())
@@ -1632,6 +1698,10 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
     pending_ = std::move(prepared.pending_);
     geometry_batches_ = std::move(prepared.geometry_batches_);
     visibility_draw_entries_ = std::move(prepared.visibility_draw_entries_);
+    visibility_matrix_ranges_ = std::move(prepared.visibility_matrix_ranges_);
+    visibility_dynamic_entries_ = std::move(prepared.visibility_dynamic_entries_);
+    for (size_t frame = 0; frame < visibility_frame_entries_.size(); ++frame)
+        visibility_frame_entries_[frame] = std::move(prepared.visibility_frame_entries_[frame]);
     visibility_draw_ranges_ = std::move(prepared.visibility_draw_ranges_);
     visibility_textures_ = std::move(prepared.visibility_textures_);
     for (size_t frame = 0; frame < cluster_draw_commands_.size(); ++frame)
@@ -3522,6 +3592,9 @@ void GpuLevel::destroy()
     meshes_.clear();
     geometry_batches_.clear();
     visibility_draw_entries_.destroy();
+    for (auto& entries : visibility_frame_entries_) entries.destroy();
+    visibility_dynamic_entries_.clear();
+    visibility_matrix_ranges_.clear();
     visibility_draw_ranges_.clear();
     visibility_textures_.clear();
     for (BufferResource& commands : cluster_draw_commands_)
