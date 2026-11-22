@@ -2321,7 +2321,9 @@ bool GpuLevel::record_details(const FrameRecordingContext &frame, const Deferred
     {
         if (p.model >= detail_meshes_.size())
             return false;
-        if (detail_meshes_[p.model].mode == SurfaceMode::Transparent || !visible_sphere(mvp, p.x, p.y, p.z, 6.f))
+        const auto& mesh = detail_meshes_[p.model];
+        if (mesh.mode == SurfaceMode::Transparent ||
+            !visible_sphere(mvp, p.x, p.y, p.z, mesh.detail_radius * std::abs(p.scale)))
             continue;
         auto instance = detail_instance(p.x, p.y, p.z, p.yaw, p.scale);
         const auto *bytes = reinterpret_cast<const uint8_t *>(&instance);
@@ -2384,8 +2386,9 @@ bool GpuLevel::prepare_transparent_details(const FrameRecordingContext &frame, c
     {
         if (placement.model >= detail_meshes_.size())
             return false;
-        if (detail_meshes_[placement.model].mode == SurfaceMode::Transparent &&
-            visible_sphere(mvp, placement.x, placement.y, placement.z, 6.f))
+        const auto& mesh = detail_meshes_[placement.model];
+        if (mesh.mode == SurfaceMode::Transparent && visible_sphere(mvp, placement.x, placement.y, placement.z,
+                mesh.detail_radius * std::abs(placement.scale)))
             visible.push_back(&placement);
     }
     const auto distance = [](const DetailPlacement *placement) {
