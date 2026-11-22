@@ -259,24 +259,30 @@ void LocalShadowTargets::layout_tiles(const std::array<TileRequest, LocalShadowS
         if (!request.faces || !request.resolution)
             continue;
         std::array<uint32_t, LocalShadowFaces> nodes{};
-        uint32_t level = atlas.LevelOf(request.resolution);
+        std::array<VkRect2D, LocalShadowFaces> light_tiles{};
+        bool light_fits = false;
         // Downgrade a light as a unit so point-light faces keep matching resolutions.
-        while (level < framegraph::kLocalAtlasLevels &&
-            !atlas.AllocateFaces(level, request.faces, nodes))
-            ++level;
-        if (level == framegraph::kLocalAtlasLevels)
+        for (uint32_t level = atlas.LevelOf(request.resolution); level < framegraph::kLocalAtlasLevels; ++level)
+        {
+            if (!atlas.AllocateFaces(level, request.faces, nodes)) continue;
+            light_fits = true;
+            for (uint32_t face = 0; face < request.faces; ++face)
+            {
+                uint32_t x{}, y{}, size{};
+                atlas.Rect(nodes[face], x, y, size);
+                light_fits &= x + size <= atlas_extent_.width && y + size <= atlas_extent_.height;
+                light_tiles[face] = {{int32_t(x), int32_t(y)}, {size, size}};
+            }
+            if (light_fits) break;
+            for (uint32_t face = 0; face < request.faces; ++face)
+                atlas.Free(nodes[face]);
+        }
+        if (!light_fits)
         {
             fits = false;
             break;
         }
-        for (uint32_t face = 0; face < request.faces; ++face)
-        {
-            uint32_t x{}, y{}, size{};
-            atlas.Rect(nodes[face], x, y, size);
-            if (x + size > atlas_extent_.width || y + size > atlas_extent_.height)
-                fits = false;
-            packed[slot * LocalShadowFaces + face] = {{int32_t(x), int32_t(y)}, {size, size}};
-        }
+        std::copy_n(light_tiles.begin(), request.faces, packed.begin() + slot * LocalShadowFaces);
     }
     if (!fits)
     {
