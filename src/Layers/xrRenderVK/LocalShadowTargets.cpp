@@ -241,6 +241,11 @@ bool LocalShadowTargets::reserve_lights(uint32_t image, size_t count, std::strin
 
 void LocalShadowTargets::layout_tiles(const std::array<TileRequest, LocalShadowSlots>& requests)
 {
+    if (tile_layout_valid_ && std::equal(requests.begin(), requests.end(), last_tile_requests_.begin(),
+            [](const TileRequest& a, const TileRequest& b) {
+                return a.resolution == b.resolution && a.faces == b.faces;
+            }))
+        return;
     framegraph::LocalAtlasAllocator atlas;
     atlas.Reset(atlas_extent_.width, atlas_extent_.height);
     std::array<uint32_t, LocalShadowSlots> slots{};
@@ -296,6 +301,8 @@ void LocalShadowTargets::layout_tiles(const std::array<TileRequest, LocalShadowS
             tiles_[i].extent.width != packed[i].extent.width)
             cache_signatures_[i] = 0;
     tiles_ = packed;
+    last_tile_requests_ = requests;
+    tile_layout_valid_ = true;
 }
 
 VkExtent2D LocalShadowTargets::face_extent(uint32_t slot, uint32_t face) const
@@ -478,6 +485,7 @@ VkBuffer LocalShadowTargets::uniform(uint32_t image) const
 
 void LocalShadowTargets::destroy()
 {
+    tile_layout_valid_ = false;
     if (device_)
     {
         for (Target &target : targets_)

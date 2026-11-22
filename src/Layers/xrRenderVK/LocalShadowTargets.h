@@ -114,6 +114,8 @@ class LocalShadowTargets
     };
     VkExtent2D atlas_extent_{};
     std::array<VkRect2D, LocalShadowSlots * LocalShadowFaces> tiles_{}, fixed_tiles_{};
+    std::array<TileRequest, LocalShadowSlots> last_tile_requests_{};
+    bool tile_layout_valid_{};
     VkImageAspectFlags barrier_aspects_{VK_IMAGE_ASPECT_DEPTH_BIT};
     VkDevice device_{};
     VkRenderPass pass_{}, tile_pass_{}, load_pass_{}, graph_pass_{}, graph_load_pass_{};
