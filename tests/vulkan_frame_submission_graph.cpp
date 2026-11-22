@@ -52,6 +52,18 @@ int main()
         }, error));
     assert(wait_count == 1);
     assert(graph.submission(external) == 29);
+    assert(graph.submit(first, [](FrameSubmissionGraph::Queue) { return uint64_t{17}; }, {}, error));
+    assert(graph.depends_on_submission(second, FrameSubmissionGraph::Queue::Compute, 17, error));
+    uint32_t shared_wait_count = 0;
+    const auto wait = [&](FrameSubmissionGraph::Queue destination,
+        FrameSubmissionGraph::Queue source, uint64_t submission) {
+        assert(destination == FrameSubmissionGraph::Queue::Graphics);
+        assert(source == FrameSubmissionGraph::Queue::Compute && submission == 17);
+        ++shared_wait_count;
+    };
+    assert(graph.prepare(second, wait, error));
+    assert(graph.prepare(second, wait, error));
+    assert(shared_wait_count == 1);
 
     FrameRecordingContext source{};
     source.command_buffer = handle<VkCommandBuffer>(101);
