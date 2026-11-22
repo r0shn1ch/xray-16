@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <exception>
 #include <functional>
@@ -12,7 +13,7 @@
 namespace xray::render::framegraph
 {
 // Orders command-list submissions and emits the cross-queue waits declared
-// between them. Same-queue dependencies rely on that queue's submission order.
+// between them. Submission tokens are increasing timeline values per queue.
 class FrameSubmissionGraph
 {
 public:
@@ -182,10 +183,7 @@ public:
                 return false;
             }
         }
-        // A resource import and an in-graph dependency may refer to the
-        // same producer submission. Queue the wait once for this consumer.
-        auto& queued_waits = consumer_info.queued_waits;
-        queued_waits.reserve(queued_waits.size() + consumer_info.dependencies.size());
+        std::array<uint64_t, 3> required_waits{};
         for (const Dependency& dependency : consumer_info.dependencies)
         {
             Queue source_queue = dependency.source_queue;
@@ -195,10 +193,23 @@ public:
                 source_queue = passes_[dependency.producer].queue;
                 submission = passes_[dependency.producer].submission;
             }
-            if (source_queue == consumer_info.queue)
-                continue;
-            const auto key = std::make_pair(source_queue, submission);
-            if (std::find(queued_waits.begin(), queued_waits.end(), key) != queued_waits.end())
+            if (source_queue != consumer_info.queue)
+            {
+                const auto index = static_cast<size_t>(source_queue);
+                if (index >= required_waits.size())
+                {
+                    error = "Frame submission graph: invalid dependency queue for " + consumer_info.name;
+                    return false;
+                }
+                auto& required = required_waits[index];
+                required = std::max(required, submission);
+            }
+        }
+        for (size_t index = 0; index < required_waits.size(); ++index)
+        {
+            const uint64_t submission = required_waits[index];
+            auto& queued = consumer_info.queued_waits[index];
+            if (submission <= queued)
                 continue;
             if (!queue_wait)
             {
@@ -207,8 +218,8 @@ public:
             }
             try
             {
-                queue_wait(consumer_info.queue, source_queue, submission);
-                queued_waits.push_back(key);
+                queue_wait(consumer_info.queue, static_cast<Queue>(index), submission);
+                queued = submission;
             }
             catch (const std::exception& exception)
             {
@@ -312,7 +323,7 @@ private:
         QueueFamily queue_family = InvalidQueueFamily;
         std::vector<Dependency> dependencies;
         uint64_t submission{};
-        std::vector<std::pair<Queue, uint64_t>> queued_waits;
+        std::array<uint64_t, 3> queued_waits{};
     };
 
     bool valid(Pass pass) const { return pass < passes_.size(); }

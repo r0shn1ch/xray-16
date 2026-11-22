@@ -38,6 +38,7 @@ int main()
     assert((order == std::vector<FrameSubmissionGraph::Pass>{first, second, third}));
 
     const auto external = graph.add_pass("external wait", FrameSubmissionGraph::Queue::Graphics);
+    assert(graph.depends_on_submission(external, FrameSubmissionGraph::Queue::Compute, 11, error));
     assert(graph.depends_on_submission(external, FrameSubmissionGraph::Queue::Compute, 17, error));
     assert(graph.depends_on_submission(external, FrameSubmissionGraph::Queue::Compute, 17, error));
     uint32_t wait_count = 0;
