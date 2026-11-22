@@ -400,7 +400,8 @@ class DeferredPass
                             uint32_t first_index = 0, const char *vertex_name = nullptr,
                             const char *fragment_name = nullptr, const char **failure = nullptr, float alpha_ref = 0.f,
                             const float *normal_rows = nullptr, float detail_scale = 1.f, int32_t vertex_base = 0,
-                            const TextureMatrixSet *matrices = nullptr, uint64_t variant_hash = 0) const;
+                            const TextureMatrixSet *matrices = nullptr, uint64_t variant_hash = 0,
+                            VkBuffer instances = VK_NULL_HANDLE, VkDeviceSize instance_offset = 0) const;
     bool record_lighting(const FrameRecordingContext &frame, VkDescriptorSet gbuffer_set, const DeferredLight &light,
                          VkDescriptorSet weather_set = VK_NULL_HANDLE, const WeatherLighting *weather = nullptr) const;
     bool record_local_light(const FrameRecordingContext &frame, VkDescriptorSet gbuffer_set, VkDescriptorSet local_set,

@@ -1467,8 +1467,7 @@ bool GpuLevel::load(IReader &level, VkDevice device, VkQueue queue, VkCommandPoo
             error = "level.details / " + prototype.shader + ": " + error;
             return false;
         }
-        if (mesh.mode != SurfaceMode::Transparent)
-            mesh.pass_graph.passes[0].vertex = "vk\\level_detail_instanced.vs";
+        mesh.pass_graph.passes[0].vertex = "vk\\level_detail_instanced.vs";
         auto &node = mesh.pass_graph.passes[0];
         bool material_ready = false;
         if (surface_roles)
@@ -2431,7 +2430,7 @@ bool GpuLevel::record_details(const FrameRecordingContext &frame, const Deferred
 bool GpuLevel::prepare_transparent_details(const FrameRecordingContext &frame, const float (&mvp)[16],
                                            std::vector<float> &sort_distances) const
 {
-    if (frame.frame_index >= transparent_detail_batches_.size())
+    if (frame.frame_index >= transparent_detail_instances_.size())
         return false;
     sort_distances.clear();
     auto &draws = transparent_detail_draws_[frame.frame_index];
@@ -2456,59 +2455,26 @@ bool GpuLevel::prepare_transparent_details(const FrameRecordingContext &frame, c
     if (visible.empty())
         return true;
 
-    std::vector<LevelVertex> vertices;
-    std::vector<uint32_t> indices;
+    std::vector<DetailInstance> instances;
+    instances.reserve(visible.size());
+    // Keep one instance per global transparent-sort entry. The draw binds its
+    // byte offset, so interleaving details with other transparent surfaces does
+    // not require transformed vertex/index copies or drawIndirectFirstInstance.
     for (const DetailPlacement *placement : visible)
     {
-        const DetailPrototype &prototype = details_.prototypes[placement->model];
-        if (vertices.size() > UINT32_MAX - prototype.vertices.size() ||
-            indices.size() > UINT32_MAX - prototype.indices.size())
+        if (instances.size() >= UINT32_MAX)
             return false;
-        draws.push_back(
-            {placement->model, static_cast<uint32_t>(indices.size()), static_cast<uint32_t>(prototype.indices.size())});
+        draws.push_back({placement->model, static_cast<uint32_t>(instances.size())});
         sort_distances.push_back(distance(placement));
-        const uint32_t first = static_cast<uint32_t>(vertices.size());
-        Fmatrix rotation, scale, world;
-        Fvector position;
-        position.set(placement->x, placement->y, placement->z);
-        rotation.rotateY(placement->yaw);
-        rotation.translate_over(position);
-        scale.scale(placement->scale, placement->scale, placement->scale);
-        world.mul_43(rotation, scale);
-        for (const LevelVertex &original : prototype.vertices)
-        {
-            LevelVertex vertex = original;
-            Fvector local, transformed, normal;
-            local.set(original.position[0], original.position[1], original.position[2]);
-            world.transform_tiny(transformed, local);
-            local.set(original.normal[0], original.normal[1], original.normal[2]);
-            rotation.transform_dir(normal, local);
-            normal.normalize_safe();
-            std::copy_n(&transformed.x, 3, vertex.position);
-            std::copy_n(&normal.x, 3, vertex.normal);
-            vertices.push_back(vertex);
-        }
-        for (uint32_t index : prototype.indices)
-            indices.push_back(first + index);
+        instances.push_back(detail_instance(placement->x, placement->y, placement->z, placement->yaw, placement->scale));
     }
-    auto &batches = transparent_detail_batches_[frame.frame_index];
-    if (batches.empty())
-        batches.resize(1);
-    auto &batch = batches[0];
-    const auto write = [this](BufferResource &buffer, const void *data, size_t bytes, VkBufferUsageFlags usage,
-                              std::string &error) {
-        if (buffer.size() < bytes &&
-            !buffer.initialize(device_, std::max<VkDeviceSize>(bytes, buffer.size() ? buffer.size() * 2 : 4096), usage,
-                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, memory_,
-                               upload_.buffer, error))
-            return false;
-        return buffer.write(0, data, bytes, error);
-    };
+    auto &buffer = transparent_detail_instances_[frame.frame_index];
     std::string error;
-    if (!write(batch.vertices, vertices.data(), vertices.size() * sizeof(LevelVertex),
-               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, error) ||
-        !write(batch.indices, indices.data(), indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-               error))
+    const size_t bytes = instances.size() * sizeof(DetailInstance);
+    if ((buffer.size() < bytes && !buffer.initialize(device_,
+            std::max<VkDeviceSize>(bytes, buffer.size() ? buffer.size() * 2 : 4096), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, memory_, upload_.buffer, error)) ||
+        !buffer.write(0, instances.data(), bytes, error))
     {
         Msg("! [renderer-vulkan] transparent detail upload: %s", error.c_str());
         return false;
@@ -2519,20 +2485,21 @@ bool GpuLevel::prepare_transparent_details(const FrameRecordingContext &frame, c
 bool GpuLevel::record_transparent_detail(size_t draw_index, const FrameRecordingContext &frame,
                                          const DeferredPass &pass, const float (&mvp)[16]) const
 {
-    if (frame.frame_index >= transparent_detail_batches_.size() ||
+    if (frame.frame_index >= transparent_detail_instances_.size() ||
         draw_index >= transparent_detail_draws_[frame.frame_index].size() ||
-        transparent_detail_batches_[frame.frame_index].empty())
+        !transparent_detail_instances_[frame.frame_index].handle())
         return false;
     const auto &draw = transparent_detail_draws_[frame.frame_index][draw_index];
-    const auto &batch = transparent_detail_batches_[frame.frame_index][0];
+    const auto &instances = transparent_detail_instances_[frame.frame_index];
     const Mesh &mesh = detail_meshes_[draw.model];
     const auto &node = mesh.pass_graph.passes[0];
     {
         const char *failure = nullptr;
-        if (!pass.record_transparent(frame, batch.vertices.handle(), batch.indices.handle(), draw.count, mvp,
-                                     mesh.material, draw.first, node.vertex.c_str(), node.fragment.c_str(), &failure,
+        if (!pass.record_transparent(frame, mesh.vertex_buffer(), mesh.index_buffer(), mesh.index_count, mvp,
+                                     mesh.material, 0, node.vertex.c_str(), node.fragment.c_str(), &failure,
                                      float(mesh.alpha_ref) / 255.f, nullptr, mesh.terrain_scale, 0, &mesh.matrices,
-                                     node.shader_variant_hash))
+                                     node.shader_variant_hash, instances.handle(),
+                                     VkDeviceSize(draw.instance) * sizeof(DetailInstance)))
         {
             Msg("! [renderer-vulkan] transparent detail shader='%s' texture='%s': %s",
                 details_.prototypes[draw.model].shader.c_str(), details_.prototypes[draw.model].texture.c_str(),
@@ -3355,8 +3322,8 @@ void GpuLevel::destroy()
     visible_details_.clear();
     for (auto &buffers : detail_batches_)
         buffers.clear();
-    for (auto &buffers : transparent_detail_batches_)
-        buffers.clear();
+    for (auto &buffer : transparent_detail_instances_)
+        buffer.destroy();
     for (auto &draws : transparent_detail_draws_)
         draws.clear();
     detail_signatures_.fill(0);

@@ -649,7 +649,7 @@ static void exercise_smoke_shader(VkDevice device, VkQueue queue, VkCommandPool 
     std::cout << "GPU smoke trail, cell selection, indirect detail generation and culling passed\n";
 }
 
-void exercise_deferred_startup(VkDevice device, const VkPhysicalDeviceLimits& limits)
+void exercise_deferred_startup(VkDevice device, const VkPhysicalDeviceLimits& limits, const std::string& shader_directory)
 {
     if (limits.maxPushConstantsSize < 256) return;
     std::string error;
@@ -695,10 +695,29 @@ void exercise_deferred_startup(VkDevice device, const VkPhysicalDeviceLimits& li
         require(pass.initialize(device, geometry, forward, shaders[0].handle(), shaders[1].handle(),
             shaders[2].handle(), shaders[3].handle(), shaders[4].handle(), shaders[5].handle(),
             shaders[6].handle(), dispatch, error), error);
+        std::array<ShaderModule, 3> detail_shaders;
+        const char* names[]{"vk/level_detail_instanced.vs.spv", "vk/level_vegetation_blended.ps.spv",
+            "vk/level_vegetation_detail_blended.ps.spv"};
+        for (size_t i = 0; i < detail_shaders.size(); ++i)
+        {
+            std::ifstream file(shader_directory + "/" + names[i], std::ios::binary | std::ios::ate);
+            require(bool(file), std::string("missing detail shader: ") + names[i]);
+            const auto bytes = file.tellg();
+            require(bytes > 0 && bytes % 4 == 0, "invalid detail SPIR-V size");
+            std::vector<uint32_t> words(static_cast<size_t>(bytes) / 4);
+            file.seekg(0);
+            file.read(reinterpret_cast<char*>(words.data()), bytes);
+            require(bool(file) && detail_shaders[i].initialize(device, modules, words.data(),
+                static_cast<size_t>(bytes), error), error);
+        }
+        for (size_t i = 1; i < detail_shaders.size(); ++i)
+            require(pass.create_game_pipeline("vk\\level_detail_instanced.vs",
+                i == 1 ? "vk\\level_vegetation_blended.ps" : "vk\\level_vegetation_detail_blended.ps",
+                detail_shaders[0].handle(), detail_shaders[i].handle(), SurfaceMode::Transparent, false, error), error);
     }
     vkDestroyRenderPass(device, forward, nullptr);
     vkDestroyRenderPass(device, geometry, nullptr);
-    std::cout << "Deferred startup geometry/alpha/transparent/HUD/lighting/weather pipelines passed\n";
+    std::cout << "Deferred startup geometry/alpha/transparent/HUD/lighting/weather and instanced transparent detail pipelines passed\n";
 }
 
 int main(int argc, char** argv)
@@ -786,7 +805,7 @@ int main(int argc, char** argv)
         VkPhysicalDeviceMemoryProperties memory{}; vkGetPhysicalDeviceMemoryProperties(physical, &memory);
         BufferResourceDispatch vk{vkCreateBuffer, vkDestroyBuffer, vkGetBufferMemoryRequirements, vkAllocateMemory,
             vkFreeMemory, vkBindBufferMemory, vkMapMemory, vkUnmapMemory};
-        exercise_deferred_startup(f.device, props.limits);
+        exercise_deferred_startup(f.device, props.limits, shader_directory);
         if (collision_shader) exercise_collision_shader(physical, f.device, queue, f.pool, props.limits, memory, vk, collision_shader);
         std::string error;
         GpuParticleCompute compute;

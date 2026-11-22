@@ -2097,13 +2097,17 @@ bool DeferredPass::record_transparent(const FrameRecordingContext &frame, VkBuff
                                       uint32_t first_index, const char *vertex_name, const char *fragment_name,
                                       const char **failure, float alpha_ref, const float *normal_rows,
                                       float detail_scale, int32_t vertex_base, const TextureMatrixSet *matrices,
-                                      uint64_t variant_hash) const
+                                      uint64_t variant_hash, VkBuffer instances, VkDeviceSize instance_offset) const
 {
     const auto reject = [failure](const char *reason) {
         if (failure)
             *failure = reason;
         return false;
     };
+    const bool instanced = vertex_name && std::strcmp(vertex_name, "vk\\level_detail_instanced.vs") == 0;
+    if (instanced != bool(instances) || (!instances && instance_offset) ||
+        instance_offset % sizeof(DetailInstance))
+        return reject("incompatible instance buffer or offset");
     VkPipeline pipeline = transparent_;
     const GamePipeline *pair = nullptr;
     if (vertex_name || fragment_name)
@@ -2180,6 +2184,8 @@ bool DeferredPass::record_transparent(const FrameRecordingContext &frame, VkBuff
                                          &draw_weather_set, 0, nullptr);
     }
     push_texture_matrices(frame, layout, matrices, normal_rows);
+    if (instances)
+        vk_.cmd_bind_vertex_buffers(frame.command_buffer, 1, 1, &instances, &instance_offset);
     vk_.cmd_draw_indexed(frame.command_buffer, index_count, 1, first_index, vertex_base, 0);
     ++draw_calls_;
     triangles_ += index_count / 3;

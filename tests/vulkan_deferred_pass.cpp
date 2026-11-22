@@ -3,6 +3,7 @@
 #include "src/Layers/xrRenderVK/ModelGeometry.h"
 #include "src/Layers/xrRenderVK/GameShaderResources.h"
 #include "src/Layers/xrRenderVK/LevelPassGraph.h"
+#include "src/Layers/xrRenderVK/DetailInstance.h"
 
 #include <cassert>
 #include <cstddef>
@@ -44,6 +45,9 @@ float expected_world_alpha_ref{.25f};
 bool distinct_surface_images{}, surface_bindings_checked{};
 float expected_environment_camera[4]{2.f, 3.f, 4.f, 1.f};
 VkPipeline bound_pipeline{};
+bool instanced_detail_probe{};
+uint32_t detail_instance_binds{}, detail_instance_draws{};
+VkDeviceSize expected_instance_offset{};
 VkPipelineLayout geometry_layout{}, skinned_layout{}, lighting_layout{}, weather_layout{};
 VkDescriptorSet updated_material{};
 VkImageView updated_albedo{};
@@ -281,6 +285,19 @@ VkResult VKAPI_PTR create_pipeline(VkDevice, VkPipelineCache, uint32_t count, co
         assert(info->pDepthStencilState->depthTestEnable && info->pDepthStencilState->depthWriteEnable);
         assert(!info->pColorBlendState->pAttachments[0].blendEnable);
     }
+    else if (info->pStages[1].module == handle<VkShaderModule>(203))
+    {
+        assert(info->renderPass == handle<VkRenderPass>(11));
+        const auto& inputs = *info->pVertexInputState;
+        assert(inputs.vertexBindingDescriptionCount == 2 && inputs.vertexAttributeDescriptionCount == 10);
+        assert(inputs.pVertexBindingDescriptions[1].stride == sizeof(DetailInstance) &&
+            inputs.pVertexBindingDescriptions[1].inputRate == VK_VERTEX_INPUT_RATE_INSTANCE);
+        assert(inputs.pVertexAttributeDescriptions[8].location == 9 &&
+            inputs.pVertexAttributeDescriptions[9].location == 10);
+        assert(info->pColorBlendState->attachmentCount == 1 &&
+            info->pColorBlendState->pAttachments[0].blendEnable &&
+            info->pDepthStencilState->depthTestEnable && !info->pDepthStencilState->depthWriteEnable);
+    }
     else if (pipeline_count < 2)
     {
         assert(info->renderPass == handle<VkRenderPass>(10));
@@ -360,8 +377,15 @@ void VKAPI_PTR scissor(VkCommandBuffer, uint32_t, uint32_t, const VkRect2D *valu
 {
     assert(value->extent.width == 640 && value->extent.height == 480);
 }
-void VKAPI_PTR bind_vertices(VkCommandBuffer, uint32_t, uint32_t, const VkBuffer *value, const VkDeviceSize *)
+void VKAPI_PTR bind_vertices(VkCommandBuffer, uint32_t first, uint32_t count, const VkBuffer *value, const VkDeviceSize *offset)
 {
+    if (first == 1)
+    {
+        assert(instanced_detail_probe && count == 1 && *value == handle<VkBuffer>(25));
+        assert(*offset == expected_instance_offset);
+        ++detail_instance_binds;
+        return;
+    }
     assert(*value == handle<VkBuffer>(20));
 }
 void VKAPI_PTR bind_indices(VkCommandBuffer, VkBuffer value, VkDeviceSize, VkIndexType type)
@@ -467,6 +491,12 @@ void VKAPI_PTR draw_indexed(VkCommandBuffer, uint32_t count, uint32_t instances,
     assert(count == 6 && instances == 1);
     assert(first_index == expected_first_index);
     assert(vertex_base == expected_vertex_base);
+    if (instanced_detail_probe)
+    {
+        assert(detail_instance_binds == detail_instance_draws + 1);
+        ++detail_instance_draws;
+        return;
+    }
     constexpr uintptr_t expected_pipelines[]{
         100, 106, 108, 101, 102, 107, 103, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132,
         133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153,
@@ -1084,6 +1114,25 @@ int main()
                                     SurfaceMode::AlphaTest, 0, "vk\\level_opaque.vs", "vk\\particle_world_deferred.ps",
                                     200.f / 255.f));
     assert(draw_count == prior_draws + 3);
+    assert(deferred.create_game_pipeline("vk\\level_detail_instanced.vs", "vk\\level_detail_unlit_blended.ps",
+        handle<VkShaderModule>(204), handle<VkShaderModule>(203), SurfaceMode::Transparent, false, error));
+    instanced_detail_probe = true;
+    const auto record_detail = [&](VkBuffer instances, VkDeviceSize offset, const char* vertex = "vk\\level_detail_instanced.vs") {
+        return deferred.record_transparent(hud_frame, handle<VkBuffer>(20), handle<VkBuffer>(21), 6,
+            expected_mvp, detail, 0, vertex, "vk\\level_detail_unlit_blended.ps", nullptr, 0.f, nullptr,
+            1.75f, 0, nullptr, 0, instances, offset);
+    };
+    assert(!record_detail(VK_NULL_HANDLE, 0));
+    assert(!record_detail(handle<VkBuffer>(25), 1));
+    assert(!record_detail(handle<VkBuffer>(25), 0, "vk\\level_detail_blended.vs"));
+    assert(detail_instance_binds == 0 && detail_instance_draws == 0);
+    for (const VkDeviceSize offset : {VkDeviceSize(2 * sizeof(DetailInstance)), VkDeviceSize(0)})
+    {
+        expected_instance_offset = offset;
+        assert(record_detail(handle<VkBuffer>(25), offset));
+    }
+    assert(detail_instance_binds == 2 && detail_instance_draws == 2);
+    instanced_detail_probe = false;
     DeferredPass::GamePipelineStages optional;
     optional.hull = handle<VkShaderModule>(211);
     optional.domain = handle<VkShaderModule>(212);

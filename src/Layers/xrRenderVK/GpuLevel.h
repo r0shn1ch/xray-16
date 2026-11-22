@@ -332,11 +332,11 @@ class GpuLevel
     mutable std::array<bool, FrameContext::FramesInFlight> gpu_detail_recorded_{};
 
     mutable std::array<uint64_t, FrameContext::FramesInFlight> detail_signatures_{};
-    mutable std::array<std::vector<DetailBatch>, FrameContext::FramesInFlight> transparent_detail_batches_;
+    mutable std::array<BufferResource, FrameContext::FramesInFlight> transparent_detail_instances_;
     struct TransparentDetailDraw
     {
         uint8_t model;
-        uint32_t first, count;
+        uint32_t instance;
     };
     mutable std::array<std::vector<TransparentDetailDraw>, FrameContext::FramesInFlight> transparent_detail_draws_;
     std::vector<LevelVisual> visuals_;
