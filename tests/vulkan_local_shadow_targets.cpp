@@ -212,6 +212,12 @@ int main()
         assert(targets.face_extent(1, face).width == 0);
     }
     assert(!targets.cached_face(1, 1, matrix));
+    targets.remember_face(1, 1, matrix);
+    const auto previous_barriers = barriers;
+    assert(!targets.cached_face(1, 1, matrix));
+    assert(!targets.begin_face(frame, 1, 1, shadow));
+    assert(!targets.record_cached_face_copy(frame.command_buffer, frame.image_index, 1, 1));
+    assert(!targets.copy_cached_face(frame, 1, 1) && barriers == previous_barriers && copies == 2);
     targets.destroy();
     assert(framebuffers == 0 && passes == 0 && vk_mock::images.empty() && vk_mock::buffers.empty() &&
            vk_mock::allocations.empty());

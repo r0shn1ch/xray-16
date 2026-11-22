@@ -352,7 +352,7 @@ bool LocalShadowTargets::begin_face(const FrameRecordingContext &frame, uint32_t
                                     bool graph_managed_layouts) const
 {
     if (!frame.command_buffer || frame.image_index >= image_count_ || slot >= LocalShadowSlots ||
-        face >= LocalShadowFaces || (cached && !caching()))
+        face >= LocalShadowFaces || (cached && !caching()) || !face_extent(slot, face).width)
         return false;
     const VkFramebuffer framebuffer =
         targets_[cached ? cache_index_ : frame.image_index].framebuffer;
@@ -387,18 +387,18 @@ uint64_t shadow_signature(const float *matrix)
 } // namespace
 bool LocalShadowTargets::cached_face(uint32_t slot, uint32_t face, const float *matrix) const
 {
-    return caching() && slot < LocalShadowSlots && face < LocalShadowFaces &&
+    return caching() && matrix && face_extent(slot, face).width &&
            cache_signatures_[slot * LocalShadowFaces + face] == shadow_signature(matrix);
 }
 void LocalShadowTargets::remember_face(uint32_t slot, uint32_t face, const float *matrix)
 {
-    if (slot < LocalShadowSlots && face < LocalShadowFaces)
+    if (matrix && face_extent(slot, face).width)
         cache_signatures_[slot * LocalShadowFaces + face] = shadow_signature(matrix);
 }
 bool LocalShadowTargets::record_cached_face_copy(VkCommandBuffer command, uint32_t image,
     uint32_t slot, uint32_t face) const
 {
-    if (!caching() || !command || image >= image_count_ || slot >= LocalShadowSlots || face >= LocalShadowFaces)
+    if (!caching() || !command || image >= image_count_ || !face_extent(slot, face).width)
         return false;
     const uint32_t layer = slot * LocalShadowFaces + face;
     VkImageCopy copy{};
@@ -413,10 +413,9 @@ bool LocalShadowTargets::record_cached_face_copy(VkCommandBuffer command, uint32
 
 bool LocalShadowTargets::copy_cached_face(const FrameRecordingContext &frame, uint32_t slot, uint32_t face) const
 {
-    if (!caching() || frame.image_index >= image_count_ || slot >= LocalShadowSlots || face >= LocalShadowFaces)
+    if (!caching() || !frame.command_buffer || frame.image_index >= image_count_ || !face_extent(slot, face).width)
         return false;
     VkImageMemoryBarrier barriers[2]{};
-    const uint32_t layer = slot * LocalShadowFaces + face;
     for (unsigned i = 0; i < 2; ++i)
     {
         auto &b = barriers[i];
@@ -433,13 +432,7 @@ bool LocalShadowTargets::copy_cached_face(const FrameRecordingContext &frame, ui
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
                                  VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
-    VkImageCopy copy{};
-    copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
-    const auto& tile = tiles_[layer];
-    copy.srcOffset = copy.dstOffset = {tile.offset.x, tile.offset.y, 0};
-    copy.extent = {tile.extent.width, tile.extent.height, 1};
-    vk_.cmd_copy_image(frame.command_buffer, barriers[0].image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, barriers[1].image,
-                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+    record_cached_face_copy(frame.command_buffer, frame.image_index, slot, face);
     for (unsigned i = 0; i < 2; ++i)
     {
         auto &b = barriers[i];
