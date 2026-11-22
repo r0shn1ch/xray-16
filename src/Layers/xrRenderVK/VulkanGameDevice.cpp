@@ -2798,7 +2798,7 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
     if (gpu_particle_graphics_) gpu_particle_graphics_->clear_pipelines();
     smoke_draw_.reset();
     trail_draw_.reset();
-    const bool replace_surface = recreate_surface || window_.frame().surface_lost();
+    bool replace_surface = recreate_surface || window_.frame().surface_lost();
     // The existing frame supplies the attachment formats for a same-surface reset.
     // A replacement surface is negotiated after SDL has created it.
     const bool preselect_msaa = !replace_surface && !gbuffer_msaa_configured_;
@@ -2856,9 +2856,19 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
     const auto recreate = [&] { return replace_surface ? window_.recreate_surface(extent, error) :
         window_.recreate_frame(extent, error); };
 #endif
+    const auto recreate_with_surface_recovery = [&]
+    {
+        if (recreate())
+            return true;
+        if (replace_surface || !window_.frame().surface_lost() || window_.frame().device_lost())
+            return false;
+        Msg("! [renderer-vulkan] surface lost during swapchain reset; creating a replacement");
+        replace_surface = true;
+        return recreate();
+    };
     if (preselect_msaa && !window_.frame().request_scene_samples(selected_msaa.samples, error))
         return false;
-    if (!recreate())
+    if (!recreate_with_surface_recovery())
     {
         if (!preselect_msaa || selected_msaa.samples == VK_SAMPLE_COUNT_1_BIT ||
             window_.frame().device_lost() || window_.frame().surface_lost())
@@ -2866,7 +2876,7 @@ bool VulkanGameDevice::recreate_swapchain(VkExtent2D extent, std::string &error,
         Msg("! [renderer-vulkan] %ux MSAA scene creation failed; retrying single-sample: %s",
             gbuffer_msaa_samples, error.c_str());
         selected_msaa = {};
-        if (!window_.frame().request_scene_samples(selected_msaa.samples, error) || !recreate())
+        if (!window_.frame().request_scene_samples(selected_msaa.samples, error) || !recreate_with_surface_recovery())
             return false;
     }
 

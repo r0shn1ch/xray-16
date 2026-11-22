@@ -26,6 +26,7 @@ unsigned created_frame_color_images{};
 bool fail_multisample_image{};
 unsigned multisample_images_created{};
 VkResult swapchain_create_result = VK_SUCCESS;
+VkResult surface_capabilities_result = VK_SUCCESS;
 unsigned blit_count{};
 VkOffset3D temporal_source_extent{}, temporal_destination_extent{};
 int fail_image_after = -1;
@@ -45,6 +46,8 @@ unsigned frame_generation_ui_registrations{};
 bool frame_generation_ui_registered_after_overlay{};
 VkResult VKAPI_PTR capabilities(VkPhysicalDevice, VkSurfaceKHR, VkSurfaceCapabilitiesKHR* out)
 {
+    if (surface_capabilities_result != VK_SUCCESS)
+        return surface_capabilities_result;
     *out = {};
     out->minImageCount = 2;
     out->maxImageCount = 2;
@@ -681,6 +684,11 @@ int main()
     assert(frame.request_scene_samples(VK_SAMPLE_COUNT_1_BIT, error));
     assert(frame.recreate(physical, surface, extent_before_msaa, error));
     assert(frame.scene_samples() == VK_SAMPLE_COUNT_1_BIT);
+    surface_capabilities_result = VK_ERROR_SURFACE_LOST_KHR;
+    assert(!frame.recreate(physical, surface, extent_before_msaa, error));
+    assert(frame.surface_lost() && !frame.device_lost());
+    surface_capabilities_result = VK_SUCCESS;
+    assert(frame.recreate(physical, surface, extent_before_msaa, error));
     swapchain_create_result = VK_ERROR_SURFACE_LOST_KHR;
     assert(!frame.recreate(physical, surface, extent_before_msaa, error));
     assert(frame.surface_lost() && !frame.device_lost());

@@ -427,8 +427,15 @@ bool FrameContext::create_swapchain(VkPhysicalDevice physical_device, VkSurfaceK
 {
     m_physical_device = physical_device;
     VkSurfaceCapabilitiesKHR capabilities{};
-    if (m_vk.get_surface_capabilities(physical_device, surface, &capabilities) != VK_SUCCESS)
+    const auto record_surface_error = [&](VkResult result)
     {
+        m_device_lost = result == VK_ERROR_DEVICE_LOST;
+        m_surface_lost = result == VK_ERROR_SURFACE_LOST_KHR;
+    };
+    const VkResult capabilities_result = m_vk.get_surface_capabilities(physical_device, surface, &capabilities);
+    if (capabilities_result != VK_SUCCESS)
+    {
+        record_surface_error(capabilities_result);
         error = "could not query Vulkan surface capabilities";
         return false;
     }
@@ -438,9 +445,11 @@ bool FrameContext::create_swapchain(VkPhysicalDevice physical_device, VkSurfaceK
         return false;
     }
     std::vector<VkSurfaceFormatKHR> formats;
+    VkResult formats_result = VK_SUCCESS;
     if (!enumerate<VkSurfaceFormatKHR>([&](uint32_t* count, VkSurfaceFormatKHR* values)
-        { return m_vk.get_surface_formats(physical_device, surface, count, values); }, formats))
+        { return formats_result = m_vk.get_surface_formats(physical_device, surface, count, values); }, formats))
     {
+        record_surface_error(formats_result);
         error = "Vulkan surface has no supported formats";
         return false;
     }
@@ -598,8 +607,7 @@ bool FrameContext::create_swapchain(VkPhysicalDevice physical_device, VkSurfaceK
         const VkResult result = m_vk.create_swapchain(m_device, &info, nullptr, &m_swapchain);
         if (result != VK_SUCCESS)
         {
-            m_device_lost = result == VK_ERROR_DEVICE_LOST;
-            m_surface_lost = result == VK_ERROR_SURFACE_LOST_KHR;
+            record_surface_error(result);
             error = "vkCreateSwapchainKHR failed: " + std::to_string(result);
             return false;
         }
