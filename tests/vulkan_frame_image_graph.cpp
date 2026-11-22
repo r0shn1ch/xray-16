@@ -77,6 +77,14 @@ int main()
         assert(staged_buffer.expired() && !virtual_graph.buffer_handle(written_buffer) &&
             !virtual_graph.buffer_handle(second_buffer));
         assert(error.find("allocation interrupted") != std::string::npos);
+        assert(!virtual_graph.materialize_buffers([&](const auto& description, auto& out, auto& reason) {
+            allocate(description, out, reason);
+            out.handle = (VkBuffer)(uintptr_t)1;
+            return true;
+        }, error));
+        assert(staged_buffer.expired() && !virtual_graph.buffer_handle(written_buffer) &&
+            !virtual_graph.buffer_handle(second_buffer));
+        assert(error.find("handle already in use") != std::string::npos);
         assert(virtual_graph.materialize_buffers(allocate, error));
         assert(virtual_graph.buffer_handle(written_buffer) && virtual_graph.buffer_handle(second_buffer));
         const auto copy = virtual_graph.add_pass("copy unflagged image", [] { return true; });

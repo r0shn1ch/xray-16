@@ -227,6 +227,9 @@ bool FrameImageGraph::materialize_buffers(const AllocateBuffer& allocate, std::s
     if (!compile_resource_lifetimes(lifetimes, error))
         return false;
     std::vector<std::pair<size_t, TransientBuffer>> allocations;
+    std::set<VkBuffer> handles;
+    for (const auto& buffer : m_buffers)
+        if (buffer.buffer) handles.insert(buffer.buffer);
     for (size_t index = 0; index < m_buffers.size(); ++index)
     {
         const Buffer& buffer = m_buffers[index];
@@ -241,6 +244,11 @@ bool FrameImageGraph::materialize_buffers(const AllocateBuffer& allocate, std::s
         {
             if (error.empty())
                 error = "Frame image graph: transient buffer allocation failed";
+            return false;
+        }
+        if (!handles.insert(physical.handle).second)
+        {
+            error = "Frame image graph: transient buffer allocator returned a handle already in use";
             return false;
         }
         allocations.emplace_back(index, std::move(physical));
@@ -583,6 +591,9 @@ bool FrameImageGraph::materialize_images(const AllocateImage& allocate, std::str
     if (!compile_resource_lifetimes(lifetimes, error))
         return false;
     std::vector<std::pair<size_t, TransientImage>> allocations;
+    std::set<VkImage> handles;
+    for (const auto& image : m_images)
+        if (image.image) handles.insert(image.image);
     for (size_t index = 0; index < m_images.size(); ++index)
     {
         const Image& image = m_images[index];
@@ -597,6 +608,11 @@ bool FrameImageGraph::materialize_images(const AllocateImage& allocate, std::str
         {
             if (error.empty())
                 error = "Frame image graph: transient image allocation failed";
+            return false;
+        }
+        if (!handles.insert(physical.handle).second)
+        {
+            error = "Frame image graph: transient image allocator returned a handle already in use";
             return false;
         }
         allocations.emplace_back(index, std::move(physical));
