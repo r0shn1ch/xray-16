@@ -282,6 +282,7 @@ void Fsr3Upscaler::set_frame(uint64_t frame_id, float delta_ms, float camera_nea
     if (history_valid_ && frame_id - history_frame_id_ != 1)
         reset_history();
     interpolation_prepared_ = false;
+    upscale_recorded_ = false;
     frame_id_ = frame_id;
     delta_ms_ = std::isfinite(delta_ms) ? std::clamp(delta_ms, 0.1f, 1000.f) : 16.67f;
     camera_near_ = std::isfinite(camera_near) && camera_near > 0.f ? camera_near : .1f;
@@ -547,6 +548,7 @@ bool Fsr3Upscaler::record(const FrameRecordingContext& frame, std::string& error
             }
         }
     }
+    upscale_recorded_ = true;
     error.clear();
     return true;
 #endif

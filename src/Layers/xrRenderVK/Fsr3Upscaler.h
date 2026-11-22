@@ -46,7 +46,11 @@ public:
     void reset_history() { history_valid_ = false; }
     void commit_frame()
     {
-        if (!active_) return;
+        if (!active_ || !upscale_recorded_)
+        {
+            reset_history();
+            return;
+        }
         history_frame_id_ = frame_id_;
         history_valid_ = true;
         interpolation_history_valid_ = interpolation_prepared_;
@@ -138,6 +142,7 @@ private:
     bool interpolation_history_valid_{};
     VkSwapchainKHR frame_interpolation_swapchain_ = VK_NULL_HANDLE;
     bool active_{};
+    bool upscale_recorded_{};
     bool history_valid_{};
 };
 }
