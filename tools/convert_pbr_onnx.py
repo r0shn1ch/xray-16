@@ -136,11 +136,15 @@ def run_openxray_models(directory, diffuse, normal):
         return data
 
     dirty, = infer("unet_albedo_uncond", ["albedo"], image=image)
+    if dirty.shape != (1, 3, height, width):
+        raise ValueError("unconditional albedo must match the diffuse resolution and RGB channels")
     logits, features = infer("segformer", ["logits", "features"],
                             input=np.concatenate(((dirty - mean) / std, normal_nchw), axis=1))
     if logits.ndim != 4 or logits.shape[:2] != (1, 10):
         raise ValueError("SegFormer must output ten material classes")
     albedo, = infer("unet_albedo", ["albedo"], image=image, seg_features=features)
+    if albedo.shape != (1, 3, height, width):
+        raise ValueError("albedo model must output three color channels at the input resolution")
     mask = np.exp(logits - logits.max(axis=1, keepdims=True))
     mask /= mask.sum(axis=1, keepdims=True)
     appearance = np.concatenate(((albedo - mean) / std, normal_nchw, resize_mask(mask, height, width)), axis=1)
@@ -153,8 +157,6 @@ def run_openxray_models(directory, diffuse, normal):
             raise ValueError(f"{name} model must output [1,1,{height},{width}]")
         channels.append(1 / (1 + np.exp(-np.clip(values, -80, 80))))
     packed = pack_pbr(np.concatenate(channels, axis=1))
-    if albedo.shape != (1, 3, height, width):
-        raise ValueError("albedo model must output three color channels at the input resolution")
     with Image.open(diffuse) as original:
         alpha = original.convert("RGBA").getchannel("A")
     albedo8 = pack_pbr(albedo)
@@ -181,18 +183,30 @@ def write_dds(file, image, srgb=False):
         file.write(image.tobytes())
 
 
-def save_dds(destination, image, srgb, overwrite):
-    temporary = None
+def save_outputs(outputs, overwrite):
+    staged = []
+    published = []
     try:
-        with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as file:
-            temporary = Path(file.name)
-            write_dds(file, image, srgb)
-        if overwrite:
-            os.replace(temporary, destination)
-        else:
-            os.link(temporary, destination)
+        for destination, image, srgb in outputs:
+            with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as file:
+                staged.append((Path(file.name), destination))
+                write_dds(file, image, srgb)
+        for temporary, destination in staged:
+            if overwrite:
+                os.replace(temporary, destination)
+            else:
+                os.link(temporary, destination)
+                published.append((temporary, destination))
+    except OSError:
+        for temporary, destination in published:
+            try:
+                if os.path.samefile(temporary, destination):
+                    destination.unlink()
+            except FileNotFoundError:
+                pass
+        raise
     finally:
-        if temporary is not None:
+        for temporary, _ in staged:
             temporary.unlink(missing_ok=True)
 
 
@@ -227,15 +241,17 @@ def main():
         if path.exists() and not args.overwrite:
             parser.error(f"output exists: {path}")
 
+    outputs = []
     if model_set:
         packed, albedo, parallax = run_openxray_models(args.model, args.diffuse, args.normal)
         if args.albedo_output:
-            save_dds(args.albedo_output, albedo, True, args.overwrite)
+            outputs.append((args.albedo_output, albedo, True))
         if args.parallax_output:
-            save_dds(args.parallax_output, parallax, False, args.overwrite)
+            outputs.append((args.parallax_output, parallax, False))
     else:
         packed = run_model(args.model, args.diffuse, args.normal, args.output_name)
-    save_dds(destination, packed, False, args.overwrite)
+    outputs.append((destination, packed, False))
+    save_outputs(outputs, args.overwrite)
 
 
 if __name__ == "__main__":
