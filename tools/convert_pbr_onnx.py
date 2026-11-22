@@ -189,17 +189,24 @@ def write_dds(file, image, srgb=False):
               32, 4, dx10, 0, 0, 0, 0, 0, caps, 0, 0, 0, 0]
     file.write(b"DDS " + struct.pack("<31I", *header) + struct.pack("<5I", 29 if srgb else 28, 3, 0, 1, 0))
     linear_rgb = None
+    linear_channels = None
     if srgb and mip_count > 1:
         rgba = np.asarray(image, dtype=np.float32) / 255.0
         encoded, coverage = rgba[..., :3], rgba[..., 3]
         linear_rgb = np.where(encoded <= 0.04045, encoded / 12.92, ((encoded + 0.055) / 1.055) ** 2.4)
         linear_rgb *= coverage[..., None]
+    elif mip_count > 1:
+        linear_channels = np.asarray(image, dtype=np.float32)
     for level in range(mip_count):
         if level:
             size = (max(1, image.width // 2), max(1, image.height // 2))
             if linear_rgb is None:
-                # Packed PBR channels, including parallax alpha, are already linear.
-                image = Image.merge("RGBA", tuple(channel.resize(size, Image.Resampling.BOX) for channel in image.split()))
+                # Quantize only the DDS bytes, keeping each channel independent.
+                linear_channels = np.stack([
+                    np.asarray(Image.fromarray(channel).resize(size, Image.Resampling.BOX))
+                    for channel in linear_channels.transpose(2, 0, 1)
+                ], axis=-1)
+                image = Image.fromarray(np.rint(linear_channels).astype(np.uint8))
             else:
                 linear_rgb = np.stack([
                     np.asarray(Image.fromarray(channel).resize(size, Image.Resampling.BOX))
