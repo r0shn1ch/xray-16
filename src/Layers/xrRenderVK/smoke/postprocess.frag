@@ -104,6 +104,7 @@ void main()
     if (motion_blur > 0.001)
     {
         vec2 velocity = texture(sampler2D(motion_image, frame_sampler), texcoord).rg * motion_blur;
+        if (any(isnan(velocity)) || any(isinf(velocity))) velocity = vec2(0.0);
         vec2 motion_pixels = velocity / pixel;
         float pixel_length = length(motion_pixels);
         if (pixel_length > 24.0)
@@ -111,9 +112,10 @@ void main()
             velocity *= 24.0 / pixel_length;
             pixel_length = 24.0;
         }
-        if (pixel_length > 0.5)
+        float depth = pixel_length > 0.5 ? texture(depth_image, texcoord).r : -1.0;
+        if (depth >= 0.0 && depth <= 1.0)
         {
-            float depth = texture(depth_image, texcoord).r;
+            float disparity = max(1.0 - depth, 0.001);
             vec3 blurred = vec3(0.0);
             float total_weight = 0.0;
             for (int tap = 0; tap < 5; ++tap)
@@ -122,7 +124,8 @@ void main()
                 vec2 sample_uv = clamp(texcoord + velocity * position,
                     pixel * 0.5, 1.0 - pixel * 0.5);
                 float sample_depth = texture(depth_image, sample_uv).r;
-                float weight = 1.0 - smoothstep(0.002, 0.03, abs(sample_depth - depth));
+                if (!(sample_depth >= 0.0 && sample_depth <= 1.0)) continue;
+                float weight = 1.0 - smoothstep(0.02, 0.15, abs(sample_depth - depth) / disparity);
                 blurred += aa_sample(sample_uv) * weight;
                 total_weight += weight;
             }
