@@ -55,6 +55,7 @@ class LocalShadowTargets
                     bool graph_managed_layouts = false) const;
     bool cached_face(uint32_t slot, uint32_t face, const float *matrix) const;
     void remember_face(uint32_t slot, uint32_t face, const float *matrix);
+    void commit_cache();
     bool copy_cached_face(const FrameRecordingContext &frame, uint32_t slot, uint32_t face) const;
     bool record_cached_face_copy(VkCommandBuffer command, uint32_t image, uint32_t slot, uint32_t face) const;
     bool caching() const
@@ -64,6 +65,7 @@ class LocalShadowTargets
     void invalidate_cache()
     {
         cache_signatures_.fill(0);
+        pending_cache_signatures_.fill(0);
     }
     void end(VkCommandBuffer command) const;
     VkImageView view(uint32_t image) const;
@@ -121,6 +123,7 @@ class LocalShadowTargets
     VkRenderPass pass_{}, tile_pass_{}, load_pass_{}, graph_pass_{}, graph_load_pass_{};
     uint32_t image_count_{}, cache_index_{UINT32_MAX};
     std::array<uint64_t, LocalShadowSlots * LocalShadowFaces> cache_signatures_{};
+    std::array<uint64_t, LocalShadowSlots * LocalShadowFaces> pending_cache_signatures_{};
     VkSampler sampler_{};
     PFN_vkDestroySampler destroy_sampler_{};
     FrameDispatch vk_{};

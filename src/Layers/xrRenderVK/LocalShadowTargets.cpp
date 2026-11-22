@@ -299,7 +299,7 @@ void LocalShadowTargets::layout_tiles(const std::array<TileRequest, LocalShadowS
     for (size_t i = 0; i < tiles_.size(); ++i)
         if (tiles_[i].offset.x != packed[i].offset.x || tiles_[i].offset.y != packed[i].offset.y ||
             tiles_[i].extent.width != packed[i].extent.width)
-            cache_signatures_[i] = 0;
+            cache_signatures_[i] = pending_cache_signatures_[i] = 0;
     tiles_ = packed;
     last_tile_requests_ = requests;
     tile_layout_valid_ = true;
@@ -412,7 +412,14 @@ bool LocalShadowTargets::cached_face(uint32_t slot, uint32_t face, const float *
 void LocalShadowTargets::remember_face(uint32_t slot, uint32_t face, const float *matrix)
 {
     if (matrix && face_extent(slot, face).width)
-        cache_signatures_[slot * LocalShadowFaces + face] = shadow_signature(matrix);
+        pending_cache_signatures_[slot * LocalShadowFaces + face] = shadow_signature(matrix);
+}
+void LocalShadowTargets::commit_cache()
+{
+    for (size_t index = 0; index < cache_signatures_.size(); ++index)
+        if (pending_cache_signatures_[index])
+            cache_signatures_[index] = pending_cache_signatures_[index];
+    pending_cache_signatures_.fill(0);
 }
 bool LocalShadowTargets::record_cached_face_copy(VkCommandBuffer command, uint32_t image,
     uint32_t slot, uint32_t face) const

@@ -2179,7 +2179,10 @@ bool VulkanGameDevice::render(const GpuLevel &level, const float (&mvp)[16], con
             screenshot_ready_ = wait_idle();
     }
     if (status == FrameStatus::Presented)
+    {
+        local_shadows_.commit_cache();
         screenshot_requested_ = false;
+    }
     if (Device.dwPrecacheFrame == 1)
         save_pipeline_cache();
     model_draws_.clear();
