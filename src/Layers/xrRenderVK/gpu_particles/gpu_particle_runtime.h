@@ -85,14 +85,21 @@ uint GpuAllocateRange(uint count,bool stateRange,bool reportFailure) {
     return GPU_PAPI_INVALID;
 }
 void GpuReleaseReservation() {
+    bool particlesUnused = g_Reservation.particleFirst != GPU_PAPI_INVALID &&
+        g_Reservation.particleUsed < g_Reservation.particleCount;
+    bool statesUnused = g_Reservation.stateFirst != GPU_PAPI_INVALID &&
+        g_Reservation.stateUsed < g_Reservation.stateCount;
+    uint child = g_Reservation.childFirst;
+    if (!particlesUnused && !statesUnused && child == GPU_PAPI_INVALID) return;
     DeviceMemoryBarrier();
-    if (g_Reservation.particleFirst != GPU_PAPI_INVALID)
+    if (particlesUnused)
         for (uint i = g_Reservation.particleUsed; i < g_Reservation.particleCount; ++i)
             GpuSetAllocationStamp(g_Reservation.particleFirst + i,false,0);
-    if (g_Reservation.stateFirst != GPU_PAPI_INVALID)
+    if (statesUnused)
         for (uint j = g_Reservation.stateUsed; j < g_Reservation.stateCount; ++j)
             GpuSetAllocationStamp(g_Reservation.stateFirst + j,true,0);
-    uint child = g_Reservation.childFirst;
+    g_Reservation.particleFirst = GPU_PAPI_INVALID;
+    g_Reservation.stateFirst = GPU_PAPI_INVALID;
     while (child != GPU_PAPI_INVALID) {
         uint next = g_Emitters[child].pad1;
         uint previousActive;
