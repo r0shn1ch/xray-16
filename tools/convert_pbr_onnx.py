@@ -323,18 +323,24 @@ def main():
             parser.error(f"output exists: {path}")
 
     sessions = {} if len(args.diffuse) > 1 else None
-    for diffuse, normal, (destination, albedo_path, parallax_path) in zip(args.diffuse, normals, destinations):
-        outputs = []
-        if model_set:
-            packed, albedo, parallax = run_openxray_models(args.model, diffuse, normal, sessions)
-            if albedo_path:
-                outputs.append((albedo_path, albedo, True))
-            if parallax_path:
-                outputs.append((parallax_path, parallax, False))
-        else:
-            packed = run_model(args.model, diffuse, normal, args.output_name, sessions)
-        outputs.append((destination, packed, False))
-        save_outputs(outputs, args.overwrite)
+
+    def convert_outputs():
+        # Yield each image as soon as it is inferred, so save_outputs can stage
+        # a whole batch without keeping every uncompressed texture in memory.
+        for diffuse, normal, (destination, albedo_path, parallax_path) in zip(args.diffuse, normals, destinations):
+            if model_set:
+                packed, albedo, parallax = run_openxray_models(args.model, diffuse, normal, sessions)
+                if albedo_path:
+                    yield albedo_path, albedo, True
+                if parallax_path:
+                    yield parallax_path, parallax, False
+            else:
+                packed = run_model(args.model, diffuse, normal, args.output_name, sessions)
+            yield destination, packed, False
+
+    # Inference and encoding must finish for every input before publishing any
+    # output; save_outputs also rolls back a failed publication of the batch.
+    save_outputs(convert_outputs(), args.overwrite)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Exercise batch publication with real ONNX inference and injected I/O errors."""
+
+import importlib.util
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+import numpy as np
+import onnx
+from onnx import TensorProto, helper
+from PIL import Image
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "tools" / "convert_pbr_onnx.py"
+spec = importlib.util.spec_from_file_location("convert_pbr_onnx", SCRIPT)
+converter = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(converter)
+
+
+class BatchConversionTest(unittest.TestCase):
+    def test_later_inference_failure_does_not_publish_or_replace_earlier_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            value = helper.make_tensor_value_info("image", TensorProto.FLOAT, [1, 3, 2, 2])
+            result = helper.make_tensor_value_info("pbr", TensorProto.FLOAT, [1, 3, 2, 2])
+            graph = helper.make_graph([helper.make_node("Identity", ["image"], ["pbr"])],
+                                      "identity", [value], [result])
+            model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+            model.ir_version = 8
+            onnx.save(model, root / "model.onnx")
+            Image.fromarray(np.full((2, 2, 3), 127, dtype=np.uint8)).save(root / "one.png")
+            Image.fromarray(np.full((3, 3, 3), 127, dtype=np.uint8)).save(root / "two.png")
+            first = root / "one_pbr.dds"
+            first.write_bytes(b"original")
+            command = [sys.executable, str(SCRIPT), str(root / "model.onnx"),
+                       str(root / "one.png"), str(root / "two.png"), "--overwrite"]
+            failure = subprocess.run(command, capture_output=True, text=True)
+            self.assertNotEqual(failure.returncode, 0)
+            self.assertIn("do not match", failure.stderr)
+            self.assertEqual(first.read_bytes(), b"original")
+            self.assertFalse((root / "two_pbr.dds").exists())
+
+            Image.fromarray(np.full((2, 2, 3), 255, dtype=np.uint8)).save(root / "two.png")
+            success = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(success.returncode, 0, success.stderr)
+            self.assertEqual(first.read_bytes()[:4], b"DDS ")
+            self.assertEqual((root / "two_pbr.dds").read_bytes()[:4], b"DDS ")
+
+    def test_publication_failure_restores_overwritten_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, second = root / "one.dds", root / "two.dds"
+            first.write_bytes(b"first original")
+            second.write_bytes(b"second original")
+            image = Image.new("RGBA", (2, 2), (1, 2, 3, 4))
+            real_replace = converter.os.replace
+
+            def fail_second(source, destination):
+                if Path(destination) == second:
+                    raise OSError("injected publication failure")
+                real_replace(source, destination)
+
+            with mock.patch.object(converter.os, "replace", side_effect=fail_second):
+                with self.assertRaisesRegex(OSError, "injected"):
+                    converter.save_outputs([(first, image, False), (second, image, False)], True)
+            self.assertEqual(first.read_bytes(), b"first original")
+            self.assertEqual(second.read_bytes(), b"second original")
+
+
+if __name__ == "__main__":
+    unittest.main()
