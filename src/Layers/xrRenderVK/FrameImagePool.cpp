@@ -101,26 +101,40 @@ bool FrameImagePool::acquire(const VkImageCreateInfo& info, VkImage& image, std:
         }
     }
     const Descriptor descriptor = describe(info);
+    constexpr VkImageUsageFlags reusable_usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    Entry* reusable = nullptr;
     for (Entry& entry : entries_)
-        if (!entry.in_use && entry.descriptor == descriptor)
+    {
+        if (entry.in_use)
+            continue;
+        if (entry.descriptor == descriptor)
         {
-            entry.in_use = true;
-            entry.last_used = frame_;
-            image = entry.image;
-            error.clear();
-            return true;
+            reusable = &entry;
+            break;
         }
+        if (!reusable && descriptor.initial_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
+            !(entry.descriptor.usage & ~reusable_usage) &&
+            (entry.descriptor.usage & descriptor.usage) == descriptor.usage &&
+            entry.descriptor.same_layout(descriptor))
+            reusable = &entry;
+    }
+    if (reusable)
+    {
+        reusable->in_use = true;
+        reusable->last_used = frame_;
+        image = reusable->image;
+        error.clear();
+        return true;
+    }
 
 #if defined(XRAY_HAS_NVRHI_VULKAN)
     // NVRHI owns compatible frame images when it can describe the requested
     // Vulkan image. The existing Vulkan state tracker still owns transitions.
-    const VkImageUsageFlags supported_usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     if (nvrhi_device_ && info.sharingMode == VK_SHARING_MODE_EXCLUSIVE &&
         info.flags == 0 && info.tiling == VK_IMAGE_TILING_OPTIMAL &&
-        info.initialLayout == VK_IMAGE_LAYOUT_UNDEFINED && !(info.usage & ~supported_usage))
+        info.initialLayout == VK_IMAGE_LAYOUT_UNDEFINED && !(info.usage & ~reusable_usage))
     {
         const nvrhi::Format format = to_nvrhi_format(info.format);
         if (format != nvrhi::Format::UNKNOWN)

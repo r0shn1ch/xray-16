@@ -111,6 +111,15 @@ int main()
     concurrent.pQueueFamilyIndices = invalid_families;
     assert(!pool.acquire(concurrent, concurrent_reused, error));
 
+    auto sampled = description;
+    sampled.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    VkImage exact{};
+    assert(pool.acquire(sampled, exact, error) && exact != new_image && exact != second);
+    assert(pool.release(new_image));
+    assert(pool.acquire(sampled, reused, error) && reused == new_image);
+    assert(pool.release(reused) && pool.release(exact));
+    assert(pool.acquire(sampled, reused, error) && reused == exact);
+
     pool.reset();
     assert(destroyed == created && freed == allocated);
 }

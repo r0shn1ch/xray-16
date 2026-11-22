@@ -72,10 +72,14 @@ private:
         VkImageLayout initial_layout{};
         bool operator==(const Descriptor& other) const
         {
+            return usage == other.usage && same_layout(other);
+        }
+        bool same_layout(const Descriptor& other) const
+        {
             return flags == other.flags && type == other.type && format == other.format &&
                 extent.width == other.extent.width && extent.height == other.extent.height &&
                 extent.depth == other.extent.depth && mips == other.mips && layers == other.layers &&
-                samples == other.samples && tiling == other.tiling && usage == other.usage &&
+                samples == other.samples && tiling == other.tiling &&
                 sharing == other.sharing && sharing_queue_families == other.sharing_queue_families &&
                 initial_layout == other.initial_layout;
         }
