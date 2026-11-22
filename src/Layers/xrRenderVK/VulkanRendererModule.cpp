@@ -309,17 +309,7 @@ public:
                             continue;
                         ImGui::PushID(static_cast<int>(i));
                         if (ImGui::Selectable(effect.name.c_str(), selected_ == i))
-                        {
-                            if (selected_ != i)
-                                preview_.reset();
-                            selected_group_ = SIZE_MAX;
-                            selected_ = i;
-                            limit_ = static_cast<int>(effect.max_particles);
-                            duration_enabled_ = effect.time_limit >= 0.f;
-                            duration_ = duration_enabled_ ? effect.time_limit : 1.f;
-                            xr_strcpy(shader_, effect.shader.c_str());
-                            xr_strcpy(texture_, effect.texture.c_str());
-                        }
+                            select_effect(i);
                         ImGui::PopID();
                     }
                     for (size_t i = 0; i < catalog_.groups.size(); ++i)
@@ -393,6 +383,10 @@ public:
                             load_draft(candidate))
                         {
                             dirty_ = true;
+                            // Copies are appended to the effect table.
+                            select_effect(catalog_.effects.size() - 1);
+                            if (!filter_.PassFilter(catalog_.effects[selected_].name.c_str()))
+                                filter_.Clear();
                             effect_copy_name_[0] = '\0';
                             message_ = "Effect copied to draft";
                         }
@@ -413,6 +407,19 @@ public:
     }
 
 private:
+    void select_effect(size_t index)
+    {
+        if (selected_ != index) preview_.reset();
+        selected_group_ = SIZE_MAX;
+        selected_ = index;
+        const auto& effect = catalog_.effects[index];
+        limit_ = static_cast<int>(effect.max_particles);
+        duration_enabled_ = effect.time_limit >= 0.f;
+        duration_ = duration_enabled_ ? effect.time_limit : 1.f;
+        xr_strcpy(shader_, effect.shader.c_str());
+        xr_strcpy(texture_, effect.texture.c_str());
+    }
+
     void choose_effect(pcstr label, std::string& selected, bool allow_empty = false)
     {
         if (!ImGui::BeginCombo(label, selected.empty() ? "None" : selected.c_str()))
