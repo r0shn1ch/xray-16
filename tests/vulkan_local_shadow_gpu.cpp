@@ -8,6 +8,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 using namespace xray::render::vulkan;
 static void check(VkResult result)
 {
@@ -103,7 +104,7 @@ int main(int argc, char** argv)
         VkClearAttachment clear{};
         clear.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
         clear.clearValue.depthStencil = {.2f, 0};
-        VkClearRect rect{{{0, 0}, {LocalShadowSize, LocalShadowSize}}, 0, 1};
+        VkClearRect rect{{shadow.viewport_offset, shadow.extent}, 0, 1};
         vkCmdClearAttachments(command, 1, &clear, 1, &rect);
         targets.end(command);
         targets.remember_face(1, 1, matrix);
@@ -115,7 +116,7 @@ int main(int argc, char** argv)
         vkCmdClearAttachments(command, 1, &clear, 1, &rect);
         targets.end(command);
         // Depth written by dynamic casters must never pollute the shared static cache.
-        auto read_depth = [&](uint32_t index, VkDeviceSize offset, uint32_t layer = 7) {
+        auto read_depth = [&](uint32_t index, VkDeviceSize offset) {
             VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
             barrier.image = targets.image(index);
             barrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
@@ -124,7 +125,7 @@ int main(int argc, char** argv)
             barrier.subresourceRange = {
                 VkImageAspectFlags(VK_IMAGE_ASPECT_DEPTH_BIT |
                                    (format == VK_FORMAT_D24_UNORM_S8_UINT ? VK_IMAGE_ASPECT_STENCIL_BIT : 0)),
-                0, 1, layer, 1};
+                0, 1, 0, 1};
             barrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
             barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
             vkCmdPipelineBarrier(command,
@@ -132,10 +133,18 @@ int main(int argc, char** argv)
                                  VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
             VkBufferImageCopy copy{};
             copy.bufferOffset = offset;
-            copy.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, layer, 1};
+            copy.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+            copy.imageOffset = {shadow.viewport_offset.x, shadow.viewport_offset.y, 0};
             copy.imageExtent = {1, 1, 1};
             vkCmdCopyImageToBuffer(command, targets.image(index), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                    readback.handle(), 1, &copy);
+            std::swap(barrier.oldLayout, barrier.newLayout);
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                0, 0, nullptr, 0, nullptr, 1, &barrier);
         };
         read_depth(0, 0);
         frame.image_index = 1;
@@ -277,6 +286,11 @@ int main(int argc, char** argv)
         info.pMultisampleState = &multisample;
         info.pDepthStencilState = &depth;
         info.pColorBlendState = &blend;
+        const VkDynamicState dynamic_states[]{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+        dynamic.dynamicStateCount = 2;
+        dynamic.pDynamicStates = dynamic_states;
+        info.pDynamicState = &dynamic;
         info.layout = layout;
         info.renderPass = targets.render_pass();
         VkPipeline pipeline{};
@@ -285,6 +299,11 @@ int main(int argc, char** argv)
         {
             assert(targets.begin_face(frame, 0, c, shadow));
             vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            viewport.x = float(shadow.viewport_offset.x);
+            viewport.y = float(shadow.viewport_offset.y);
+            scissor.offset = shadow.viewport_offset;
+            vkCmdSetViewport(command, 0, 1, &viewport);
+            vkCmdSetScissor(command, 0, 1, &scissor);
             const auto buffer = vertices.handle();
             const VkDeviceSize offset = c * 6 * sizeof(SkinVertex);
             vkCmdBindVertexBuffers(command, 0, 1, &buffer, &offset);
@@ -292,7 +311,7 @@ int main(int argc, char** argv)
             vkCmdPushConstants(command, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, 64, matrix);
             vkCmdDraw(command, 6, 1, 0, 0);
             targets.end(command);
-            read_depth(1, 8 + c * 4, c);
+            read_depth(1, 8 + c * 4);
         }
         VkBufferMemoryBarrier host{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
         host.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
