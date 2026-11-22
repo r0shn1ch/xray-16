@@ -85,7 +85,8 @@ int main()
         assert(staged_buffer.expired() && !virtual_graph.buffer_handle(written_buffer) &&
             !virtual_graph.buffer_handle(second_buffer));
         assert(error.find("handle already in use") != std::string::npos);
-        assert(!virtual_graph.materialize_resources(allocate, [](const auto&, auto&, auto&) {
+        assert(!virtual_graph.materialize_resources(allocate, [&](const auto&, auto&, auto&) {
+            assert(!virtual_graph.buffer_handle(written_buffer) && !virtual_graph.buffer_handle(second_buffer));
             return false;
         }, error));
         assert(staged_buffer.expired() && !virtual_graph.buffer_handle(written_buffer) &&

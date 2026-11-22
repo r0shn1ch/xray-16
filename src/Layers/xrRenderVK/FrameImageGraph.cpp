@@ -224,15 +224,16 @@ bool FrameImageGraph::declare_buffer(const BufferDescription& description,
 bool FrameImageGraph::materialize_buffers(const AllocateBuffer& allocate, std::string& error)
 {
     ResourceLifetimes lifetimes;
-    if (!compile_resource_lifetimes(lifetimes, error))
+    PendingBuffers allocations;
+    if (!compile_resource_lifetimes(lifetimes, error) || !allocate_buffers(allocate, lifetimes, allocations, error))
         return false;
-    return materialize_buffers(allocate, lifetimes, error);
+    bind_buffers(allocations, lifetimes);
+    return true;
 }
 
-bool FrameImageGraph::materialize_buffers(const AllocateBuffer& allocate,
-    const ResourceLifetimes& lifetimes, std::string& error)
+bool FrameImageGraph::allocate_buffers(const AllocateBuffer& allocate,
+    const ResourceLifetimes& lifetimes, PendingBuffers& allocations, std::string& error) const
 {
-    std::vector<std::pair<size_t, TransientBuffer>> allocations;
     std::set<VkBuffer> handles;
     for (const auto& buffer : m_buffers)
         if (buffer.buffer) handles.insert(buffer.buffer);
@@ -259,6 +260,11 @@ bool FrameImageGraph::materialize_buffers(const AllocateBuffer& allocate,
         }
         allocations.emplace_back(index, std::move(physical));
     }
+    return true;
+}
+
+void FrameImageGraph::bind_buffers(PendingBuffers& allocations, const ResourceLifetimes& lifetimes)
+{
     for (auto& pending : allocations)
     {
         Buffer& buffer = m_buffers[pending.first];
@@ -269,7 +275,6 @@ bool FrameImageGraph::materialize_buffers(const AllocateBuffer& allocate,
         buffer.allocation = std::move(physical.owner);
         buffer.initial_queue = m_passes[lifetimes.pass_order[lifetimes.buffers[pending.first].first_use]].queue;
     }
-    return true;
 }
 
 VkBuffer FrameImageGraph::buffer_handle(BufferResource resource) const
@@ -594,15 +599,16 @@ bool FrameImageGraph::declare_image(const VkImageCreateInfo& info, VkImageAspect
 bool FrameImageGraph::materialize_images(const AllocateImage& allocate, std::string& error)
 {
     ResourceLifetimes lifetimes;
-    if (!compile_resource_lifetimes(lifetimes, error))
+    PendingImages allocations;
+    if (!compile_resource_lifetimes(lifetimes, error) || !allocate_images(allocate, lifetimes, allocations, error))
         return false;
-    return materialize_images(allocate, lifetimes, error);
+    bind_images(allocations, lifetimes);
+    return true;
 }
 
-bool FrameImageGraph::materialize_images(const AllocateImage& allocate,
-    const ResourceLifetimes& lifetimes, std::string& error)
+bool FrameImageGraph::allocate_images(const AllocateImage& allocate,
+    const ResourceLifetimes& lifetimes, PendingImages& allocations, std::string& error) const
 {
-    std::vector<std::pair<size_t, TransientImage>> allocations;
     std::set<VkImage> handles;
     for (const auto& image : m_images)
         if (image.image) handles.insert(image.image);
@@ -629,6 +635,11 @@ bool FrameImageGraph::materialize_images(const AllocateImage& allocate,
         }
         allocations.emplace_back(index, std::move(physical));
     }
+    return true;
+}
+
+void FrameImageGraph::bind_images(PendingImages& allocations, const ResourceLifetimes& lifetimes)
+{
     for (auto& pending : allocations)
     {
         auto& image = m_images[pending.first];
@@ -636,7 +647,6 @@ bool FrameImageGraph::materialize_images(const AllocateImage& allocate,
         image.allocation = std::move(pending.second.owner);
         image.initial_queue = m_passes[lifetimes.pass_order[lifetimes.images[pending.first].first_use]].queue;
     }
-    return true;
 }
 
 VkImage FrameImageGraph::image_handle(Resource resource) const
@@ -651,24 +661,15 @@ bool FrameImageGraph::materialize_resources(const AllocateBuffer& allocate_buffe
     const AllocateImage& allocate_image, std::string& error)
 {
     ResourceLifetimes lifetimes;
-    if (!compile_resource_lifetimes(lifetimes, error))
+    PendingBuffers buffers;
+    PendingImages images;
+    if (!compile_resource_lifetimes(lifetimes, error) ||
+        !allocate_buffers(allocate_buffer, lifetimes, buffers, error) ||
+        !allocate_images(allocate_image, lifetimes, images, error))
         return false;
-    std::vector<size_t> unbound_buffers;
-    for (size_t index = 0; index < m_buffers.size(); ++index)
-        if (!m_buffers[index].buffer) unbound_buffers.push_back(index);
-    if (!materialize_buffers(allocate_buffer, lifetimes, error)) return false;
-    if (materialize_images(allocate_image, lifetimes, error)) return true;
-
-    for (size_t index : unbound_buffers)
-    {
-        auto& buffer = m_buffers[index];
-        buffer.buffer = VK_NULL_HANDLE;
-        buffer.allocation.reset();
-        buffer.sharing_mode = VK_SHARING_MODE_EXCLUSIVE;
-        buffer.sharing_queue_families.clear();
-        buffer.initial_queue = default_queue_;
-    }
-    return false;
+    bind_buffers(buffers, lifetimes);
+    bind_images(images, lifetimes);
+    return true;
 }
 
 FrameImageGraph::Pass FrameImageGraph::add_pass(const char* name, Record record)

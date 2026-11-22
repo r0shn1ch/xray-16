@@ -221,8 +221,14 @@ public:
         bool semaphore_handoff = false) const;
 
 private:
-    bool materialize_buffers(const AllocateBuffer& allocate, const ResourceLifetimes& lifetimes, std::string& error);
-    bool materialize_images(const AllocateImage& allocate, const ResourceLifetimes& lifetimes, std::string& error);
+    using PendingBuffers = std::vector<std::pair<size_t, TransientBuffer>>;
+    using PendingImages = std::vector<std::pair<size_t, TransientImage>>;
+    bool allocate_buffers(const AllocateBuffer& allocate, const ResourceLifetimes& lifetimes,
+        PendingBuffers& allocations, std::string& error) const;
+    bool allocate_images(const AllocateImage& allocate, const ResourceLifetimes& lifetimes,
+        PendingImages& allocations, std::string& error) const;
+    void bind_buffers(PendingBuffers& allocations, const ResourceLifetimes& lifetimes);
+    void bind_images(PendingImages& allocations, const ResourceLifetimes& lifetimes);
     using Version = framegraph::ResourceVersion;
     struct Image
     {
