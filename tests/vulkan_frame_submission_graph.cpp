@@ -64,6 +64,15 @@ int main()
     assert(graph.prepare(second, wait, error));
     assert(graph.prepare(second, wait, error));
     assert(shared_wait_count == 1);
+    const auto late = graph.add_pass("late producer", FrameSubmissionGraph::Queue::Compute);
+    const auto consumer = graph.add_pass("pending consumer", FrameSubmissionGraph::Queue::Graphics);
+    assert(graph.depends_on_submission(consumer, FrameSubmissionGraph::Queue::Compute, 17, error));
+    assert(graph.depends_on(consumer, late, error));
+    assert(!graph.prepare(consumer, wait, error));
+    assert(shared_wait_count == 1);
+    assert(graph.submit(late, [](FrameSubmissionGraph::Queue) { return uint64_t{17}; }, {}, error));
+    assert(graph.prepare(consumer, wait, error));
+    assert(shared_wait_count == 2);
 
     FrameRecordingContext source{};
     source.command_buffer = handle<VkCommandBuffer>(101);

@@ -161,21 +161,27 @@ public:
             return false;
         }
         PassInfo& consumer_info = passes_[consumer];
+        // Validate the whole pass before changing the destination queue.
+        for (const Dependency& dependency : consumer_info.dependencies)
+        {
+            if (!dependency.external &&
+                (!valid(dependency.producer) || !passes_[dependency.producer].submission))
+            {
+                error = "Frame submission graph: dependency submitted after its consumer: " +
+                    consumer_info.name;
+                return false;
+            }
+        }
         // A resource import and an in-graph dependency may refer to the
         // same producer submission. Queue the wait once for this consumer.
         std::vector<std::pair<Queue, uint64_t>> queued_waits;
+        queued_waits.reserve(consumer_info.dependencies.size());
         for (Dependency& dependency : consumer_info.dependencies)
         {
             Queue source_queue = dependency.source_queue;
             uint64_t submission = dependency.submission;
             if (!dependency.external)
             {
-                if (!valid(dependency.producer) || !passes_[dependency.producer].submission)
-                {
-                    error = "Frame submission graph: dependency submitted after its consumer: " +
-                        consumer_info.name;
-                    return false;
-                }
                 source_queue = passes_[dependency.producer].queue;
                 submission = passes_[dependency.producer].submission;
             }
