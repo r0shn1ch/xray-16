@@ -392,6 +392,7 @@ class VulkanGameDevice
     std::array<float, 2> temporal_jitter_ndc_{};
     uint32_t temporal_sample_index_{};
     bool temporal_jitter_active_{};
+    bool temporal_jitter_uses_fsr_{};
     WaterTargets water_targets_;
     WaterTargets ui_snapshot_targets_;
     SunShadowTargets sun_shadows_;

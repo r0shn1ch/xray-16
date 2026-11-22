@@ -1390,6 +1390,13 @@ void VulkanGameDevice::begin_frame()
         frame_buffer_pool_.tick();
     object_motion_.begin_frame();
     const bool fsr3_selected = spatial_upscaler == 3 && fsr3_upscaler_.ready();
+    if (temporal_jitter_uses_fsr_ != fsr3_selected)
+    {
+        temporal_sample_index_ = 0;
+        temporal_.reset_history();
+        fsr3_upscaler_.reset_history();
+        temporal_jitter_uses_fsr_ = fsr3_selected;
+    }
     temporal_jitter_active_ = fsr3_selected ||
         ((antialiasing == 2 || spatial_upscaler == 2) && temporal_.ready());
     temporal_jitter_ndc_ = {};
@@ -1402,10 +1409,13 @@ void VulkanGameDevice::begin_frame()
         {
             temporal_jitter_ndc_ = {2.f * jitter_x / float(extent.width),
                 -2.f * jitter_y / float(extent.height)};
-            fsr3_upscaler_.set_jitter(jitter_x, jitter_y);
         }
         else
+        {
             temporal_jitter_active_ = false;
+            jitter_x = jitter_y = 0.f;
+        }
+        fsr3_upscaler_.set_jitter(jitter_x, jitter_y);
     }
     else if (temporal_jitter_active_)
         temporal_jitter_ndc_ = temporal_jitter_ndc(temporal_sample_index_, window_.frame().extent());
