@@ -1889,17 +1889,6 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
     const unsigned grid_size = detail_grid_size(spacing);
     const float sample_spacing = 2.f / grid_size;
     const float density = sample_spacing * sample_spacing / (spacing * spacing);
-    const bool gpu_generation = detail_generate_ && !detail_gpu_generation_failed_;
-    if (detail_spacing_ != spacing || detail_cache_gpu_only_ != gpu_generation)
-    {
-        detail_cache_.clear();
-        detail_ground_cache_.clear();
-        detail_generation_cells_.clear();
-        detail_generation_triangles_.clear();
-        ++detail_ground_generation_;
-        detail_spacing_ = spacing;
-        detail_cache_gpu_only_ = gpu_generation;
-    }
     const int cx = static_cast<int>(std::floor(camera.x / 2.f)) + details_.offset_x;
     const int cz = static_cast<int>(std::floor(camera.z / 2.f)) + details_.offset_z;
     const int radius = static_cast<int>(max_distance / 2.f) + 1;
@@ -1926,11 +1915,33 @@ void GpuLevel::prepare_details(const Fvector &camera, float max_distance)
                 std::any_of(cell.ids.begin(), cell.ids.end(), [](uint8_t id) { return id != 63; }))
             {
                 cells.push_back(index);
-                if (detail_cache_.find(index) == detail_cache_.end())
-                    updates.push_back({index, distance_squared});
+                updates.push_back({index, distance_squared});
             }
         }
     }
+    bool gpu_generation = detail_generate_ && !detail_gpu_generation_failed_;
+    if (gpu_generation && !cells.empty())
+    {
+        // Decide before populating the caches so a large view can use CPU
+        // placements and a later smaller view can resume GPU generation.
+        uint32_t candidates{};
+        std::string capacity_error;
+        gpu_generation = detail_generate_->candidate_count(
+            {static_cast<uint32_t>(cells.size()), grid_size, sample_spacing, density}, candidates, capacity_error);
+    }
+    if (detail_spacing_ != spacing || detail_cache_gpu_only_ != gpu_generation)
+    {
+        detail_cache_.clear();
+        detail_ground_cache_.clear();
+        detail_generation_cells_.clear();
+        detail_generation_triangles_.clear();
+        ++detail_ground_generation_;
+        detail_spacing_ = spacing;
+        detail_cache_gpu_only_ = gpu_generation;
+    }
+    updates.erase(std::remove_if(updates.begin(), updates.end(), [&](const NearbyCell& cell) {
+        return detail_cache_.find(cell.index) != detail_cache_.end();
+    }), updates.end());
     std::stable_sort(updates.begin(), updates.end(), [](const NearbyCell& a, const NearbyCell& b) {
         return a.distance_squared < b.distance_squared;
     });
