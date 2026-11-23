@@ -50,6 +50,7 @@ class CMainMenu : public IMainMenu,
                   public CUIResetNotifier
 {
     CUIDialogWnd* m_startDialog;
+    bool m_reloadUIAfterScriptEngineStart = false;
 
     enum
     {
@@ -66,6 +67,7 @@ class CMainMenu : public IMainMenu,
     Flags16 m_Flags;
     string_path m_screenshot_name;
     u32 m_screenshotFrame;
+    bool m_gameSaveScreenshotRequested{};
 
     xr_vector<CUIWindow*> m_pp_draw_wnds;
 
@@ -139,6 +141,7 @@ public:
     void IR_OnMouseHold(int btn) override;
     void IR_OnMouseWheel(float x, float y) override;
     void IR_OnMouseMove(int x, int y) override;
+    void IR_OnMouseMoveTo(float x, float y) override;
 
     void IR_OnKeyboardPress(int dik) override;
     void IR_OnKeyboardRelease(int dik) override;
@@ -200,6 +203,7 @@ public:
     demo_info const* GetDemoInfo(LPCSTR file_name);
 
     CEventNotifierCallback::CID m_script_reset_event_cid;
+    CEventNotifierCallback::CID m_script_started_event_cid;
 
 private:
     DECLARE_SCRIPT_REGISTER_FUNCTION(CDialogHolder, CUIDialogWnd, CUIWindow);

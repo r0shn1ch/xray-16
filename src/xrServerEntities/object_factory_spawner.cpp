@@ -538,11 +538,10 @@ void CObjectFactory::on_tool_frame()
 
                 if (auto* anomaly = abstract ? abstract->cast_anomalous_zone() : nullptr)
                 {
-                    CShapeData::shape_def shape
-                    {
-                        .type = CShapeData::cfSphere,
-                        .data = { Fsphere{ .P = {}, .R = 3.0f } },
-                    };
+                    CShapeData::shape_def shape{};
+                    shape.type = CShapeData::cfSphere;
+                    shape.data.sphere.P.set(0.0f, 0.0f, 0.0f);
+                    shape.data.sphere.R = 3.0f;
                     anomaly->assign_shapes(&shape, 1);
                 }
 
@@ -558,11 +557,10 @@ void CObjectFactory::on_tool_frame()
 
                 if (auto* anomaly = abstract ? abstract->cast_anomalous_zone() : nullptr)
                 {
-                    CShapeData::shape_def shape
-                    {
-                        .type = CShapeData::cfSphere,
-                        .data = { Fsphere{ .P = {}, .R = 3.0f } },
-                    };
+                    CShapeData::shape_def shape{};
+                    shape.type = CShapeData::cfSphere;
+                    shape.data.sphere.P.set(0.0f, 0.0f, 0.0f);
+                    shape.data.sphere.R = 3.0f;
                     anomaly->assign_shapes(&shape, 1);
                 }
             }

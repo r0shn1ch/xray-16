@@ -17,6 +17,43 @@
 
 #define F_MAX 3.402823466e+38F
 
+namespace
+{
+constexpr u16 FirstExtendedVisibilityBone = 64;
+constexpr u16 MaxSerializedVisibilityBone =
+    FirstExtendedVisibilityBone + SPHBonesData::ExtendedVisibilityWordCount * 64;
+}
+
+void CPHSkeleton::SaveExtendedVisibility(NET_Packet& packet, IKinematics* kinematics)
+{
+    u64 masks[SPHBonesData::ExtendedVisibilityWordCount]{};
+    if (kinematics)
+    {
+        const u16 end = std::min<u16>(kinematics->LL_BoneCount(), MaxSerializedVisibilityBone);
+        for (u16 bone = FirstExtendedVisibilityBone; bone < end; ++bone)
+        {
+            const u16 bit = bone - FirstExtendedVisibilityBone;
+            if (kinematics->LL_GetBoneVisible(bone))
+                masks[bit / 64] |= u64(1) << (bit % 64);
+        }
+    }
+    for (u64 mask : masks)
+        packet.w_u64(kinematics ? mask : u64(-1));
+}
+
+void CPHSkeleton::ApplyExtendedVisibility(IKinematics* kinematics, const u64* masks)
+{
+    if (!kinematics)
+        return;
+    const u16 end = std::min<u16>(kinematics->LL_BoneCount(), MaxSerializedVisibilityBone);
+    for (u16 bone = FirstExtendedVisibilityBone; bone < end; ++bone)
+    {
+        const u16 relative = u16(bone - FirstExtendedVisibilityBone);
+        const bool visible = (masks[relative / 64] & (u64(1) << (relative % 64))) != 0;
+        kinematics->LL_SetBoneVisible(bone, visible, FALSE);
+    }
+}
+
 u32 CPHSkeleton::existence_time = 5000;
 
 bool IC CheckObjectSize(IKinematics* K)
@@ -92,6 +129,7 @@ bool CPHSkeleton::Spawn(CSE_Abstract* D)
             {
                 K->LL_SetBoneRoot(po->saved_bones.root_bone);
                 K->LL_SetBonesVisible(po->saved_bones.bones_mask);
+                ApplyExtendedVisibility(K, po->saved_bones.extended_bones_visibility);
             }
         }
         SpawnInitPhysics(D);
@@ -216,6 +254,7 @@ void CPHSkeleton::SaveNetState(NET_Packet& P)
         obj->PHGetSyncItem(i)->get_State(state);
         state.net_Save(P, min, max);
     }
+    SaveExtendedVisibility(P, K);
 }
 
 void CPHSkeleton::LoadNetState(NET_Packet& P)
@@ -223,10 +262,12 @@ void CPHSkeleton::LoadNetState(NET_Packet& P)
     CPhysicsShellHolder* obj = PPhysicsShellHolder();
     IKinematics* K = smart_cast<IKinematics*>(obj->Visual());
     P.r_u8(m_flags.flags);
+    const u64 visible_bones = P.r_u64();
+    const u16 root_bone = P.r_u16();
     if (K)
     {
-        K->LL_SetBonesVisible(P.r_u64());
-        K->LL_SetBoneRoot(P.r_u16());
+        K->LL_SetBonesVisible(visible_bones);
+        K->LL_SetBoneRoot(root_bone);
     }
 
     u16 bones_number = P.r_u16();
@@ -236,6 +277,10 @@ void CPHSkeleton::LoadNetState(NET_Packet& P)
         state.net_Load(P);
         obj->PHGetSyncItem(i)->set_State(state);
     }
+    u64 extended_visibility[SPHBonesData::ExtendedVisibilityWordCount];
+    for (u64& mask : extended_visibility)
+        mask = P.r_u64();
+    ApplyExtendedVisibility(K, extended_visibility);
 }
 void CPHSkeleton::RestoreNetState(CSE_PHSkeleton* po)
 {
@@ -321,29 +366,38 @@ void CPHSkeleton::UnsplitSingle(CPHSkeleton* SO)
     IKinematics* newKinematics = smart_cast<IKinematics*>(O->Visual());
     IKinematics* pKinematics = smart_cast<IKinematics*>(obj->Visual());
 
-    Flags64 mask0, mask1;
     u16 split_bone = m_unsplited_shels.front().second;
-    mask1.assign(pKinematics->LL_GetBonesVisible()); // source bones mask
+    const u16 bone_count = pKinematics->LL_BoneCount();
+    VERIFY(newKinematics->LL_BoneCount() == bone_count);
+    xr_vector<u8> source_visibility(bone_count);
+    for (u16 bone = 0; bone < bone_count; ++bone)
+        source_visibility[bone] = pKinematics->LL_GetBoneVisible(bone) ? 1 : 0;
     pKinematics->LL_SetBoneVisible(split_bone, FALSE, TRUE);
 
     pKinematics->CalculateBones_Invalidate();
     pKinematics->CalculateBones(TRUE);
 
-    mask0.assign(pKinematics->LL_GetBonesVisible()); // first part mask
-    VERIFY2(mask0.flags, "mask0 -Zero");
-    mask0.invert();
-    mask1._and (mask0.flags); // second part mask
+    bool first_part_has_visible_bones = false;
+    bool second_part_has_visible_bones = false;
+    for (u16 bone = 0; bone < bone_count; ++bone)
+    {
+        const bool visible = pKinematics->LL_GetBoneVisible(bone);
+        first_part_has_visible_bones |= visible;
+        const bool second_part_visible = source_visibility[bone] && !visible;
+        newKinematics->LL_SetBoneVisible(bone, second_part_visible, FALSE);
+        second_part_has_visible_bones |= second_part_visible;
+    }
+    VERIFY2(first_part_has_visible_bones, "first part has no visible bones");
+    VERIFY2(second_part_has_visible_bones, "second part has no visible bones");
 
     newKinematics->LL_SetBoneRoot(split_bone);
-    VERIFY2(mask1.flags, "mask1 -Zero");
-    newKinematics->LL_SetBonesVisible(mask1.flags);
 
     newKinematics->CalculateBones_Invalidate();
     newKinematics->CalculateBones(TRUE);
 
     newPhysicsShell->set_Kinematics(newKinematics);
     VERIFY(_valid(newPhysicsShell->mXFORM));
-    newPhysicsShell->ResetCallbacks(split_bone, mask1);
+    newPhysicsShell->ResetCallbacks(split_bone);
     VERIFY(_valid(newPhysicsShell->mXFORM));
 
     newPhysicsShell->ObjectInRoot().identity();
@@ -385,10 +439,8 @@ void CPHSkeleton::RecursiveBonesCheck(u16 id)
     IKinematics* K = smart_cast<IKinematics*>(obj->Visual());
     CBoneData& BD = K->LL_GetData(u16(id));
     //////////////////////////////////////////
-    Flags64 mask;
-    mask.assign(K->LL_GetBonesVisible());
     ///////////////////////////////////////////
-    if (mask.is(u64(1) << (u64)id) && !(BD.shape.flags.is(SBoneShape::sfRemoveAfterBreak)))
+    if (K->LL_GetBoneVisible(id) && !(BD.shape.flags.is(SBoneShape::sfRemoveAfterBreak)))
     {
         removable = false;
         return;

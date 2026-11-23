@@ -7,12 +7,15 @@
 #include <SDL.h>
 #include <jni.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 
 namespace
 {
-constexpr int TouchControlCount = 8;
+constexpr int TouchControlCount = 9;
 std::atomic<std::uint32_t> g_touchControls{};
+std::atomic<std::uint32_t> g_touchPresses{};
 
 Uint32 touch_window_id()
 {
@@ -21,11 +24,31 @@ Uint32 touch_window_id()
         window = SDL_GetKeyboardFocus();
     return window ? SDL_GetWindowID(window) : 0;
 }
+
+void push_touch_mouse_button(bool pressed)
+{
+    SDL_Event event{};
+    event.type = pressed ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+    event.button.type = event.type;
+    event.button.timestamp = SDL_GetTicks();
+    event.button.windowID = touch_window_id();
+    event.button.which = SDL_TOUCH_MOUSEID;
+    event.button.button = SDL_BUTTON_LEFT;
+    event.button.state = pressed ? SDL_PRESSED : SDL_RELEASED;
+    event.button.clicks = 1;
+    SDL_GetMouseState(&event.button.x, &event.button.y);
+    SDL_PushEvent(&event);
+}
 }
 
 std::uint32_t AndroidTouchControlMask() noexcept
 {
     return g_touchControls.load(std::memory_order_acquire);
+}
+
+std::uint32_t AndroidTouchPressMask() noexcept
+{
+    return g_touchPresses.exchange(0, std::memory_order_acq_rel);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -37,7 +60,10 @@ Java_org_openxray_app_XRayActivity_nativeSetTouchControl(
 
     const std::uint32_t bit = std::uint32_t(1) << control;
     if (pressed)
+    {
+        g_touchPresses.fetch_or(bit, std::memory_order_release);
         g_touchControls.fetch_or(bit, std::memory_order_release);
+    }
     else
         g_touchControls.fetch_and(~bit, std::memory_order_release);
 }
@@ -67,17 +93,32 @@ extern "C" JNIEXPORT void JNICALL
 Java_org_openxray_app_XRayActivity_nativeClickTouchMouse(
     JNIEnv*, jclass, jboolean pressed)
 {
-    SDL_Event event{};
-    event.type = pressed ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
-    event.button.type = event.type;
-    event.button.timestamp = SDL_GetTicks();
-    event.button.windowID = touch_window_id();
-    event.button.which = SDL_TOUCH_MOUSEID;
-    event.button.button = SDL_BUTTON_LEFT;
-    event.button.state = pressed ? SDL_PRESSED : SDL_RELEASED;
-    event.button.clicks = 1;
-    SDL_GetMouseState(&event.button.x, &event.button.y);
-    SDL_PushEvent(&event);
+    push_touch_mouse_button(pressed == JNI_TRUE);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_openxray_app_XRayActivity_nativeClickTouchMouseAt(
+    JNIEnv*, jclass, jfloat x, jfloat y, jint viewWidth, jint viewHeight)
+{
+    if (viewWidth <= 0 || viewHeight <= 0)
+        return;
+
+    const float normalizedX = std::clamp(x / static_cast<float>(viewWidth), 0.f, 1.f);
+    const float normalizedY = std::clamp(y / static_cast<float>(viewHeight), 0.f, 1.f);
+
+    SDL_Event position{};
+    position.type = SDL_MOUSEMOTION;
+    position.motion.type = SDL_MOUSEMOTION;
+    position.motion.timestamp = SDL_GetTicks();
+    position.motion.windowID = touch_window_id();
+    position.motion.which = SDL_TOUCH_MOUSEID;
+    position.motion.state = AndroidTouchMousePositionState;
+    position.motion.x = static_cast<Sint32>(std::lround(normalizedX * 65535.f));
+    position.motion.y = static_cast<Sint32>(std::lround(normalizedY * 65535.f));
+    SDL_PushEvent(&position);
+
+    push_touch_mouse_button(true);
+    push_touch_mouse_button(false);
 }
 
 #endif

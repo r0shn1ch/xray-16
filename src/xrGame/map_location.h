@@ -10,6 +10,7 @@ class CMapSpotPointer;
 class CComplexMapSpot;
 class CUICustomMap;
 class CInventoryOwner;
+class IReader;
 
 class CMapLocation : public IPureDestroyableObject
 {
@@ -114,6 +115,7 @@ public:
 
     virtual void save(IWriter& stream);
     virtual void load(IReader& stream);
+    bool load_checked(IReader& stream);
 
     shared_str m_owner_task_id;
 

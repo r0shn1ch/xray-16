@@ -1,0 +1,47 @@
+#version 450
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std430) readonly buffer Needed { uint needed[]; };
+layout(set = 0, binding = 1, std430) buffer PageTable { uint table[]; };
+layout(set = 0, binding = 2, std430) buffer Slots { ivec4 slots[]; };
+// work[0] is candidate count; the 16-byte header is followed by uvec4 jobs.
+layout(set = 0, binding = 3, std430) buffer Work { uint work[]; };
+layout(push_constant) uniform Parameters { uvec4 config; uvec4 limits; ivec4 base[6]; } params;
+void main()
+{
+    uint axis = params.config.x, count = axis * axis * params.config.y;
+    uint width = params.limits.z * 64u;
+    if (count == 0u || width == 0u || gl_GlobalInvocationID.y > (count - 1u) / width) return;
+    uint row = gl_GlobalInvocationID.y * width;
+    if (gl_GlobalInvocationID.x >= count - row) return;
+    uint index = row + gl_GlobalInvocationID.x;
+    uint phase = params.limits.w;
+    bool primary_phase = phase < 3u;
+    if (phase == 0u) table[index] = 0xffffffffu;
+    uint request = needed[index];
+    bool requested_in_phase = request != 0u && (((request & 1u) != 0u) == primary_phase);
+    uint per_level = axis * axis;
+    // Give coarse misses priority over detailed misses and refreshes.
+    if (phase < 2u)
+        requested_in_phase = requested_in_phase && ((index >= count - per_level) == (phase == 0u));
+    bool invalidate = phase == 0u && params.limits.y != 0u;
+    if (!requested_in_phase && !invalidate) return;
+    uint level = index / per_level, within = index % per_level;
+    ivec2 absolute_page = params.base[level].xy + ivec2(within % axis, within / axis);
+    uvec2 toroidal = uvec2(absolute_page) & uvec2(axis - 1u);
+    uint slot = level * per_level + toroidal.y * axis + toroidal.x;
+    if (invalidate) slots[slot].w = 0;
+    if (!requested_in_phase) return;
+    ivec4 state = slots[slot];
+    bool wrong = state.w == 0 || any(notEqual(state.xy, absolute_page));
+    // A forced invalidation may represent changed caster geometry. Do not
+    // expose stale content, including when the update budget is exhausted.
+    if (!wrong && params.limits.y == 0u) table[index] = slot;
+    bool refresh_phase = phase == 2u || phase == 4u;
+    if (refresh_phase ? wrong || params.config.z - uint(state.z) < params.config.w : !wrong) return;
+    uint job = atomicAdd(work[0], 1u);
+    if (job >= params.limits.x) return;
+    // Keep valid refreshes mapped if caster binning cancels the batch.
+    // A miss remains unmapped until the completed draw is published.
+    uint offset = 4u + job * 4u;
+    work[offset] = slot; work[offset + 1u] = index; work[offset + 2u] = wrong ? 1u : 2u; work[offset + 3u] = 0u;
+}

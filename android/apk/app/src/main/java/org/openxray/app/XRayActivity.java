@@ -9,6 +9,7 @@ import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.util.DisplayMetrics;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -17,6 +18,8 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Date;
 import java.util.Locale;
 import java.nio.charset.StandardCharsets;
@@ -26,8 +29,8 @@ import org.libsdl.app.SDLActivity;
 /**
  * SDL entry point for the Android renderer bring-up APK.
  *
- * The default mode creates a real GLES 3.1 context and runs a native shader
- * smoke test without bundling proprietary game data. Java-side lifecycle and
+ * The launcher selects auto, GLES or Vulkan for the game; the separate smoke
+ * mode runs native renderer probes without proprietary game data. Java-side lifecycle and
  * uncaught-exception records are written to app-specific external storage so
  * a phone test remains diagnosable without root access.
  */
@@ -36,10 +39,12 @@ public final class XRayActivity extends SDLActivity {
     private File diagnosticsFile;
     private boolean immersiveMode = true;
     private TouchControlsView touchControls;
+    private final Map<Integer, AndroidVideoPlayer> videoPlayers = new HashMap<>();
+    private int nextVideoPlayerId = 1;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        // Apply orientation before SDL creates its SurfaceView/EGL surface.
+        // Apply orientation before SDL creates its SurfaceView.
         // Doing it after super.onCreate leaves the first drawable portrait
         // and forces a destructive surface recreation during native startup.
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
@@ -58,6 +63,13 @@ public final class XRayActivity extends SDLActivity {
                 + "; abi=" + (Build.SUPPORTED_ABIS.length == 0 ? "unknown" : Build.SUPPORTED_ABIS[0]));
         try {
             super.onCreate(savedInstanceState);
+            if (mSurface == null) {
+                writeDiagnostic("SDL did not create a surface");
+                return;
+            }
+            // Native UI provides focus feedback. Android's default decoration
+            // would tint the entire SDL surface after the keyboard closes.
+            mSurface.setDefaultFocusHighlightEnabled(false);
             if (getIntent().getBooleanExtra(LauncherActivity.EXTRA_TOUCH_CONTROLS, true)) {
                 touchControls = new TouchControlsView(this);
                 addContentView(touchControls, new ViewGroup.LayoutParams(
@@ -74,7 +86,8 @@ public final class XRayActivity extends SDLActivity {
     protected void onResume() {
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         super.onResume();
-        applyImmersiveMode();
+        if (mSurface != null)
+            applyImmersiveMode();
         writeDiagnostic("activity onResume");
     }
 
@@ -84,6 +97,24 @@ public final class XRayActivity extends SDLActivity {
             touchControls.releaseAllControls();
         writeDiagnostic("activity onPause");
         super.onPause();
+    }
+
+    @Override
+    protected void onStop() {
+        writeDiagnostic("activity onStop");
+        super.onStop();
+    }
+
+    @Override
+    public void onLowMemory() {
+        writeDiagnostic("activity onLowMemory");
+        super.onLowMemory();
+    }
+
+    @Override
+    public void onTrimMemory(int level) {
+        writeDiagnostic("activity onTrimMemory level=" + level);
+        super.onTrimMemory(level);
     }
 
     @Override
@@ -129,6 +160,11 @@ public final class XRayActivity extends SDLActivity {
     @Override
     protected void onDestroy() {
         writeDiagnostic("activity onDestroy");
+        synchronized (videoPlayers) {
+            for (AndroidVideoPlayer player : videoPlayers.values())
+                player.close();
+            videoPlayers.clear();
+        }
         super.onDestroy();
     }
 
@@ -155,14 +191,20 @@ public final class XRayActivity extends SDLActivity {
         int gameVariant = getIntent().getIntExtra(LauncherActivity.EXTRA_GAME_VARIANT, 3);
         String[] additionalArgs = getIntent().getStringArrayExtra(LauncherActivity.EXTRA_ADDITIONAL_ARGS);
         int rendererMode = getIntent().getIntExtra(
-                LauncherActivity.EXTRA_RENDERER_MODE, LauncherActivity.RENDERER_AUTO);
-        int graphicsPreset = getIntent().getIntExtra(
-                LauncherActivity.EXTRA_GRAPHICS_PRESET, LauncherActivity.GRAPHICS_AUTO);
-        int renderWidth = getIntent().getIntExtra(LauncherActivity.EXTRA_RENDER_WIDTH, 1280);
-        int renderHeight = getIntent().getIntExtra(LauncherActivity.EXTRA_RENDER_HEIGHT, 720);
+                LauncherActivity.EXTRA_RENDERER_MODE, LauncherActivity.RENDERER_VULKAN);
+        DisplayMetrics screen = new DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getRealMetrics(screen);
+        if (screen.widthPixels <= 0 || screen.heightPixels <= 0)
+            screen = getResources().getDisplayMetrics();
+        int fallbackWidth = Math.max(2, Math.round(Math.max(screen.widthPixels, screen.heightPixels) * .5f)) & ~1;
+        int fallbackHeight = Math.max(2, Math.round(Math.min(screen.widthPixels, screen.heightPixels) * .5f)) & ~1;
+        int renderWidth = getIntent().getIntExtra(LauncherActivity.EXTRA_RENDER_WIDTH, fallbackWidth);
+        int renderHeight = getIntent().getIntExtra(LauncherActivity.EXTRA_RENDER_HEIGHT, fallbackHeight);
         boolean showFps = getIntent().getBooleanExtra(LauncherActivity.EXTRA_SHOW_FPS, true);
         ArrayList<String> args = new ArrayList<>();
-        args.add("-unique_logs");
+        // SessionLogs already owns a unique Android engine journal. The core
+        // callback writes there, so a second native log would duplicate it.
+        args.add("-nolog");
 
         if (rendererSmoke) {
             args.add(vulkanRendererSmoke ? "-renderer-vulkan-smoke" : "-renderer-smoke");
@@ -184,17 +226,25 @@ public final class XRayActivity extends SDLActivity {
         }
 
         if (!rendererSmoke) {
-            args.add(OptionCatalog.value(OptionCatalog.RENDERER_ARGS, rendererMode, 0));
+            String rendererArg = OptionCatalog.value(OptionCatalog.RENDERER_ARGS, rendererMode, 0);
+            args.add(rendererArg);
+            writeDiagnostic("native gameplay renderer request=" + rendererArg);
 
             args.add("-android-render-width");
             args.add(Integer.toString(Math.max(320, renderWidth)));
             args.add("-android-render-height");
             args.add(Integer.toString(Math.max(320, renderHeight)));
-            args.add("-android-mobile-preset");
-            args.add(OptionCatalog.value(OptionCatalog.GRAPHICS_PRESETS, graphicsPreset, 0));
             if (showFps)
                 args.add("-android-show-fps");
         }
+
+        // The smoke test validates Vulkan explicitly. In gameplay the layer
+        // allocates additional state for every level resource and draw; keep
+        // it opt-in through additional arguments for targeted diagnosis.
+        if (vulkanRendererSmoke)
+            args.add("-vk_validation");
+        if (BuildConfig.EXPORT_SHADERS_XR && !rendererSmoke)
+            args.add("-vk_export_shaders_xr");
 
         if (!gamepadEnabled)
             args.add("-no_gamepad");
@@ -224,9 +274,72 @@ public final class XRayActivity extends SDLActivity {
         nativeClickTouchMouse(pressed);
     }
 
+    static void clickTouchMouseAt(float x, float y, int viewWidth, int viewHeight) {
+        nativeClickTouchMouseAt(x, y, viewWidth, viewHeight);
+    }
+
+    public int[] createAndroidVideoDecoder(String path) {
+        AndroidVideoPlayer player = AndroidVideoPlayer.open(path);
+        if (player == null)
+            return null;
+        synchronized (videoPlayers) {
+            int id = nextVideoPlayerId++;
+            if (id <= 0) {
+                nextVideoPlayerId = 2;
+                id = 1;
+            }
+            while (videoPlayers.containsKey(id)) {
+                id = nextVideoPlayerId++;
+                if (nextVideoPlayerId <= 0)
+                    nextVideoPlayerId = 1;
+            }
+            videoPlayers.put(id, player);
+            return new int[] {id, player.width(), player.height()};
+        }
+    }
+
+    public void playAndroidVideoDecoder(int id, boolean looped, int timeMs) {
+        synchronized (videoPlayers) {
+            AndroidVideoPlayer player = videoPlayers.get(id);
+            if (player != null)
+                player.play(looped, timeMs);
+        }
+    }
+
+    public void stopAndroidVideoDecoder(int id) {
+        synchronized (videoPlayers) {
+            AndroidVideoPlayer player = videoPlayers.get(id);
+            if (player != null)
+                player.stop();
+        }
+    }
+
+    public boolean isAndroidVideoDecoderPlaying(int id) {
+        synchronized (videoPlayers) {
+            AndroidVideoPlayer player = videoPlayers.get(id);
+            return player != null && player.isPlaying();
+        }
+    }
+
+    public byte[] updateAndroidVideoDecoder(int id, int timeMs) {
+        synchronized (videoPlayers) {
+            AndroidVideoPlayer player = videoPlayers.get(id);
+            return player == null ? null : player.update(timeMs);
+        }
+    }
+
+    public void releaseAndroidVideoDecoder(int id) {
+        synchronized (videoPlayers) {
+            AndroidVideoPlayer player = videoPlayers.remove(id);
+            if (player != null)
+                player.close();
+        }
+    }
+
     private static native void nativeSetTouchControl(int control, boolean pressed);
     private static native void nativeMoveTouchMouse(float deltaX, float deltaY);
     private static native void nativeClickTouchMouse(boolean pressed);
+    private static native void nativeClickTouchMouseAt(float x, float y, int viewWidth, int viewHeight);
 
     private void applyImmersiveMode() {
         if (!immersiveMode)

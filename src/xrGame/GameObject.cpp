@@ -1,5 +1,7 @@
 #include "pch_script.h"
 #include "GameObject.h"
+#include "PhysicsShellHolder.h"
+#include "xrEngine/GrassInteractionCollector.h"
 
 #include "Include/xrRender/RenderVisual.h"
 #include "xrPhysics/PhysicsShell.h"
@@ -126,8 +128,10 @@ void CGameObject::cNameVisual_set(shared_str N)
     if (N.c_str() && N[0])
     {
         IRenderVisual* old_v = renderable.visual;
+        IRenderVisual* new_v = GEnv.Render->model_Create(N.c_str());
+        R_ASSERT3(new_v, "Could not create object visual", N.c_str());
         NameVisual = N;
-        renderable.visual = GEnv.Render->model_Create(N.c_str());
+        renderable.visual = new_v;
         IKinematics* old_k = old_v ? old_v->dcast_PKinematics() : NULL;
         IKinematics* new_k = renderable.visual->dcast_PKinematics();
         /*
@@ -1307,6 +1311,17 @@ void CGameObject::OnChangeVisual()
 bool CGameObject::shedule_Needed() { return (!getDestroy()); }
 void CGameObject::create_anim_mov_ctrl(CBlend* b, Fmatrix* start_pose, bool local_animation)
 {
+    // A renderer can reject a cycle when its blend pool is exhausted or the
+    // requested motion is unavailable. Never hand a null controlling blend to
+    // animation_movement_controller, which samples it during construction.
+    if (!b)
+    {
+        static u32 rejected_movement_blends = 0;
+        if (++rejected_movement_blends <= 4 ||
+            (rejected_movement_blends & (rejected_movement_blends - 1)) == 0)
+            Msg("! [animation] movement controller skipped null blend occurrence=%u", rejected_movement_blends);
+        return;
+    }
     if (animation_movement_controlled())
     {
         m_anim_mov_ctrl->NewBlend(b, start_pose ? *start_pose : XFORM(), local_animation);
@@ -1395,7 +1410,20 @@ void CGameObject::UpdateCL()
 }
 
 void CGameObject::PreUpdateCL() { m_client_updated = false; }
-void CGameObject::PostUpdateCL(bool /*bUpdateCL_disabled*/) { m_client_updated = true;}
+void CGameObject::PostUpdateCL(bool /*bUpdateCL_disabled*/)
+{
+    m_client_updated = true;
+    auto* physics = cast_physics_shell_holder();
+    if (!physics || H_Parent() || getDestroy() || !Visual()) return;
+    const auto& position = Position();
+    const auto& bounds = BoundingBox();
+    xray::grass::Sample sample;
+    sample.instance = static_cast<IGameObject*>(this); sample.object_id = ID();
+    sample.position[0] = position.x; sample.position[1] = position.y; sample.position[2] = position.z;
+    sample.radius = .5f * (std::max)(bounds.vMax.x-bounds.vMin.x,bounds.vMax.z-bounds.vMin.z);
+    sample.mass = cast_entity() ? physics->GetMass() : 0.f;
+    xray::grass::submit(sample);
+}
 
 void CGameObject::on_matrix_change(const Fmatrix& previous) { obstacle().on_move(); }
 #ifdef DEBUG

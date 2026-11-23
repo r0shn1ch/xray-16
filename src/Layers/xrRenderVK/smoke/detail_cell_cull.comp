@@ -1,0 +1,45 @@
+#version 450
+struct Slot { vec4 bounds; uvec4 data; uvec4 palettes; };
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std430) readonly buffer Cells { Slot cells[]; };
+layout(set = 0, binding = 1, std430) buffer Visible { uint visible[]; };
+layout(set = 0, binding = 2, std430) buffer Arguments { uint args[]; };
+layout(push_constant) uniform Cull
+{
+    mat4 mvp;
+    vec4 camera_distance;
+    uint slot_count;
+    uint per_cell;
+    uint max_groups_x;
+    float margin;
+} settings;
+
+bool outside(vec4 plane, vec3 center, vec3 extent)
+{
+    return dot(plane.xyz, center) + plane.w < -dot(abs(plane.xyz), extent);
+}
+void main()
+{
+    uint group = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    if (group > 0xffffffffu / gl_WorkGroupSize.x) return;
+    uint index = group * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
+    if (index >= settings.slot_count || index >= cells.length()) return;
+    Slot cell = cells[index];
+    if (cell.data.y == 0x3f3f3f3fu || cell.data.w == 0u) return;
+    vec2 delta = cell.bounds.xy + 1.0 - settings.camera_distance.xz;
+    float distance_limit = settings.camera_distance.w;
+    if (dot(delta, delta) > distance_limit * distance_limit ||
+        abs(cell.bounds.z - settings.camera_distance.y) > distance_limit + cell.bounds.w) return;
+    vec3 center = vec3(cell.bounds.x + 1.0, cell.bounds.z + cell.bounds.w * 0.5, cell.bounds.y + 1.0);
+    vec3 extent = vec3(1.0, cell.bounds.w * 0.5, 1.0) + settings.margin;
+    mat4 rows = transpose(settings.mvp);
+    if (outside(rows[3] + rows[0], center, extent) || outside(rows[3] - rows[0], center, extent) ||
+        outside(rows[3] + rows[1], center, extent) || outside(rows[3] - rows[1], center, extent) ||
+        outside(rows[2], center, extent) || outside(rows[3] - rows[2], center, extent)) return;
+    uint target = atomicAdd(visible[0], 1u);
+    visible[1u + target] = index;
+    uint candidates = (target + 1u) * settings.per_cell;
+    uint groups = (candidates - 1u) / 64u + 1u;
+    atomicMax(args[0], min(groups, settings.max_groups_x));
+    atomicMax(args[1], (groups - 1u) / settings.max_groups_x + 1u);
+}

@@ -433,6 +433,24 @@ bool CUITrackBar::GetCheck()
     return !!m_i_val;
 }
 
+void CUITrackBar::SetIValue(int value)
+{
+    VERIFY(!m_b_is_float);
+    m_i_val = value;
+    clamp(m_i_val, m_i_min, m_i_max);
+    UpdatePos();
+}
+
+void CUITrackBar::SetFValue(float value)
+{
+    VERIFY(m_b_is_float);
+    if (!std::isfinite(value))
+        return;
+    m_f_val = value;
+    clamp(m_f_val, m_f_min, m_f_max);
+    UpdatePos();
+}
+
 void CUITrackBar::SetCheck(bool b)
 {
     VERIFY(!m_b_is_float);

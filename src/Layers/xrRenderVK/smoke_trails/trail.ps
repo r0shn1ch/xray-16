@@ -1,0 +1,18 @@
+
+
+[[vk::binding(2, 0)]] Texture2D<float4> tracer_map : register(t2);
+[[vk::binding(2, 0)]] SamplerState tracer_sampler : register(s2);
+
+struct PS_INPUT
+{
+    float4 hpos     : SV_Position;
+    [[vk::location(0)]] float2 texcoord : TEXCOORD0;
+    [[vk::location(1)]] float4 color    : TEXCOORD1;
+};
+
+float4 main(PS_INPUT input) : SV_Target0
+{
+    // The line sprite uses the left quarter of the legacy tracer atlas.
+    float2 uv = float2(saturate(input.texcoord.x) * 0.25, 1.0 - saturate(input.texcoord.y));
+    return tracer_map.Sample(tracer_sampler, uv) * input.color;
+}

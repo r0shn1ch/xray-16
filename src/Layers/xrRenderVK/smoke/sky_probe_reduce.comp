@@ -1,0 +1,60 @@
+#version 450
+
+// Matches RayQueryHit. Keeping the query and reduction separate lets the bake
+// use the same material-aware visibility queries as the rest of the renderer.
+struct RayHit
+{
+    uint found;
+    float distance;
+    uint instance;
+    uint geometry;
+    uint primitive;
+    uint material_id;
+    vec2 barycentric;
+};
+
+struct SkyProbe
+{
+    vec4 positive_x_negative_x_positive_y_negative_y;
+    vec2 positive_z_negative_z;
+    vec2 padding;
+};
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std430) readonly buffer QueryResults { RayHit hits[]; };
+layout(set = 0, binding = 1, std430) writeonly buffer ProbeResults { SkyProbe probes[]; };
+layout(push_constant) uniform BakeSlice
+{
+    uint first_probe;
+    uint probe_count;
+    uint rays_per_face;
+} slice;
+
+void main()
+{
+    uint local_index = gl_GlobalInvocationID.x;
+    if (local_index >= slice.probe_count || slice.first_probe >= probes.length() ||
+        local_index >= probes.length() - slice.first_probe || slice.rays_per_face == 0u)
+        return;
+
+    uint probe_stride = slice.rays_per_face * 6u;
+    if (probe_stride / 6u != slice.rays_per_face || local_index >= hits.length() / probe_stride)
+        return;
+
+    uint first_ray = local_index * probe_stride;
+    float visibility[6];
+    for (uint face = 0u; face < 6u; ++face)
+    {
+        uint clear_count = 0u;
+        for (uint ray = 0u; ray < slice.rays_per_face; ++ray)
+            clear_count += uint(hits[first_ray + face * slice.rays_per_face + ray].found == 0u);
+        visibility[face] = float(clear_count) / float(slice.rays_per_face);
+    }
+
+    SkyProbe result;
+    result.positive_x_negative_x_positive_y_negative_y =
+        vec4(visibility[0], visibility[1], visibility[2], visibility[3]);
+    result.positive_z_negative_z = vec2(visibility[4], visibility[5]);
+    result.padding = vec2(0.0);
+    probes[slice.first_probe + local_index] = result;
+}

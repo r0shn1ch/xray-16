@@ -280,6 +280,12 @@ void CRenderDevice::SelectResolution(const bool windowed)
     dwWidth = psDeviceMode.Width;
     dwHeight = psDeviceMode.Height;
 #if defined(XR_PLATFORM_ANDROID)
+    // Before creation these dimensions select the scene size. A live Vulkan
+    // renderer has a separate scene target; window notifications must retain
+    // native UI coordinates instead of scaling them a second time.
+    if (b_is_Ready && (SDL_GetWindowFlags(m_sdlWnd) & SDL_WINDOW_VULKAN))
+        return;
+
     u32 requestedWidth = 0;
     u32 requestedHeight = 0;
     const bool hasExplicitSize =

@@ -1,0 +1,22 @@
+#version 450
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std430) readonly buffer Needed { uint needed[]; };
+layout(set = 0, binding = 1, std430) buffer PageTable { uint table[]; };
+layout(set = 0, binding = 2, std430) buffer Slots { ivec4 slots[]; };
+layout(set = 0, binding = 3, std430) readonly buffer Work { uint work[]; };
+layout(push_constant) uniform Parameters { uvec4 config; uvec4 limits; ivec4 base[6]; } params;
+void main()
+{
+    uint count = work[1] == 0u ? min(work[0], params.limits.x) : 0u;
+    uint width = params.limits.z * 64u;
+    if (count == 0u || width == 0u || gl_GlobalInvocationID.y > (count - 1u) / width) return;
+    uint row = gl_GlobalInvocationID.y * width;
+    if (gl_GlobalInvocationID.x >= count - row) return;
+    uint offset = 4u + (row + gl_GlobalInvocationID.x) * 4u;
+    uint slot = work[offset], index = work[offset + 1u];
+    uint axis = params.config.x, per_level = axis * axis;
+    uint level = index / per_level, within = index % per_level;
+    ivec2 absolute_page = params.base[level].xy + ivec2(within % axis, within / axis);
+    slots[slot] = ivec4(absolute_page, int(params.config.z), 1);
+    table[index] = slot;
+}

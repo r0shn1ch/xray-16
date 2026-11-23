@@ -8,6 +8,8 @@
 #include "xrEngine/xr_level_controller.h"
 #include "xrEngine/CustomHUD.h"
 
+#include <algorithm>
+
 dlgItem::dlgItem(CUIWindow* pWnd)
 {
     wnd = pWnd;
@@ -490,6 +492,25 @@ bool CDialogHolder::IR_UIOnMouseMove(int dx, int dy)
             return false;
         }
     };
+    return true;
+}
+
+bool CDialogHolder::IR_UIOnMouseMoveTo(float x, float y)
+{
+    CUIDialogWnd* TIR = TopInputReceiver();
+    if (!TIR || !TIR->IR_process())
+        return false;
+
+    UpdateCursorVisibility();
+    if (!GetUICursor().IsVisible())
+        return false;
+
+    const Fvector2 position{
+        std::clamp(x, 0.f, 1.f) * UI_BASE_WIDTH,
+        std::clamp(y, 0.f, 1.f) * UI_BASE_HEIGHT,
+    };
+    GetUICursor().SetUICursorPosition(position, false);
+    TIR->OnMouseAction(position.x, position.y, WINDOW_MOUSE_MOVE);
     return true;
 }
 

@@ -5,6 +5,7 @@
 
 #include "StdAfx.h"
 #include "game_news.h"
+#include "game_news_serialization.h"
 #include "Common/object_broker.h"
 
 #include "ai_space.h"
@@ -34,7 +35,7 @@ void GAME_NEWS_DATA::load(IReader& stream)
     load_data(news_text, stream);
     load_data(receive_time, stream);
     load_data(texture_name, stream);
-    //	load_data(tex_rect,		stream);
+    game_news_serialization::skip_legacy_texture_rect(stream);
 }
 /*
 LPCSTR GAME_NEWS_DATA::SingleLineText()

@@ -21,13 +21,7 @@ bool CMonsterHitMemory::is_hit(const IGameObject* pO)
 
 void CMonsterHitMemory::add_hit(IGameObject* who, EHitSide side)
 {
-    SMonsterHit new_hit_info
-    {
-        .object = who,
-        .position = monster->Position(),
-        .time = Device.dwTimeGlobal,
-        .side = side,
-    };
+    SMonsterHit new_hit_info{who, monster->Position(), Device.dwTimeGlobal, side};
 
     if (const auto it = std::find(m_hits.begin(), m_hits.end(), who); it == m_hits.end())
         m_hits.emplace_back(new_hit_info);

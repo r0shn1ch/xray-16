@@ -151,7 +151,13 @@ void CConsole::OnFrame()
         // Activate console input after hiding the editor
         // XXX: not really great I'd say
         if (pInput->CurrentIR() != this)
+        {
+            // Loading or a modal UI may have captured input above the console.
+            // Move our existing capture to the top instead of duplicating it:
+            // Hide() must release the console completely, including after loads.
+            IR_Release();
             IR_Capture();
+        }
     }
 
     bool bGame = false;

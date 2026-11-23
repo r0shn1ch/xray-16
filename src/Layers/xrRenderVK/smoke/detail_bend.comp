@@ -1,0 +1,30 @@
+#version 450
+layout(local_size_x=64) in;
+layout(set=0,binding=0,std430) buffer Instances { float data[]; };
+layout(set=0,binding=1,std430) readonly buffer Arguments { uint args[]; };
+layout(set=0,binding=2) uniform sampler2D current_field;
+layout(set=0,binding=3) uniform sampler2D previous_field;
+layout(push_constant) uniform Parameters {
+    vec2 origin; vec2 previous_origin;
+    float texel_size; uint size; uint capacity; uint indirect;
+    uint previous_valid;
+} params;
+
+vec2 bend(sampler2D field, vec2 world, vec2 origin) {
+    ivec2 pixel = ivec2(floor((world-origin)/params.texel_size));
+    if (any(lessThan(pixel,ivec2(0))) || any(greaterThanEqual(pixel,ivec2(params.size)))) return vec2(0);
+    return texelFetch(field,pixel,0).xy;
+}
+void main() {
+    uint group=gl_WorkGroupID.y*gl_NumWorkGroups.x+gl_WorkGroupID.x;
+    if (group>0xffffffffu/64u) return;
+    uint index=group*64u+gl_LocalInvocationIndex;
+    uint count=params.indirect!=0u ? min(args[1],params.capacity) : params.capacity;
+    if (index>=count || index>=data.length()/10u) return;
+    uint offset=index*10u;
+    vec2 world=vec2(data[offset],data[offset+2u]);
+    vec2 current=bend(current_field,world,params.origin);
+    vec2 previous=params.previous_valid!=0u ? bend(previous_field,world,params.previous_origin) : current;
+    data[offset+6u]=current.x; data[offset+7u]=current.y;
+    data[offset+8u]=previous.x; data[offset+9u]=previous.y;
+}

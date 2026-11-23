@@ -1,0 +1,209 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_nonuniform_qualifier : require
+#include "visibility_common.glsl"
+#include "visibility_geometry.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform usampler2D visibilityImage;
+layout(set = 1, binding = 0) uniform sampler2D baseColorTextures[];
+#ifdef VISIBILITY_ENVIRONMENT_CUBE
+layout(set = 1, binding = 1) uniform samplerCube environmentTextures[];
+#endif
+layout(rgba16f, binding = 5) writeonly uniform image2D baseColorImage;
+layout(rgba16f, binding = 6) writeonly uniform image2D normalImage;
+layout(rgba16f, binding = 7) writeonly uniform image2D surfaceImage;
+layout(push_constant) uniform ResolveParameters
+{
+    mat4 viewProjection;
+    vec2 origin;
+    vec2 extent;
+    uint firstDraw;
+    uint drawCount;
+    uint materialCount;
+    uint geometryBatch;
+    vec4 eyeAndSteep;
+} parameters;
+
+vec3 finiteNormal(vec3 normal)
+{
+    float squaredLength = dot(normal, normal);
+    return squaredLength > 1e-12 && squaredLength < 1e20
+        ? normal * inversesqrt(squaredLength) : vec3(0.0, 1.0, 0.0);
+}
+
+vec3 finiteTangentNormal(vec3 normal)
+{
+    float squaredLength = dot(normal, normal);
+    return squaredLength > 1e-12 && squaredLength < 1e20
+        ? normal * inversesqrt(squaredLength) : vec3(0.0, 0.0, 1.0);
+}
+
+bool finiteUv(vec2 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
+#include "visibility_parallax.glsl"
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 extent = textureSize(visibilityImage, 0);
+    if (any(greaterThanEqual(pixel, extent)) || any(notEqual(extent, imageSize(baseColorImage))) ||
+        any(notEqual(extent, imageSize(normalImage))) || any(notEqual(extent, imageSize(surfaceImage))))
+        return;
+    uint id = texelFetch(visibilityImage, pixel, 0).x;
+    if (!visibilityIdValid(id) || visibilityEntry(id) >= uint(entries.length()))
+        return;
+
+    uint draw = visibilityEntry(id);
+    if (draw < parameters.firstDraw || draw - parameters.firstDraw >= parameters.drawCount)
+        return;
+    DrawEntry entry = entries[draw];
+    uvec3 vertexIndex;
+    if (entry.geometryBatch != parameters.geometryBatch || entry.materialSlot >= parameters.materialCount ||
+        !visibilityVertices(entry, visibilityTriangle(id), vertexIndex))
+        return;
+    PackedVertex a = vertices[vertexIndex.x];
+    PackedVertex b = vertices[vertexIndex.y];
+    PackedVertex c = vertices[vertexIndex.z];
+    if (any(equal(parameters.extent, vec2(0.0))))
+        return;
+    vec2 ndcPerPixel = 2.0 / parameters.extent;
+    vec2 ndc = (vec2(pixel) + 0.5 - parameters.origin) * ndcPerPixel - 1.0;
+    VisibilityBarycentrics barycentrics;
+    if (!resolveVisibilityBarycentrics(visibilityClipPosition(a, parameters.viewProjection),
+        visibilityClipPosition(b, parameters.viewProjection), visibilityClipPosition(c, parameters.viewProjection),
+        ndc, ndcPerPixel, barycentrics))
+        return;
+
+    mat3x2 texcoords = mat3x2(a.normalYZUv.zw, b.normalYZUv.zw, c.normalYZUv.zw);
+    vec2 rawUv = texcoords * barycentrics.weights;
+    vec2 rawDx = texcoords * barycentrics.dx;
+    vec2 rawDy = texcoords * barycentrics.dy;
+    vec2 uv = visibilityBaseUv(entry, rawUv, 1.0);
+    vec2 uvDx = visibilityBaseUv(entry, rawDx, 0.0);
+    vec2 uvDy = visibilityBaseUv(entry, rawDy, 0.0);
+    vec2 baseUv = uv, baseDx = uvDx, baseDy = uvDy;
+    if (!finiteUv(uv) || !finiteUv(uvDx) || !finiteUv(uvDy)) return;
+    vec3 normalA = finiteNormal(visibilityNormal(a));
+    vec3 normalB = finiteNormal(visibilityNormal(b));
+    vec3 normalC = finiteNormal(visibilityNormal(c));
+    vec3 normal = finiteNormal(mat3(normalA, normalB, normalC) * barycentrics.weights);
+    vec3 tangent = mat3(unpackSnorm4x8(a.bakedBATangentBitangent.z).xyz,
+        unpackSnorm4x8(b.bakedBATangentBitangent.z).xyz,
+        unpackSnorm4x8(c.bakedBATangentBitangent.z).xyz) * barycentrics.weights;
+    vec3 bitangent = mat3(unpackSnorm4x8(a.bakedBATangentBitangent.w).xyz,
+        unpackSnorm4x8(b.bakedBATangentBitangent.w).xyz,
+        unpackSnorm4x8(c.bakedBATangentBitangent.w).xyz) * barycentrics.weights;
+    if (!visibilityMaterialUv(a, b, c, entry, barycentrics, pixel, ndc, ndcPerPixel,
+        parameters.viewProjection, parameters.eyeAndSteep, parameters.materialCount, uv, uvDx, uvDy)) return;
+    vec4 color = textureGrad(baseColorTextures[nonuniformEXT(entry.materialSlot)], uv, uvDx, uvDy);
+#ifdef VISIBILITY_ENVIRONMENT_CUBE
+    if (entry.environmentCube != 0xffffffffu)
+    {
+        mat3 positions = mat3(a.positionNormalX.xyz, b.positionNormalX.xyz, c.positionNormalX.xyz);
+        mat3 geometricNormals = mat3(normalA, normalB, normalC);
+        vec3 direction = visibilityEnvironmentDirection(entry, positions * barycentrics.weights,
+            geometricNormals * barycentrics.weights, parameters.eyeAndSteep.xyz);
+        vec3 directionDx = visibilityEnvironmentDirection(entry, positions * (barycentrics.weights + barycentrics.dx),
+            geometricNormals * (barycentrics.weights + barycentrics.dx), parameters.eyeAndSteep.xyz) - direction;
+        vec3 directionDy = visibilityEnvironmentDirection(entry, positions * (barycentrics.weights + barycentrics.dy),
+            geometricNormals * (barycentrics.weights + barycentrics.dy), parameters.eyeAndSteep.xyz) - direction;
+        vec3 reflectedColor = textureGrad(environmentTextures[nonuniformEXT(entry.environmentCube)],
+            direction, directionDx, directionDy).rgb;
+        color.rgb = mix(reflectedColor, color.rgb, color.a);
+    }
+#endif
+    float hemi = dot(clamp(0.5 + 0.5 * vec3(normalA.y, normalB.y, normalC.y), 0.0, 1.0), barycentrics.weights);
+    float normalAlpha = 0.875 + 0.125 * clamp(hemi, 0.0, 1.0);
+    float bakedHemi = 0.0;
+    if (entry.lightmapSlot < parameters.materialCount)
+    {
+        mat3x2 lightmapUv = mat3x2(a.lightmapUvBakedRG.xy, b.lightmapUvBakedRG.xy, c.lightmapUvBakedRG.xy);
+        vec2 bakedUv = lightmapUv * barycentrics.weights;
+        vec2 bakedDx = lightmapUv * barycentrics.dx;
+        vec2 bakedDy = lightmapUv * barycentrics.dy;
+        if (finiteUv(bakedUv) && finiteUv(bakedDx) && finiteUv(bakedDy))
+        {
+            vec4 baked = textureGrad(baseColorTextures[nonuniformEXT(entry.lightmapSlot)],
+                bakedUv, bakedDx, bakedDy);
+            color.a = baked.g;
+            bakedHemi = baked.a;
+            normalAlpha = bakedHemi * 0.75;
+        }
+    }
+    bool hasPbr = entry.pbrSlot < parameters.materialCount || entry.metallicSlot < parameters.materialCount ||
+        entry.roughnessSlot < parameters.materialCount || entry.aoSlot < parameters.materialCount;
+    vec4 surface = vec4(0.0, entry.materialClass, clamp(entry.emission, 0.0, 1.0), 0.0);
+    bool hasBump = entry.bumpSlot < parameters.materialCount && entry.bumpAuxSlot < parameters.materialCount;
+    bool hasNormal = entry.normalSlot < parameters.materialCount;
+    bool hasDetail = entry.detailSlot < parameters.materialCount;
+    bool hasDetailNormal = hasDetail && entry.detailMode != 0u &&
+        entry.detailBumpSlot < parameters.materialCount && entry.detailBumpAuxSlot < parameters.materialCount;
+    vec3 mapped = vec3(0.0, 0.0, 1.0);
+    float gloss = hasDetailNormal ? 1.0 : 0.0;
+    if (hasBump)
+    {
+        vec4 bump = textureGrad(baseColorTextures[nonuniformEXT(entry.bumpSlot)], uv, uvDx, uvDy);
+        vec4 aux = textureGrad(baseColorTextures[nonuniformEXT(entry.bumpAuxSlot)], uv, uvDx, uvDy);
+        mapped = finiteTangentNormal(bump.wzy + aux.xyz - 1.0);
+        gloss = bump.r * bump.r;
+        surface.a = aux.z * entry.bumpHeight;
+    }
+    if (hasNormal)
+        mapped = finiteTangentNormal(textureGrad(baseColorTextures[nonuniformEXT(entry.normalSlot)],
+            uv, uvDx, uvDy).xyz * 2.0 - 1.0);
+    if (hasDetail)
+    {
+        vec2 detailUv = visibilityDetailUv(entry, rawUv, 1.0) * entry.detailScale + (uv - baseUv);
+        vec2 detailDx = visibilityDetailUv(entry, rawDx, 0.0) * entry.detailScale + (uvDx - baseDx);
+        vec2 detailDy = visibilityDetailUv(entry, rawDy, 0.0) * entry.detailScale + (uvDy - baseDy);
+        vec4 detail = textureGrad(baseColorTextures[nonuniformEXT(entry.detailSlot)], detailUv, detailDx, detailDy);
+        if (entry.detailMode != 1u) color.rgb *= 2.0 * detail.rgb;
+        if (hasDetailNormal)
+        {
+            vec4 detailBump = textureGrad(baseColorTextures[nonuniformEXT(entry.detailBumpSlot)], detailUv, detailDx, detailDy);
+            vec4 detailAux = textureGrad(baseColorTextures[nonuniformEXT(entry.detailBumpAuxSlot)], detailUv, detailDx, detailDy);
+            mapped = finiteTangentNormal(mapped + finiteTangentNormal(detailBump.wzy + detailAux.xyz - 1.0) - vec3(0, 0, 1));
+            gloss *= detailBump.r * 2.0;
+        }
+        else gloss *= detail.a * 2.0;
+    }
+    surface.r = clamp(gloss, 0.0, 1.0);
+    if (hasBump || hasNormal || hasDetailNormal)
+    {
+        tangent -= normal * dot(normal, tangent);
+        bitangent -= normal * dot(normal, bitangent);
+        float t2 = dot(tangent, tangent), b2 = dot(bitangent, bitangent);
+        float determinant = dot(cross(normal, tangent), bitangent);
+        if (t2 > 1e-12 && b2 > 1e-12 && t2 < 1e20 && b2 < 1e20 &&
+            determinant * determinant > t2 * b2 * 1e-6)
+        {
+            tangent *= inversesqrt(t2);
+            bitangent = cross(normal, tangent) * (determinant < 0.0 ? -1.0 : 1.0);
+            normal = finiteNormal(tangent * mapped.x + bitangent * mapped.y + normal * mapped.z);
+        }
+    }
+    if (hasPbr)
+    {
+        vec3 pbr = vec3(0.0, 1.0, 1.0);
+        if (entry.pbrSlot < parameters.materialCount)
+            pbr = textureGrad(baseColorTextures[nonuniformEXT(entry.pbrSlot)], uv, uvDx, uvDy).rgb;
+        if (entry.metallicSlot < parameters.materialCount)
+            pbr.r = textureGrad(baseColorTextures[nonuniformEXT(entry.metallicSlot)], uv, uvDx, uvDy).r;
+        if (entry.roughnessSlot < parameters.materialCount)
+            pbr.g = textureGrad(baseColorTextures[nonuniformEXT(entry.roughnessSlot)], uv, uvDx, uvDy).r;
+        if (entry.aoSlot < parameters.materialCount)
+            pbr.b = textureGrad(baseColorTextures[nonuniformEXT(entry.aoSlot)], uv, uvDx, uvDy).r;
+        surface = vec4(clamp(pbr.g, 0.0, 1.0), clamp(pbr.r, 0.0, 1.0), clamp(pbr.b, 0.0, 1.0),
+            clamp(entry.emission, 0.0, 1.0));
+        normalAlpha = entry.lightmapSlot < parameters.materialCount
+            ? 0.76 + 0.05 * clamp(bakedHemi, 0.0, 1.0) : 0.82 + 0.05 * clamp(hemi, 0.0, 1.0);
+    }
+    imageStore(baseColorImage, pixel, color);
+    imageStore(normalImage, pixel, vec4(normal, normalAlpha));
+    imageStore(surfaceImage, pixel, surface);
+}

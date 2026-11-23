@@ -142,7 +142,8 @@ public:
         D3D9,
         D3D10,
         D3D11,
-        OpenGL
+        OpenGL,
+        Vulkan
     };
 
     enum ScreenshotMode : u32
@@ -343,6 +344,7 @@ public:
     virtual void AfterWorldRender() = 0; //--#SM+#-- После рендеринга мира (до UI)
 
     virtual void Screenshot(ScreenshotMode mode = SM_NORMAL, pcstr name = nullptr) = 0;
+    virtual bool ScreenshotPending() const { return false; }
     virtual void SetPostProcessParams(const SPPInfo& ppi) = 0;
 
     // Constructor/destructor
@@ -384,6 +386,10 @@ public:
 
     //	Device state
     virtual DeviceState GetDeviceState() = 0;
+    // Mobile platforms may discard the native window surface while keeping
+    // the engine and renderer alive. Backends can quiesce GPU work on pause
+    // and rebuild surface-dependent resources when the app returns.
+    virtual void OnAppLifecycleChanged(bool) {}
     virtual bool GetForceGPU_REF() = 0;
     virtual u32 GetCacheStatCalls() = 0;
     virtual u32 GetCacheStatPolys() = 0;
@@ -397,4 +403,7 @@ public:
 
     virtual RenderContext GetCurrentContext() const = 0;
     virtual void MakeContextCurrent(RenderContext context) = 0;
+    // Optional renderer effect sourced by the active weapon.
+    virtual void UpdateSmokeTrail(const Fvector&, const Fvector&, float, bool) {}
+    virtual bool UpdateProjectileTrail(u64, const Fvector&, const Fvector&, float, u32, float, u32) { return false; }
 };

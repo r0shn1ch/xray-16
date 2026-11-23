@@ -1,0 +1,7 @@
+XRAY_VULKAN_SHADER_METADATA_V1
+source=vk/../../../../src/Layers/xrRenderVK/gpu_particles/gpu_particle_distortion.ps
+stage=ps
+entry=main
+defines=
+source-fingerprint=b9ad37b38b52a77a
+spirv-fingerprint=aba1cecb43541a38

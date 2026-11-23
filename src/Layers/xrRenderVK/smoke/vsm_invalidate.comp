@@ -1,0 +1,23 @@
+#version 450
+layout(local_size_x = 64) in;
+struct Bounds { vec4 minimum; vec4 maximum; };
+layout(set = 0, binding = 0, std430) readonly buffer Changes { Bounds changes[]; };
+layout(set = 0, binding = 1, std430) readonly buffer Parameters {
+    ivec4 base[6]; vec4 level[6]; vec4 zrange; uvec4 config; // axis, levels
+} params;
+layout(set = 0, binding = 2, std430) buffer Slots { ivec4 slots[]; };
+layout(push_constant) uniform Limits { uint slot_count, change_count, unused0, unused1; } limits;
+void main()
+{
+    uint slot = gl_GlobalInvocationID.x, change = gl_GlobalInvocationID.y;
+    if (slot >= limits.slot_count || change >= limits.change_count || atomicAdd(slots[slot].w, 0) == 0) return;
+    uint axis = params.config.x, per_level = axis * axis, level = slot / per_level;
+    if (level >= params.config.y) return;
+    vec2 local_page = vec2(slots[slot].xy) - vec2(params.base[level].xy);
+    vec2 page_min = params.level[level].xy + local_page * (params.level[level].z / float(axis));
+    vec2 page_max = page_min + vec2(params.level[level].z / float(axis));
+    Bounds bound = changes[change];
+    if (any(lessThan(bound.maximum.xy, page_min)) || any(greaterThan(bound.minimum.xy, page_max)) ||
+        bound.maximum.z < params.zrange.x || bound.minimum.z > params.zrange.y) return;
+    atomicExchange(slots[slot].w, 0);
+}

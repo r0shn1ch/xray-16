@@ -102,6 +102,7 @@ public:
     void RestoreEffectorDOF();
 
     virtual void GetCurrentDof(Fvector3& dof);
+    bool GetDofOverride(Fvector3& dof) const override;
     virtual void SetBaseDof(const Fvector3& dof);
     virtual void OnSectorChanged(IRender_Sector::sector_id_t sector);
     virtual void OnAssetsChanged();

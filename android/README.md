@@ -1,8 +1,27 @@
 # Building OpenXRay for Android
 
 The Android port is maintained in this fork and is not an upstream OpenXRay
-release target. It builds one debug APK containing the launcher and an ARMv7
+release target. It builds a debug APK containing the launcher and a native
 engine. It does not contain S.T.A.L.K.E.R. game data.
+
+For Vulkan on a 64-bit device, build with `XRAY_ANDROID_ARM64_ONLY=ON`
+and `./android/build-apk-dual.sh` using an ARM64 dependency prefix. ARMv7 gameplay
+can exhaust its 32-bit address space while loading a large level; switching
+the packaged engine to `arm64-v8a` removes that address-space ceiling. An APK
+with both ABIs can be built by omitting `XRAY_ANDROID_ARM64_ONLY`; Android
+selects the native ABI supported by the device, so a dual-ABI APK is not a
+reliable way to force the 64-bit Vulkan engine. The build kit can include an
+optional `ANDROID_DEPS_PREFIX_ARM64` alongside its ARMv7 prefix.
+An ARM64-only build needs `ANDROID_DEPS_PREFIX_ARM64`; the ARMv7 prefix is
+required only when packaging both ABIs.
+
+APK packaging stages SDL's complete Java package automatically from a source
+tree matching the version in each native dependency prefix. It can resolve the
+matching source from an SDL CMake build or the versioned renderer dependency
+cache. It rejects mixed ABI versions or missing matching sources before Gradle
+builds the APK. It preserves SDL sources as supplied and never changes Java
+version constants to conceal a mismatch. The selected source and Java hashes
+are recorded in `sdl-java-provenance.json` in the staging project.
 
 ## Supported configuration
 
@@ -10,18 +29,26 @@ engine. It does not contain S.T.A.L.K.E.R. game data.
 |---|---|
 | Host | x86-64 Linux |
 | Android version | API 26 (Android 8.0) or newer |
-| ABI | `armeabi-v7a` only |
+| ABI | `armeabi-v7a`; optional `arm64-v8a` via `build-apk-dual.sh` |
 | Native API level | 26 |
 | Compile and target SDK | 36 |
 | NDK used by the current scripts | r30 (`30.0.16248370`) |
 | CMake | 3.23 or newer |
 | Java | JDK 17 |
-| Gameplay renderer | OpenGL ES 3.1 |
+| Gameplay renderer | OpenGL ES 3.1 or Vulkan; RT features are optional on Vulkan 1.1+ devices with the required extensions |
 
-A 64-bit device can run the APK only when its Android build still supports
-32-bit applications. The OpenGL ES driver must expose at least four draw
-buffers and four color attachments. The engine also remains subject to the
-32-bit address-space limit.
+The 64-bit Android Vulkan renderer uses Slang for runtime HLSL-to-SPIR-V
+fallbacks. `build-android-native.sh` builds the pinned Slang `v2026.22` release
+for `arm64-v8a` or `x86_64` when `XRAY_SLANG_ROOT` is not set. Set `XRAY_SLANG_SOURCE_DIR`
+to reuse a local checkout or `XRAY_SLANG_ROOT` to use an existing install.
+
+New launcher profiles select Vulkan by default. An existing saved renderer
+choice remains in effect, and OpenGL ES is still selectable in the launcher.
+
+An ARMv7-only APK requires device support for 32-bit applications. The OpenGL
+ES driver must expose at least four draw buffers and four color attachments.
+The ARMv7 engine remains subject to the 32-bit address-space limit. Its Vulkan
+renderer uses the direct backend.
 
 Call of Pripyat is the intended game profile. The SoC and CS entries in the
 launcher only pass `-soc` or `-cs`; they do not make those games supported by
@@ -30,9 +57,10 @@ this port.
 ## What the repository does and does not provide
 
 The checked-in scripts configure OpenXRay, assemble the SDL Android project,
-package native libraries and sign a debug APK. They do **not** download or
-build third-party libraries. No Android APK or ready-made Android build kit is
-published by the repository workflow.
+package native libraries and sign a debug APK. CMake fetches the pinned
+Vulkan renderer dependencies. On Linux, the ARM64 FidelityFX backend also
+requires a host FidelityFX Shader Compiler supplied through
+`-DFFX_SC_EXECUTABLE=/path/to/FidelityFX_SC`.
 
 You must provide:
 
@@ -197,7 +225,11 @@ XRAY_ANDROID_ARM_MODE=thumb ./android/build-apk-armv7.sh
 XRAY_ANDROID_ENABLE_LTO=ON ./android/build-apk-armv7.sh
 ```
 
-The default is ARM mode with LTO disabled.
+The default is ARM mode with LTO disabled. This also applies to the standalone
+`build-armv7.sh` and `build-arm64.sh` native builds. Use
+`XRAY_ANDROID_ENABLE_LTO=ON` to enable LTO; setting only
+`CMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF` does not override the project's
+configuration-specific LTO setting.
 
 ## 5. Install and run
 
@@ -234,17 +266,17 @@ Runtime data uses the normal desktop paths:
 <STALKER>/_appdata_/logs/
 ```
 
-## Renderer status
+## Renderer selection
 
-Gameplay currently uses OpenGL ES. `Auto` and `OpenGL ES` select the same GLES
-backend. Selecting Vulkan runs the Vulkan probe and then falls back to GLES;
-there is no Vulkan gameplay renderer yet. See
-[VULKAN_RENDERER_PLAN.md](VULKAN_RENDERER_PLAN.md) for the implemented Vulkan
-pieces and remaining work.
+The launcher can request the separate Vulkan gameplay module. `Auto` selects it
+only when the Vulkan probe and required game shaders pass, then selects GLES
+otherwise. Explicit Vulkan requests fail if those requirements are missing.
 
-The launcher can run GLES and Vulkan smoke tests without game data. A passing
-smoke test verifies context/device setup and a small render path only; it does
-not prove that a level can be loaded or rendered correctly.
+The launcher can run GLES and Vulkan smoke tests without game data. The Vulkan
+test draws depth-tested indexed, lit geometry and a textured UI overlay, reads back one pixel
+from each draw and presents three frames.
+A passing smoke test verifies a small render path only; it does not prove that
+a level can be loaded or rendered correctly.
 
 ## Diagnostics
 
@@ -282,5 +314,5 @@ want automatic increments can enable the optional hook with
 dependency prefix, SDL source tree and Gradle cache. It does not create or
 download any of them.
 
-Launcher behavior is described in [apk/README.md](apk/README.md). Port-specific
-resource and platform boundaries are recorded in [PORT_AUDIT.md](PORT_AUDIT.md).
+Launcher behavior is described in [apk/README.md](apk/README.md). ARM64 build
+dependencies are listed in [ARM64_DEPS.md](ARM64_DEPS.md).

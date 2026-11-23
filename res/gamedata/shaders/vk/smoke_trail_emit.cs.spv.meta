@@ -1,0 +1,7 @@
+XRAY_VULKAN_SHADER_METADATA_V1
+source=vk/../../../../src/Layers/xrRenderVK/smoke_trails/smoke_trail_emit.cs
+stage=cs
+entry=main
+defines=
+source-fingerprint=8fdaa2e7f84803ac
+spirv-fingerprint=e38eae9f70230181

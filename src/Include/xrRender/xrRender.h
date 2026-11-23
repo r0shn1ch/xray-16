@@ -30,4 +30,8 @@ namespace render_gl
 {
 XRRENDER_GL_API RendererModule* GetRendererModule();
 }
+namespace vulkan
+{
+RendererModule* GetRendererModule();
+}
 } // namespace xray::render

@@ -1,0 +1,133 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D scene_depth;
+layout(set = 0, binding = 1) uniform sampler2D static_atlas;
+layout(set = 0, binding = 2) uniform sampler2D dynamic_atlas;
+layout(set = 0, binding = 3, std430) readonly buffer StaticTable { uint static_pages[]; };
+layout(set = 0, binding = 4, std430) readonly buffer DynamicTable { uint dynamic_pages[]; };
+layout(set = 0, binding = 5, std430) readonly buffer Parameters {
+    mat4 inverse_view_projection;
+    mat4 light_view;
+    vec4 level[6];
+    uvec4 config; // axis, levels, page size, static atlas columns
+    uvec4 dynamic_config; // dynamic columns, enabled, static slots, dynamic slots
+    vec4 zparams; // near, inverse depth range, bias, reserved
+} params;
+layout(set = 0, binding = 6, r32f) uniform writeonly image2D visibility_image;
+layout(set = 0, binding = 7) uniform sampler2D ray_visibility;
+
+bool tile_origin(uint slot, uint columns, int size, ivec2 atlas_size, out ivec2 origin)
+{
+    if (columns == 0u || size <= 0)
+        return false;
+    uvec2 tile = uvec2(slot % columns, slot / columns);
+    if (any(greaterThanEqual(tile, uvec2(atlas_size / size))))
+        return false;
+    origin = ivec2(tile) * size;
+    return true;
+}
+
+bool sample_page(sampler2D atlas, bool dynamic_layer, uint slot, uint columns, uint slots,
+    uint level, uvec2 page, vec2 local_uv, float depth, float bias,
+    out uint visible_taps)
+{
+    int size = int(params.config.z);
+    ivec2 atlas_size = textureSize(atlas, 0);
+    ivec2 origin;
+    visible_taps = 511u;
+    if (!tile_origin(slot, columns, size, atlas_size, origin)) return false;
+    ivec2 center = clamp(ivec2(local_uv * float(size)), ivec2(0), ivec2(size - 1));
+    visible_taps = 0u;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x)
+        {
+            ivec2 tap = center + ivec2(x, y);
+            ivec2 p = origin + clamp(tap, ivec2(0), ivec2(size - 1));
+            if (any(lessThan(tap, ivec2(0))) || any(greaterThanEqual(tap, ivec2(size))))
+            {
+                ivec2 shift = ivec2(greaterThanEqual(tap, ivec2(size))) - ivec2(lessThan(tap, ivec2(0)));
+                ivec2 neighbor = ivec2(page) + shift;
+                uint axis = params.config.x;
+                if (all(greaterThanEqual(neighbor, ivec2(0))) && all(lessThan(neighbor, ivec2(int(axis)))))
+                {
+                    uint index = (level * axis + uint(neighbor.y)) * axis + uint(neighbor.x);
+                    uint neighbor_slot = 0xffffffffu;
+                    if (dynamic_layer && index < dynamic_pages.length()) neighbor_slot = dynamic_pages[index];
+                    if (!dynamic_layer && index < static_pages.length()) neighbor_slot = static_pages[index];
+                    ivec2 neighbor_origin;
+                    if (neighbor_slot < slots && tile_origin(neighbor_slot, columns, size, atlas_size, neighbor_origin))
+                        p = neighbor_origin + tap - shift * size;
+                }
+            }
+            if (depth <= texelFetch(atlas, p, 0).r + bias)
+                visible_taps |= 1u << uint((y + 1) * 3 + x + 1);
+        }
+    return true;
+}
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy), extent = imageSize(visibility_image);
+    if (any(greaterThanEqual(pixel, extent))) return;
+    bool depth_matches = all(equal(textureSize(scene_depth, 0), extent));
+    float z = depth_matches ? texelFetch(scene_depth, pixel, 0).r : 1.0;
+    float result = 1.0;
+    if (z >= 0.0 && z < 1.0)
+    {
+        vec2 uv = (vec2(pixel) + 0.5) / vec2(extent);
+        vec4 world = params.inverse_view_projection * vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, z, 1.0);
+        if (abs(world.w) > 1e-8)
+        {
+            vec3 light = (params.light_view * vec4(world.xyz / world.w, 1.0)).xyz;
+            float depth = (light.z - params.zparams.x) * params.zparams.y;
+            if (depth >= 0.0 && depth <= 1.0)
+            {
+                bool static_found = false, dynamic_found = params.dynamic_config.y == 0u;
+                uint static_taps = 511u, dynamic_taps = 511u;
+                uint static_level = 0xffffffffu, dynamic_level = 0xffffffffu;
+                uint axis = params.config.x;
+                for (uint i = 0u; i < params.config.y && !(static_found && dynamic_found); ++i)
+                {
+                    vec2 coord = (light.xy - params.level[i].xy) / params.level[i].z;
+                    if (!all(greaterThanEqual(coord, vec2(0.0))) || !all(lessThan(coord, vec2(1.0)))) continue;
+                    vec2 page_coord = coord * float(axis);
+                    uvec2 page = min(uvec2(page_coord), uvec2(axis - 1u));
+                    vec2 local_uv = page_coord - vec2(page);
+                    uint index = i * axis * axis + page.y * axis + page.x;
+                    if (!static_found && index < static_pages.length())
+                    {
+                        uint slot = static_pages[index];
+                        if (slot < params.dynamic_config.z &&
+                            sample_page(static_atlas, false, slot, params.config.w, params.dynamic_config.z,
+                                i, page, local_uv, depth, params.zparams.z, static_taps))
+                        {
+                            static_level = i;
+                            static_found = true;
+                        }
+                    }
+                    if (!dynamic_found && index < dynamic_pages.length())
+                    {
+                        uint slot = dynamic_pages[index];
+                        if (slot < params.dynamic_config.w &&
+                            sample_page(dynamic_atlas, true, slot, params.dynamic_config.x, params.dynamic_config.w,
+                                i, page, local_uv, depth, params.zparams.z, dynamic_taps))
+                        {
+                            dynamic_level = i;
+                            dynamic_found = true;
+                        }
+                    }
+                }
+                // Matching levels use the same filter footprint. A tap is
+                // visible only if both layers leave it unoccluded.
+                result = float(static_level == dynamic_level ? bitCount(static_taps & dynamic_taps) :
+                    min(bitCount(static_taps), bitCount(dynamic_taps))) / 9.0;
+            }
+        }
+    }
+    if (params.zparams.w > 0.5 && all(equal(textureSize(ray_visibility, 0), extent)))
+    {
+        float traced = texelFetch(ray_visibility, pixel, 0).r;
+        if (traced >= 0.0 && traced <= 1.0)
+            result = min(result, traced);
+    }
+    imageStore(visibility_image, pixel, vec4(result));
+}

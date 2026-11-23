@@ -1,0 +1,99 @@
+#include "EmbeddedShaderFingerprint.h"
+#include "PipelineCache.h"
+#include "DeferredAlphaTestShaders.h"
+#include "DeferredShaders.h"
+#include "DistortionShaders.h"
+#include "ClusterVisibilityShaders.h"
+#include "HiZShaders.h"
+#include "IndirectSunShaders.h"
+#include "IndirectRadianceShaders.h"
+#include "IndirectResolveShaders.h"
+#include "IndirectLocalShaders.h"
+#include "RestirGIShaders.h"
+#include "LightGridShaders.h"
+#include "LocalLightShaders.h"
+#include "MotionVectorShaders.h"
+#include "ObjectVelocityShaders.h"
+#include "PostProcessShaders.h"
+#include "RayQueryBatchShaders.h"
+#include "RaySurfaceShaders.h"
+#include "RayGenerateShaders.h"
+#include "RayVisibilityShaders.h"
+#include "SceneShaders.h"
+#include "ShadowShaders.h"
+#include "SmokeShaders.h"
+#include "TemporalExposureShaders.h"
+#include "TemporalResolveShaders.h"
+#include "VulkanGameShaders.h"
+#include "WaterShaders.h"
+#include "WeatherShaders.h"
+
+namespace xray::render::vulkan
+{
+void append_embedded_shader_fingerprint(PipelineCacheFingerprint& fingerprint)
+{
+#define XRAY_HASH_SHADER(name, code) fingerprint.append(name, code, sizeof(code))
+    XRAY_HASH_SHADER("deferred.gbuffer.vs", deferred_shaders::GBufferVertex);
+    XRAY_HASH_SHADER("deferred.gbuffer.ps", deferred_shaders::GBufferFragment);
+    XRAY_HASH_SHADER("deferred.gbuffer.alpha.ps", deferred_shaders::GBufferAlphaTestFragment);
+    XRAY_HASH_SHADER("deferred.light.vs", deferred_shaders::LightVertex);
+    XRAY_HASH_SHADER("deferred.light.ps", deferred_shaders::LightFragment);
+    XRAY_HASH_SHADER("deferred.light.msaa.ps", deferred_shaders::LightFragmentMsaa);
+    XRAY_HASH_SHADER("distortion.vs", distortion_shaders::Vertex);
+    XRAY_HASH_SHADER("distortion.ps", distortion_shaders::Fragment);
+    XRAY_HASH_SHADER("distortion.composite.ps", distortion_shaders::Composite);
+    XRAY_HASH_SHADER("hiz.cs", hiz_shaders::Build);
+    XRAY_HASH_SHADER("cluster_visibility.cs", cluster_visibility_shaders::Cull);
+    XRAY_HASH_SHADER("indirect.sun.cs", indirect_sun_shaders::Generate);
+    XRAY_HASH_SHADER("indirect.radiance.cs", indirect_radiance_shaders::Evaluate);
+    XRAY_HASH_SHADER("indirect.radiance.unshadowed.cs", indirect_radiance_shaders::EvaluateUnshadowed);
+    XRAY_HASH_SHADER("indirect.radiance.projection.cs", indirect_radiance_shaders::EvaluateProjection);
+    XRAY_HASH_SHADER("indirect.radiance.projection.unshadowed.cs", indirect_radiance_shaders::EvaluateProjectionUnshadowed);
+    XRAY_HASH_SHADER("indirect.resolve.cs", indirect_resolve_shaders::Resolve);
+    XRAY_HASH_SHADER("indirect.local.cs", indirect_local_shaders::Generate);
+    XRAY_HASH_SHADER("restir.gi.spatial.cs", restir_gi_shaders::Spatial);
+    XRAY_HASH_SHADER("light_grid.cull.cs", light_grid_shaders::Cull);
+    XRAY_HASH_SHADER("light_grid.shade.ps", light_grid_shaders::Shade);
+    XRAY_HASH_SHADER("local_light.ps", local_light_shaders::Fragment);
+    XRAY_HASH_SHADER("local_light.msaa.ps", local_light_shaders::FragmentMsaa);
+    XRAY_HASH_SHADER("motion.rg.cs", motion_vector_shaders::FillRg);
+    XRAY_HASH_SHADER("motion.rgba.cs", motion_vector_shaders::FillRgba);
+    XRAY_HASH_SHADER("motion.object.vs", object_velocity_shaders::Vertex);
+    XRAY_HASH_SHADER("motion.detail.vs", object_velocity_shaders::DetailVertex);
+    XRAY_HASH_SHADER("motion.detail.transparent.ps", object_velocity_shaders::TransparentFragment);
+    XRAY_HASH_SHADER("motion.object.skin.vs", object_velocity_shaders::SkinnedVertex);
+    XRAY_HASH_SHADER("motion.object.particle.vs", object_velocity_shaders::ParticleVelocityVertex);
+    XRAY_HASH_SHADER("motion.object.particle.ps", object_velocity_shaders::ParticleVelocityFragment);
+    XRAY_HASH_SHADER("motion.object.ps", object_velocity_shaders::Fragment);
+    XRAY_HASH_SHADER("motion.object.cutout.ps", object_velocity_shaders::CutoutFragment);
+    XRAY_HASH_SHADER("postprocess.vs", postprocess_shaders::Vertex);
+    XRAY_HASH_SHADER("ray.query.batch.cs", ray_query_batch_shaders::Query);
+    XRAY_HASH_SHADER("ray.surface.cs", ray_surface_shaders::Reconstruct);
+    XRAY_HASH_SHADER("ray.generate.cs", ray_generate_shaders::Generate);
+    XRAY_HASH_SHADER("ray.generate.indirect.cs", ray_generate_shaders::Indirect);
+    XRAY_HASH_SHADER("ray.visibility.cs", ray_visibility_shaders::Resolve);
+    XRAY_HASH_SHADER("postprocess.ps", postprocess_shaders::Fragment);
+    XRAY_HASH_SHADER("postprocess.bright.ps", postprocess_shaders::BrightFragment);
+    XRAY_HASH_SHADER("postprocess.upsample.ps", postprocess_shaders::UpsampleFragment);
+    XRAY_HASH_SHADER("postprocess.sun_shafts.ps", postprocess_shaders::SunShaftsFragment);
+    XRAY_HASH_SHADER("scene.vs", scene_shaders::SceneVertex);
+    XRAY_HASH_SHADER("scene.ps", scene_shaders::SceneFragment);
+    XRAY_HASH_SHADER("ui.vs", scene_shaders::UiVertex);
+    XRAY_HASH_SHADER("ui.ps", scene_shaders::UiFragment);
+    XRAY_HASH_SHADER("shadow.vs", shadow_shaders::Vertex);
+    XRAY_HASH_SHADER("shadow.opaque.ps", shadow_shaders::Opaque);
+    XRAY_HASH_SHADER("shadow.cutout.ps", shadow_shaders::Cutout);
+    XRAY_HASH_SHADER("shadow.skin.vs", shadow_shaders::SkinVertex);
+    XRAY_HASH_SHADER("smoke.triangle.vs", smoke::TriangleVertex);
+    XRAY_HASH_SHADER("smoke.triangle.ps", smoke::TriangleFragment);
+    XRAY_HASH_SHADER("exposure.histogram.cs", temporal_exposure_shaders::Histogram);
+    XRAY_HASH_SHADER("exposure.adapt.cs", temporal_exposure_shaders::Adapt);
+    XRAY_HASH_SHADER("temporal.resolve.cs", temporal_resolve_shaders::Resolve);
+    XRAY_HASH_SHADER("game.cutout.ps", game_shaders::CutoutFragment);
+    XRAY_HASH_SHADER("game.transparent.ps", game_shaders::TransparentFragment);
+    XRAY_HASH_SHADER("water.ps", water_shaders::Fragment);
+    XRAY_HASH_SHADER("weather.ps", weather_shaders::Fragment);
+    XRAY_HASH_SHADER("weather.msaa.ps", weather_shaders::FragmentMsaa);
+#undef XRAY_HASH_SHADER
+}
+}

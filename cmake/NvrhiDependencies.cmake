@@ -1,0 +1,56 @@
+include(FetchContent)
+
+set(NVRHI_BUILD_SHARED OFF CACHE BOOL "Build NVRHI as a static library" FORCE)
+set(NVRHI_WITH_DX11 OFF CACHE BOOL "Build the NVRHI D3D11 backend" FORCE)
+include(CMakeDependentOption)
+cmake_dependent_option(XRAY_NVRHI_D3D12 "Build the NVRHI D3D12 backend" OFF "WIN32" OFF)
+set(NVRHI_WITH_DX12 "${XRAY_NVRHI_D3D12}" CACHE BOOL "Build NVRHI D3D12" FORCE)
+cmake_dependent_option(XRAY_NVRHI_METAL "Build the NVRHI Metal 3 backend" OFF "APPLE" OFF)
+set(NVRHI_WITH_METAL3 "${XRAY_NVRHI_METAL}" CACHE BOOL "Build NVRHI Metal 3" FORCE)
+set(NVRHI_WITH_RTXMU OFF CACHE BOOL "Build NVRHI with RTXMU" FORCE)
+# The pinned Vulkan backend expects non-dispatchable handles to be pointers.
+# On 32-bit targets the renderer uses its direct Vulkan path.
+if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(NVRHI_WITH_VULKAN ON CACHE BOOL "Build the NVRHI Vulkan backend" FORCE)
+else()
+    set(NVRHI_WITH_VULKAN OFF CACHE BOOL "Build the NVRHI Vulkan backend" FORCE)
+endif()
+set(NVRHI_FETCH_VULKAN_HEADERS OFF CACHE BOOL "Use the engine's Vulkan headers" FORCE)
+set(NVRHI_INSTALL OFF CACHE BOOL "Install NVRHI" FORCE)
+FetchContent_Declare(xray_nvrhi
+    GIT_REPOSITORY https://github.com/OpenXRay/NVRHI.git
+    GIT_TAG 1f503c0e06465025b73e6357f7b7ea82a710555c
+)
+FetchContent_MakeAvailable(xray_nvrhi)
+
+add_library(xrNvrhi INTERFACE)
+target_link_libraries(xrNvrhi INTERFACE nvrhi)
+
+add_library(xrNvrhiVulkan INTERFACE)
+target_link_libraries(xrNvrhiVulkan INTERFACE xrNvrhi)
+if (TARGET nvrhi_vk)
+    # Vulkan backend objects call helpers in the core static archive. Declare
+    # that dependency so consumers also resolve it with one-pass linkers.
+    target_link_libraries(nvrhi_vk PUBLIC nvrhi)
+    target_link_libraries(xrNvrhiVulkan INTERFACE nvrhi_vk)
+    target_compile_definitions(xrNvrhiVulkan INTERFACE XRAY_HAS_NVRHI_VULKAN)
+    if (MSVC)
+        target_compile_options(nvrhi_vk PRIVATE /EHsc)
+    endif()
+endif()
+if (TARGET nvrhi_d3d12)
+    add_library(xrNvrhiD3D12 INTERFACE)
+    target_link_libraries(xrNvrhiD3D12 INTERFACE nvrhi_d3d12 xrNvrhi)
+endif()
+if (TARGET nvrhi_metal3)
+    add_library(xrNvrhiMetal INTERFACE)
+    target_link_libraries(xrNvrhiMetal INTERFACE nvrhi_metal3 xrNvrhi)
+endif()
+set(XRAY_NVRHI_LIBRARIES xrNvrhiVulkan)
+get_target_property(XRAY_NVRHI_INCLUDE_DIRS nvrhi INTERFACE_INCLUDE_DIRECTORIES)
+if (MSVC)
+    target_compile_options(nvrhi PRIVATE /EHsc)
+endif()
+
+add_library(xrRenderGraph INTERFACE)
+target_link_libraries(xrRenderGraph INTERFACE xrNvrhi)

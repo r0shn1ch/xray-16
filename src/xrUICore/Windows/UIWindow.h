@@ -359,17 +359,17 @@ protected:
             m_ChildWndList.erase(it);
     }
 
-    bool m_bShowMe : 1 {};
+    bool m_bShowMe : 1;
 
     //флаг автоматического удаления во время вызова деструктора
-    bool m_bAutoDelete : 1 {};
+    bool m_bAutoDelete : 1;
 
     // Is user input allowed
-    bool m_bIsEnabled : 1 { true };
+    bool m_bIsEnabled : 1;
 
     // Если курсор над окном
-    bool m_bCursorOverWindow : 1 {};
-    bool m_bCustomDraw : 1 {};
+    bool m_bCursorOverWindow : 1;
+    bool m_bCustomDraw : 1;
 
     EWindowAlignment m_alignment{};
     Fvector2 m_wndPos{};

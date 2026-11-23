@@ -1,0 +1,966 @@
+#version 460
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_GOOGLE_include_directive : require
+
+
+layout(local_size_x = 64) in;
+const uint RAY_MATERIAL_EMISSIVE = 1u;
+const uint RAY_SURFACE_PBR = 1u;
+
+struct Ray { vec4 origin_min; vec4 direction_max; };
+struct Surface
+{
+    vec4 position_valid;
+    vec4 normal;
+    vec2 uv;
+    uint material_id;
+    uint texture_slot;
+    vec4 albedo;
+    vec4 pbr;
+    vec4 geometric_normal;
+};
+struct BatchInfo
+{
+    uint first_geometry;
+    uint geometry_count;
+    uvec2 padding;
+    vec4 row0;
+    vec4 row1;
+    vec4 row2;
+};
+struct GeometryInfo
+{
+    uvec2 vertices;
+    uvec2 indices;
+    uint vertex_stride;
+    uint max_vertex;
+    uint material_id;
+    uint material_flags;
+    float alpha_cutoff;
+    uint texture_slot;
+    uint diffuse_texture_slot;
+    uint pbr_texture_slot;
+    uint metallic_texture_slot;
+    uint roughness_texture_slot;
+    uint ao_texture_slot;
+    uint normal_texture_slot;
+    uint normal_aux_texture_slot;
+    uint terrain_texture_slots[33];
+    float terrain_scale;
+    float parallax_height;
+};
+struct TextureTransform { vec4 row0; vec4 row1; vec4 detail_row0; vec4 detail_row1; };
+struct Hit
+{
+    uint instance;
+    uint geometry;
+    uint primitive;
+    vec2 barycentric;
+    float distance;
+};
+struct TraceHistory { vec4 radiance_count; vec3 position; uint packed_normal; };
+struct LocalLight
+{
+    vec4 position_range;
+    vec4 direction_cone;
+    vec4 color_type;
+    vec4 spot_right;
+    uvec4 projection;
+};
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer IndexBuffer { uint values[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer VertexBuffer { uint values[]; };
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
+layout(set = 0, binding = 1, std430) readonly buffer PrimaryRays { Ray rays[]; };
+layout(set = 0, binding = 2, std430) readonly buffer PrimarySurfaces { Surface surfaces[]; };
+layout(set = 0, binding = 3, std430) readonly buffer Batches { BatchInfo batches[]; };
+layout(set = 0, binding = 4, std430) readonly buffer Geometries { GeometryInfo geometries[]; };
+layout(set = 0, binding = 5, std430) readonly buffer Transforms { TextureTransform transforms[]; };
+layout(set = 0, binding = 6, std430) buffer Radiance { vec4 radiance[]; };
+layout(set = 0, binding = 7, std430) readonly buffer PreviousHistoryBuffer { TraceHistory previous_history[]; };
+layout(set = 0, binding = 8, std430) writeonly buffer NextHistoryBuffer { TraceHistory next_history[]; };
+layout(set = 0, binding = 9, std430) readonly buffer LocalLights { LocalLight local_lights[]; };
+layout(set = 0, binding = 10) uniform sampler2D motion_vectors;
+layout(set = 1, binding = 0) uniform sampler2D material_textures[];
+layout(set = 2, binding = 0) uniform sampler2D projected_lights[];
+layout(push_constant) uniform Parameters
+{
+    vec4 sky;
+    vec4 sun_direction_distance;
+    vec4 sun_color;
+    uvec4 dimensions;
+    uvec4 control;
+    vec4 limits;
+} parameters;
+
+const float PI = 3.14159265358979323846;
+
+uint pcg_hash(uint value)
+{
+    uint state = value * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+float random_float(inout uint state)
+{
+    state = pcg_hash(state);
+    return float(state >> 8u) * (1.0 / 16777216.0);
+}
+
+vec3 safe_normalize(vec3 value, vec3 fallback)
+{
+    float length2 = dot(value, value);
+    return length2 > 1e-12 && !isnan(length2) && !isinf(length2) ? value * inversesqrt(length2) : fallback;
+}
+
+vec2 ray_parallax_offset(vec3 view, vec3 normal, vec3 tangent, vec3 bitangent,
+    float height, float scale, float distance_to_camera)
+{
+    float fade = 1.0 - smoothstep(32.0, 96.0, distance_to_camera);
+    vec3 tangent_view = vec3(dot(view, tangent), dot(view, bitangent), dot(view, normal));
+    float view_length2 = dot(tangent_view, tangent_view);
+    if (!(scale > 1e-5) || fade <= 1e-5 || view_length2 <= 1e-12 ||
+        isnan(view_length2) || isinf(view_length2))
+        return vec2(0.0);
+    return tangent_view.xy * inversesqrt(view_length2) * (height - 0.5) * scale * fade;
+}
+
+bool finite3(vec3 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
+vec2 octahedral_encode(vec3 normal)
+{
+    normal /= max(abs(normal.x) + abs(normal.y) + abs(normal.z), 1e-8);
+    vec2 encoded = normal.xy;
+    if (normal.z < 0.0)
+    {
+        vec2 sign_not_zero = mix(vec2(-1.0), vec2(1.0), greaterThanEqual(encoded, vec2(0.0)));
+        encoded = (1.0 - abs(encoded.yx)) * sign_not_zero;
+    }
+    return encoded;
+}
+
+vec3 octahedral_decode(uint packed_normal)
+{
+    vec2 encoded = unpackSnorm2x16(packed_normal);
+    vec3 normal = vec3(encoded, 1.0 - abs(encoded.x) - abs(encoded.y));
+    if (normal.z < 0.0)
+    {
+        vec2 sign_not_zero = mix(vec2(-1.0), vec2(1.0), greaterThanEqual(normal.xy, vec2(0.0)));
+        normal.xy = (1.0 - abs(normal.yx)) * sign_not_zero;
+    }
+    return safe_normalize(normal, vec3(0.0, 1.0, 0.0));
+}
+
+vec3 pbr_direct(vec3 albedo, float metallic, float roughness,
+    vec3 normal, vec3 view, vec3 light)
+{
+    metallic = clamp(metallic, 0.0, 1.0);
+    roughness = clamp(roughness, 0.04, 1.0);
+    float nl = max(dot(normal, light), 0.0);
+    float nv = max(dot(normal, view), 0.0);
+    vec3 half_vector = view + light;
+    float half_length = length(half_vector);
+    if (nl <= 0.0 || nv <= 0.0 || half_length < 1e-6) return vec3(0.0);
+    vec3 h = half_vector / half_length;
+    float nh = max(dot(normal, h), 0.0);
+    float vh = max(dot(view, h), 0.0);
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float denominator = max(1.0 - nh * nh, 0.0) + nh * nh * a2;
+    float distribution = a2 / max(PI * denominator * denominator, 1e-12);
+    float k = (roughness + 1.0) * (roughness + 1.0) * 0.125;
+    float geometry = nv / max(nv * (1.0 - k) + k, 1e-6) *
+        nl / max(nl * (1.0 - k) + k, 1e-6);
+    vec3 f0 = mix(vec3(0.04), albedo, metallic);
+    vec3 fresnel = f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
+    vec3 specular = distribution * geometry * fresnel /
+        (4.0 * max(nv, 0.001) * max(nl, 0.001));
+    vec3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * albedo / PI;
+    return (diffuse + specular) * nl;
+}
+
+uint local_light_hash(uint value)
+{
+    value ^= value >> 16u;
+    value *= 0x7feb352du;
+    value ^= value >> 15u;
+    value *= 0x846ca68bu;
+    return value ^ (value >> 16u);
+}
+
+float local_light_random(uint value)
+{
+    return float(local_light_hash(value) >> 8u) * (1.0 / 16777216.0);
+}
+
+float local_light_importance(vec3 position, vec3 normal, LocalLight light)
+{
+    vec3 delta = position - light.position_range.xyz;
+    float distance_squared = dot(delta, delta);
+    float range_squared = light.position_range.w * light.position_range.w;
+    if (distance_squared <= 1e-10 || distance_squared >= range_squared) return 0.0;
+    vec3 from_light = delta * inversesqrt(distance_squared);
+    float cosine = max(dot(normal, -from_light), 0.0);
+    if (cosine <= 0.0) return 0.0;
+    float attenuation = max(1.0 - distance_squared / range_squared, 0.0);
+    if (mod(light.color_type.w, 2.0) > 0.5)
+        attenuation *= smoothstep(light.direction_cone.w, min(1.0, light.direction_cone.w + 0.05),
+            dot(from_light, light.direction_cone.xyz));
+    vec3 color = max(light.color_type.rgb, vec3(0.0));
+    return max(max(color.r, max(color.g, color.b)), 0.0) * attenuation * cosine;
+}
+
+bool select_secondary_light(vec3 position, vec3 normal, uint index, uint seed,
+    uint light_count, out uint selected, out float multiplier)
+{
+    selected = 0u;
+    multiplier = 0.0;
+    light_count = min(light_count, uint(local_lights.length()));
+    if (light_count == 0u) return false;
+    uint candidates = min(light_count, 8u);
+    uint random_seed = local_light_hash(index ^ seed ^ 0x9e3779b9u);
+    float sum = 0.0;
+    float selected_weight = 0.0;
+    for (uint i = 0u; i < candidates; ++i)
+    {
+        uint candidate = light_count <= 8u ? (random_seed % light_count + i) % light_count :
+            local_light_hash(random_seed ^ (i * 0x85ebca6bu + 0xc2b2ae35u)) % light_count;
+        float weight = local_light_importance(position, normal, local_lights[candidate]);
+        sum += weight;
+        if (weight > 0.0 && local_light_random(random_seed ^ (i * 0x27d4eb2du + 0x165667b1u)) * sum < weight)
+        {
+            selected = candidate;
+            selected_weight = weight;
+        }
+    }
+    if (selected_weight <= 0.0) return false;
+    multiplier = (float(light_count) / float(candidates)) * sum / selected_weight;
+    return true;
+}
+
+vec2 transformed_uv(uint geometry_index, vec2 uv)
+{
+    if (geometry_index >= transforms.length()) return uv;
+    TextureTransform transform = transforms[geometry_index];
+    vec4 coordinate = vec4(uv, 0.0, 1.0);
+    return vec2(dot(transform.row0, coordinate), dot(transform.row1, coordinate));
+}
+
+vec2 transformed_detail_uv(uint geometry_index, vec2 uv)
+{
+    if (geometry_index >= transforms.length()) return uv;
+    TextureTransform transform = transforms[geometry_index];
+    vec4 coordinate = vec4(uv, 0.0, 1.0);
+    return vec2(dot(transform.detail_row0, coordinate), dot(transform.detail_row1, coordinate));
+}
+
+bool candidate_visible(rayQueryEXT query)
+{
+    uint batch_index = rayQueryGetIntersectionInstanceCustomIndexEXT(query, false);
+    uint geometry_index = rayQueryGetIntersectionGeometryIndexEXT(query, false);
+    if (batch_index >= batches.length()) return true;
+    BatchInfo batch = batches[batch_index];
+    if (geometry_index >= batch.geometry_count || batch.first_geometry + geometry_index >= geometries.length())
+        return true;
+    uint flat_geometry = batch.first_geometry + geometry_index;
+    GeometryInfo geometry = geometries[flat_geometry];
+    if (geometry.alpha_cutoff <= 0.0 || geometry.texture_slot >= parameters.dimensions.z) return true;
+    if (geometry.vertex_stride < 32u || geometry.vertex_stride % 4u != 0u) return true;
+    uint primitive = rayQueryGetIntersectionPrimitiveIndexEXT(query, false);
+    IndexBuffer indices = IndexBuffer(geometry.indices);
+    VertexBuffer vertices = VertexBuffer(geometry.vertices);
+    uint stride = geometry.vertex_stride / 4u;
+    uint i0 = indices.values[primitive * 3u];
+    uint i1 = indices.values[primitive * 3u + 1u];
+    uint i2 = indices.values[primitive * 3u + 2u];
+    if (i0 > geometry.max_vertex || i1 > geometry.max_vertex || i2 > geometry.max_vertex) return true;
+    vec2 uv0 = vec2(uintBitsToFloat(vertices.values[i0 * stride + 6u]), uintBitsToFloat(vertices.values[i0 * stride + 7u]));
+    vec2 uv1 = vec2(uintBitsToFloat(vertices.values[i1 * stride + 6u]), uintBitsToFloat(vertices.values[i1 * stride + 7u]));
+    vec2 uv2 = vec2(uintBitsToFloat(vertices.values[i2 * stride + 6u]), uintBitsToFloat(vertices.values[i2 * stride + 7u]));
+    vec2 barycentric = rayQueryGetIntersectionBarycentricsEXT(query, false);
+    vec2 uv = uv0 * (1.0 - barycentric.x - barycentric.y) + uv1 * barycentric.x + uv2 * barycentric.y;
+    uv = transformed_uv(flat_geometry, uv);
+    uint base_parallax_slot = geometry.terrain_texture_slots[28];
+    if (geometry.terrain_texture_slots[0] >= parameters.dimensions.z &&
+        base_parallax_slot < parameters.dimensions.z && geometry.vertex_stride >= 64u &&
+        geometry.parallax_height > 1e-5)
+    {
+        vec3 weights = vec3(1.0 - barycentric.x - barycentric.y, barycentric);
+        vec3 object_normal = vec3(uintBitsToFloat(vertices.values[i0 * stride + 3u]),
+            uintBitsToFloat(vertices.values[i0 * stride + 4u]),
+            uintBitsToFloat(vertices.values[i0 * stride + 5u])) * weights.x +
+            vec3(uintBitsToFloat(vertices.values[i1 * stride + 3u]),
+            uintBitsToFloat(vertices.values[i1 * stride + 4u]),
+            uintBitsToFloat(vertices.values[i1 * stride + 5u])) * weights.y +
+            vec3(uintBitsToFloat(vertices.values[i2 * stride + 3u]),
+            uintBitsToFloat(vertices.values[i2 * stride + 4u]),
+            uintBitsToFloat(vertices.values[i2 * stride + 5u])) * weights.z;
+        mat3 object_to_world = transpose(mat3(batch.row0.xyz, batch.row1.xyz, batch.row2.xyz));
+        vec3 normal = safe_normalize(transpose(inverse(object_to_world)) * object_normal,
+            vec3(0.0, 1.0, 0.0));
+        vec3 ray_direction = rayQueryGetWorldRayDirectionEXT(query);
+        if (dot(normal, ray_direction) > 0.0) normal = -normal;
+        vec3 tangent = unpackSnorm4x8(vertices.values[i0 * stride + 14u]).xyz * weights.x +
+            unpackSnorm4x8(vertices.values[i1 * stride + 14u]).xyz * weights.y +
+            unpackSnorm4x8(vertices.values[i2 * stride + 14u]).xyz * weights.z;
+        vec3 bitangent = unpackSnorm4x8(vertices.values[i0 * stride + 15u]).xyz * weights.x +
+            unpackSnorm4x8(vertices.values[i1 * stride + 15u]).xyz * weights.y +
+            unpackSnorm4x8(vertices.values[i2 * stride + 15u]).xyz * weights.z;
+        tangent = object_to_world * tangent;
+        bitangent = object_to_world * bitangent;
+        tangent -= normal * dot(normal, tangent);
+        bitangent -= normal * dot(normal, bitangent);
+        float tangent2 = dot(tangent, tangent);
+        float bitangent2 = dot(bitangent, bitangent);
+        float determinant = dot(cross(normal, tangent), bitangent);
+        if (tangent2 > 1e-8 && bitangent2 > 1e-8 && abs(determinant) > 1e-8 &&
+            !isnan(tangent2) && !isinf(tangent2) && !isnan(bitangent2) && !isinf(bitangent2))
+        {
+            tangent *= inversesqrt(tangent2);
+            bitangent = safe_normalize(cross(normal, tangent), vec3(0.0, 0.0, 1.0)) *
+                (determinant < 0.0 ? -1.0 : 1.0);
+            float height = textureLod(material_textures[
+                nonuniformEXT(base_parallax_slot)], uv, 0.0).r;
+            float distance_to_camera = rayQueryGetIntersectionTEXT(query, false);
+            uv += ray_parallax_offset(-ray_direction, normal, tangent, bitangent, height,
+                geometry.parallax_height, distance_to_camera);
+        }
+    }
+    return textureLod(material_textures[nonuniformEXT(geometry.texture_slot)], uv, 0.0).a >= geometry.alpha_cutoff;
+}
+
+bool trace_scene(vec3 origin, vec3 direction, float max_distance, uint flags, out Hit hit)
+{
+    hit.instance = hit.geometry = hit.primitive = 0xffffffffu;
+    hit.barycentric = vec2(0.0);
+    hit.distance = -1.0;
+    if (!(max_distance > parameters.limits.y)) return false;
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, scene, flags, 0xff, origin, parameters.limits.y,
+        direction, max_distance);
+    while (rayQueryProceedEXT(query))
+    {
+        if (rayQueryGetIntersectionTypeEXT(query, false) == gl_RayQueryCandidateIntersectionTriangleEXT &&
+            candidate_visible(query))
+            rayQueryConfirmIntersectionEXT(query);
+    }
+    if (rayQueryGetIntersectionTypeEXT(query, true) != gl_RayQueryCommittedIntersectionTriangleEXT)
+        return false;
+    hit.instance = rayQueryGetIntersectionInstanceCustomIndexEXT(query, true);
+    hit.geometry = rayQueryGetIntersectionGeometryIndexEXT(query, true);
+    hit.primitive = rayQueryGetIntersectionPrimitiveIndexEXT(query, true);
+    hit.barycentric = rayQueryGetIntersectionBarycentricsEXT(query, true);
+    hit.distance = rayQueryGetIntersectionTEXT(query, true);
+    return true;
+}
+
+vec3 read_position(VertexBuffer vertices, uint index, uint stride)
+{
+    uint base = index * stride;
+    return vec3(uintBitsToFloat(vertices.values[base]), uintBitsToFloat(vertices.values[base + 1u]),
+        uintBitsToFloat(vertices.values[base + 2u]));
+}
+
+vec3 read_normal(VertexBuffer vertices, uint index, uint stride)
+{
+    uint base = index * stride + 3u;
+    return vec3(uintBitsToFloat(vertices.values[base]), uintBitsToFloat(vertices.values[base + 1u]),
+        uintBitsToFloat(vertices.values[base + 2u]));
+}
+
+vec2 read_uv(VertexBuffer vertices, uint index, uint stride)
+{
+    uint base = index * stride + 6u;
+    return vec2(uintBitsToFloat(vertices.values[base]), uintBitsToFloat(vertices.values[base + 1u]));
+}
+
+bool reconstruct_surface(Hit hit, vec3 ray_direction, out vec3 position, out vec3 normal,
+    out vec3 albedo, out float metallic, out float roughness, out float ambient_occlusion,
+    out bool is_pbr, out bool is_emissive)
+{
+    if (hit.instance >= batches.length()) return false;
+    BatchInfo batch = batches[hit.instance];
+    if (hit.geometry >= batch.geometry_count || batch.first_geometry >= geometries.length() ||
+        hit.geometry >= geometries.length() - batch.first_geometry)
+        return false;
+    uint geometry_index = batch.first_geometry + hit.geometry;
+    GeometryInfo geometry = geometries[geometry_index];
+    if (geometry.vertex_stride < 32u || geometry.vertex_stride % 4u != 0u) return false;
+    uint stride = geometry.vertex_stride / 4u;
+    IndexBuffer indices = IndexBuffer(geometry.indices);
+    VertexBuffer vertices = VertexBuffer(geometry.vertices);
+    uint first = hit.primitive * 3u;
+    uvec3 triangle = uvec3(indices.values[first], indices.values[first + 1u], indices.values[first + 2u]);
+    if (any(greaterThan(triangle, uvec3(geometry.max_vertex)))) return false;
+    vec3 weights = vec3(1.0 - hit.barycentric.x - hit.barycentric.y, hit.barycentric);
+    vec3 object_normal = read_normal(vertices, triangle.x, stride) * weights.x +
+        read_normal(vertices, triangle.y, stride) * weights.y + read_normal(vertices, triangle.z, stride) * weights.z;
+    vec2 uv = read_uv(vertices, triangle.x, stride) * weights.x +
+        read_uv(vertices, triangle.y, stride) * weights.y + read_uv(vertices, triangle.z, stride) * weights.z;
+    mat3 object_to_world = transpose(mat3(batch.row0.xyz, batch.row1.xyz, batch.row2.xyz));
+    normal = safe_normalize(transpose(inverse(object_to_world)) * object_normal, vec3(0.0, 1.0, 0.0));
+    if (dot(normal, ray_direction) > 0.0) normal = -normal;
+    vec3 geometric_normal = normal;
+    vec3 object_position = read_position(vertices, triangle.x, stride) * weights.x +
+        read_position(vertices, triangle.y, stride) * weights.y +
+        read_position(vertices, triangle.z, stride) * weights.z;
+    position = vec3(dot(batch.row0, vec4(object_position, 1.0)),
+        dot(batch.row1, vec4(object_position, 1.0)), dot(batch.row2, vec4(object_position, 1.0)));
+    vec3 parallax_tangent = vec3(0.0);
+    vec3 parallax_bitangent = vec3(0.0);
+    bool parallax_frame_valid = false;
+    if (geometry.vertex_stride >= 64u)
+    {
+        vec3 tangent = unpackSnorm4x8(vertices.values[triangle.x * stride + 14u]).xyz * weights.x +
+            unpackSnorm4x8(vertices.values[triangle.y * stride + 14u]).xyz * weights.y +
+            unpackSnorm4x8(vertices.values[triangle.z * stride + 14u]).xyz * weights.z;
+        vec3 bitangent = unpackSnorm4x8(vertices.values[triangle.x * stride + 15u]).xyz * weights.x +
+            unpackSnorm4x8(vertices.values[triangle.y * stride + 15u]).xyz * weights.y +
+            unpackSnorm4x8(vertices.values[triangle.z * stride + 15u]).xyz * weights.z;
+        tangent = object_to_world * tangent;
+        bitangent = object_to_world * bitangent;
+        tangent -= geometric_normal * dot(geometric_normal, tangent);
+        bitangent -= geometric_normal * dot(geometric_normal, bitangent);
+        float tangent2 = dot(tangent, tangent);
+        float bitangent2 = dot(bitangent, bitangent);
+        float determinant = dot(cross(geometric_normal, tangent), bitangent);
+        if (tangent2 > 1e-8 && bitangent2 > 1e-8 && abs(determinant) > 1e-8 &&
+            !isnan(tangent2) && !isinf(tangent2) && !isnan(bitangent2) && !isinf(bitangent2))
+        {
+            parallax_tangent = tangent * inversesqrt(tangent2);
+            parallax_bitangent = safe_normalize(cross(geometric_normal, parallax_tangent),
+                vec3(0.0, 0.0, 1.0)) * (determinant < 0.0 ? -1.0 : 1.0);
+            parallax_frame_valid = true;
+        }
+    }
+    vec2 detail_uv = transformed_detail_uv(geometry_index, uv) * geometry.terrain_scale;
+    uv = transformed_uv(geometry_index, uv);
+    uint terrain_normal_mask_slot = geometry.terrain_texture_slots[0];
+    bool is_terrain = terrain_normal_mask_slot < parameters.dimensions.z;
+    uint base_parallax_slot = geometry.terrain_texture_slots[28];
+    if (!is_terrain && parallax_frame_valid && base_parallax_slot < parameters.dimensions.z)
+    {
+        float height = textureLod(material_textures[
+            nonuniformEXT(base_parallax_slot)], uv, 0.0).r;
+        vec2 offset = ray_parallax_offset(-ray_direction, geometric_normal, parallax_tangent,
+            parallax_bitangent, height, geometry.parallax_height, hit.distance);
+        uv += offset;
+        detail_uv += offset;
+    }
+    albedo = geometry.diffuse_texture_slot < parameters.dimensions.z ?
+        max(textureLod(material_textures[nonuniformEXT(geometry.diffuse_texture_slot)], uv, 0.0).rgb, vec3(0.0)) :
+        vec3(0.8);
+    metallic = 0.0;
+    roughness = 1.0;
+    ambient_occlusion = 1.0;
+    is_pbr = false;
+    is_emissive = (geometry.material_flags & RAY_MATERIAL_EMISSIVE) != 0u;
+    if (geometry.pbr_texture_slot < parameters.dimensions.z)
+    {
+        vec3 packed_pbr = textureLod(material_textures[nonuniformEXT(geometry.pbr_texture_slot)], uv, 0.0).rgb;
+        metallic = clamp(packed_pbr.r, 0.0, 1.0);
+        roughness = clamp(packed_pbr.g, 0.04, 1.0);
+        ambient_occlusion = clamp(packed_pbr.b, 0.0, 1.0);
+        is_pbr = true;
+    }
+    if (geometry.metallic_texture_slot < parameters.dimensions.z)
+    {
+        metallic = clamp(textureLod(material_textures[
+            nonuniformEXT(geometry.metallic_texture_slot)], uv, 0.0).r, 0.0, 1.0);
+        is_pbr = true;
+    }
+    if (geometry.roughness_texture_slot < parameters.dimensions.z)
+    {
+        roughness = clamp(textureLod(material_textures[
+            nonuniformEXT(geometry.roughness_texture_slot)], uv, 0.0).r, 0.04, 1.0);
+        is_pbr = true;
+    }
+    if (geometry.ao_texture_slot < parameters.dimensions.z)
+    {
+        ambient_occlusion = clamp(textureLod(material_textures[
+            nonuniformEXT(geometry.ao_texture_slot)], uv, 0.0).r, 0.0, 1.0);
+        is_pbr = true;
+    }
+    if (terrain_normal_mask_slot < parameters.dimensions.z)
+    {
+        vec4 layer_weights = textureLod(material_textures[
+            nonuniformEXT(terrain_normal_mask_slot)], uv, 0.0);
+        float weight_sum = dot(layer_weights, vec4(1.0));
+        if (weight_sum > 1e-6) layer_weights /= weight_sum;
+        if (parallax_frame_valid)
+        {
+            float height_sum = 0.0;
+            float height_weight = 0.0;
+            for (uint layer = 0u; layer < 4u; ++layer)
+            {
+                uint parallax_slot = geometry.terrain_texture_slots[29u + layer];
+                if (parallax_slot >= parameters.dimensions.z || layer_weights[layer] <= 1e-5)
+                    continue;
+                height_sum += textureLod(material_textures[
+                    nonuniformEXT(parallax_slot)], detail_uv, 0.0).r * layer_weights[layer];
+                height_weight += layer_weights[layer];
+            }
+            if (height_weight > 1e-5)
+            {
+                vec2 offset = ray_parallax_offset(-ray_direction, geometric_normal, parallax_tangent,
+                    parallax_bitangent, height_sum / height_weight, geometry.parallax_height, hit.distance);
+                detail_uv += offset;
+            }
+        }
+        vec3 terrain_albedo = vec3(0.0);
+        vec3 terrain_pbr = vec3(0.0);
+        bool terrain_has_pbr = false;
+        for (uint layer = 0u; layer < 4u; ++layer)
+        {
+            uint albedo_slot = geometry.terrain_texture_slots[1u + layer];
+            vec3 layer_albedo = albedo_slot < parameters.dimensions.z ?
+                textureLod(material_textures[nonuniformEXT(albedo_slot)], detail_uv, 0.0).rgb : vec3(1.0);
+            terrain_albedo += layer_albedo * layer_weights[layer];
+
+            vec3 layer_pbr = vec3(0.0, 1.0, 1.0);
+            uint packed_slot = geometry.terrain_texture_slots[5u + layer];
+            uint metal_slot = geometry.terrain_texture_slots[9u + layer];
+            uint rough_slot = geometry.terrain_texture_slots[13u + layer];
+            uint ao_slot = geometry.terrain_texture_slots[17u + layer];
+            bool layer_has_pbr = false;
+            if (packed_slot < parameters.dimensions.z)
+            {
+                layer_pbr = textureLod(material_textures[
+                    nonuniformEXT(packed_slot)], detail_uv, 0.0).rgb;
+                layer_has_pbr = true;
+            }
+            if (metal_slot < parameters.dimensions.z)
+            {
+                layer_pbr.r = textureLod(material_textures[
+                    nonuniformEXT(metal_slot)], detail_uv, 0.0).r;
+                layer_has_pbr = true;
+            }
+            if (rough_slot < parameters.dimensions.z)
+            {
+                layer_pbr.g = textureLod(material_textures[
+                    nonuniformEXT(rough_slot)], detail_uv, 0.0).r;
+                layer_has_pbr = true;
+            }
+            if (ao_slot < parameters.dimensions.z)
+            {
+                layer_pbr.b = textureLod(material_textures[
+                    nonuniformEXT(ao_slot)], detail_uv, 0.0).r;
+                layer_has_pbr = true;
+            }
+            terrain_pbr += layer_pbr * layer_weights[layer];
+            terrain_has_pbr = terrain_has_pbr || (layer_has_pbr && layer_weights[layer] > 1e-5);
+        }
+        albedo *= 2.0 * terrain_albedo;
+        if (terrain_has_pbr)
+        {
+            metallic = clamp(terrain_pbr.r, 0.0, 1.0);
+            roughness = clamp(terrain_pbr.g, 0.04, 1.0);
+            ambient_occlusion = clamp(terrain_pbr.b, 0.0, 1.0);
+            is_pbr = true;
+        }
+    }
+    if (geometry.vertex_stride >= 64u && geometry.normal_texture_slot < parameters.dimensions.z)
+    {
+        vec3 tangent = unpackSnorm4x8(vertices.values[triangle.x * stride + 14u]).xyz * weights.x +
+            unpackSnorm4x8(vertices.values[triangle.y * stride + 14u]).xyz * weights.y +
+            unpackSnorm4x8(vertices.values[triangle.z * stride + 14u]).xyz * weights.z;
+        vec3 bitangent = unpackSnorm4x8(vertices.values[triangle.x * stride + 15u]).xyz * weights.x +
+            unpackSnorm4x8(vertices.values[triangle.y * stride + 15u]).xyz * weights.y +
+            unpackSnorm4x8(vertices.values[triangle.z * stride + 15u]).xyz * weights.z;
+        tangent = object_to_world * tangent;
+        bitangent = object_to_world * bitangent;
+        tangent -= normal * dot(normal, tangent);
+        bitangent -= normal * dot(normal, bitangent);
+        float tangent_length2 = dot(tangent, tangent);
+        float bitangent_length2 = dot(bitangent, bitangent);
+        float determinant = dot(cross(normal, tangent), bitangent);
+        if (tangent_length2 > 1e-8 && bitangent_length2 > 1e-8 && abs(determinant) > 1e-8)
+        {
+            tangent *= inversesqrt(tangent_length2);
+            bitangent = cross(normal, tangent) * (determinant < 0.0 ? -1.0 : 1.0);
+            vec4 main_map = textureLod(material_textures[nonuniformEXT(geometry.normal_texture_slot)], uv, 0.0);
+            vec3 map_normal = main_map.xyz * 2.0 - 1.0;
+            if (geometry.normal_aux_texture_slot < parameters.dimensions.z)
+            {
+                vec3 auxiliary = textureLod(material_textures[
+                    nonuniformEXT(geometry.normal_aux_texture_slot)], uv, 0.0).xyz;
+                map_normal = main_map.wzy + auxiliary - 1.0;
+            }
+            vec3 mapped_normal = tangent * map_normal.x + bitangent * map_normal.y + normal * map_normal.z;
+            normal = safe_normalize(mapped_normal, normal);
+        }
+    }
+    uint terrain_mask_slot = geometry.terrain_texture_slots[0];
+    if (terrain_mask_slot < parameters.dimensions.z)
+    {
+        vec4 layer_weights = textureLod(material_textures[
+            nonuniformEXT(terrain_mask_slot)], uv, 0.0);
+        float weight_sum = dot(layer_weights, vec4(1.0));
+        if (weight_sum > 1e-6) layer_weights /= weight_sum;
+        vec3 layer_normal = vec3(0.0);
+        bool has_layer_normal = false;
+        for (uint layer = 0u; layer < 4u; ++layer)
+        {
+            uint bump_slot = geometry.terrain_texture_slots[21u + layer];
+            uint auxiliary_slot = geometry.terrain_texture_slots[25u + layer];
+            if (bump_slot >= parameters.dimensions.z || auxiliary_slot >= parameters.dimensions.z ||
+                layer_weights[layer] <= 1e-5) continue;
+            vec4 bump = textureLod(material_textures[
+                nonuniformEXT(bump_slot)], detail_uv, 0.0);
+            vec3 auxiliary = textureLod(material_textures[
+                nonuniformEXT(auxiliary_slot)], detail_uv, 0.0).xyz;
+            vec3 decoded = bump.wzy + auxiliary - 1.0;
+            layer_normal += safe_normalize(decoded, vec3(0.0, 0.0, 1.0)) * layer_weights[layer];
+            has_layer_normal = true;
+        }
+        if (has_layer_normal)
+        {
+            vec2 uv0 = transformed_detail_uv(geometry_index, read_uv(vertices, triangle.x, stride)) *
+                geometry.terrain_scale;
+            vec2 uv1 = transformed_detail_uv(geometry_index, read_uv(vertices, triangle.y, stride)) *
+                geometry.terrain_scale;
+            vec2 uv2 = transformed_detail_uv(geometry_index, read_uv(vertices, triangle.z, stride)) *
+                geometry.terrain_scale;
+            vec2 duv1 = uv1 - uv0;
+            vec2 duv2 = uv2 - uv0;
+            float uv_determinant = duv1.x * duv2.y - duv1.y * duv2.x;
+            vec3 edge1 = object_to_world * (read_position(vertices, triangle.y, stride) -
+                read_position(vertices, triangle.x, stride));
+            vec3 edge2 = object_to_world * (read_position(vertices, triangle.z, stride) -
+                read_position(vertices, triangle.x, stride));
+            if (abs(uv_determinant) > 1e-8 && !isnan(uv_determinant) && !isinf(uv_determinant))
+            {
+                vec3 tangent = (edge1 * duv2.y - edge2 * duv1.y) / uv_determinant;
+                tangent -= geometric_normal * dot(geometric_normal, tangent);
+                float tangent_length2 = dot(tangent, tangent);
+                if (tangent_length2 > 1e-8 && !isnan(tangent_length2) && !isinf(tangent_length2))
+                {
+                    tangent *= inversesqrt(tangent_length2);
+                    vec3 bitangent = cross(geometric_normal, tangent) *
+                        (uv_determinant < 0.0 ? -1.0 : 1.0);
+                    vec3 mapped = safe_normalize(tangent * layer_normal.x +
+                        bitangent * layer_normal.y + geometric_normal * layer_normal.z, geometric_normal);
+                    normal = safe_normalize(normal + mapped - geometric_normal, normal);
+                }
+            }
+        }
+    }
+    return finite3(position) && finite3(normal) && finite3(albedo);
+}
+
+vec3 cosine_direction(vec3 normal, inout uint rng)
+{
+    float u = random_float(rng);
+    float v = random_float(rng);
+    float radius = sqrt(u);
+    float phi = 2.0 * PI * v;
+    vec3 local = vec3(radius * cos(phi), radius * sin(phi), sqrt(max(1.0 - u, 0.0)));
+    vec3 helper = abs(normal.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+    vec3 tangent = safe_normalize(cross(helper, normal), vec3(1.0, 0.0, 0.0));
+    vec3 bitangent = cross(normal, tangent);
+    return safe_normalize(tangent * local.x + bitangent * local.y + normal * local.z, normal);
+}
+
+vec3 evaluate_path_brdf(vec3 albedo, float metallic, float roughness, float ambient_occlusion,
+    bool is_pbr, vec3 normal, vec3 view, vec3 light)
+{
+    const float inv_pi = 0.3183098861837907;
+    float nl = max(dot(normal, light), 0.0);
+    float nv = max(dot(normal, view), 0.0);
+    if (nl <= 0.0 || nv <= 0.0) return vec3(0.0);
+    if (!is_pbr) return max(albedo, vec3(0.0)) * inv_pi;
+
+    vec3 half_vector = safe_normalize(view + light, normal);
+    float nh = max(dot(normal, half_vector), 0.0);
+    float vh = max(dot(view, half_vector), 0.0);
+    metallic = clamp(metallic, 0.0, 1.0);
+    roughness = clamp(roughness, 0.04, 1.0);
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float denominator = max(nh * nh * (a2 - 1.0) + 1.0, 1e-6);
+    float distribution = a2 / max(PI * denominator * denominator, 1e-12);
+    float k = (roughness + 1.0) * (roughness + 1.0) * 0.125;
+    float geometry_view = nv / max(nv * (1.0 - k) + k, 1e-6);
+    float geometry_light = nl / max(nl * (1.0 - k) + k, 1e-6);
+    vec3 f0 = mix(vec3(0.04), max(albedo, vec3(0.0)), metallic);
+    vec3 fresnel = f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
+    vec3 specular = distribution * geometry_view * geometry_light * fresnel /
+        max(4.0 * nv * nl, 1e-5);
+    vec3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * max(albedo, vec3(0.0)) *
+        clamp(ambient_occlusion, 0.0, 1.0) * inv_pi;
+    return diffuse + specular;
+}
+
+float ggx_distribution(float normal_half, float roughness)
+{
+    float a = clamp(roughness, 0.04, 1.0);
+    a *= a;
+    float a2 = a * a;
+    float denominator = max(normal_half * normal_half * (a2 - 1.0) + 1.0, 1e-6);
+    return a2 / max(PI * denominator * denominator, 1e-12);
+}
+
+bool sample_path_bsdf(vec3 albedo, float metallic, float roughness, float ambient_occlusion,
+    bool is_pbr, vec3 normal, vec3 view, inout uint rng,
+    out vec3 direction, out vec3 throughput_weight)
+{
+    normal = safe_normalize(normal, vec3(0.0, 1.0, 0.0));
+    view = safe_normalize(view, normal);
+    direction = normal;
+    throughput_weight = vec3(0.0);
+    float specular_probability = 0.0;
+    if (is_pbr)
+    {
+        metallic = clamp(metallic, 0.0, 1.0);
+        roughness = clamp(roughness, 0.04, 1.0);
+        vec3 f0 = mix(vec3(0.04), max(albedo, vec3(0.0)), metallic);
+        specular_probability = clamp(max(f0.r, max(f0.g, f0.b)), 0.05, 0.95);
+    }
+
+    if (random_float(rng) < specular_probability)
+    {
+        float u = random_float(rng);
+        float v = random_float(rng);
+        float a = roughness * roughness;
+        float a2 = a * a;
+        float phi = 2.0 * PI * u;
+        float cos_theta = sqrt(max((1.0 - v) / max(1.0 + (a2 - 1.0) * v, 1e-6), 0.0));
+        float sin_theta = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
+        vec3 helper = abs(normal.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+        vec3 tangent = safe_normalize(cross(helper, normal), vec3(1.0, 0.0, 0.0));
+        vec3 bitangent = cross(normal, tangent);
+        vec3 half_vector = safe_normalize(tangent * (sin_theta * cos(phi)) +
+            bitangent * (sin_theta * sin(phi)) + normal * cos_theta, normal);
+        if (dot(view, half_vector) <= 1e-6) return false;
+        direction = safe_normalize(reflect(-view, half_vector), normal);
+    }
+    else
+        direction = cosine_direction(normal, rng);
+
+    float normal_light = max(dot(normal, direction), 0.0);
+    if (normal_light <= 1e-7) return false;
+    float diffuse_pdf = normal_light / PI;
+    float specular_pdf = 0.0;
+    if (is_pbr)
+    {
+        vec3 half_vector = safe_normalize(view + direction, normal);
+        float normal_half = max(dot(normal, half_vector), 0.0);
+        float view_half = abs(dot(view, half_vector));
+        if (view_half > 1e-6)
+            specular_pdf = ggx_distribution(normal_half, roughness) * normal_half / (4.0 * view_half);
+    }
+    float pdf = mix(diffuse_pdf, specular_pdf, specular_probability);
+    if (!(pdf > 1e-8) || isnan(pdf) || isinf(pdf)) return false;
+    vec3 brdf = evaluate_path_brdf(albedo, metallic, roughness, ambient_occlusion,
+        is_pbr, normal, view, direction);
+    throughput_weight = brdf * (normal_light / pdf);
+    return finite3(throughput_weight) && any(greaterThan(throughput_weight, vec3(0.0)));
+}
+
+void main()
+{
+    uint count = parameters.dimensions.x;
+    uint row_width = parameters.dimensions.y * 64u;
+    if (count == 0u || row_width == 0u ||
+        gl_GlobalInvocationID.y > (count - 1u) / row_width) return;
+    uint row = gl_GlobalInvocationID.y * row_width;
+    if (gl_GlobalInvocationID.x >= count - row) return;
+    uint index = row + gl_GlobalInvocationID.x;
+    if (index >= uint(next_history.length()))
+        return;
+    if (index >= uint(surfaces.length()) || index >= uint(rays.length()) || index >= uint(radiance.length()))
+    {
+        next_history[index] = TraceHistory(vec4(0.0), vec3(0.0), 0u);
+        return;
+    }
+    Surface primary = surfaces[index];
+    if (!(primary.position_valid.w > 0.0) || isinf(primary.position_valid.w) ||
+        !finite3(primary.position_valid.xyz))
+    {
+        next_history[index] = TraceHistory(vec4(0.0), vec3(0.0), 0u);
+        return;
+    }
+    vec3 primary_normal = safe_normalize(primary.normal.xyz, vec3(0.0, 1.0, 0.0));
+    uint primary_material_flags = uint(max(primary.pbr.w, 0.0) + 0.5);
+    bool primary_is_pbr = (primary_material_flags & RAY_SURFACE_PBR) != 0u;
+    float primary_metallic = primary_is_pbr ? clamp(primary.pbr.x, 0.0, 1.0) : 0.0;
+    float primary_roughness = primary_is_pbr ? clamp(primary.pbr.y, 0.04, 1.0) : 1.0;
+    float primary_ao = primary_is_pbr ? clamp(primary.pbr.z, 0.0, 1.0) : 1.0;
+    vec3 path_radiance = vec3(0.0);
+    vec3 primary_view = safe_normalize(-rays[index].direction_max.xyz, primary_normal);
+    vec3 direction = primary_normal, primary_weight = vec3(0.0);
+    uint rng = pcg_hash(index * 747796405u + parameters.dimensions.w * 2891336453u + 17u);
+    bool path_active = sample_path_bsdf(max(primary.albedo.rgb, vec3(0.0)), primary_metallic,
+        primary_roughness, primary_ao, primary_is_pbr, primary_normal, primary_view,
+        rng, direction, primary_weight);
+    vec3 throughput = primary_weight;
+    vec3 origin = primary.position_valid.xyz + primary_normal * parameters.limits.y;
+    uint max_bounces = clamp(parameters.control.x, 1u, 4u);
+    vec3 sun_direction = safe_normalize(parameters.sun_direction_distance.xyz, vec3(0.0, 1.0, 0.0));
+    for (uint bounce = 0u; path_active && bounce < max_bounces; ++bounce)
+    {
+        Hit hit;
+        if (!trace_scene(origin, direction, parameters.limits.x, 0u, hit))
+        {
+            path_radiance += throughput * max(parameters.sky.rgb, vec3(0.0));
+            break;
+        }
+        vec3 hit_position, hit_normal, hit_albedo;
+        float hit_metallic, hit_roughness, hit_ao;
+        bool hit_is_pbr, hit_is_emissive;
+        if (!reconstruct_surface(hit, direction, hit_position, hit_normal, hit_albedo,
+                hit_metallic, hit_roughness, hit_ao, hit_is_pbr, hit_is_emissive))
+            break;
+        if (hit_is_emissive)
+            path_radiance += throughput * hit_albedo;
+        float sun_cosine = max(dot(hit_normal, sun_direction), 0.0);
+        if (sun_cosine > 0.0 && parameters.sun_direction_distance.w > parameters.limits.y)
+        {
+            Hit sun_hit;
+            bool occluded = trace_scene(hit_position + hit_normal * parameters.limits.y,
+                sun_direction, parameters.sun_direction_distance.w, gl_RayFlagsTerminateOnFirstHitEXT,
+                sun_hit);
+            if (!occluded)
+            {
+                vec3 direct = hit_is_pbr ? pbr_direct(hit_albedo, hit_metallic, hit_roughness,
+                    hit_normal, safe_normalize(-direction, hit_normal), sun_direction) :
+                    hit_albedo * (sun_cosine / PI);
+                path_radiance += throughput * direct * max(parameters.sun_color.rgb, vec3(0.0));
+            }
+        }
+        uint selected_light;
+        float light_multiplier;
+        if (select_secondary_light(hit_position, hit_normal, index,
+                parameters.dimensions.w ^ (bounce * 0x85ebca6bu), parameters.control.w,
+                selected_light, light_multiplier))
+        {
+            LocalLight light = local_lights[selected_light];
+            vec3 to_light = light.position_range.xyz - hit_position;
+            float distance_squared = dot(to_light, to_light);
+            float range_squared = light.position_range.w * light.position_range.w;
+            if (distance_squared > 1e-10 && distance_squared < range_squared)
+            {
+                float distance_to_light = sqrt(distance_squared);
+                vec3 light_direction = to_light / distance_to_light;
+                float cosine = max(dot(hit_normal, light_direction), 0.0);
+                float attenuation = max(1.0 - distance_squared / range_squared, 0.0);
+                if (mod(light.color_type.w, 2.0) > 0.5)
+                    attenuation *= smoothstep(light.direction_cone.w,
+                        min(1.0, light.direction_cone.w + 0.05),
+                        dot(-light_direction, light.direction_cone.xyz));
+                if (light.projection.x < uint(parameters.limits.w) &&
+                    mod(light.color_type.w, 2.0) > 0.5)
+                {
+                    vec3 light_direction_axis = safe_normalize(light.direction_cone.xyz,
+                        vec3(0.0, -1.0, 0.0));
+                    vec3 right = safe_normalize(light.spot_right.xyz - light_direction_axis *
+                        dot(light.spot_right.xyz, light_direction_axis), vec3(1.0, 0.0, 0.0));
+                    vec3 up = cross(light_direction_axis, right);
+                    vec3 from_light = -to_light;
+                    float z = dot(from_light, light_direction_axis);
+                    float projection_scale = z * light.spot_right.w;
+                    vec2 uv = vec2(dot(from_light, right), -dot(from_light, up)) /
+                        max(projection_scale, 1e-6) * 0.5 + 0.5;
+                    if (z <= 0.0 || projection_scale <= 1e-6 ||
+                        any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
+                        attenuation = 0.0;
+                    else
+                        attenuation *= textureLod(projected_lights[
+                            nonuniformEXT(light.projection.x)], uv, 0.0).r;
+                }
+                if (cosine > 0.0 && attenuation > 0.0)
+                {
+                    Hit light_hit;
+                    bool occluded = light.color_type.w >= 2.0 &&
+                        trace_scene(hit_position + hit_normal * parameters.limits.y,
+                            light_direction, max(distance_to_light - parameters.limits.y, 0.0),
+                            gl_RayFlagsTerminateOnFirstHitEXT, light_hit);
+                    if (!occluded)
+                    {
+                        vec3 incident = max(light.color_type.rgb, vec3(0.0)) * attenuation * light_multiplier;
+                        vec3 direct = hit_is_pbr ? pbr_direct(hit_albedo, hit_metallic, hit_roughness,
+                            hit_normal, safe_normalize(-direction, hit_normal), light_direction) :
+                            hit_albedo * (cosine / PI);
+                        path_radiance += throughput * direct * incident;
+                    }
+                }
+            }
+        }
+        if (bounce + 1u == max_bounces) break;
+        vec3 next_direction, next_weight;
+        path_active = sample_path_bsdf(hit_albedo, hit_metallic, hit_roughness, hit_ao,
+            hit_is_pbr, hit_normal, safe_normalize(-direction, hit_normal), rng,
+            next_direction, next_weight);
+        if (!path_active) break;
+        throughput *= next_weight;
+        if (!finite3(throughput)) break;
+        if (bounce >= 2u)
+        {
+            float survival = clamp(max(throughput.r, max(throughput.g, throughput.b)), 0.05, 0.95);
+            if (random_float(rng) > survival) break;
+            throughput /= survival;
+        }
+        origin = hit_position + hit_normal * parameters.limits.y;
+        direction = next_direction;
+    }
+    bool sample_valid = finite3(path_radiance);
+    if (!sample_valid) path_radiance = vec3(0.0);
+    float old_count = 0.0;
+    vec3 average_radiance = path_radiance;
+    TraceHistory old_history;
+    bool history_matches = false;
+    if (parameters.control.y != 0u)
+    {
+        uint width = max(uint(parameters.sky.w), 1u);
+        uint height = (count - 1u) / width + 1u;
+        ivec2 motion_size = textureSize(motion_vectors, 0);
+        uint x = index % width;
+        uint y = index / width;
+        vec2 uv = (vec2(x, y) + 0.5) / vec2(width, height);
+        ivec2 motion_pixel = clamp(ivec2(uv * vec2(motion_size)), ivec2(0), motion_size - 1);
+        vec4 motion = texelFetch(motion_vectors, motion_pixel, 0);
+        bool valid_previous_depth = (parameters.control.y & 2u) == 0u ||
+            (motion.z >= 0.0 && motion.z < 1.0);
+        vec2 previous_uv = uv + motion.xy;
+        if (valid_previous_depth && finite3(vec3(motion.xy, 0.0)) &&
+            all(greaterThanEqual(previous_uv, vec2(0.0))) &&
+            all(lessThan(previous_uv, vec2(1.0))))
+        {
+            ivec2 previous_pixel = clamp(ivec2(previous_uv * vec2(width, height)), ivec2(0),
+                ivec2(int(width) - 1, int(height) - 1));
+            uint previous_index = uint(previous_pixel.y) * width + uint(previous_pixel.x);
+            if (previous_index < count && previous_index < uint(previous_history.length()))
+            {
+                old_history = previous_history[previous_index];
+                history_matches = old_history.radiance_count.w >= 1.0 &&
+                    old_history.radiance_count.w <= 64.0 &&
+                    finite3(old_history.radiance_count.rgb) && finite3(old_history.position) &&
+                    distance(old_history.position, primary.position_valid.xyz) <= parameters.limits.z &&
+                    dot(octahedral_decode(old_history.packed_normal), primary_normal) >= 0.95;
+            }
+        }
+    }
+    if (history_matches)
+    {
+        float sample_limit = float(clamp(parameters.control.z, 1u, 64u));
+        old_count = min(old_history.radiance_count.w, sample_limit);
+        float next_count = min(old_count + (sample_valid ? 1.0 : 0.0), sample_limit);
+        average_radiance = mix(old_history.radiance_count.rgb, path_radiance,
+            sample_valid ? 1.0 / next_count : 0.0);
+        next_history[index] = TraceHistory(vec4(average_radiance, next_count),
+            primary.position_valid.xyz, packSnorm2x16(octahedral_encode(primary_normal)));
+    }
+    else
+    {
+        next_history[index] = TraceHistory(vec4(path_radiance, sample_valid ? 1.0 : 0.0),
+            primary.position_valid.xyz, packSnorm2x16(octahedral_encode(primary_normal)));
+    }
+    radiance[index].rgb += average_radiance;
+}

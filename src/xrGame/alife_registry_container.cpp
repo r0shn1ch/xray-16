@@ -11,6 +11,7 @@
 #include "Common/object_interfaces.h"
 #include "alife_space.h"
 #include "Common/object_type_traits.h"
+#include <type_traits>
 
 template <typename TContainer, typename TList>
 struct RegistryHelper;
@@ -19,7 +20,7 @@ template <typename TContainer>
 struct RegistryHelper<TContainer, Loki::NullType>
 {
     static void Save(TContainer*, IWriter&) {};
-    static void Load(TContainer*, IReader&) {};
+    static bool Load(TContainer*, IReader&) { return true; }
 };
 
 template <typename TContainer, typename Head, typename Tail>
@@ -35,18 +36,30 @@ struct RegistryHelper<TContainer, Loki::Typelist<Head, Tail>>
             self->Head::save(writer);
     };
 
-    static void Load(TContainer* self, IReader& reader)
+    static bool Load(TContainer* self, IReader& reader)
     {
-        RegistryHelper<TContainer, Tail>::Load(self, reader);
+        if (!RegistryHelper<TContainer, Tail>::Load(self, reader))
+            return false;
         if constexpr (isSerializable)
             self->Head::load(reader);
+        if constexpr (std::is_same_v<Head, CMapLocationRegistry>)
+            return self->Head::load_succeeded();
+        return true;
     }
 };
 
 void CALifeRegistryContainer::load(IReader& file_stream)
 {
-    R_ASSERT2(file_stream.find_chunk(REGISTRY_CHUNK_DATA), "Can't find chunk REGISTRY_CHUNK_DATA!");
-    RegistryHelper<CALifeRegistryContainer, TYPE_LIST>::Load(this, file_stream);
+    IReader* registry_stream = file_stream.open_chunk(REGISTRY_CHUNK_DATA);
+    if (!registry_stream)
+    {
+        Msg("! Can't find chunk REGISTRY_CHUNK_DATA while loading ALife registries");
+        return;
+    }
+
+    if (!RegistryHelper<CALifeRegistryContainer, TYPE_LIST>::Load(this, *registry_stream))
+        Msg("! Remaining ALife registries skipped after invalid map-location data");
+    registry_stream->close();
 }
 
 void CALifeRegistryContainer::save(IWriter& memory_stream)

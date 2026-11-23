@@ -1,0 +1,976 @@
+#include "LightingLimits.h"
+[[vk::binding(0, 0)]] Texture2D<float4> diffuse : register(t0);
+// Material maps repeat and select mip levels independently of the clamped,
+// level-zero lightmap sampler carried by binding 1.
+[[vk::binding(0, 0)]] SamplerState diffuse_sampler : register(s0);
+[[vk::binding(1, 0)]] SamplerState lightmap_sampler : register(s1);
+#if defined(VK_LIGHTMAP)
+[[vk::binding(1, 0)]] Texture2D<float4> lightmap : register(t1);
+#endif
+#if (!defined(VK_ENV_CUBE) && !defined(VK_LAEMB_BASE)) || defined(VK_TRANSPARENT)
+#if defined(VK_GPU_PARTICLE)
+[[vk::binding(6, 1)]] cbuffer MaterialParams {
+#else
+[[vk::push_constant]] cbuffer MaterialParams {
+#endif
+    float4x4 material_camera;
+    float terrain_alpha_threshold;
+    float terrain_scale;
+    float2 material_padding;
+    float4 surface_modes; // bump mode, detail normal, surface map flags, material class
+    float4 surface_factors; // material weight, height scale, emission, terrain bump mask
+    float4 matrix_alignment;
+    float4 base_matrix_u;
+    float4 base_matrix_v;
+    float4 detail_matrix_u;
+    float4 detail_matrix_v;
+    float4 environment_matrix_u;
+    float4 environment_matrix_v;
+    float4 environment_matrix_z;
+};
+#endif
+[[vk::binding(7, 0)]] Texture2D<float4> base_bump : register(t7);
+[[vk::binding(8, 0)]] Texture2D<float4> base_bump_aux : register(t8);
+[[vk::binding(9, 0)]] Texture2D<float4> detail_bump : register(t9);
+[[vk::binding(10, 0)]] Texture2D<float4> detail_bump_aux : register(t10);
+[[vk::binding(11, 0)]] Texture2D<float4> terrain_bump_red : register(t11);
+[[vk::binding(12, 0)]] Texture2D<float4> terrain_bump_green : register(t12);
+[[vk::binding(13, 0)]] Texture2D<float4> terrain_bump_blue : register(t13);
+[[vk::binding(14, 0)]] Texture2D<float4> terrain_bump_alpha : register(t14);
+[[vk::binding(15, 0)]] Texture2D<float4> external_normal : register(t15);
+[[vk::binding(16, 0)]] Texture2D<float4> terrain_aux_red : register(t16);
+[[vk::binding(17, 0)]] Texture2D<float4> terrain_aux_green : register(t17);
+[[vk::binding(18, 0)]] Texture2D<float4> terrain_aux_blue : register(t18);
+[[vk::binding(19, 0)]] Texture2D<float4> terrain_aux_alpha : register(t19);
+[[vk::binding(36, 0)]] Texture2D<float4> material_parallax : register(t36);
+#if defined(VK_TERRAIN)
+[[vk::binding(20, 0)]] Texture2D<float4> terrain_pbr_red : register(t20);
+[[vk::binding(21, 0)]] Texture2D<float4> terrain_pbr_green : register(t21);
+[[vk::binding(22, 0)]] Texture2D<float4> terrain_pbr_blue : register(t22);
+[[vk::binding(23, 0)]] Texture2D<float4> terrain_pbr_alpha : register(t23);
+[[vk::binding(24, 0)]] Texture2D<float4> terrain_metallic_red : register(t24);
+[[vk::binding(25, 0)]] Texture2D<float4> terrain_metallic_green : register(t25);
+[[vk::binding(26, 0)]] Texture2D<float4> terrain_metallic_blue : register(t26);
+[[vk::binding(27, 0)]] Texture2D<float4> terrain_metallic_alpha : register(t27);
+[[vk::binding(28, 0)]] Texture2D<float4> terrain_roughness_red : register(t28);
+[[vk::binding(29, 0)]] Texture2D<float4> terrain_roughness_green : register(t29);
+[[vk::binding(30, 0)]] Texture2D<float4> terrain_roughness_blue : register(t30);
+[[vk::binding(31, 0)]] Texture2D<float4> terrain_roughness_alpha : register(t31);
+[[vk::binding(32, 0)]] Texture2D<float4> terrain_ao_red : register(t32);
+[[vk::binding(33, 0)]] Texture2D<float4> terrain_ao_green : register(t33);
+[[vk::binding(34, 0)]] Texture2D<float4> terrain_ao_blue : register(t34);
+[[vk::binding(35, 0)]] Texture2D<float4> terrain_ao_alpha : register(t35);
+[[vk::binding(37, 0)]] Texture2D<float4> terrain_parallax_red : register(t37);
+[[vk::binding(38, 0)]] Texture2D<float4> terrain_parallax_green : register(t38);
+[[vk::binding(39, 0)]] Texture2D<float4> terrain_parallax_blue : register(t39);
+[[vk::binding(40, 0)]] Texture2D<float4> terrain_parallax_alpha : register(t40);
+#endif
+#if defined(VK_DETAIL)
+[[vk::binding(2, 0)]] Texture2D<float4> single_detail : register(t2);
+#endif
+#if !defined(VK_DETAIL) && !defined(VK_TERRAIN) && !defined(VK_ENV_CUBE) && !defined(VK_LAEMB_BASE)
+[[vk::binding(2, 0)]] Texture2D<float4> surface_detail : register(t2);
+#endif
+#if defined(VK_ENV_CUBE) || defined(VK_LAEMB_BASE)
+[[vk::binding(3, 0)]] Texture2D<float4> surface_detail : register(t3);
+#endif
+#if defined(VK_TERRAIN)
+[[vk::binding(2, 0)]] Texture2D<float4> terrain_mask : register(t2);
+[[vk::binding(3, 0)]] Texture2D<float4> terrain_red : register(t3);
+[[vk::binding(4, 0)]] Texture2D<float4> terrain_green : register(t4);
+[[vk::binding(5, 0)]] Texture2D<float4> terrain_blue : register(t5);
+[[vk::binding(6, 0)]] Texture2D<float4> terrain_alpha : register(t6);
+#endif
+#if defined(VK_ENV_CUBE)
+[[vk::binding(2, 0)]] TextureCube<float4> environment_cube : register(t2);
+#endif
+#if defined(VK_LAEMB_BASE)
+[[vk::binding(2, 0)]] Texture2D<float4> environment_2d : register(t2);
+#endif
+#if defined(VK_ENV_CUBE) && !defined(VK_TRANSPARENT) || defined(VK_LAEMB_BASE)
+[[vk::push_constant]] cbuffer EnvironmentParams {
+    float4x4 environment_mvp;
+    float4 environment_camera;
+    float4 environment_factor;
+    float4 surface_modes;
+    float4 surface_factors;
+    float4 base_matrix_u;
+    float4 base_matrix_v;
+    float4 detail_matrix_u;
+    float4 detail_matrix_v;
+    float4 environment_matrix_u;
+    float4 environment_matrix_v;
+    float4 environment_matrix_z;
+};
+#endif
+
+struct Fragment
+{
+#if defined(VK_TRANSPARENT) && !defined(VK_UNLIT)
+    float4 position : SV_Position;
+#endif
+    [[vk::location(0)]] float3 normal : TEXCOORD0;
+    [[vk::location(1)]] float2 uv : TEXCOORD1;
+#if defined(LEVEL_GEOMETRY)
+    [[vk::location(2)]] float2 lightmap_uv : TEXCOORD2;
+    [[vk::location(3)]] float4 baked : COLOR0;
+#endif
+    [[vk::location(4)]] float3 world_position : TEXCOORD4;
+    [[vk::location(5)]] float hemi : TEXCOORD5;
+    [[vk::location(6)]] float3 tangent : TEXCOORD6;
+    [[vk::location(7)]] float3 bitangent : TEXCOORD7;
+};
+
+
+float2 matrix_uv(float2 uv, float4 row_u, float4 row_v)
+{
+    float4 coordinate = float4(uv, 0.0, 1.0);
+    return float2(dot(coordinate, row_u), dot(coordinate, row_v));
+}
+
+uint surface_map_flags()
+{
+    return uint(max(surface_modes.z, 0.0) + 0.5);
+}
+
+bool has_surface_map(uint flag)
+{
+    return (surface_map_flags() & flag) != 0u;
+}
+
+float3 finite_normal(float3 value,float3 fallback)
+{
+    float length_squared=dot(value,value);
+    return length_squared>1e-12 && length_squared<1e20 ? value*rsqrt(length_squared) : fallback;
+}
+
+float3 unpack_bump(float4 main_map, float4 auxiliary)
+{
+    float3 value = main_map.wzy + auxiliary.xyz - 1.0;
+    float length_squared = dot(value, value);
+    return length_squared > 1e-12 ? value * rsqrt(length_squared) : float3(0.0, 0.0, 1.0);
+}
+
+float3 model_surface_normal(Fragment fragment, float3 tangent_normal)
+{
+    float3 geometric = finite_normal(fragment.normal, float3(0, 1, 0));
+    float3 tangent = fragment.tangent - geometric * dot(geometric, fragment.tangent);
+    float3 bitangent = fragment.bitangent - geometric * dot(geometric, fragment.bitangent);
+    float t2 = dot(tangent, tangent), b2 = dot(bitangent, bitangent);
+    float determinant = dot(cross(geometric, tangent), bitangent);
+    // Finite but collapsed authored frames are just as invalid as missing
+    // frames. Preserve UV handedness and remove interpolation/scale skew.
+    if (t2 > 1e-12 && b2 > 1e-12 && t2 < 1e20 && b2 < 1e20 &&
+        determinant * determinant > t2 * b2 * 1e-6)
+    {
+        tangent *= rsqrt(t2);
+        bitangent = cross(geometric, tangent) * (determinant < 0 ? -1.0 : 1.0);
+        return finite_normal(tangent * tangent_normal.x + bitangent * tangent_normal.y +
+            geometric * tangent_normal.z, geometric);
+    }
+    // Both level and model meshes repair their authored tangent basis on
+    // upload. A remaining singular face has no stable normal-map orientation.
+    return geometric;
+}
+
+float3 pbr_direct(float3 albedo, float metallic, float roughness,
+    float3 normal, float3 view, float3 light)
+{
+    const float pi = 3.14159265358979323846;
+    float nl = max(dot(normal, light), 0.0);
+    float nv = max(dot(normal, view), 0.0);
+    float3 half_vector = view + light;
+    float half_length = length(half_vector);
+    if (nl <= 0.0 || nv <= 0.0 || half_length < 1e-6) return 0.0;
+    float3 h = half_vector / half_length;
+    float nh = max(dot(normal, h), 0.0);
+    float vh = max(dot(view, h), 0.0);
+    roughness = clamp(roughness, 0.04, 1.0);
+    metallic = saturate(metallic);
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float denominator = max(1.0 - nh * nh, 0.0) + nh * nh * a2;
+    float distribution = a2 / max(pi * denominator * denominator, 1e-12);
+    float k = (roughness + 1.0) * (roughness + 1.0) * 0.125;
+    float geometry = nv / max(nv * (1.0 - k) + k, 1e-6) *
+        nl / max(nl * (1.0 - k) + k, 1e-6);
+    float3 f0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
+    float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
+    float3 specular = distribution * geometry * fresnel /
+        (4.0 * max(nv, 0.001) * max(nl, 0.001));
+    float3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * albedo / pi;
+    return (diffuse + specular) * nl;
+}
+
+float3 pbr_environment_brdf(float3 albedo, float metallic, float roughness, float ndotv)
+{
+    float3 f0 = lerp(float3(0.04, 0.04, 0.04), albedo, saturate(metallic));
+    float4 r = clamp(roughness, 0.04, 1.0) * float4(-1.0, -0.0275, -0.572, 0.022) +
+        float4(1.0, 0.0425, 1.04, -0.04);
+    float a004 = min(r.x * r.x, exp2(-9.28 * saturate(ndotv))) * r.x + r.y;
+    float2 ab = float2(-1.04, 1.04) * a004 + r.zw;
+    return max(f0 * ab.x + ab.y, 0.0);
+}
+
+#if defined(VK_TRANSPARENT)
+#if !defined(VK_UNLIT) || defined(VK_WORLD_SET_FOG)
+struct LocalLight
+{
+    float4 position_range;
+    float4 direction_cone;
+    float4 color_type;
+};
+#if defined(VK_SKINNED)
+[[vk::binding(0, 2)]]
+#else
+[[vk::binding(0, 1)]]
+#endif
+cbuffer ForwardLighting
+{
+    float4x4 inverse_view_projection;
+    float4 sun_direction_ambient;
+    float4 sun_color_count;
+    float4 viewport;
+    float4 fog_color_start;
+    float4 fog_end_camera;
+    float4 fog_plane;
+    float4 ambient_color;
+    float4 hemi_color;
+    LocalLight local_lights[XRAY_VK_MAX_LOCAL_LIGHTS];
+};
+#if defined(VK_SKINNED)
+[[vk::binding(4, 3)]] TextureCube<float4> weather_environment_a : register(t20);
+[[vk::binding(5, 3)]] TextureCube<float4> weather_environment_b : register(t21);
+#else
+[[vk::binding(4, 2)]] TextureCube<float4> weather_environment_a : register(t20);
+[[vk::binding(5, 2)]] TextureCube<float4> weather_environment_b : register(t21);
+#endif
+
+float environment_diffuse_factor(float hemi, float material)
+{
+    float h = saturate(hemi);
+    float category = saturate(material) * 3.0;
+    if (category < 1.0) return lerp(pow(h, 0.75), pow(h, 0.90), category);
+    if (category < 2.0) return lerp(pow(h, 0.90), h, category - 1.0);
+    return h;
+}
+
+float environment_specular_factor(float hemi, float reflection, float material)
+{
+    float h = saturate(hemi);
+    float ls = saturate(reflection) * pow(h, 1.0 / 32.0);
+    float oren = 0.5 * pow(ls, 16.0);
+    float blinn = pow(ls, 24.0);
+    float phong = pow(min(ls * 1.01, 1.0), 128.0);
+    float metal = max(max(abs(1.0 - abs(0.05 * sin(33.0 * h) + h - ls)),
+        abs(1.0 - abs(0.05 * cos(33.0 * h * ls) + h - ls))),
+        abs(1.0 - abs(h - ls)));
+    metal = pow(saturate(metal), 24.0) * pow(h, 1.0 / 7.0);
+    float category = saturate(material) * 3.0;
+    if (category < 1.0) return lerp(oren, blinn, category);
+    if (category < 2.0) return lerp(blinn, phong, category - 1.0);
+    return lerp(phong, metal, category - 2.0);
+}
+#endif
+float3 material_camera_position()
+{
+#if defined(VK_TRANSPARENT) && !defined(VK_UNLIT)
+    return fog_end_camera.yzw;
+#elif (defined(VK_ENV_CUBE) && !defined(VK_TRANSPARENT)) || defined(VK_LAEMB_BASE)
+    return environment_camera.xyz;
+#else
+    return matrix_alignment.xyz;
+#endif
+}
+
+float parallax_distance_fade(Fragment fragment)
+{
+    // Fade distant height displacement to reduce aliasing. Keeping the same
+    // range for regular and steep parallax avoids a visible mode transition.
+    float distance_to_camera = length(material_camera_position() - fragment.world_position);
+    return 1.0 - smoothstep(32.0, 96.0, distance_to_camera);
+}
+
+float2 parallax_uv(float2 uv, float height, Fragment fragment)
+{
+    float3 geometric = finite_normal(fragment.normal, float3(0, 1, 0));
+    float3 tangent = finite_normal(fragment.tangent - geometric * dot(geometric, fragment.tangent),
+        float3(1, 0, 0));
+    float3 bitangent = finite_normal(fragment.bitangent - geometric * dot(geometric, fragment.bitangent) -
+        tangent * dot(tangent, fragment.bitangent), float3(0, 0, 1));
+    float3 view = finite_normal(material_camera_position() - fragment.world_position, geometric);
+    float3 tangent_view = float3(dot(view, tangent), dot(view, bitangent), dot(view, geometric));
+    float2 offset = normalize(tangent_view).xy * (height - 0.5) *
+        max(surface_factors.y, 0.0) * parallax_distance_fade(fragment);
+    return uv + offset;
+}
+
+float2 steep_parallax_uv(float2 uv, Fragment fragment)
+{
+    float3 geometric = finite_normal(fragment.normal, float3(0, 1, 0));
+    float3 tangent = finite_normal(fragment.tangent - geometric * dot(geometric, fragment.tangent),
+        float3(1, 0, 0));
+    float3 bitangent = finite_normal(fragment.bitangent - geometric * dot(geometric, fragment.bitangent) -
+        tangent * dot(tangent, fragment.bitangent), float3(0, 0, 1));
+    float3 view = finite_normal(material_camera_position() - fragment.world_position, geometric);
+    float parallax_scale = max(surface_factors.y, 0.0) * parallax_distance_fade(fragment);
+    if (parallax_scale <= 1e-5)
+        return uv;
+    float3 tangent_view = float3(dot(view, tangent), dot(view, bitangent), dot(view, geometric));
+    int layer_count = int(lerp(16.0, 8.0, saturate(abs(tangent_view.z))));
+    float layer_depth = 1.0 / max(float(layer_count), 1.0);
+    float2 step_uv = tangent_view.xy / max(abs(tangent_view.z), 0.15) *
+        parallax_scale / max(float(layer_count), 1.0);
+    float2 current_uv = uv;
+    float current_layer_depth = 0.0;
+    float sampled_depth = 1.0 - material_parallax.Sample(diffuse_sampler, current_uv).r;
+    [loop]
+    for (int step = 0; step < 16; ++step)
+    {
+        if (step >= layer_count || current_layer_depth >= sampled_depth)
+            break;
+        current_uv -= step_uv;
+        current_layer_depth += layer_depth;
+        sampled_depth = 1.0 - material_parallax.Sample(diffuse_sampler, current_uv).r;
+    }
+    if (current_layer_depth <= 0.0)
+        return uv;
+    float2 previous_uv = current_uv + step_uv;
+    float previous_depth = 1.0 - material_parallax.Sample(diffuse_sampler, previous_uv).r -
+        (current_layer_depth - layer_depth);
+    float after_depth = sampled_depth - current_layer_depth;
+    float weight = saturate(after_depth / max(after_depth - previous_depth, 1e-5));
+    return lerp(current_uv, previous_uv, weight);
+}
+
+float4 main(Fragment fragment) : SV_Target0
+{
+    float2 base_uv = matrix_uv(fragment.uv, base_matrix_u, base_matrix_v);
+    #if defined(VK_ENV_CUBE) && !defined(VK_TRANSPARENT) || defined(VK_LAEMB_BASE)
+    float2 detail_uv = matrix_uv(fragment.uv, detail_matrix_u, detail_matrix_v) * max(surface_factors.w, 1.0);
+#else
+    float2 detail_uv = matrix_uv(fragment.uv, detail_matrix_u, detail_matrix_v) * terrain_scale;
+#endif
+#if !defined(VK_TERRAIN)
+    if (has_surface_map(32u))
+    {
+        float2 original_base_uv = base_uv;
+        base_uv = has_surface_map(64u) ? steep_parallax_uv(base_uv, fragment) :
+            parallax_uv(base_uv, material_parallax.Sample(diffuse_sampler, base_uv).r, fragment);
+        detail_uv += base_uv - original_base_uv;
+    }
+#endif
+    float4 texel = diffuse.Sample(diffuse_sampler, base_uv);
+#if defined(VK_DETAIL)
+    if (surface_modes.y < 0.5 || surface_modes.y > 1.5)
+        texel.rgb *= 2.0 * single_detail.Sample(diffuse_sampler,
+            detail_uv).rgb;
+#endif
+#if defined(VK_UNLIT)
+#if defined(VK_WALLMARK_FADE)
+    texel.a *= saturate(terrain_alpha_threshold);
+    return texel;
+#elif defined(VK_WALLMARK_BLEND)
+    clip(texel.a - terrain_alpha_threshold);
+    return texel;
+#elif defined(VK_WALLMARK_MULT)
+    // GL's level effects_wallmarkmult uses wmark/simple, which samples the
+    // decal without vertex color. COLOR in level vertices is baked lighting,
+    // not the screen-space stub_default_ma fade: mixing it darkens the whole
+    // quad, including the neutral 0.5 border of a multiply-2x decal.
+    return texel;
+#elif defined(VK_GLOW)
+    float4 color = texel;
+#if defined(LEVEL_GEOMETRY)
+    color *= fragment.baked;
+#endif
+    clip(color.a - terrain_alpha_threshold);
+    return color;
+#elif defined(VK_HUD_ENVIRONMENT)
+    float3 normal = normalize(fragment.normal);
+    float3 incident = normalize(matrix_alignment.xyz);
+    float3 reflection = reflect(incident, normal);
+    float3 lookup = float3(dot(float4(reflection, 0.0), environment_matrix_u),
+        dot(float4(reflection, 0.0), environment_matrix_v),
+        dot(float4(reflection, 0.0), environment_matrix_z));
+    texel.rgb = lerp(environment_cube.Sample(diffuse_sampler, lookup).rgb, texel.rgb, texel.a);
+    return texel;
+#elif defined(VK_PARTICLE) || defined(VK_WORLD_SET)
+    float4 color = texel;
+#if defined(LEVEL_GEOMETRY)
+    color *= fragment.baked;
+#endif
+#if defined(VK_SCREEN_SCALE_2)
+    color.rgb *= 2.0;
+#elif defined(VK_SCREEN_SCALE_4)
+    color.rgb *= 4.0;
+#endif
+#if defined(VK_WORLD_SET_AREF)
+    clip(color.a - terrain_alpha_threshold);
+#endif
+#if defined(VK_WORLD_SET_FOG)
+    float fog_visibility = saturate(dot(float4(fragment.world_position, 1.0), fog_plane));
+    color.rgb = lerp(fog_color_start.rgb, color.rgb, fog_visibility);
+#endif
+#if defined(VK_PARTICLE) && !defined(VK_PARTICLE_SCREEN)
+    // Match gl/particle.ps: additive blending must not emit retained RGB
+    // from fully transparent atlas texels.
+    clip(color.a - (0.01 / 255.0));
+#endif
+#if defined(VK_PARTICLE_SET)
+    clip(color.a - terrain_alpha_threshold);
+#endif
+    return color;
+#else
+    return texel;
+#endif
+#else
+    float3 normal = normalize(fragment.normal);
+    float gloss = 0.0;
+    if (surface_modes.x >= 2.0 || surface_modes.y > 0.5 || has_surface_map(1u))
+    {
+        float3 tangent_normal = float3(0.0, 0.0, 1.0);
+        if (surface_modes.x >= 2.0)
+        {
+            float4 bump = base_bump.Sample(diffuse_sampler, base_uv);
+            tangent_normal = unpack_bump(bump, base_bump_aux.Sample(diffuse_sampler, base_uv));
+            gloss = bump.x * bump.x;
+        }
+        if (has_surface_map(1u))
+            tangent_normal = finite_normal(external_normal.Sample(diffuse_sampler, base_uv).xyz * 2.0 - 1.0,float3(0,0,1));
+        if (surface_modes.y > 0.5)
+        {
+#if !defined(VK_DETAIL)
+            if (surface_modes.y > 1.5)
+                texel.rgb *= surface_detail.Sample(diffuse_sampler, detail_uv).rgb * 2.0;
+#endif
+            float4 detail_map = detail_bump.Sample(diffuse_sampler, detail_uv);
+            tangent_normal = normalize(tangent_normal + unpack_bump(detail_map,
+                detail_bump_aux.Sample(diffuse_sampler, detail_uv)) - float3(0.0, 0.0, 1.0));
+            gloss = max(gloss, detail_map.x * detail_map.x);
+        }
+        normal = model_surface_normal(fragment, tangent_normal);
+    }
+    float hemisphere = saturate(fragment.hemi);
+#if defined(VK_LIGHTMAP)
+    // CoP's regular dynamic-sun renderer uses the lightmap alpha for hemi.
+    // The green channel is only used with USE_R2_STATIC_SUN, which this
+    // renderer does not enable.
+    float4 baked_light = lightmap.Sample(lightmap_sampler, fragment.lightmap_uv);
+    hemisphere = baked_light.a;
+#endif
+    float3 illumination = ambient_color.rgb + hemi_color.rgb * hemisphere +
+        sun_color_count.rgb *
+        max(dot(normal, normalize(-sun_direction_ambient.xyz)), 0.0);
+    float2 uv = fragment.position.xy * viewport.xy;
+    float4 world_clip = mul(inverse_view_projection,
+        float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, fragment.position.z, 1.0));
+    float3 world = world_clip.xyz / max(abs(world_clip.w), 1e-6) * sign(world_clip.w);
+    bool use_pbr = (surface_map_flags() & 30u) != 0u;
+    float3 pbr = float3(0.0, 1.0, 1.0);
+    if (use_pbr)
+    {
+        if (has_surface_map(2u))
+            pbr = terrain_aux_alpha.Sample(diffuse_sampler, base_uv).rgb;
+        if (has_surface_map(4u))
+            pbr.r = terrain_aux_red.Sample(diffuse_sampler, base_uv).r;
+        if (has_surface_map(8u))
+            pbr.g = terrain_aux_green.Sample(diffuse_sampler, base_uv).r;
+        if (has_surface_map(16u))
+            pbr.b = terrain_aux_blue.Sample(diffuse_sampler, base_uv).r;
+        pbr = saturate(pbr);
+        pbr.g = max(pbr.g, 0.04);
+    }
+    float3 view_direction = normalize(fog_end_camera.yzw - world);
+    float3 pbr_local_illumination = 0.0;
+    float3 environment_diffuse_illumination = 0.0;
+    float3 environment_specular = 0.0;
+    if (hemi_color.w > 0.5)
+    {
+        float3 env_normal = normalize(normal);
+        float blend = saturate(viewport.z);
+        float3 diffuse_env = lerp(
+            weather_environment_a.SampleLevel(diffuse_sampler, env_normal, 0.0).rgb,
+            weather_environment_b.SampleLevel(diffuse_sampler, env_normal, 0.0).rgb, blend);
+        float3 tinted = diffuse_env * hemi_color.rgb * 4.0;
+        float material = saturate((surface_modes.w + surface_factors.x) / 3.0);
+        float3 environment_diffuse = tinted * tinted * environment_diffuse_factor(hemisphere, material) -
+            hemi_color.rgb * hemisphere;
+        illumination += environment_diffuse;
+        environment_diffuse_illumination = max(environment_diffuse, 0.0);
+        if (use_pbr || gloss > 0.0)
+        {
+            float3 incident = normalize(world - fog_end_camera.yzw);
+            float3 reflection = reflect(incident, env_normal);
+            float angle = 0.5 + 0.5 * dot(reflection, incident);
+            reflection.y = reflection.y * 2.0 - 1.0;
+            if (use_pbr)
+            {
+                uint env_width, env_height, env_levels_a;
+                uint env_levels_b;
+                weather_environment_a.GetDimensions(0, env_width, env_height, env_levels_a);
+                weather_environment_b.GetDimensions(0, env_width, env_height, env_levels_b);
+                float roughness = clamp(pbr.g, 0.04, 1.0);
+                float lod_a = roughness * float(max(env_levels_a, 1u) - 1u);
+                float lod_b = roughness * float(max(env_levels_b, 1u) - 1u);
+                float3 spec_env = lerp(
+                    weather_environment_a.SampleLevel(diffuse_sampler, reflection, lod_a).rgb,
+                    weather_environment_b.SampleLevel(diffuse_sampler, reflection, lod_b).rgb, blend);
+                environment_specular = spec_env * hemi_color.rgb * hemisphere * pbr.b *
+                    pbr_environment_brdf(texel.rgb, pbr.r, roughness,
+                        max(dot(env_normal, -incident), 0.0));
+            }
+            else
+            {
+                float3 spec_env = lerp(
+                    weather_environment_a.SampleLevel(diffuse_sampler, reflection, 0.0).rgb,
+                    weather_environment_b.SampleLevel(diffuse_sampler, reflection, 0.0).rgb, blend);
+                tinted = spec_env * hemi_color.rgb * 4.0;
+                environment_specular = tinted * tinted *
+                    environment_specular_factor(hemisphere, angle, material) * gloss;
+            }
+        }
+    }
+    for (int i = 0; i < min(int(sun_color_count.w), XRAY_VK_MAX_LOCAL_LIGHTS); ++i)
+    {
+        float3 delta = world - local_lights[i].position_range.xyz;
+        float distance = length(delta);
+        float range = max(local_lights[i].position_range.w, 0.01);
+        if (distance >= range || distance < 1e-5) continue;
+        float3 ray = delta / distance;
+        float normalized_distance = distance / range;
+        float attenuation = max(1.0 - normalized_distance * normalized_distance, 0.0);
+        if (local_lights[i].color_type.w > 0.5)
+            attenuation *= smoothstep(local_lights[i].direction_cone.w,
+                min(1.0, local_lights[i].direction_cone.w + 0.05),
+                dot(ray, normalize(local_lights[i].direction_cone.xyz)));
+        illumination += local_lights[i].color_type.rgb * attenuation *
+            max(dot(normal, -ray), 0.0);
+        if (use_pbr)
+            pbr_local_illumination += local_lights[i].color_type.rgb * attenuation *
+                pbr_direct(texel.rgb, pbr.r, pbr.g, normal, view_direction, -ray);
+    }
+#if defined(VK_ENV_CUBE)
+    float3 reflection = reflect(normalize(world - fog_end_camera.yzw), normal);
+    texel.rgb = lerp(environment_cube.Sample(diffuse_sampler, float3(dot(float4(reflection, 0.0), environment_matrix_u), dot(float4(reflection, 0.0), environment_matrix_v), dot(float4(reflection, 0.0), environment_matrix_z))).rgb, texel.rgb, texel.a);
+#endif
+    float3 lit = texel.rgb * illumination + environment_specular;
+    if (use_pbr)
+    {
+        float3 ambient_diffuse = ambient_color.rgb + hemi_color.rgb * hemisphere +
+            environment_diffuse_illumination;
+        lit = texel.rgb * (1.0 - pbr.r) * pbr.b * ambient_diffuse +
+            pbr_direct(texel.rgb, pbr.r, pbr.g, normal, view_direction,
+                normalize(-sun_direction_ambient.xyz)) * sun_color_count.rgb +
+            pbr_local_illumination + environment_specular;
+    }
+    if (!use_pbr && gloss > 0.0)
+    {
+        float3 view_ray = view_direction;
+        float3 half_ray = normalize(view_ray - normalize(sun_direction_ambient.xyz));
+        lit += pow(max(dot(normal, half_ray), 0.0), lerp(4.0, 64.0, gloss)) *
+            gloss * lerp(0.04, 0.2, saturate((surface_modes.w + surface_factors.x) / 3.0)) *
+            sun_color_count.rgb;
+    }
+    lit += texel.rgb * saturate(surface_factors.z);
+#if defined(VK_FOG)
+    float fog_visibility = saturate(dot(float4(world, 1.0), fog_plane));
+    lit = lerp(fog_color_start.rgb, lit, fog_visibility);
+#endif
+    return float4(lit, texel.a);
+#endif
+}
+#else
+float3 material_camera_position()
+{
+#if defined(VK_TRANSPARENT) && !defined(VK_UNLIT)
+    return fog_end_camera.yzw;
+#elif (defined(VK_ENV_CUBE) && !defined(VK_TRANSPARENT)) || defined(VK_LAEMB_BASE)
+    return environment_camera.xyz;
+#else
+    return matrix_alignment.xyz;
+#endif
+}
+
+float parallax_distance_fade(Fragment fragment)
+{
+    // Fade distant height displacement to reduce aliasing. Keeping the same
+    // range for regular and steep parallax avoids a visible mode transition.
+    float distance_to_camera = length(material_camera_position() - fragment.world_position);
+    return 1.0 - smoothstep(32.0, 96.0, distance_to_camera);
+}
+
+float2 parallax_uv(float2 uv, float height, Fragment fragment)
+{
+    float3 geometric = finite_normal(fragment.normal, float3(0, 1, 0));
+    float3 tangent = finite_normal(fragment.tangent - geometric * dot(geometric, fragment.tangent),
+        float3(1, 0, 0));
+    float3 bitangent = finite_normal(fragment.bitangent - geometric * dot(geometric, fragment.bitangent) -
+        tangent * dot(tangent, fragment.bitangent), float3(0, 0, 1));
+    float3 view = finite_normal(material_camera_position() - fragment.world_position, geometric);
+    float3 tangent_view = float3(dot(view, tangent), dot(view, bitangent), dot(view, geometric));
+    float2 offset = normalize(tangent_view).xy * (height - 0.5) *
+        max(surface_factors.y, 0.0) * parallax_distance_fade(fragment);
+    return uv + offset;
+}
+
+float2 steep_parallax_uv(float2 uv, Fragment fragment)
+{
+    float3 geometric = finite_normal(fragment.normal, float3(0, 1, 0));
+    float3 tangent = finite_normal(fragment.tangent - geometric * dot(geometric, fragment.tangent),
+        float3(1, 0, 0));
+    float3 bitangent = finite_normal(fragment.bitangent - geometric * dot(geometric, fragment.bitangent) -
+        tangent * dot(tangent, fragment.bitangent), float3(0, 0, 1));
+    float3 view = finite_normal(material_camera_position() - fragment.world_position, geometric);
+    float parallax_scale = max(surface_factors.y, 0.0) * parallax_distance_fade(fragment);
+    if (parallax_scale <= 1e-5)
+        return uv;
+    float3 tangent_view = float3(dot(view, tangent), dot(view, bitangent), dot(view, geometric));
+    int layer_count = int(lerp(16.0, 8.0, saturate(abs(tangent_view.z))));
+    float layer_depth = 1.0 / max(float(layer_count), 1.0);
+    float2 step_uv = tangent_view.xy / max(abs(tangent_view.z), 0.15) *
+        parallax_scale / max(float(layer_count), 1.0);
+    float2 current_uv = uv;
+    float current_layer_depth = 0.0;
+    float sampled_depth = 1.0 - material_parallax.Sample(diffuse_sampler, current_uv).r;
+    [loop]
+    for (int step = 0; step < 16; ++step)
+    {
+        if (step >= layer_count || current_layer_depth >= sampled_depth)
+            break;
+        current_uv -= step_uv;
+        current_layer_depth += layer_depth;
+        sampled_depth = 1.0 - material_parallax.Sample(diffuse_sampler, current_uv).r;
+    }
+    if (current_layer_depth <= 0.0)
+        return uv;
+    float2 previous_uv = current_uv + step_uv;
+    float previous_depth = 1.0 - material_parallax.Sample(diffuse_sampler, previous_uv).r -
+        (current_layer_depth - layer_depth);
+    float after_depth = sampled_depth - current_layer_depth;
+    float weight = saturate(after_depth / max(after_depth - previous_depth, 1e-5));
+    return lerp(current_uv, previous_uv, weight);
+}
+
+#if defined(VK_TERRAIN)
+float terrain_parallax_height(float2 uv, float4 weights, uint map_flags)
+{
+    float height = 0.0;
+    float total_weight = 0.0;
+    if (map_flags & (1u << 20))
+    {
+        height += weights.r * terrain_parallax_red.Sample(diffuse_sampler, uv).r;
+        total_weight += weights.r;
+    }
+    if (map_flags & (1u << 21))
+    {
+        height += weights.g * terrain_parallax_green.Sample(diffuse_sampler, uv).r;
+        total_weight += weights.g;
+    }
+    if (map_flags & (1u << 22))
+    {
+        height += weights.b * terrain_parallax_blue.Sample(diffuse_sampler, uv).r;
+        total_weight += weights.b;
+    }
+    if (map_flags & (1u << 23))
+    {
+        height += weights.a * terrain_parallax_alpha.Sample(diffuse_sampler, uv).r;
+        total_weight += weights.a;
+    }
+    return total_weight > 1e-5 ? height / total_weight : 0.5;
+}
+
+float2 terrain_steep_parallax_uv(float2 uv, Fragment fragment, float4 weights, uint map_flags)
+{
+    float3 geometric = finite_normal(fragment.normal, float3(0, 1, 0));
+    float3 tangent = finite_normal(fragment.tangent - geometric * dot(geometric, fragment.tangent),
+        float3(1, 0, 0));
+    float3 bitangent = finite_normal(fragment.bitangent - geometric * dot(geometric, fragment.bitangent) -
+        tangent * dot(tangent, fragment.bitangent), float3(0, 0, 1));
+    float3 view = finite_normal(material_camera_position() - fragment.world_position, geometric);
+    float parallax_scale = max(surface_factors.y, 0.0) * parallax_distance_fade(fragment);
+    if (parallax_scale <= 1e-5)
+        return uv;
+
+    float3 tangent_view = float3(dot(view, tangent), dot(view, bitangent), dot(view, geometric));
+    int layer_count = int(lerp(16.0, 8.0, saturate(abs(tangent_view.z))));
+    float layer_depth = 1.0 / max(float(layer_count), 1.0);
+    float2 step_uv = tangent_view.xy / max(abs(tangent_view.z), 0.15) *
+        parallax_scale / max(float(layer_count), 1.0);
+    float2 current_uv = uv;
+    float current_layer_depth = 0.0;
+    float sampled_depth = 1.0 - terrain_parallax_height(current_uv, weights, map_flags);
+    [loop]
+    for (int step = 0; step < 16; ++step)
+    {
+        if (step >= layer_count || current_layer_depth >= sampled_depth)
+            break;
+        current_uv -= step_uv;
+        current_layer_depth += layer_depth;
+        sampled_depth = 1.0 - terrain_parallax_height(current_uv, weights, map_flags);
+    }
+    if (current_layer_depth <= 0.0)
+        return uv;
+    float2 previous_uv = current_uv + step_uv;
+    float previous_depth = 1.0 - terrain_parallax_height(previous_uv, weights, map_flags) -
+        (current_layer_depth - layer_depth);
+    float after_depth = sampled_depth - current_layer_depth;
+    float blend = saturate(after_depth / max(after_depth - previous_depth, 1e-5));
+    return lerp(current_uv, previous_uv, blend);
+}
+#endif
+
+struct GBuffer
+{
+    [[vk::location(0)]] float4 albedo : SV_Target0;
+    [[vk::location(1)]] float4 normal : SV_Target1;
+    [[vk::location(2)]] float4 surface : SV_Target2;
+};
+
+
+GBuffer main(Fragment fragment, bool front_face : SV_IsFrontFace)
+{
+    GBuffer output;
+    float2 base_uv = matrix_uv(fragment.uv, base_matrix_u, base_matrix_v);
+    #if defined(VK_ENV_CUBE) && !defined(VK_TRANSPARENT) || defined(VK_LAEMB_BASE)
+    float2 detail_uv = matrix_uv(fragment.uv, detail_matrix_u, detail_matrix_v) * max(surface_factors.w, 1.0);
+#else
+    float2 detail_uv = matrix_uv(fragment.uv, detail_matrix_u, detail_matrix_v) * terrain_scale;
+#endif
+#if !defined(VK_TERRAIN)
+    if (has_surface_map(32u))
+    {
+        float2 original_base_uv = base_uv;
+        base_uv = has_surface_map(64u) ? steep_parallax_uv(base_uv, fragment) :
+            parallax_uv(base_uv, material_parallax.Sample(diffuse_sampler, base_uv).r, fragment);
+        detail_uv += base_uv - original_base_uv;
+    }
+#endif
+    output.albedo = diffuse.Sample(diffuse_sampler, base_uv);
+#if defined(VK_ALPHA_TEST)
+    // Reject empty foliage/LOD texels before any normal/detail fetches.
+    clip(output.albedo.a - terrain_alpha_threshold);
+#endif
+#if defined(VK_PARTICLE_DEFERRED)
+    output.albedo *= fragment.baked;
+    clip(output.albedo.a - terrain_alpha_threshold);
+#endif
+    // R=gloss, G=material category/3, B=emission, A=height.
+    // Flat materials explicitly write zero instead of inheriting stale data.
+    output.surface = float4(0.0, 0.0, 0.0, 0.0);
+    output.surface.g = saturate((surface_modes.w + surface_factors.x) / 3.0);
+    output.surface.b = saturate(surface_factors.z);
+    float3 mapped_normal = float3(0.0, 0.0, 1.0);
+    float gloss = surface_modes.y > 0.5 ? 1.0 : 0.0;
+    if (surface_modes.x >= 2.0)
+    {
+        float4 bump = base_bump.Sample(diffuse_sampler, base_uv);
+        float4 auxiliary = base_bump_aux.Sample(diffuse_sampler, base_uv);
+        mapped_normal = unpack_bump(bump, auxiliary);
+        gloss = bump.x * bump.x;
+        output.surface.a = auxiliary.z * surface_factors.y;
+    }
+    if (has_surface_map(1u))
+        mapped_normal = finite_normal(external_normal.Sample(diffuse_sampler, base_uv).xyz * 2.0 - 1.0,float3(0,0,1));
+#if defined(VK_ENV_CUBE)
+    float3 reflected = reflect(normalize(fragment.world_position - environment_camera.xyz),
+        normalize(fragment.normal));
+    output.albedo.rgb = lerp(environment_cube.Sample(diffuse_sampler, float3(dot(float4(reflected, 0.0), environment_matrix_u), dot(float4(reflected, 0.0), environment_matrix_v), dot(float4(reflected, 0.0), environment_matrix_z))).rgb,
+        output.albedo.rgb, output.albedo.a);
+#endif
+#if defined(VK_LAEMB_BASE)
+    float2 environment_uv = environment_matrix_z.w > .5 ?
+        float2(dot(float4(normalize(fragment.normal), 1.0), environment_matrix_u),
+               dot(float4(normalize(fragment.normal), 1.0), environment_matrix_v)) :
+        matrix_uv(fragment.uv, environment_matrix_u, environment_matrix_v);
+    float3 env = environment_2d.Sample(diffuse_sampler, environment_uv).rgb;
+    output.albedo.rgb = saturate(lightmap.Sample(lightmap_sampler, fragment.lightmap_uv).rgb +
+        env * environment_factor.rgb);
+#endif
+#if defined(VK_TERRAIN)
+    float4 weights = terrain_mask.Sample(diffuse_sampler, base_uv);
+    weights /= max(dot(weights, float4(1.0, 1.0, 1.0, 1.0)), 1e-6);
+    uint terrain_map_flags = uint(max(surface_factors.w, 0.0) + 0.5);
+    float terrain_height = 0.0;
+    bool terrain_parallax_present = false;
+    if (terrain_map_flags & (1u << 20))
+    {
+        terrain_height += weights.r * terrain_parallax_red.Sample(diffuse_sampler, detail_uv).r;
+        terrain_parallax_present = true;
+    }
+    if (terrain_map_flags & (1u << 21))
+    {
+        terrain_height += weights.g * terrain_parallax_green.Sample(diffuse_sampler, detail_uv).r;
+        terrain_parallax_present = true;
+    }
+    if (terrain_map_flags & (1u << 22))
+    {
+        terrain_height += weights.b * terrain_parallax_blue.Sample(diffuse_sampler, detail_uv).r;
+        terrain_parallax_present = true;
+    }
+    if (terrain_map_flags & (1u << 23))
+    {
+        terrain_height += weights.a * terrain_parallax_alpha.Sample(diffuse_sampler, detail_uv).r;
+        terrain_parallax_present = true;
+    }
+    if (terrain_parallax_present)
+        detail_uv = has_surface_map(64u) ?
+            terrain_steep_parallax_uv(detail_uv, fragment, weights, terrain_map_flags) :
+            parallax_uv(detail_uv, terrain_height, fragment);
+    float3 details = terrain_red.Sample(diffuse_sampler, detail_uv).rgb * weights.r +
+        terrain_green.Sample(diffuse_sampler, detail_uv).rgb * weights.g +
+        terrain_blue.Sample(diffuse_sampler, detail_uv).rgb * weights.b +
+        terrain_alpha.Sample(diffuse_sampler, detail_uv).rgb * weights.a;
+    output.albedo.rgb *= 2.0 * details;
+    if ((terrain_map_flags & 15u) != 0u)
+    {
+        float3 terrain_normal = float3(0.0, 0.0, 0.0);
+        if (terrain_map_flags & 1u)
+        {
+            float4 bump = terrain_bump_red.Sample(diffuse_sampler, detail_uv);
+            float4 aux = terrain_aux_red.Sample(diffuse_sampler, detail_uv);
+            terrain_normal += weights.r * unpack_bump(bump, aux);
+            gloss += weights.r * bump.x * bump.x;
+            output.surface.a += weights.r * aux.z * surface_factors.y;
+        }
+        if (terrain_map_flags & 2u)
+        {
+            float4 bump = terrain_bump_green.Sample(diffuse_sampler, detail_uv);
+            float4 aux = terrain_aux_green.Sample(diffuse_sampler, detail_uv);
+            terrain_normal += weights.g * unpack_bump(bump, aux);
+            gloss += weights.g * bump.x * bump.x;
+            output.surface.a += weights.g * aux.z * surface_factors.y;
+        }
+        if (terrain_map_flags & 4u)
+        {
+            float4 bump = terrain_bump_blue.Sample(diffuse_sampler, detail_uv);
+            float4 aux = terrain_aux_blue.Sample(diffuse_sampler, detail_uv);
+            terrain_normal += weights.b * unpack_bump(bump, aux);
+            gloss += weights.b * bump.x * bump.x;
+            output.surface.a += weights.b * aux.z * surface_factors.y;
+        }
+        if (terrain_map_flags & 8u)
+        {
+            float4 bump = terrain_bump_alpha.Sample(diffuse_sampler, detail_uv);
+            float4 aux = terrain_aux_alpha.Sample(diffuse_sampler, detail_uv);
+            terrain_normal += weights.a * unpack_bump(bump, aux);
+            gloss += weights.a * bump.x * bump.x;
+            output.surface.a += weights.a * aux.z * surface_factors.y;
+        }
+        mapped_normal = normalize(mapped_normal + terrain_normal - float3(0.0, 0.0, 1.0));
+    }
+#endif
+#if defined(VK_DETAIL)
+    float4 detail_sample = single_detail.Sample(diffuse_sampler, detail_uv);
+    if (surface_modes.y < 0.5 || surface_modes.y > 1.5)
+        output.albedo.rgb *= 2.0 * detail_sample.rgb;
+    if (surface_modes.y > 0.5)
+    {
+        float4 detail_map = detail_bump.Sample(diffuse_sampler, detail_uv);
+        float4 detail_aux = detail_bump_aux.Sample(diffuse_sampler, detail_uv);
+        mapped_normal = normalize(mapped_normal + unpack_bump(detail_map, detail_aux) - float3(0.0, 0.0, 1.0));
+        gloss *= detail_map.x * 2.0;
+    }
+    else gloss *= detail_sample.a * 2.0;
+#endif
+#if !defined(VK_DETAIL) && !defined(VK_TERRAIN)
+    if (surface_modes.y > 0.5)
+    {
+        if (surface_modes.y > 1.5)
+            output.albedo.rgb *= 2.0 * surface_detail.Sample(diffuse_sampler, detail_uv).rgb;
+        float4 detail_map = detail_bump.Sample(diffuse_sampler, detail_uv);
+        float4 detail_aux = detail_bump_aux.Sample(diffuse_sampler, detail_uv);
+        mapped_normal = normalize(mapped_normal + unpack_bump(detail_map, detail_aux) - float3(0.0, 0.0, 1.0));
+        gloss *= detail_map.x * 2.0;
+    }
+#endif
+    // Preserve the baked green channel for diagnostics. CoP's default
+    // dynamic-sun path does not apply it to sunlight; alpha stores hemi.
+#if defined(VK_DOUBLE_SIDED)
+    if (!front_face) fragment.normal = -fragment.normal;
+#endif
+    output.surface.r = saturate(gloss);
+    bool terrain_bump_present = surface_factors.w > 0.0;
+#if defined(VK_TERRAIN)
+    terrain_bump_present = (terrain_map_flags & 15u) != 0u;
+#endif
+    if (surface_modes.x >= 2.0 || surface_modes.y > 0.5 || has_surface_map(1u) || terrain_bump_present)
+        fragment.normal = model_surface_normal(fragment, mapped_normal);
+#if defined(VK_LIGHTMAP)
+#if defined(VK_TERRAIN)
+    // Original deffer_impl_flat stores terrain hemi in D.w (base alpha).
+    // Its s_lmap uses base UV, not the level lightmap-atlas coordinates.
+    float4 indirect = lightmap.Sample(lightmap_sampler, base_uv);
+    float hemisphere = saturate(output.albedo.a);
+#else
+    float4 indirect = lightmap.Sample(lightmap_sampler, fragment.lightmap_uv);
+    float hemisphere = indirect.a;
+#endif
+    output.albedo.a = indirect.g;
+    output.normal = float4(finite_normal(fragment.normal, float3(0,1,0)) * 0.5 + 0.5, hemisphere * 0.75);
+#else
+    // Encode unlightmapped hemi above the static-lightmap alpha range.
+    output.normal = float4(normalize(fragment.normal) * 0.5 + 0.5,
+        0.875 + 0.125 * saturate(fragment.hemi));
+#endif
+#if defined(VK_TERRAIN)
+    float3 pbr = float3(0.0, 0.0, 0.0);
+    bool has_pbr = false;
+    float3 layer_pbr = float3(0.0, 1.0, 1.0);
+    if (terrain_map_flags & 16u) layer_pbr = terrain_pbr_red.Sample(diffuse_sampler, detail_uv).rgb;
+    if (terrain_map_flags & 256u) layer_pbr.r = terrain_metallic_red.Sample(diffuse_sampler, detail_uv).r;
+    if (terrain_map_flags & 4096u) layer_pbr.g = terrain_roughness_red.Sample(diffuse_sampler, detail_uv).r;
+    if (terrain_map_flags & 65536u) layer_pbr.b = terrain_ao_red.Sample(diffuse_sampler, detail_uv).r;
+    pbr += layer_pbr * weights.r;
+    has_pbr = has_pbr || (weights.r > 1e-5 && (terrain_map_flags & 0x11110u) != 0u);
+    layer_pbr = float3(0.0, 1.0, 1.0);
+    if (terrain_map_flags & 32u) layer_pbr = terrain_pbr_green.Sample(diffuse_sampler, detail_uv).rgb;
+    if (terrain_map_flags & 512u) layer_pbr.r = terrain_metallic_green.Sample(diffuse_sampler, detail_uv).r;
+    if (terrain_map_flags & 8192u) layer_pbr.g = terrain_roughness_green.Sample(diffuse_sampler, detail_uv).r;
+    if (terrain_map_flags & 131072u) layer_pbr.b = terrain_ao_green.Sample(diffuse_sampler, detail_uv).r;
+    pbr += layer_pbr * weights.g;
+    has_pbr = has_pbr || (weights.g > 1e-5 && (terrain_map_flags & 0x22220u) != 0u);
+    layer_pbr = float3(0.0, 1.0, 1.0);
+    if (terrain_map_flags & 64u) layer_pbr = terrain_pbr_blue.Sample(diffuse_sampler, detail_uv).rgb;
+    if (terrain_map_flags & 1024u) layer_pbr.r = terrain_metallic_blue.Sample(diffuse_sampler, detail_uv).r;
+    if (terrain_map_flags & 16384u) layer_pbr.g = terrain_roughness_blue.Sample(diffuse_sampler, detail_uv).r;
+    if (terrain_map_flags & 262144u) layer_pbr.b = terrain_ao_blue.Sample(diffuse_sampler, detail_uv).r;
+    pbr += layer_pbr * weights.b;
+    has_pbr = has_pbr || (weights.b > 1e-5 && (terrain_map_flags & 0x44440u) != 0u);
+    layer_pbr = float3(0.0, 1.0, 1.0);
+    if (terrain_map_flags & 128u) layer_pbr = terrain_pbr_alpha.Sample(diffuse_sampler, detail_uv).rgb;
+    if (terrain_map_flags & 2048u) layer_pbr.r = terrain_metallic_alpha.Sample(diffuse_sampler, detail_uv).r;
+    if (terrain_map_flags & 32768u) layer_pbr.g = terrain_roughness_alpha.Sample(diffuse_sampler, detail_uv).r;
+    if (terrain_map_flags & 524288u) layer_pbr.b = terrain_ao_alpha.Sample(diffuse_sampler, detail_uv).r;
+    pbr += layer_pbr * weights.a;
+    has_pbr = has_pbr || (weights.a > 1e-5 && (terrain_map_flags & 0x88880u) != 0u);
+#else
+    float3 pbr = float3(0.0, 1.0, 1.0);
+    bool has_pbr = (surface_map_flags() & 30u) != 0u;
+    if (has_pbr)
+    {
+        // Packed maps use R/G/B for metallic/roughness/AO; dedicated grayscale
+        // maps override only their own channel.
+        if (has_surface_map(2u))
+            pbr = terrain_aux_alpha.Sample(diffuse_sampler, base_uv).rgb;
+        if (has_surface_map(4u))
+            pbr.r = terrain_aux_red.Sample(diffuse_sampler, base_uv).r;
+        if (has_surface_map(8u))
+            pbr.g = terrain_aux_green.Sample(diffuse_sampler, base_uv).r;
+        if (has_surface_map(16u))
+            pbr.b = terrain_aux_blue.Sample(diffuse_sampler, base_uv).r;
+    }
+#endif
+    if (has_pbr)
+    {
+        output.surface = float4(saturate(pbr.g), saturate(pbr.r), saturate(pbr.b), saturate(surface_factors.z));
+        // Reserve the gap between legacy lightmapped and dynamic hemi codes.
+#if defined(VK_LIGHTMAP)
+        output.normal.a = 0.76 + 0.05 * saturate(hemisphere);
+#else
+        output.normal.a = 0.82 + 0.05 * saturate(fragment.hemi);
+#endif
+    }
+    return output;
+}
+#endif

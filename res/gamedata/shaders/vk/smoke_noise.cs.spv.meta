@@ -1,0 +1,7 @@
+XRAY_VULKAN_SHADER_METADATA_V1
+source=vk/../../../../src/Layers/xrRenderVK/smoke_trails/smoke_noise.cs
+stage=cs
+entry=main
+defines=
+source-fingerprint=5073543a6233ec1e
+spirv-fingerprint=8a68404699957374

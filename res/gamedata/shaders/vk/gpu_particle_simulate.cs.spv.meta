@@ -1,0 +1,7 @@
+XRAY_VULKAN_SHADER_METADATA_V1
+source=vk/../../../../src/Layers/xrRenderVK/gpu_particles/gpu_particle_simulate.cs
+stage=cs
+entry=main
+defines=
+source-fingerprint=f213dd092b6907a8
+spirv-fingerprint=9a747ee9743109cf

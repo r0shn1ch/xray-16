@@ -29,6 +29,8 @@ public:
     virtual void IR_OnMouseHold(int /*btn*/) {}
     virtual void IR_OnMouseWheel(float /*x*/, float /*y*/) {}
     virtual void IR_OnMouseMove(int /*x*/, int /*y*/) {}
+    // Normalized screen position for a direct touch tap, before its button edge.
+    virtual void IR_OnMouseMoveTo(float /*x*/, float /*y*/) {}
 
     virtual void IR_OnKeyboardPress(int /*dik*/) {}
     virtual void IR_OnKeyboardRelease(int /*dik*/) {}

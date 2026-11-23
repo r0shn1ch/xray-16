@@ -69,11 +69,10 @@ void SBoneProtections::reload(const shared_str& bone_sect, IKinematics* kinemati
 
         string256 buffer;
 
-        BoneProtection BP
-        {
-            .koeff = (float)atof(_GetItem(value.c_str(), 0, buffer)),
-            .armor = (float)atof(_GetItem(value.c_str(), 1, buffer)),
-            .BonePassBullet = (bool)(atof(_GetItem(value.c_str(), 2, buffer)) > 0.5f),
+        BoneProtection BP{
+            (float)atof(_GetItem(value.c_str(), 0, buffer)),
+            (float)atof(_GetItem(value.c_str(), 1, buffer)),
+            (bool)(atof(_GetItem(value.c_str(), 2, buffer)) > 0.5f),
         };
 
         if (xr_strcmp(name.c_str(), "default") == 0)

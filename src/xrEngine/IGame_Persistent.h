@@ -168,6 +168,7 @@ public:
 
     virtual void UpdateGameType(){};
     virtual void GetCurrentDof(Fvector3& dof) { dof.set(-1.4f, 0.0f, 250.f); };
+    virtual bool GetDofOverride(Fvector3&) const { return false; }
     virtual void SetBaseDof(const Fvector3& /*dof*/) {};
     virtual void OnSectorChanged(IRender_Sector::sector_id_t /*sector*/) {};
     virtual void OnAssetsChanged();
@@ -180,6 +181,7 @@ public:
     void LoadEnd();
     void LoadTitle(pcstr ls_title = nullptr, bool change_tip = false, shared_str map_name = nullptr);
     void LoadStage(bool draw = true);
+    void UpdateLoadScreen() const;
     void LoadDraw() const;
 
     void load_draw_internal() const;

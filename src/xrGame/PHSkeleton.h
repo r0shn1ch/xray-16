@@ -8,6 +8,7 @@ class CSE_ALifePHSkeletonObject;
 class CSE_Abstract;
 class CSE_PHSkeleton;
 class NET_Packet;
+class IKinematics;
 class CPHSkeleton : public CPHDestroyableNotificate
 {
     bool b_removing;
@@ -19,6 +20,10 @@ class CPHSkeleton : public CPHDestroyableNotificate
     flags8 m_flags;
 
 private:
+    friend class CPhysicsShellHolder;
+    static void SaveExtendedVisibility(NET_Packet& packet, IKinematics* kinematics);
+    static void ApplyExtendedVisibility(IKinematics* kinematics, const u64* masks);
+
     // Creating
 
     void Init();

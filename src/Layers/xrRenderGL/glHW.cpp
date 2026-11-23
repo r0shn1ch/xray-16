@@ -259,15 +259,22 @@ void CHW::DestroyDevice()
 #if defined(XR_PLATFORM_ANDROID)
     frameProfiler.destroy();
 #endif
-    CHK_GL(glDeleteFramebuffers(1, &pFB));
+    // A capability probe can fail before GLAD loads any entry points.  In
+    // that case the helper still destroys CHW, but glDeleteFramebuffers is
+    // null and there is no framebuffer to release.
+    if (m_context && pFB && glDeleteFramebuffers)
+        CHK_GL(glDeleteFramebuffers(1, &pFB));
     pFB = 0;
 
-    const auto context = SDL_GL_GetCurrentContext();
-    if (context == m_context)
-        SDL_GL_MakeCurrent(nullptr, nullptr);
-
-    SDL_GL_DeleteContext(m_context);
+    if (m_context)
+    {
+        const auto context = SDL_GL_GetCurrentContext();
+        if (context == m_context)
+            SDL_GL_MakeCurrent(nullptr, nullptr);
+        SDL_GL_DeleteContext(m_context);
+    }
     m_context = nullptr;
+    m_window = nullptr;
 }
 
 //////////////////////////////////////////////////////////////////////

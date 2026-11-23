@@ -1,6 +1,8 @@
 #include "pch_script.h"
 
 #include "PhysicsShellHolder.h"
+#include "PHSkeleton.h"
+#include "xrServerEntities/PHNetState.h"
 #include "xrPhysics/PhysicsShell.h"
 #include "xrMessages.h"
 #include "ph_shell_interface.h"
@@ -23,6 +25,11 @@
 #ifdef DEBUG
 #include "xrEngine/ObjectDump.h"
 #endif
+
+namespace
+{
+constexpr u16 PHSaveStateExtendedVisibilityFlag = 0x8000;
+}
 
 CPhysicsShellHolder::CPhysicsShellHolder()
 {
@@ -390,7 +397,7 @@ void CPhysicsShellHolder::PHSaveState(NET_Packet& P)
     max.set(-flt_max, -flt_max, -flt_max);
     /////////////////////////////////////
 
-    u16 bones_number = PHGetSyncItemsNumber();
+    const u16 bones_number = PHGetSyncItemsNumber();
     for (u16 i = 0; i < bones_number; i++)
     {
         SPHNetState state;
@@ -418,7 +425,8 @@ void CPhysicsShellHolder::PHSaveState(NET_Packet& P)
     P.w_vec3(min);
     P.w_vec3(max);
 
-    P.w_u16(bones_number);
+    VERIFY(!(bones_number & PHSaveStateExtendedVisibilityFlag));
+    P.w_u16(u16(bones_number | PHSaveStateExtendedVisibilityFlag));
 
     for (u16 i = 0; i < bones_number; i++)
     {
@@ -426,16 +434,18 @@ void CPhysicsShellHolder::PHSaveState(NET_Packet& P)
         PHGetSyncItem(i)->get_State(state);
         state.net_Save(P, min, max);
     }
+
+    CPHSkeleton::SaveExtendedVisibility(P, K);
 }
 void CPhysicsShellHolder::PHLoadState(IReader& P)
 {
-    //	Flags8 lflags;
     IKinematics* K = smart_cast<IKinematics*>(Visual());
-    //	P.r_u8 (lflags.flags);
+    const u64 visible_bones = P.r_u64();
+    const u16 root_bone = P.r_u16();
     if (K)
     {
-        K->LL_SetBonesVisible(P.r_u64());
-        K->LL_SetBoneRoot(P.r_u16());
+        K->LL_SetBonesVisible(visible_bones);
+        K->LL_SetBoneRoot(root_bone);
     }
 
     Fvector min = P.r_vec3();
@@ -443,12 +453,22 @@ void CPhysicsShellHolder::PHLoadState(IReader& P)
 
     VERIFY(!min.similar(max));
 
-    u16 bones_number = P.r_u16();
+    const u16 encoded_bones_number = P.r_u16();
+    const bool has_extended_visibility = (encoded_bones_number & PHSaveStateExtendedVisibilityFlag) != 0;
+    const u16 bones_number = encoded_bones_number & ~PHSaveStateExtendedVisibilityFlag;
     for (u16 i = 0; i < bones_number; i++)
     {
         SPHNetState state;
         state.net_Load(P, min, max);
         PHGetSyncItem(i)->set_State(state);
+    }
+
+    if (has_extended_visibility)
+    {
+        u64 masks[SPHBonesData::ExtendedVisibilityWordCount];
+        for (u64& mask : masks)
+            mask = P.r_u64();
+        CPHSkeleton::ApplyExtendedVisibility(K, masks);
     }
 }
 

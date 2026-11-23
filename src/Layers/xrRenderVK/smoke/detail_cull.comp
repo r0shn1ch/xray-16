@@ -1,0 +1,113 @@
+#version 450
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std430) readonly buffer DetailPlacements { uint placements[]; };
+layout(set = 0, binding = 1, std430) writeonly buffer DetailInstances { float instances[]; };
+layout(set = 0, binding = 2, std430) buffer DrawArguments
+{
+    uint index_count;
+    uint instance_count;
+    uint first_index;
+    int vertex_offset;
+    uint first_instance;
+};
+layout(set = 0, binding = 3, std430) readonly buffer VisibleCells { uint visible_cells[]; };
+layout(push_constant) uniform DetailCull
+{
+    vec4 planes[6];
+    uint placement_count;
+    uint instance_capacity;
+    float radius;
+    uint source_stride; // five floats for legacy placements, eight for GPU generation
+    uint model;
+    uint compact_cells;
+    uint candidates_per_cell;
+} settings;
+
+bool visible(vec3 position, float radius)
+{
+    for (int i = 0; i < 6; ++i)
+        if (dot(settings.planes[i], vec4(position, 1.0)) < -radius)
+            return false;
+    return true;
+}
+
+bool load_visible_placement(uint index, out vec3 position, out float scale, out float yaw)
+{
+    uint count = settings.placement_count;
+    if (settings.compact_cells != 0u)
+        count = min(visible_cells[0], count / settings.candidates_per_cell) * settings.candidates_per_cell;
+    if ((settings.source_stride != 5u && settings.source_stride != 8u) ||
+        index >= count || index >= placements.length() / settings.source_stride)
+        return false;
+
+    uint source = index * settings.source_stride;
+    bool generated = settings.source_stride == 8u;
+    if (generated && placements[source + 5u] != settings.model)
+        return false;
+    position = uintBitsToFloat(uvec3(placements[source], placements[source + 1u], placements[source + 2u]));
+    scale = uintBitsToFloat(placements[source + (generated ? 3u : 4u)]);
+    yaw = uintBitsToFloat(placements[source + (generated ? 4u : 3u)]);
+    vec4 transform = vec4(position, scale);
+    if (any(isnan(transform)) || any(isinf(transform)) || isnan(yaw) || isinf(yaw))
+        return false;
+    return visible(position, settings.radius * abs(scale));
+}
+
+shared uint group_count;
+shared uint group_first;
+shared uint group_reserved;
+
+void reserve_instances()
+{
+    group_reserved = 0u;
+    if (group_count == 0u)
+        return;
+    uint capacity = min(settings.instance_capacity, uint(instances.length()) / 10u);
+    uint destination = atomicAdd(instance_count, 0u);
+    while (destination < capacity)
+    {
+        uint count = min(group_count, capacity - destination);
+        uint previous = atomicCompSwap(instance_count, destination, destination + count);
+        if (previous == destination)
+        {
+            group_first = destination;
+            group_reserved = count;
+            return;
+        }
+        destination = previous;
+    }
+}
+
+void main()
+{
+    uint group = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    if (group > 0xffffffffu / gl_WorkGroupSize.x)
+        return;
+    if (gl_LocalInvocationIndex == 0u)
+        group_count = 0u;
+    barrier();
+    vec3 position;
+    float scale, yaw;
+    uint index = group * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
+    bool accepted = load_visible_placement(index, position, scale, yaw);
+    uint rank = accepted ? atomicAdd(group_count, 1u) : 0u;
+    barrier();
+    if (gl_LocalInvocationIndex == 0u)
+        reserve_instances();
+    barrier();
+    if (!accepted || rank >= group_reserved)
+        return;
+    uint destination = group_first + rank;
+    uint output_offset = destination * 10u;
+    instances[output_offset] = position.x;
+    instances[output_offset + 1u] = position.y;
+    instances[output_offset + 2u] = position.z;
+    instances[output_offset + 3u] = scale;
+    instances[output_offset + 4u] = cos(yaw);
+    instances[output_offset + 5u] = sin(yaw);
+    instances[output_offset + 6u] = 0.0;
+    instances[output_offset + 7u] = 0.0;
+    instances[output_offset + 8u] = 0.0;
+    instances[output_offset + 9u] = 0.0;
+}

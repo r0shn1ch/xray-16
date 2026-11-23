@@ -366,7 +366,6 @@ shell_root CPHShellSplitterHolder::ElementSingleSplit(
     new_shell_last->set_Kinematics(m_pShell->PKinematics());
     new_shell_last_desc->AfterSetActive();
     new_shell_last->set_Kinematics(NULL);
-    VERIFY2(split_elem.second.m_bone_id < 64, "strange root");
     VERIFY(_valid(new_shell_last->mXFORM));
     VERIFY(dBodyStateValide(source_element->get_bodyConst()));
     VERIFY(dBodyStateValide(split_elem.first->get_body()));

@@ -10,6 +10,5 @@ void dxUISequenceVideoItem::CaptureTexture()
 {
     R_constant* C = RCache.get_c(c_sbase)._get(); // get sampler
     m_texture = RCache.get_ActiveTexture(C ? C->samp.index : 0);
-    R_ASSERT(m_texture);
 }
 } // namespace xray::render::RENDER_NAMESPACE

@@ -1,0 +1,54 @@
+#version 450
+layout(local_size_x = 16, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D scene;
+layout(set = 0, binding = 2, std430) buffer Histogram
+{
+    uint counts[64];
+    int residual_sums[64];
+} histogram;
+
+shared uint tile_counts[64];
+shared int tile_residual_sums[64];
+
+uint luminance_bin(float value)
+{
+    return uint(clamp(floor((value + 10.0) * (64.0 / 20.0)), 0.0, 63.0));
+}
+
+void main()
+{
+    uint lane = gl_LocalInvocationIndex;
+    if (lane < 64u)
+    {
+        tile_counts[lane] = 0u;
+        tile_residual_sums[lane] = 0;
+    }
+    barrier();
+
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 extent = textureSize(scene, 0);
+    if (all(lessThan(pixel, extent)))
+    {
+        vec3 color = texelFetch(scene, pixel, 0).rgb;
+        float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
+        if (isnan(luminance) || isinf(luminance)) luminance = 0.1;
+        float value = log2(clamp(luminance, 0.0001, 1024.0));
+        uint bin = luminance_bin(value);
+        float bin_center = -10.0 + (float(bin) + 0.5) * (20.0 / 64.0);
+        int residual = int(round(clamp(value - bin_center, -0.15625, 0.15625) * 256.0));
+        atomicAdd(tile_counts[bin], 1u);
+        atomicAdd(tile_residual_sums[bin], residual);
+    }
+    barrier();
+
+    if (lane < 64u)
+    {
+        uint count = tile_counts[lane];
+        int residual_sum = tile_residual_sums[lane];
+        if (count != 0u)
+        {
+            atomicAdd(histogram.counts[lane], count);
+            atomicAdd(histogram.residual_sums[lane], residual_sum);
+        }
+    }
+}

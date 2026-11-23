@@ -35,8 +35,16 @@ target_link_libraries(xr_3da
     xrAPI
     xrEngine
     xrRender_GL
+    xrRenderVK
     xrGame
+    xrMaterialSystem
+    xrParticles
 )
+
+if (WIN32)
+    set_target_properties(xr_3da PROPERTIES WIN32_EXECUTABLE ON)
+    target_link_libraries(xr_3da PRIVATE xrRenderPC_R4)
+endif()
 
 if (ANDROID AND XRAY_ANDROID_SHARED)
     # SDLActivity loads libmain.so and resolves the C-linkage SDL_main symbol.
@@ -52,6 +60,15 @@ if (ANDROID AND XRAY_ANDROID_SHARED)
         PREFIX "lib"
         OUTPUT_NAME main
     )
+    if (CMAKE_HOST_WIN32)
+        # Keep Ninja's final freshness check stable when the Windows-hosted
+        # Android linker leaves libmain.so timestamped just before a linked
+        # static archive.
+        add_custom_command(TARGET xr_3da POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E touch "$<TARGET_FILE:xr_3da>"
+            VERBATIM
+        )
+    endif()
 endif()
 
 install(TARGETS xr_3da

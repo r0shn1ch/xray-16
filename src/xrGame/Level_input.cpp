@@ -107,6 +107,14 @@ void CLevel::IR_OnMouseMove(int dx, int dy)
     }
 }
 
+void CLevel::IR_OnMouseMoveTo(float x, float y)
+{
+    if (g_bDisableAllInput)
+        return;
+
+    CurrentGameUI()->IR_UIOnMouseMoveTo(x, y);
+}
+
 // Обработка нажатия клавиш
 extern bool g_block_pause;
 

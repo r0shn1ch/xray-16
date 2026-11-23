@@ -103,9 +103,9 @@ void CCF_Skeleton::BuildState()
     K->CalculateBones();
     const Fmatrix& L2W = owner->XFORM();
 
-    if (vis_mask != K->LL_GetBonesVisible())
+    if (vis_mask != K->LL_GetBonesVisibleSignature())
     {
-        vis_mask = K->LL_GetBonesVisible();
+        vis_mask = K->LL_GetBonesVisibleSignature();
         elements.clear();
         bv_box.set(pVisual->getVisData().box);
         bv_box.getsphere(bv_sphere.P, bv_sphere.R);
@@ -201,6 +201,13 @@ void CCF_Skeleton::BuildTopLevel()
     VERIFY(_valid(bv_sphere));
 }
 
+void CCF_Skeleton::RefreshCollisionGeometry()
+{
+    if (dwFrameTL != Device.dwFrame) BuildTopLevel();
+    IKinematics* K = PKinematics(owner->Visual());
+    if (dwFrame != Device.dwFrame || K->LL_GetBonesVisibleSignature() != vis_mask) BuildState();
+}
+
 bool CCF_Skeleton::_RayQuery(const collide::ray_defs& Q, collide::rq_results& R)
 {
     ZoneScoped;
@@ -225,7 +232,7 @@ bool CCF_Skeleton::_RayQuery(const collide::ray_defs& Q, collide::rq_results& R)
     else
     {
         IKinematics* K = PKinematics(owner->Visual());
-        if (K->LL_GetBonesVisible() != vis_mask)
+        if (K->LL_GetBonesVisibleSignature() != vis_mask)
         {
             // Model changed between ray-picks
             dwFrame = Device.dwFrame - 1;

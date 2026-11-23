@@ -74,6 +74,9 @@ public:
     virtual void LL_SetBoneVisible(u16 bone_id, BOOL val, BOOL bRecursive) = 0;
     virtual u64 LL_GetBonesVisible() = 0;
     virtual void LL_SetBonesVisible(u64 mask) = 0;
+    // Cache key for derived data using per-bone visibility. Renderers with more
+    // than 64 bones can include visibility beyond the legacy serialized mask.
+    virtual u64 LL_GetBonesVisibleSignature() { return LL_GetBonesVisible(); }
 
     virtual void LL_AddTransformToBone(KinematicsABT::additional_bone_transform& offset) = 0; //--#SM+#--
     virtual void LL_ClearAdditionalTransform(u16 bone_id) = 0; //--#SM+#--

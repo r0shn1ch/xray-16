@@ -8,6 +8,7 @@
 # exclude binaries and temporary files
 [Bb]in/
 [Bb]uild*/
+__pycache__/
 
 # User-specific files
 *.user
@@ -22,3 +23,7 @@
 
 # exclude doxygen output
 doc/doxygen/html/*
+
+# Keep personal Vulkan progress and triage notes outside repository branches.
+android/VULKAN_*.md
+android/PORT_AUDIT.md

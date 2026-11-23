@@ -25,6 +25,7 @@ final class TouchControlsView extends View {
     static final int CONTROL_USE = 5;
     static final int CONTROL_FIRE = 6;
     static final int CONTROL_ESCAPE = 7;
+    static final int CONTROL_TORCH = 8;
 
     private static final int NO_POINTER = -1;
 
@@ -38,6 +39,7 @@ final class TouchControlsView extends View {
     private int usePointer = NO_POINTER;
     private int inventoryPointer = NO_POINTER;
     private int escapePointer = NO_POINTER;
+    private int torchPointer = NO_POINTER;
     private int mousePointer = NO_POINTER;
     private float joystickX;
     private float joystickY;
@@ -69,9 +71,9 @@ final class TouchControlsView extends View {
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
-        final float joyRadius = dp(78);
-        final float joyCx = dp(102);
-        final float joyCy = getHeight() - dp(100);
+        final float joyRadius = joystickRadius();
+        final float joyCx = joystickCenterX();
+        final float joyCy = joystickCenterY();
         drawCircle(canvas, joyCx, joyCy, joyRadius, "");
 
         float knobX = joyCx;
@@ -87,7 +89,7 @@ final class TouchControlsView extends View {
             knobX += dx;
             knobY += dy;
         }
-        drawCircle(canvas, knobX, knobY, dp(31), "");
+        drawCircle(canvas, knobX, knobY, dp(27), "");
 
         RectF fire = fireBounds();
         drawCircle(canvas, fire.centerX(), fire.centerY(), fire.width() / 2, "ОГОНЬ");
@@ -95,6 +97,8 @@ final class TouchControlsView extends View {
         drawCircle(canvas, use.centerX(), use.centerY(), use.width() / 2, "ВЗЯТЬ");
         RectF inventory = inventoryBounds();
         drawCircle(canvas, inventory.centerX(), inventory.centerY(), inventory.width() / 2, "ИНВ");
+        RectF torch = torchBounds();
+        drawCircle(canvas, torch.centerX(), torch.centerY(), torch.width() / 2, "ФОНАРЬ");
         RectF escape = escapeBounds();
         drawCircle(canvas, escape.centerX(), escape.centerY(), escape.width() / 2, "ESC");
     }
@@ -119,11 +123,11 @@ final class TouchControlsView extends View {
     }
 
     void releaseAllControls() {
-        for (int control = CONTROL_FORWARD; control <= CONTROL_ESCAPE; ++control)
+        for (int control = CONTROL_FORWARD; control <= CONTROL_TORCH; ++control)
             setControl(control, false);
         if (mousePointer != NO_POINTER)
             XRayActivity.clickTouchMouse(false);
-        joystickPointer = firePointer = usePointer = inventoryPointer = escapePointer = mousePointer = NO_POINTER;
+        joystickPointer = firePointer = usePointer = inventoryPointer = escapePointer = torchPointer = mousePointer = NO_POINTER;
         invalidate();
     }
 
@@ -131,6 +135,9 @@ final class TouchControlsView extends View {
         if (escapePointer == NO_POINTER && escapeBounds().contains(x, y)) {
             escapePointer = pointerId;
             setControl(CONTROL_ESCAPE, true);
+        } else if (torchPointer == NO_POINTER && torchBounds().contains(x, y)) {
+            torchPointer = pointerId;
+            setControl(CONTROL_TORCH, true);
         } else if (firePointer == NO_POINTER && fireBounds().contains(x, y)) {
             firePointer = pointerId;
             setControl(CONTROL_FIRE, true);
@@ -140,7 +147,7 @@ final class TouchControlsView extends View {
         } else if (inventoryPointer == NO_POINTER && inventoryBounds().contains(x, y)) {
             inventoryPointer = pointerId;
             setControl(CONTROL_INVENTORY, true);
-        } else if (joystickPointer == NO_POINTER && x < getWidth() * 0.42f && y > getHeight() * 0.42f) {
+        } else if (joystickPointer == NO_POINTER && isInsideJoystick(x, y)) {
             joystickPointer = pointerId;
             updateJoystick(x, y);
         } else if (mousePointer == NO_POINTER) {
@@ -185,13 +192,15 @@ final class TouchControlsView extends View {
         } else if (pointerId == escapePointer) {
             escapePointer = NO_POINTER;
             setControl(CONTROL_ESCAPE, false);
+        } else if (pointerId == torchPointer) {
+            torchPointer = NO_POINTER;
+            setControl(CONTROL_TORCH, false);
         } else if (pointerId == mousePointer) {
             mousePointer = NO_POINTER;
             float travel = (float)Math.hypot(x - mouseDownX, y - mouseDownY);
             long duration = SystemClock.uptimeMillis() - mouseDownTime;
             if (!cancelled && travel <= dp(14) && duration <= 350) {
-                XRayActivity.clickTouchMouse(true);
-                XRayActivity.clickTouchMouse(false);
+                XRayActivity.clickTouchMouseAt(x, y, getWidth(), getHeight());
             }
         }
     }
@@ -199,13 +208,32 @@ final class TouchControlsView extends View {
     private void updateJoystick(float x, float y) {
         joystickX = x;
         joystickY = y;
-        float dx = x - dp(102);
-        float dy = y - (getHeight() - dp(100));
-        float deadZone = dp(18);
+        float dx = x - joystickCenterX();
+        float dy = y - joystickCenterY();
+        float deadZone = dp(16);
         setControl(CONTROL_LEFT, dx < -deadZone);
         setControl(CONTROL_RIGHT, dx > deadZone);
         setControl(CONTROL_FORWARD, dy < -deadZone);
         setControl(CONTROL_BACK, dy > deadZone);
+    }
+
+    private float joystickCenterX() {
+        return dp(78);
+    }
+
+    private float joystickCenterY() {
+        return getHeight() - dp(88);
+    }
+
+    private float joystickRadius() {
+        return dp(64);
+    }
+
+    private boolean isInsideJoystick(float x, float y) {
+        float dx = x - joystickCenterX();
+        float dy = y - joystickCenterY();
+        float radius = joystickRadius();
+        return dx * dx + dy * dy <= radius * radius;
     }
 
     private void setControl(int control, boolean pressed) {
@@ -230,6 +258,10 @@ final class TouchControlsView extends View {
 
     private RectF inventoryBounds() {
         return circleBounds(getWidth() - dp(207), getHeight() - dp(55), dp(39));
+    }
+
+    private RectF torchBounds() {
+        return circleBounds(getWidth() - dp(66), dp(151), dp(34));
     }
 
     private RectF escapeBounds() {

@@ -43,7 +43,6 @@ public:
 
 private:
     // список костей
-    u64 bone_mask; // используемые кости
     BoneInfoVec m_Bones;
     IGameObject* m_self_object;
     Fvector parent_vel;

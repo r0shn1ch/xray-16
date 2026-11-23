@@ -197,6 +197,9 @@ private:
 #if defined(XR_PLATFORM_ANDROID)
     void TouchUpdate();
     u32 touchControlState{};
+    bool touchMousePositionPending{};
+    float touchMousePositionX{};
+    float touchMousePositionY{};
 #endif
 
     void OpenController(int idx);

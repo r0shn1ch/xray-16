@@ -1,0 +1,22 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+struct Hit
+{
+    uint found;
+    float distance;
+    uint instance;
+    uint geometry;
+    uint primitive;
+    uint material_id;
+    vec2 barycentric;
+};
+layout(set = 0, binding = 0, std430) readonly buffer HitInput { Hit hits[]; };
+layout(set = 0, binding = 1, r32f) uniform writeonly image2D visibility;
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(visibility);
+    if (any(greaterThanEqual(pixel, size))) return;
+    uint index = uint(pixel.y * size.x + pixel.x);
+    imageStore(visibility, pixel, vec4(hits[index].found == 0u ? 1.0 : 0.0));
+}

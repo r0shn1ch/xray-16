@@ -1,0 +1,27 @@
+[[vk::binding(0, 0)]] Texture2D<float4> distortion_map : register(t0);
+[[vk::binding(0, 0)]] SamplerState distortion_sampler : register(s0);
+[[vk::binding(0, 2)]] Texture2D<float4> scene_color : register(t1);
+[[vk::binding(0, 2)]] SamplerState scene_sampler : register(s1);
+[[vk::binding(2, 2)]] Texture2D<float> scene_depth : register(t2);
+[[vk::binding(2, 2)]] SamplerState depth_sampler : register(s2);
+[[vk::binding(5, 1)]] cbuffer GpuParticleDrawParams {
+    float4 camera_top, camera_right, camera_direction, eye_position;
+    uint draw_bucket; float padding0, padding1, padding2;
+    float4 water_origin, water_normal, screen_params;
+};
+float4 main(float4 pixel : SV_Position, [[vk::location(1)]] float2 uv : TEXCOORD1,
+    [[vk::location(3)]] float4 tint : COLOR0) : SV_Target0
+{
+    float4 field = distortion_map.Sample(distortion_sampler, uv);
+    float weight = saturate(field.a * dot(tint.rgb, float3(0.33, 0.33, 0.33)));
+    if (weight < 0.01 / 255.0) discard;
+    uint width, height;
+    scene_color.GetDimensions(width, height);
+    float2 extent = float2(width, height);
+    float2 screen = pixel.xy * screen_params.xy;
+    float2 border = 0.5 / extent;
+    float2 displaced = clamp(screen + (field.xy - (127.0 / 255.0)) * 0.05, border, 1.0 - border);
+    if (scene_depth.Sample(depth_sampler, displaced) < pixel.z)
+        displaced = clamp(screen, border, 1.0 - border);
+    return float4(scene_color.Sample(scene_sampler, displaced).rgb, weight);
+}

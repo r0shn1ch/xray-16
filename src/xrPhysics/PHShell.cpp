@@ -606,9 +606,7 @@ void CPHShell::AddElementRecursive(
     Fmatrix fm_position;
     fm_position.set(bone_data.get_bind_transform());
     fm_position.mulA_43(global_parent);
-    Flags64 mask;
-    mask.assign(m_pKinematics->LL_GetBonesVisible());
-	bool no_visible = !mask.is(UINT64_C(1) << (u64)id);
+	bool no_visible = !m_pKinematics->LL_GetBoneVisible(id);
     bool lvis_check = false;
     if (no_visible)
     {
@@ -659,7 +657,6 @@ void CPHShell::AddElementRecursive(
             {
                 CPHFracture fracture;
                 fracture.m_bone_id = id;
-                R_ASSERT2(id < 64, "ower 64 bones in breacable are not supported");
                 fracture.m_start_geom_num = E->numberOfGeoms();
                 fracture.m_end_geom_num = u16(-1);
                 fracture.m_start_el_num = u16(elements.size());
@@ -816,15 +813,15 @@ void CPHShell::AddElementRecursive(
 #endif
 }
 
-void CPHShell::ResetCallbacks(u16 id, Flags64& mask) { ResetCallbacksRecursive(id, u16(-1), mask); }
-void CPHShell::ResetCallbacksRecursive(u16 id, u16 element, Flags64& mask)
+void CPHShell::ResetCallbacks(u16 id) { ResetCallbacksRecursive(id, u16(-1)); }
+void CPHShell::ResetCallbacksRecursive(u16 id, u16 element)
 {
     // if(elements.size()==element)  return;
     CBoneInstance& B = m_pKinematics->LL_GetBoneInstance(u16(id));
     const IBoneData& bone_data = m_pKinematics->GetBoneData(u16(id));
     const SJointIKData& joint_data = bone_data.get_IK_data();
 
-	if (mask.is(UINT64_C(1) << (u64)id))
+	if (m_pKinematics->LL_GetBoneVisible(id))
     {
         if ((no_physics_shape(bone_data.get_shape()) || joint_data.type == jtRigid) && element != u16(-1))
         {
@@ -845,7 +842,7 @@ void CPHShell::ResetCallbacksRecursive(u16 id, u16 element, Flags64& mask)
     // IBoneData &ibone_data = bone_data;
     u16 num_children = bone_data.GetNumChildren();
     for (u16 i = 0; i < num_children; ++i)
-        ResetCallbacksRecursive(bone_data.GetChild(i).GetSelfID(), element, mask);
+        ResetCallbacksRecursive(bone_data.GetChild(i).GetSelfID(), element);
 }
 
 void CPHShell::EnabledCallbacks(BOOL val)
@@ -931,9 +928,7 @@ void CPHShell::SetCallbacksRecursive(u16 id, u16 element)
     CBoneInstance& B = m_pKinematics->LL_GetBoneInstance(u16(id));
     const IBoneData& bone_data = m_pKinematics->GetBoneData(u16(id));
     const SJointIKData& joint_data = bone_data.get_IK_data();
-    Flags64 mask;
-    mask.assign(m_pKinematics->LL_GetBonesVisible());
-	if (mask.is(UINT64_C(1) << (u64)id))
+	if (m_pKinematics->LL_GetBoneVisible(id))
     {
         if ((no_physics_shape(bone_data.get_shape()) || joint_data.type == jtRigid) && element != u16(-1))
         {
@@ -1256,9 +1251,7 @@ void CPHShell::applyGravityAccel(const Fvector& accel)
 
 void CPHShell::PlaceBindToElForms()
 {
-    Flags64 mask;
-    mask.assign(m_pKinematics->LL_GetBonesVisible());
-    PlaceBindToElFormsRecursive(Fidentity, m_pKinematics->LL_GetBoneRoot(), 0, mask);
+    PlaceBindToElFormsRecursive(Fidentity, m_pKinematics->LL_GetBoneRoot(), 0);
 }
 void CPHShell::setTorque(const Fvector& torque)
 {
@@ -1274,12 +1267,12 @@ void CPHShell::setForce(const Fvector& force)
     for (; i != e; ++i)
         (*i)->setForce(force);
 }
-void CPHShell::PlaceBindToElFormsRecursive(Fmatrix parent, u16 id, u16 element, Flags64& mask)
+void CPHShell::PlaceBindToElFormsRecursive(Fmatrix parent, u16 id, u16 element)
 {
     CBoneData& bone_data = m_pKinematics->LL_GetData(u16(id));
     SJointIKData& joint_data = bone_data.IK_data;
 
-	if (mask.is(UINT64_C(1) << (u64)id))
+	if (m_pKinematics->LL_GetBoneVisible(id))
     {
         if (no_physics_shape(bone_data.shape) || joint_data.type == jtRigid && element != u16(-1))
         {
@@ -1298,7 +1291,7 @@ void CPHShell::PlaceBindToElFormsRecursive(Fmatrix parent, u16 id, u16 element, 
     IBoneData& ibone_data = bone_data;
     u16 num_children = ibone_data.GetNumChildren();
     for (u16 i = 0; i < num_children; ++i)
-        PlaceBindToElFormsRecursive(mXFORM, ibone_data.GetChild(i).GetSelfID(), element, mask);
+        PlaceBindToElFormsRecursive(mXFORM, ibone_data.GetChild(i).GetSelfID(), element);
 }
 
 void CPHShell::BonesBindCalculate(u16 id_from) { BonesBindCalculateRecursive(Fidentity, 0); }

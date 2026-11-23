@@ -41,6 +41,7 @@ static float g[B + B + 2][3];
 //--------------------------------------------------------------------
 void noise3Init()
 {
+    static const bool initialized = [] {
     int i, j, k;
     float v[3], s;
     int rnd;
@@ -81,6 +82,16 @@ void noise3Init()
         for (j = 0; j < 3; j++)
             g[B + i][j] = g[i][j];
     }
+    return true;
+    }();
+    (void)initialized;
+}
+
+void PAPI::GetNoise3Tables(int* permutation, float* gradients)
+{
+    noise3Init();
+    std::memcpy(permutation, p, sizeof(p));
+    std::memcpy(gradients, g, sizeof(g));
 }
 
 //--------------------------------------------------------------------

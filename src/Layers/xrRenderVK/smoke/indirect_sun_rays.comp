@@ -1,0 +1,34 @@
+#version 450
+layout(local_size_x = 64) in;
+struct Surface {
+    vec4 position_valid; vec4 normal; vec2 uv;
+    uint material_id; uint texture_slot; vec4 albedo; vec4 pbr; vec4 geometric_normal;
+};
+struct Ray { vec4 origin_min; vec4 direction_max; };
+layout(set = 0, binding = 0, std430) readonly buffer Surfaces { Surface surfaces[]; };
+layout(set = 0, binding = 1, std430) writeonly buffer Rays { Ray rays[]; };
+layout(push_constant) uniform Parameters { vec4 direction_distance; uvec4 dimensions; } parameters;
+void main()
+{
+    uint width = parameters.dimensions.y * 64u;
+    uint count = parameters.dimensions.x;
+    if (count == 0u || width == 0u || gl_GlobalInvocationID.y > (count - 1u) / width) return;
+    uint row = gl_GlobalInvocationID.y * width;
+    if (gl_GlobalInvocationID.x >= count - row) return;
+    uint index = row + gl_GlobalInvocationID.x;
+    Surface surface = surfaces[index];
+    Ray ray;
+    ray.origin_min = vec4(0.0);
+    ray.direction_max = vec4(0.0);
+    float direction_length = length(parameters.direction_distance.xyz);
+    if (surface.position_valid.w > 0.0 && parameters.direction_distance.w > 0.0 && direction_length > 1e-6)
+    {
+        vec3 direction = parameters.direction_distance.xyz / direction_length;
+        if (dot(surface.normal.xyz, direction) > 0.0 && dot(surface.geometric_normal.xyz, direction) > 0.0)
+        {
+            ray.origin_min = vec4(surface.position_valid.xyz + surface.geometric_normal.xyz * 0.01, 0.001);
+            ray.direction_max = vec4(direction, parameters.direction_distance.w);
+        }
+    }
+    rays[index] = ray;
+}

@@ -28,9 +28,9 @@ public:
     Flags8 m_Flags;
 
     u8 tag{};
-    bool bClampYaw   : 1 {};
-    bool bClampPitch : 1 {};
-    bool bClampRoll  : 1 {};
+    bool bClampYaw   : 1;
+    bool bClampPitch : 1;
+    bool bClampRoll  : 1;
 
     float yaw{}, pitch{}, roll{};
 
@@ -53,7 +53,7 @@ public:
 
 public:
     CCameraBase(IGameObject* p, u8 flags)
-        : parent(p), m_Flags{ flags }
+        : parent(p), m_Flags{ flags }, bClampYaw(false), bClampPitch(false), bClampRoll(false)
     {
         VERIFY(p);
     }

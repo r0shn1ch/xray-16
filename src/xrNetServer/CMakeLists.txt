@@ -6,8 +6,6 @@ target_sources(xrNetServer PRIVATE
     ip_filter.h
     NET_AuthCheck.cpp
     NET_AuthCheck.h
-    #NET_Client.cpp
-    #NET_Client.h
     NET_Common.cpp
     NET_Common.h
     NET_Compressor.cpp
@@ -16,21 +14,25 @@ target_sources(xrNetServer PRIVATE
     NET_Log.h
     NET_Messages.h
     NET_PlayersMonitor.h
-    #NET_Server.cpp
-    #NET_Server.h
     NET_Shared.h
     stdafx.cpp
     stdafx.h
-    empty/NET_Client.cpp
-    empty/NET_Client.h
-    empty/NET_Server.cpp
-    empty/NET_Server.h
 )
+
+if (WIN32)
+    target_sources(xrNetServer PRIVATE NET_Client.cpp NET_Client.h NET_Server.cpp NET_Server.h)
+    target_link_libraries(xrNetServer PRIVATE ws2_32 dxguid)
+else()
+    target_sources(xrNetServer PRIVATE
+        empty/NET_Client.cpp empty/NET_Client.h
+        empty/NET_Server.cpp empty/NET_Server.h)
+endif()
 
 target_include_directories(xrNetServer
     PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${XRAY_SOURCE_DIR}/src"
+    "${XRAY_SOURCE_DIR}/sdk/include"
 )
 
 target_link_libraries(xrNetServer

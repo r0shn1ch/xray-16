@@ -88,6 +88,7 @@ protected:
     //время удаления оружия
     ALife::_TIME_ID m_dwWeaponRemoveTime;
     ALife::_TIME_ID m_dwWeaponIndependencyTime;
+    float m_smokeTrailEmissionTime{};
 
     virtual bool IsHudModeNow();
     void LoadScope(const shared_str& section);

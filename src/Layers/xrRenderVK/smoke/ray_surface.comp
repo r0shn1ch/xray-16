@@ -1,0 +1,415 @@
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+#extension GL_EXT_nonuniform_qualifier : require
+
+// Reconstruct static-level hit attributes for subsequent indirect-light passes.
+layout(local_size_x = 64) in;
+const uint RAY_MATERIAL_EMISSIVE = 1u;
+const uint RAY_SURFACE_PBR = 1u;
+const uint RAY_SURFACE_EMISSIVE = 2u;
+struct Ray { vec4 origin_min; vec4 direction_max; };
+struct Hit {
+    uint found; float distance; uint instance; uint geometry;
+    uint primitive; uint material_id; vec2 barycentric;
+};
+struct BatchInfo { uint first_geometry; uint geometry_count; uvec2 padding; vec4 row0; vec4 row1; vec4 row2; };
+struct GeometryInfo {
+    uvec2 vertices; uvec2 indices; uint vertex_stride; uint max_vertex;
+    uint material_id; uint material_flags; float alpha_cutoff; uint texture_slot;
+    uint diffuse_texture_slot; uint pbr_texture_slot;
+    uint metallic_texture_slot; uint roughness_texture_slot; uint ao_texture_slot;
+    uint normal_texture_slot; uint normal_aux_texture_slot;
+    uint terrain_texture_slots[33]; float terrain_scale; float parallax_height;
+};
+struct TextureTransform { vec4 row0; vec4 row1; vec4 detail_row0; vec4 detail_row1; };
+struct Surface {
+    vec4 position_valid;
+    vec4 normal;
+    vec2 uv;
+    uint material_id;
+    uint texture_slot;
+    vec4 albedo;
+    vec4 pbr;
+    vec4 geometric_normal;
+};
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer IndexBuffer { uint values[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer VertexBuffer { uint values[]; };
+layout(set = 0, binding = 0, std430) readonly buffer Rays { Ray rays[]; };
+layout(set = 0, binding = 1, std430) readonly buffer Hits { Hit hits[]; };
+layout(set = 0, binding = 2, std430) readonly buffer Batches { BatchInfo batches[]; };
+layout(set = 0, binding = 3, std430) readonly buffer Geometries { GeometryInfo geometries[]; };
+layout(set = 0, binding = 4, std430) readonly buffer Transforms { TextureTransform transforms[]; };
+layout(set = 0, binding = 5, std430) writeonly buffer Surfaces { Surface surfaces[]; };
+layout(set = 1, binding = 0) uniform sampler2D diffuse_textures[];
+layout(push_constant) uniform Parameters { uint count; uint groups_x; uint texture_count; } parameters;
+
+vec3 read_normal(VertexBuffer v, uint index, uint stride)
+{
+    uint base = index * stride + 3u;
+    return vec3(uintBitsToFloat(v.values[base]), uintBitsToFloat(v.values[base + 1u]),
+                uintBitsToFloat(v.values[base + 2u]));
+}
+vec3 read_position(VertexBuffer v, uint index, uint stride)
+{
+    uint base = index * stride;
+    return vec3(uintBitsToFloat(v.values[base]), uintBitsToFloat(v.values[base + 1u]),
+                uintBitsToFloat(v.values[base + 2u]));
+}
+vec2 read_uv(VertexBuffer v, uint index, uint stride)
+{
+    uint base = index * stride + 6u;
+    return vec2(uintBitsToFloat(v.values[base]), uintBitsToFloat(v.values[base + 1u]));
+}
+vec2 transformed_detail_uv(uint geometry_index, vec2 uv)
+{
+    if (geometry_index >= transforms.length()) return uv;
+    TextureTransform transform = transforms[geometry_index];
+    vec4 coordinate = vec4(uv, 0.0, 1.0);
+    return vec2(dot(transform.detail_row0, coordinate), dot(transform.detail_row1, coordinate));
+}
+vec2 parallax_offset(vec3 view, vec3 normal, vec3 tangent, vec3 bitangent,
+    float height, float scale, float distance_to_camera)
+{
+    float fade = 1.0 - smoothstep(32.0, 96.0, distance_to_camera);
+    vec3 tangent_view = vec3(dot(view, tangent), dot(view, bitangent), dot(view, normal));
+    float view_length2 = dot(tangent_view, tangent_view);
+    if (!(scale > 1e-5) || fade <= 1e-5 || view_length2 <= 1e-12 ||
+        isnan(view_length2) || isinf(view_length2))
+        return vec2(0.0);
+    return tangent_view.xy * inversesqrt(view_length2) * (height - 0.5) * scale * fade;
+}
+void main()
+{
+    uint row_width = parameters.groups_x * 64u;
+    if (parameters.count == 0u || row_width == 0u ||
+        gl_GlobalInvocationID.y > (parameters.count - 1u) / row_width) return;
+    uint row = gl_GlobalInvocationID.y * row_width;
+    if (gl_GlobalInvocationID.x >= parameters.count - row) return;
+    uint index = row + gl_GlobalInvocationID.x;
+    Surface surface;
+    surface.position_valid = vec4(0.0);
+    surface.normal = vec4(0.0);
+    surface.uv = vec2(0.0);
+    surface.material_id = 0xffffffffu;
+    surface.texture_slot = 0xffffffffu;
+    surface.albedo = vec4(1.0);
+    surface.pbr = vec4(0.0, 1.0, 1.0, 0.0);
+    surface.geometric_normal = vec4(0.0);
+    Hit hit = hits[index];
+    if (hit.found != 0u) surface.position_valid.w = -1.0;
+    if (hit.found != 0u && hit.instance < batches.length())
+    {
+        BatchInfo batch = batches[hit.instance];
+        if (hit.geometry < batch.geometry_count && batch.first_geometry < geometries.length() &&
+            hit.geometry < geometries.length() - batch.first_geometry)
+        {
+            uint geometry_index = batch.first_geometry + hit.geometry;
+            GeometryInfo geometry = geometries[geometry_index];
+            if (geometry.vertex_stride >= 32u && geometry.vertex_stride % 4u == 0u)
+            {
+                IndexBuffer indices = IndexBuffer(geometry.indices);
+                VertexBuffer vertices = VertexBuffer(geometry.vertices);
+                uint first = hit.primitive * 3u;
+                uvec3 triangle = uvec3(indices.values[first], indices.values[first + 1u], indices.values[first + 2u]);
+                if (all(lessThanEqual(triangle, uvec3(geometry.max_vertex))))
+                {
+                    uint stride = geometry.vertex_stride / 4u;
+                    vec3 weights = vec3(1.0 - hit.barycentric.x - hit.barycentric.y, hit.barycentric);
+                    vec3 n = read_normal(vertices, triangle.x, stride) * weights.x +
+                             read_normal(vertices, triangle.y, stride) * weights.y +
+                             read_normal(vertices, triangle.z, stride) * weights.z;
+                    mat3 object_to_world = transpose(mat3(batch.row0.xyz, batch.row1.xyz, batch.row2.xyz));
+                    n = transpose(inverse(object_to_world)) * n;
+                    vec2 uv = read_uv(vertices, triangle.x, stride) * weights.x +
+                              read_uv(vertices, triangle.y, stride) * weights.y +
+                              read_uv(vertices, triangle.z, stride) * weights.z;
+                    vec2 base_uv = uv;
+                    vec2 detail_uv = uv * geometry.terrain_scale;
+                    if (geometry_index < transforms.length())
+                    {
+                        TextureTransform transform = transforms[geometry_index];
+                        vec4 coord = vec4(uv, 0.0, 1.0);
+                        base_uv = vec2(dot(transform.row0, coord), dot(transform.row1, coord));
+                        detail_uv = vec2(dot(transform.detail_row0, coord),
+                            dot(transform.detail_row1, coord)) * geometry.terrain_scale;
+                    }
+                    uv = base_uv;
+                    Ray ray = rays[index];
+                    float length_squared = dot(n, n);
+                    if (length_squared > 1e-12 && !isnan(length_squared) && !isinf(length_squared))
+                    {
+                        n *= inversesqrt(length_squared);
+                        if (dot(n, ray.direction_max.xyz) > 0.0) n = -n;
+                        vec3 parallax_tangent = vec3(0.0);
+                        vec3 parallax_bitangent = vec3(0.0);
+                        bool parallax_frame_valid = false;
+                        if (geometry.vertex_stride >= 64u)
+                        {
+                            vec3 tangent = unpackSnorm4x8(vertices.values[triangle.x * stride + 14u]).xyz * weights.x +
+                                unpackSnorm4x8(vertices.values[triangle.y * stride + 14u]).xyz * weights.y +
+                                unpackSnorm4x8(vertices.values[triangle.z * stride + 14u]).xyz * weights.z;
+                            vec3 bitangent = unpackSnorm4x8(vertices.values[triangle.x * stride + 15u]).xyz * weights.x +
+                                unpackSnorm4x8(vertices.values[triangle.y * stride + 15u]).xyz * weights.y +
+                                unpackSnorm4x8(vertices.values[triangle.z * stride + 15u]).xyz * weights.z;
+                            tangent = object_to_world * tangent;
+                            bitangent = object_to_world * bitangent;
+                            tangent -= n * dot(n, tangent);
+                            bitangent -= n * dot(n, bitangent);
+                            float tangent2 = dot(tangent, tangent);
+                            float bitangent2 = dot(bitangent, bitangent);
+                            float determinant = dot(cross(n, tangent), bitangent);
+                            if (tangent2 > 1e-8 && bitangent2 > 1e-8 && abs(determinant) > 1e-8 &&
+                                !isnan(tangent2) && !isinf(tangent2) && !isnan(bitangent2) && !isinf(bitangent2))
+                            {
+                                parallax_tangent = tangent * inversesqrt(tangent2);
+                                parallax_bitangent = normalize(cross(n, parallax_tangent)) *
+                                    (determinant < 0.0 ? -1.0 : 1.0);
+                                parallax_frame_valid = true;
+                            }
+                        }
+                        vec3 p0 = read_position(vertices, triangle.x, stride);
+                        vec3 p1 = read_position(vertices, triangle.y, stride);
+                        vec3 p2 = read_position(vertices, triangle.z, stride);
+                        vec3 face = cross(object_to_world * (p1 - p0), object_to_world * (p2 - p0));
+                        float face2 = dot(face, face);
+                        if (face2 > 1e-12 && !isnan(face2) && !isinf(face2))
+                        {
+                            face *= inversesqrt(face2);
+                            if (dot(face, ray.direction_max.xyz) > 0.0) face = -face;
+                        }
+                        else face = n;
+                        surface.position_valid = vec4(ray.origin_min.xyz + hit.distance * ray.direction_max.xyz, 1.0);
+                        surface.normal = vec4(n, 0.0);
+                        surface.geometric_normal = vec4(face, 0.0);
+                        vec3 geometric_normal = n;
+                        vec3 view_direction = -ray.direction_max.xyz;
+                        uint terrain_mask_slot = geometry.terrain_texture_slots[0];
+                        bool is_terrain = terrain_mask_slot < parameters.texture_count;
+                        uint base_parallax_slot = geometry.terrain_texture_slots[28];
+                        if (!is_terrain && parallax_frame_valid &&
+                            base_parallax_slot < parameters.texture_count)
+                        {
+                            float height = textureLod(diffuse_textures[
+                                nonuniformEXT(base_parallax_slot)], uv, 0.0).r;
+                            vec2 offset = parallax_offset(view_direction, geometric_normal,
+                                parallax_tangent, parallax_bitangent, height,
+                                geometry.parallax_height, hit.distance);
+                            uv += offset;
+                            detail_uv += offset;
+                        }
+                        surface.uv = uv;
+                        surface.material_id = geometry.material_id;
+                        surface.texture_slot = geometry.diffuse_texture_slot;
+                        if (geometry.diffuse_texture_slot < parameters.texture_count)
+                            surface.albedo = textureLod(diffuse_textures[nonuniformEXT(geometry.diffuse_texture_slot)], uv, 0.0);
+                        bool has_pbr = false;
+                        if (geometry.pbr_texture_slot < parameters.texture_count)
+                        {
+                            vec3 packed = textureLod(diffuse_textures[nonuniformEXT(geometry.pbr_texture_slot)], uv, 0.0).rgb;
+                            surface.pbr = vec4(packed, 1.0);
+                            has_pbr = true;
+                        }
+                        if (geometry.metallic_texture_slot < parameters.texture_count)
+                        {
+                            surface.pbr.x = textureLod(diffuse_textures[
+                                nonuniformEXT(geometry.metallic_texture_slot)], uv, 0.0).r;
+                            has_pbr = true;
+                        }
+                        if (geometry.roughness_texture_slot < parameters.texture_count)
+                        {
+                            surface.pbr.y = textureLod(diffuse_textures[
+                                nonuniformEXT(geometry.roughness_texture_slot)], uv, 0.0).r;
+                            has_pbr = true;
+                        }
+                        if (geometry.ao_texture_slot < parameters.texture_count)
+                        {
+                            surface.pbr.z = textureLod(diffuse_textures[
+                                nonuniformEXT(geometry.ao_texture_slot)], uv, 0.0).r;
+                            has_pbr = true;
+                        }
+                        uint terrain_normal_mask_slot = geometry.terrain_texture_slots[0];
+                        if (terrain_normal_mask_slot < parameters.texture_count)
+                        {
+                            vec4 layer_weights = textureLod(diffuse_textures[
+                                nonuniformEXT(terrain_normal_mask_slot)], base_uv, 0.0);
+                            float weight_sum = dot(layer_weights, vec4(1.0));
+                            if (weight_sum > 1e-6) layer_weights /= weight_sum;
+                            if (parallax_frame_valid)
+                            {
+                                float height_sum = 0.0;
+                                float height_weight = 0.0;
+                                for (uint layer = 0u; layer < 4u; ++layer)
+                                {
+                                    uint parallax_slot = geometry.terrain_texture_slots[29u + layer];
+                                    if (parallax_slot >= parameters.texture_count || layer_weights[layer] <= 1e-5)
+                                        continue;
+                                    height_sum += textureLod(diffuse_textures[
+                                        nonuniformEXT(parallax_slot)], detail_uv, 0.0).r * layer_weights[layer];
+                                    height_weight += layer_weights[layer];
+                                }
+                                if (height_weight > 1e-5)
+                                {
+                                    vec2 offset = parallax_offset(view_direction, geometric_normal,
+                                        parallax_tangent, parallax_bitangent, height_sum / height_weight,
+                                        geometry.parallax_height, hit.distance);
+                                    detail_uv += offset;
+                                }
+                            }
+                            vec3 terrain_albedo = vec3(0.0);
+                            vec3 terrain_pbr = vec3(0.0);
+                            bool terrain_has_pbr = false;
+                            for (uint layer = 0u; layer < 4u; ++layer)
+                            {
+                                uint albedo_slot = geometry.terrain_texture_slots[1u + layer];
+                                vec3 layer_albedo = albedo_slot < parameters.texture_count ?
+                                    textureLod(diffuse_textures[nonuniformEXT(albedo_slot)], detail_uv, 0.0).rgb :
+                                    vec3(1.0);
+                                terrain_albedo += layer_albedo * layer_weights[layer];
+
+                                vec3 layer_pbr = vec3(0.0, 1.0, 1.0);
+                                uint packed_slot = geometry.terrain_texture_slots[5u + layer];
+                                uint metal_slot = geometry.terrain_texture_slots[9u + layer];
+                                uint rough_slot = geometry.terrain_texture_slots[13u + layer];
+                                uint ao_slot = geometry.terrain_texture_slots[17u + layer];
+                                bool layer_has_pbr = false;
+                                if (packed_slot < parameters.texture_count)
+                                {
+                                    layer_pbr = textureLod(diffuse_textures[
+                                        nonuniformEXT(packed_slot)], detail_uv, 0.0).rgb;
+                                    layer_has_pbr = true;
+                                }
+                                if (metal_slot < parameters.texture_count)
+                                {
+                                    layer_pbr.r = textureLod(diffuse_textures[
+                                        nonuniformEXT(metal_slot)], detail_uv, 0.0).r;
+                                    layer_has_pbr = true;
+                                }
+                                if (rough_slot < parameters.texture_count)
+                                {
+                                    layer_pbr.g = textureLod(diffuse_textures[
+                                        nonuniformEXT(rough_slot)], detail_uv, 0.0).r;
+                                    layer_has_pbr = true;
+                                }
+                                if (ao_slot < parameters.texture_count)
+                                {
+                                    layer_pbr.b = textureLod(diffuse_textures[
+                                        nonuniformEXT(ao_slot)], detail_uv, 0.0).r;
+                                    layer_has_pbr = true;
+                                }
+                                terrain_pbr += layer_pbr * layer_weights[layer];
+                                terrain_has_pbr = terrain_has_pbr ||
+                                    (layer_has_pbr && layer_weights[layer] > 1e-5);
+                            }
+                            surface.albedo.rgb *= 2.0 * terrain_albedo;
+                            if (terrain_has_pbr)
+                            {
+                                surface.pbr.rgb = terrain_pbr;
+                                has_pbr = true;
+                            }
+                        }
+                        surface.pbr.w = float((has_pbr ? RAY_SURFACE_PBR : 0u) |
+                            ((geometry.material_flags & RAY_MATERIAL_EMISSIVE) != 0u ? RAY_SURFACE_EMISSIVE : 0u));
+                        // LevelVertex stores signed normalized tangent and bitangent
+                        // after the baked-light attributes, at offsets 56 and 60.
+                        if (geometry.vertex_stride >= 64u && geometry.normal_texture_slot < parameters.texture_count)
+                        {
+                            vec3 t = unpackSnorm4x8(vertices.values[triangle.x * stride + 14u]).xyz * weights.x +
+                                     unpackSnorm4x8(vertices.values[triangle.y * stride + 14u]).xyz * weights.y +
+                                     unpackSnorm4x8(vertices.values[triangle.z * stride + 14u]).xyz * weights.z;
+                            vec3 b = unpackSnorm4x8(vertices.values[triangle.x * stride + 15u]).xyz * weights.x +
+                                     unpackSnorm4x8(vertices.values[triangle.y * stride + 15u]).xyz * weights.y +
+                                     unpackSnorm4x8(vertices.values[triangle.z * stride + 15u]).xyz * weights.z;
+                            t = object_to_world * t;
+                            b = object_to_world * b;
+                            t -= n * dot(n, t);
+                            b -= n * dot(n, b);
+                            float t2 = dot(t, t), b2 = dot(b, b);
+                            float determinant = dot(cross(n, t), b);
+                            if (t2 > 1e-8 && b2 > 1e-8 && abs(determinant) > 1e-8)
+                            {
+                                t *= inversesqrt(t2);
+                                b = cross(n, t) * (determinant < 0.0 ? -1.0 : 1.0);
+                                vec4 main_map = textureLod(diffuse_textures[nonuniformEXT(geometry.normal_texture_slot)], uv, 0.0);
+                                vec3 map = main_map.xyz * 2.0 - 1.0;
+                                if (geometry.normal_aux_texture_slot < parameters.texture_count)
+                                {
+                                    vec3 auxiliary = textureLod(diffuse_textures[nonuniformEXT(geometry.normal_aux_texture_slot)], uv, 0.0).xyz;
+                                    map = main_map.wzy + auxiliary - 1.0;
+                                }
+                                vec3 mapped = t * map.x + b * map.y + n * map.z;
+                                float mapped2 = dot(mapped, mapped);
+                                if (mapped2 > 1e-8 && !isnan(mapped2) && !isinf(mapped2))
+                                    surface.normal.xyz = mapped * inversesqrt(mapped2);
+                            }
+                        }
+                        if (terrain_mask_slot < parameters.texture_count)
+                        {
+                            vec4 layer_weights = textureLod(diffuse_textures[
+                                nonuniformEXT(terrain_mask_slot)], base_uv, 0.0);
+                            float weight_sum = dot(layer_weights, vec4(1.0));
+                            if (weight_sum > 1e-6) layer_weights /= weight_sum;
+                            vec3 layer_normal = vec3(0.0);
+                            bool has_layer_normal = false;
+                            for (uint layer = 0u; layer < 4u; ++layer)
+                            {
+                                uint bump_slot = geometry.terrain_texture_slots[21u + layer];
+                                uint auxiliary_slot = geometry.terrain_texture_slots[25u + layer];
+                                if (bump_slot >= parameters.texture_count ||
+                                    auxiliary_slot >= parameters.texture_count || layer_weights[layer] <= 1e-5)
+                                    continue;
+                                vec4 bump = textureLod(diffuse_textures[
+                                    nonuniformEXT(bump_slot)], detail_uv, 0.0);
+                                vec3 auxiliary = textureLod(diffuse_textures[
+                                    nonuniformEXT(auxiliary_slot)], detail_uv, 0.0).xyz;
+                                vec3 decoded = bump.wzy + auxiliary - 1.0;
+                                float decoded_length2 = dot(decoded, decoded);
+                                if (decoded_length2 > 1e-8 && !isnan(decoded_length2) && !isinf(decoded_length2))
+                                    decoded *= inversesqrt(decoded_length2);
+                                else decoded = vec3(0.0, 0.0, 1.0);
+                                layer_normal += decoded * layer_weights[layer];
+                                has_layer_normal = true;
+                            }
+                            if (has_layer_normal)
+                            {
+                                vec2 uv0 = transformed_detail_uv(geometry_index,
+                                    read_uv(vertices, triangle.x, stride)) * geometry.terrain_scale;
+                                vec2 uv1 = transformed_detail_uv(geometry_index,
+                                    read_uv(vertices, triangle.y, stride)) * geometry.terrain_scale;
+                                vec2 uv2 = transformed_detail_uv(geometry_index,
+                                    read_uv(vertices, triangle.z, stride)) * geometry.terrain_scale;
+                                vec2 duv1 = uv1 - uv0;
+                                vec2 duv2 = uv2 - uv0;
+                                float uv_determinant = duv1.x * duv2.y - duv1.y * duv2.x;
+                                vec3 edge1 = object_to_world * (read_position(vertices, triangle.y, stride) -
+                                    read_position(vertices, triangle.x, stride));
+                                vec3 edge2 = object_to_world * (read_position(vertices, triangle.z, stride) -
+                                    read_position(vertices, triangle.x, stride));
+                                if (abs(uv_determinant) > 1e-8 && !isnan(uv_determinant) && !isinf(uv_determinant))
+                                {
+                                    vec3 tangent = (edge1 * duv2.y - edge2 * duv1.y) / uv_determinant;
+                                    tangent -= geometric_normal * dot(geometric_normal, tangent);
+                                    float tangent_length2 = dot(tangent, tangent);
+                                    if (tangent_length2 > 1e-8 && !isnan(tangent_length2) && !isinf(tangent_length2))
+                                    {
+                                        tangent *= inversesqrt(tangent_length2);
+                                        vec3 bitangent = cross(geometric_normal, tangent) *
+                                            (uv_determinant < 0.0 ? -1.0 : 1.0);
+                                        vec3 mapped = tangent * layer_normal.x + bitangent * layer_normal.y +
+                                            geometric_normal * layer_normal.z;
+                                        vec3 combined = surface.normal.xyz + mapped - geometric_normal;
+                                        float combined_length2 = dot(combined, combined);
+                                        if (combined_length2 > 1e-8 && !isnan(combined_length2) &&
+                                            !isinf(combined_length2))
+                                            surface.normal.xyz = combined * inversesqrt(combined_length2);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    surfaces[index] = surface;
+}

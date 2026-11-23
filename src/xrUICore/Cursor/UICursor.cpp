@@ -28,6 +28,11 @@ void CUICursor::OnDeviceReset()
     correction.x = UI_BASE_WIDTH  / (float)Device.m_rcWindowClient.w;
     correction.y = UI_BASE_HEIGHT / (float)Device.m_rcWindowClient.h;
 
+    // Android's touch overlay injects relative mouse events. There is no OS
+    // mouse cursor to query, even if the physical display exceeds render size.
+#if defined(XR_PLATFORM_ANDROID)
+    m_bound_to_system_cursor = false;
+#else
     SDL_Rect display;
     if (0 == SDL_GetDisplayBounds(0, &display))
     {
@@ -37,6 +42,7 @@ void CUICursor::OnDeviceReset()
     }
     if (m_bound_to_system_cursor) // sanity
         Device.UpdateWindowRects();
+#endif
 }
 
 void CUICursor::OnUIReset()
@@ -87,13 +93,16 @@ void CUICursor::OnRender()
     m_static->Draw();
 }
 
-void CUICursor::SetUICursorPosition(Fvector2 pos)
+void CUICursor::SetUICursorPosition(Fvector2 pos, bool warpSystemCursor)
 {
     vPos = pos;
-    Ivector2 p;
-    p.x = iFloor(vPos.x / correction.x);
-    p.y = iFloor(vPos.y / correction.y);
-    std::ignore = pInput->iSetMousePos(p);
+    if (warpSystemCursor)
+    {
+        Ivector2 p;
+        p.x = iFloor(vPos.x / correction.x);
+        p.y = iFloor(vPos.y / correction.y);
+        std::ignore = pInput->iSetMousePos(p);
+    }
 }
 
 void CUICursor::UpdateCursorPosition(Fvector2 pos)

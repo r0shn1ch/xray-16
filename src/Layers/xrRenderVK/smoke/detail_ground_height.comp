@@ -1,0 +1,46 @@
+#version 450
+layout(local_size_x=8,local_size_y=8) in;
+struct Cell { vec4 bounds; uvec4 data; uvec4 palettes; };
+struct Triangle { vec4 a; vec4 b; vec4 c; };
+layout(set=0,binding=0,std430) readonly buffer Cells { Cell cells[]; };
+layout(set=0,binding=1,std430) readonly buffer Triangles { Triangle triangles[]; };
+layout(set=0,binding=2,r32f) uniform writeonly image2D heightmap;
+layout(push_constant) uniform Parameters {
+    vec2 origin; float texel_size; uint size;
+    uvec2 level_size; ivec2 offset;
+    uint cell_count; float minimum_normal_y; uint select_lowest; uint padding;
+} params;
+void main() {
+    ivec2 pixel=ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel,ivec2(params.size))) || any(greaterThanEqual(pixel,imageSize(heightmap)))) return;
+    imageStore(heightmap,pixel,vec4(-1e10));
+    vec2 world=params.origin+(vec2(pixel)+.5)*params.texel_size;
+    ivec2 coordinate=ivec2(floor(world*.5))+params.offset;
+    if (any(lessThan(coordinate,ivec2(0))) || any(greaterThanEqual(coordinate,ivec2(params.level_size)))) return;
+    uint id=uint(coordinate.y)*params.level_size.x+uint(coordinate.x);
+    uint first=0u, last=min(params.cell_count,uint(cells.length()));
+    while (first<last) {
+        uint middle=first+(last-first)/2u;
+        if (cells[middle].data.x<id) first=middle+1u; else last=middle;
+    }
+    if (first>=min(params.cell_count,uint(cells.length())) || cells[first].data.x!=id) return;
+    Cell cell=cells[first];
+    uint start=min(cell.data.z,uint(triangles.length()));
+    uint count=min(cell.data.w,uint(triangles.length())-start);
+    bool found=false; float best=-1e10;
+    for (uint i=0u; i<count; ++i) {
+        Triangle triangle=triangles[start+i];
+        vec3 a=triangle.b.xyz-triangle.a.xyz, b=triangle.c.xyz-triangle.a.xyz;
+        vec3 normal=cross(a,b);
+        float determinant=normal.y;
+        if (determinant<1e-6 || determinant<params.minimum_normal_y*length(normal)) continue;
+        vec2 offset=world-triangle.a.xz;
+        float u=offset.y*b.x-offset.x*b.z, v=offset.x*a.z-offset.y*a.x;
+        if (min(u,v)<0.0 || u+v>determinant) continue;
+        float height=triangle.a.y+(u*a.y+v*b.y)/determinant;
+        if (isnan(height) || isinf(height) || height<cell.bounds.z || height>cell.bounds.z+cell.bounds.w+.1) continue;
+        if (!found || (params.select_lowest!=0u ? height<best : height>best)) best=height;
+        found=true;
+    }
+    if (found) imageStore(heightmap,pixel,vec4(best));
+}

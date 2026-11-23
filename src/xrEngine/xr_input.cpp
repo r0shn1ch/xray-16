@@ -11,6 +11,7 @@
 #include "xr_level_controller.h"
 #endif
 
+#include <algorithm>
 #include <locale>
 
 CInput* pInput = nullptr;
@@ -202,6 +203,17 @@ void CInput::MouseUpdate()
         switch (event.type)
         {
         case SDL_MOUSEMOTION:
+#if defined(XR_PLATFORM_ANDROID)
+            if (event.motion.which == SDL_TOUCH_MOUSEID &&
+                event.motion.state == AndroidTouchMousePositionState)
+            {
+                constexpr float MaxTouchCoordinate = 65535.f;
+                touchMousePositionX = std::clamp(event.motion.x / MaxTouchCoordinate, 0.f, 1.f);
+                touchMousePositionY = std::clamp(event.motion.y / MaxTouchCoordinate, 0.f, 1.f);
+                touchMousePositionPending = true;
+                break;
+            }
+#endif
             mouseMoved = true;
             offs[0] += event.motion.xrel;
             offs[1] += event.motion.yrel;
@@ -218,6 +230,21 @@ void CInput::MouseUpdate()
 
         case SDL_MOUSEBUTTONDOWN:
         {
+#if defined(XR_PLATFORM_ANDROID)
+            // Touch sends motion and a click together. Move the UI cursor
+            // before dispatching the click so its hit test uses this touch.
+            if (touchMousePositionPending)
+            {
+                cbStack.back()->IR_OnMouseMoveTo(touchMousePositionX, touchMousePositionY);
+                touchMousePositionPending = false;
+                offs[0] = offs[1] = 0;
+            }
+            else if (offs[0] || offs[1])
+            {
+                cbStack.back()->IR_OnMouseMove(offs[0], offs[1]);
+                offs[0] = offs[1] = 0;
+            }
+#endif
             const auto idx = RemapIdx[event.button.button - 1];
             mouseState[idx] = true;
             cbStack.back()->IR_OnMousePress(IdxToKey[idx]);
@@ -833,10 +860,16 @@ void CInput::TouchUpdate()
         { kUSE, SDL_SCANCODE_F },
         { kWPN_FIRE, MOUSE_1 },
         { kQUIT, SDL_SCANCODE_ESCAPE },
+        { kTORCH, SDL_SCANCODE_L },
     };
 
-    const u32 requested = AndroidTouchControlMask();
+    // A complete tap can happen while Vulkan is recording a slow frame.
+    // Keep its down edge for one input frame even if Java already sent up.
+    const u32 requested = AndroidTouchControlMask() | AndroidTouchPressMask();
     const u32 changed = requested ^ touchControlState;
+    if (changed & ((u32(1) << 4) | (u32(1) << 7)))
+        Msg("[android-input] menu controls requested=%02x changed=%02x receiver=%p",
+            requested, changed, cbStack.back());
     if (requested || changed)
         SetCurrentInputType(KeyboardMouse);
 

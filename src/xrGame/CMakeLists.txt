@@ -247,8 +247,6 @@ target_sources(xrGame PRIVATE
     animation_script_callback.h
     animation_utils.cpp
     animation_utils.h
-    #AnselManager.cpp
-    #AnselManager.h
     anticheat_dumpable_object.h
     antirad.cpp
     antirad.h
@@ -548,6 +546,8 @@ target_sources(xrGame PRIVATE
     game_location_selector_inline.h
     game_news.cpp
     game_news.h
+    game_news_serialization.cpp
+    game_news_serialization.h
     GameObject.cpp
     GameObject.h
     game_object_space.h
@@ -2497,7 +2497,25 @@ target_link_libraries(xrGame
     xrCDB
     xrPhysics
     xrNetServer
+    GameSpy-oxr
 )
+
+if (WIN32)
+    target_sources(xrGame PRIVATE AnselManager.cpp AnselManager.h)
+    if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(XRAY_ANSEL_ARCH x64)
+        set(XRAY_ANSEL_NAME AnselSDK64)
+    else()
+        set(XRAY_ANSEL_ARCH x86)
+        set(XRAY_ANSEL_NAME AnselSDK32)
+    endif()
+    target_link_libraries(xrGame PRIVATE
+        "${XRAY_SOURCE_DIR}/sdk/libraries/${XRAY_ANSEL_ARCH}/${XRAY_ANSEL_NAME}.lib")
+    add_custom_command(TARGET xrGame POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${XRAY_SOURCE_DIR}/sdk/binaries/${XRAY_ANSEL_ARCH}/${XRAY_ANSEL_NAME}.dll"
+            "$<TARGET_FILE_DIR:xrGame>/${XRAY_ANSEL_NAME}.dll")
+endif()
 
 target_compile_definitions(xrGame
     PUBLIC

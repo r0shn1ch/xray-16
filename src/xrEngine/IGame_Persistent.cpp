@@ -551,6 +551,17 @@ void IGame_Persistent::LoadStage(bool draw /*= true*/)
     ++load_stage;
 }
 
+void IGame_Persistent::UpdateLoadScreen() const
+{
+    if (max_load_stage > 0)
+    {
+        const bool awaiting_input = load_screen_renderer.NeedsUserInput() && Device.dwPrecacheFrame == 0 &&
+            g_pGameLevel && g_pGameLevel->bReady;
+        const int completed = awaiting_input ? max_load_stage : std::min(load_stage, max_load_stage);
+        m_pLoadingScreen->Update(completed, max_load_stage);
+    }
+}
+
 void IGame_Persistent::LoadDraw() const
 {
     if (loaded)

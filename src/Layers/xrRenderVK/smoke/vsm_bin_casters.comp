@@ -1,0 +1,32 @@
+#version 450
+layout(local_size_x = 64) in;
+struct Caster { vec4 minimum; vec4 maximum; };
+layout(set = 0, binding = 0, std430) readonly buffer Casters { Caster casters[]; };
+// The job buffer is produced by VsmStaticCache: one header uvec4 and a job list.
+layout(set = 0, binding = 1, std430) buffer Jobs { uint work[]; };
+layout(set = 0, binding = 2, std430) readonly buffer Parameters {
+    vec4 level[6]; vec4 zrange; uvec4 layout_params; // axis, levels, reserved, reserved
+} params;
+// pairs[0] is total matches, pairs[1] is dropped matches; entries start at 4.
+layout(set = 0, binding = 3, std430) buffer Pairs { uint pairs[]; };
+layout(push_constant) uniform Limits { uint caster_count, job_budget, pair_capacity, reserved; } limits;
+void main()
+{
+    uint caster_index = gl_GlobalInvocationID.x;
+    uint job_index = gl_GlobalInvocationID.y;
+    if (caster_index >= limits.caster_count || job_index >= min(work[0], limits.job_budget)) return;
+    uint job = 4u + job_index * 4u;
+    uint slot = work[job], index = work[job + 1u];
+    uint axis = params.layout_params.x, per_level = axis * axis;
+    uint level = index / per_level, within = index % per_level;
+    if (level >= params.layout_params.y) return;
+    vec2 page_min = params.level[level].xy + vec2(within % axis, within / axis) * (params.level[level].z / float(axis));
+    vec2 page_max = page_min + vec2(params.level[level].z / float(axis));
+    Caster caster = casters[caster_index];
+    if (any(lessThan(caster.maximum.xy, page_min)) || any(greaterThan(caster.minimum.xy, page_max)) ||
+        caster.maximum.z < params.zrange.x || caster.minimum.z > params.zrange.y) return;
+    uint pair = atomicAdd(pairs[0], 1u);
+    if (pair >= limits.pair_capacity) { atomicAdd(pairs[1], 1u); atomicOr(work[1], 1u); return; }
+    pairs[4u + pair * 2u] = caster_index;
+    pairs[5u + pair * 2u] = slot;
+}

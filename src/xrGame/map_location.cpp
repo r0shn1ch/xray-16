@@ -27,6 +27,7 @@
 #include "GametaskManager.h"
 #include "ActorHelmet.h"
 #include "Inventory.h"
+#include "map_location_serialization.h"
 
 CMapLocation::CMapLocation(pcstr type, u16 object_id)
     : m_objectID(object_id),
@@ -37,7 +38,8 @@ CMapLocation::CMapLocation(pcstr type, u16 object_id)
 
     LoadSpot(type);
     DisablePointer();
-    EnableSpot();
+    if (m_level_spot || m_minimap_spot || m_complex_spot)
+        EnableSpot();
 
     if (!IsGameTypeSingle())
         m_cached.m_LevelName = Level().name();
@@ -67,7 +69,24 @@ void CMapLocation::LoadSpot(pcstr type)
 
     string512 path_base, path;
     xr_strcpy(path_base, type);
-    R_ASSERT3(uiXml.NavigateToNode(path_base, 0), "XML node not found in file map_spots.xml", path_base);
+    if (!uiXml.NavigateToNode(path_base, 0))
+    {
+        Msg("! Map spot '%s' is missing from map_spots.xml; hiding this marker", path_base);
+        delete_data(m_level_spot);
+        delete_data(m_level_spot_pointer);
+        delete_data(m_minimap_spot);
+        delete_data(m_minimap_spot_pointer);
+        delete_data(m_complex_spot);
+        delete_data(m_complex_spot_pointer);
+        delete_data(m_level_map_spot_border);
+        delete_data(m_mini_map_spot_border);
+        delete_data(m_complex_spot_border);
+        delete_data(m_level_map_spot_border_na);
+        delete_data(m_mini_map_spot_border_na);
+        delete_data(m_complex_spot_border_na);
+        DisableSpot();
+        return;
+    }
     pcstr s = uiXml.ReadAttrib(path_base, 0, "hint", "no hint");
     SetHint(s);
 
@@ -622,6 +641,8 @@ void CMapLocation::UpdateLevelMap(CUICustomMap* map)
 void CMapLocation::HighlightSpot(bool state, const Fcolor& color)
 {
     CUIStatic* st = smart_cast<CUIStatic*>(m_level_spot);
+    if (!st)
+        return;
     if (state)
     {
         u32 clr = color_rgba((u32)color.r, (u32)color.g, (u32)color.b, (u32)color.a);
@@ -643,13 +664,28 @@ void CMapLocation::save(IWriter& stream)
 
 void CMapLocation::load(IReader& stream)
 {
-    xr_string str;
-    stream.r_stringZ(str);
-    SetHint(str.c_str());
-    m_flags.flags = stream.r_u32();
+    if (!load_checked(stream))
+        Msg("! Invalid map-location data in save; marker state was not loaded");
+}
 
-    stream.r_stringZ(str);
-    m_owner_task_id = str.c_str();
+bool CMapLocation::load_checked(IReader& stream)
+{
+    const intptr_t remaining = stream.elapsed();
+    if (remaining <= 0)
+        return false;
+
+    map_location_serialization::StateRecord state{};
+    if (!map_location_serialization::parse_state(static_cast<const char*>(stream.pointer()),
+            static_cast<size_t>(remaining), state))
+        return false;
+
+    const xr_string hint(state.hint.data, state.hint.size);
+    const xr_string owner_task_id(state.owner_task_id.data, state.owner_task_id.size);
+    SetHint(hint.c_str());
+    m_flags.flags = state.flags;
+    m_owner_task_id = owner_task_id.c_str();
+    stream.advance(state.consumed);
+    return true;
 }
 
 void CMapLocation::SetHint(const shared_str& hint)
@@ -767,7 +803,7 @@ CMapSpot* CMapLocation::GetSpotBorder(CMapSpot* sp)
 
 Fvector2 CMapLocation::SpotSize()
 {
-    return m_level_spot->GetWndSize();
+    return m_level_spot ? m_level_spot->GetWndSize() : Fvector2{};
 }
 
 CRelationMapLocation::CRelationMapLocation(const shared_str& type, u16 object_id, u16 pInvOwnerActorID)
@@ -879,7 +915,7 @@ bool CRelationMapLocation::Update()
             vis_res = false;
     }
 
-    if (m_b_visible == false && vis_res == true)
+    if (m_b_visible == false && vis_res == true && m_minimap_spot)
         m_minimap_spot->ResetXformAnimation();
 
     m_b_visible = vis_res;

@@ -180,9 +180,7 @@ void CSE_PHSkeleton::STATE_Read(NET_Packet& tNetPacket, u16 size)
     tNetPacket.r_u8(_flags.flags);
     tNetPacket.r_u16(source_id);
     if (_flags.test(flSavedData))
-    {
         data_load(tNetPacket);
-    }
 }
 
 void CSE_PHSkeleton::STATE_Write(NET_Packet& tNetPacket)
@@ -201,13 +199,19 @@ void CSE_PHSkeleton::STATE_Write(NET_Packet& tNetPacket)
 
 void CSE_PHSkeleton::data_load(NET_Packet& tNetPacket)
 {
-    saved_bones.net_Load(tNetPacket);
+    CSE_Abstract* abstract = cast_abstract();
+    data_load(tNetPacket, abstract && abstract->m_wVersion >= 129);
+}
+
+void CSE_PHSkeleton::data_load(NET_Packet& tNetPacket, bool load_extended_visibility)
+{
+    saved_bones.net_Load(tNetPacket, load_extended_visibility);
     _flags.set(flSavedData, true);
 }
 
 void CSE_PHSkeleton::data_save(NET_Packet& tNetPacket)
 {
-    saved_bones.net_Save(tNetPacket);
+    saved_bones.net_Save(tNetPacket, true);
     //	this comment is added by Dima (correct me if this is wrong)
     //  if we call 2 times in a row StateWrite then we get different results
     //	WHY???
@@ -217,7 +221,7 @@ void CSE_PHSkeleton::data_save(NET_Packet& tNetPacket)
 void CSE_PHSkeleton::load(NET_Packet& tNetPacket)
 {
     _flags.assign(tNetPacket.r_u8());
-    data_load(tNetPacket);
+    data_load(tNetPacket, true);
     source_id = u16(-1); //.
 }
 void CSE_PHSkeleton::UPDATE_Write(NET_Packet& tNetPacket) {}

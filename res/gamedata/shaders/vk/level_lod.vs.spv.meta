@@ -1,0 +1,7 @@
+XRAY_VULKAN_SHADER_METADATA_V1
+source=vk/lod.vs
+stage=vs
+entry=main
+defines=
+source-fingerprint=a278bd3b4977c2b1
+spirv-fingerprint=fed33f23c4506c03

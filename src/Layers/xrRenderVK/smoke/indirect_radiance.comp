@@ -1,0 +1,132 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#ifdef WITH_PROJECTION
+#extension GL_EXT_nonuniform_qualifier : require
+layout(set = 1, binding = 0) uniform sampler2D projection_textures[];
+#endif
+#include "pbr_material.glsl"
+#include "world_radiance_cache.glsl"
+layout(local_size_x = 64) in;
+const uint RAY_SURFACE_PBR = 1u;
+const uint RAY_SURFACE_EMISSIVE = 2u;
+struct Surface {
+    vec4 position_valid; vec4 normal; vec2 uv;
+    uint material_id; uint texture_slot; vec4 albedo; vec4 pbr; vec4 geometric_normal;
+};
+struct Ray { vec4 origin_min; vec4 direction_max; };
+struct Hit {
+    uint found; float distance; uint instance; uint geometry;
+    uint primitive; uint material_id; vec2 barycentric;
+};
+struct LocalLight { vec4 position_range; vec4 direction_cone; vec4 color_type; vec4 spot_right; uvec4 projection; };
+layout(set = 0, binding = 0, std430) readonly buffer PrimaryRays { Ray primary[]; };
+layout(set = 0, binding = 1, std430) readonly buffer Surfaces { Surface surfaces[]; };
+layout(set = 0, binding = 2, std430) readonly buffer SunRays { Ray sun_rays[]; };
+layout(set = 0, binding = 3, std430) readonly buffer SunHits { Hit sun_hits[]; };
+layout(set = 0, binding = 4, std430) writeonly buffer Radiance { vec4 radiance[]; };
+layout(set = 0, binding = 5, std430) readonly buffer LocalLights { LocalLight local_lights[]; };
+#ifndef NO_LOCAL_SHADOW
+layout(set = 0, binding = 6, std430) readonly buffer LocalHits { Hit local_hits[]; };
+#endif
+layout(push_constant) uniform Parameters {
+    vec4 sky; vec4 sun; uvec4 dimensions;
+} parameters;
+#include "indirect_light_selection.glsl"
+void main()
+{
+    uint width = parameters.dimensions.y * 64u;
+    uint count = parameters.dimensions.x;
+    if (count == 0u || width == 0u || gl_GlobalInvocationID.y > (count - 1u) / width) return;
+    uint row = gl_GlobalInvocationID.y * width;
+    if (gl_GlobalInvocationID.x >= count - row) return;
+    uint index = row + gl_GlobalInvocationID.x;
+    Ray ray = primary[index];
+    vec3 value = vec3(0.0);
+    if (ray.direction_max.w > ray.origin_min.w)
+    {
+        Surface surface = surfaces[index];
+        if (surface.position_valid.w == 0.0)
+            value = max(parameters.sky.rgb, vec3(0.0));
+        else if (surface.position_valid.w > 0.0)
+        {
+            Ray sunlight = sun_rays[index];
+            float visible = sunlight.direction_max.w > sunlight.origin_min.w && sun_hits[index].found == 0u ? 1.0 : 0.0;
+            float cosine = max(dot(surface.normal.xyz, sunlight.direction_max.xyz), 0.0);
+            uint material_flags = uint(max(surface.pbr.w, 0.0) + 0.5);
+            bool is_pbr = (material_flags & RAY_SURFACE_PBR) != 0u;
+            bool is_emissive = (material_flags & RAY_SURFACE_EMISSIVE) != 0u;
+            vec3 albedo = max(surface.albedo.rgb, vec3(0.0));
+            if (is_emissive) value += albedo;
+            float ray_length = length(ray.direction_max.xyz);
+            vec3 view = ray_length > 1e-6 ? -ray.direction_max.xyz / ray_length : surface.normal.xyz;
+            bool trace_indirect = parameters.sky.w > 0.0;
+            vec3 ambient_sky = trace_indirect ? vec3(0.0) : max(parameters.sky.rgb, vec3(0.0));
+            vec3 irradiance = ambient_sky;
+            vec3 pbr_lighting = vec3(0.0);
+            if (is_pbr)
+                pbr_lighting += pbr_direct(albedo, surface.pbr.x, surface.pbr.y, surface.normal.xyz,
+                    view, sunlight.direction_max.xyz) * max(parameters.sun.rgb, vec3(0.0)) * visible;
+            else
+                irradiance += max(parameters.sun.rgb, vec3(0.0)) * (cosine * visible);
+            uint light_count = min(parameters.dimensions.z, uint(local_lights.length()));
+            uint selected; float multiplier;
+            if (select_indirect_light(surface, index, parameters.dimensions.w, light_count, selected, multiplier))
+            {
+                LocalLight light = local_lights[selected];
+                vec3 delta = surface.position_valid.xyz - light.position_range.xyz;
+                float distance_squared = dot(delta, delta);
+                float range_squared = light.position_range.w * light.position_range.w;
+                if (distance_squared > 1e-10 && distance_squared < range_squared)
+                {
+                    vec3 from_light = delta * inversesqrt(distance_squared);
+                    float attenuation = max(1.0 - distance_squared / range_squared, 0.0);
+                    if (mod(light.color_type.w, 2.0) > 0.5)
+                        attenuation *= smoothstep(light.direction_cone.w, min(1.0, light.direction_cone.w + 0.05),
+                            dot(from_light, light.direction_cone.xyz));
+#ifdef WITH_PROJECTION
+                    if (light.projection.x != 0xffffffffu && mod(light.color_type.w, 2.0) > 0.5)
+                    {
+                        vec3 direction = normalize(light.direction_cone.xyz);
+                        vec3 right = normalize(light.spot_right.xyz - direction * dot(light.spot_right.xyz, direction));
+                        vec3 up = cross(direction, right);
+                        float z = dot(delta, direction);
+                        vec2 uv = vec2(dot(delta, right), -dot(delta, up)) /
+                            max(z * light.spot_right.w, 1e-6) * .5 + .5;
+                        if (z <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
+                            attenuation = 0.0;
+                        else
+                            attenuation *= textureLod(projection_textures[nonuniformEXT(light.projection.x)], uv, 0.0).r;
+                    }
+#endif
+                    float visibility = 1.0;
+#ifndef NO_LOCAL_SHADOW
+                    visibility = light.color_type.w < 2.0 || local_hits[index].found == 0u ? 1.0 : 0.0;
+#endif
+                    vec3 incident = max(light.color_type.rgb, vec3(0.0)) * attenuation * visibility * multiplier;
+                    if (is_pbr)
+                        pbr_lighting += pbr_direct(albedo, surface.pbr.x, surface.pbr.y,
+                            surface.normal.xyz, view, -from_light) * incident;
+                    else
+                        irradiance += incident * max(dot(surface.normal.xyz, -from_light), 0.0);
+                }
+            }
+            // The sky input is a uniform environment approximation. Include its
+            // specular response as well as diffuse so metallic secondary hits
+            // do not incorrectly become black in indirect skylight.
+            vec3 environment_specular = ambient_sky * surface.pbr.z *
+                pbr_environment_brdf(albedo, surface.pbr.x, surface.pbr.y, max(dot(surface.normal.xyz, view), 0.0));
+            value += is_pbr ? albedo * (1.0 - surface.pbr.x) * surface.pbr.z * irradiance * 0.31830988618 +
+                environment_specular + pbr_lighting :
+                albedo * irradiance * 0.31830988618;
+            if (!trace_indirect)
+            {
+                vec3 cached_radiance = world_cache_sample(surface.position_valid.xyz, surface.normal.xyz,
+                    surface.position_valid.xyz, parameters.dimensions.w);
+                float diffuse_weight = is_pbr ? max(1.0 - surface.pbr.x, 0.0) *
+                    clamp(surface.pbr.z, 0.0, 1.0) : 1.0;
+                value += albedo * cached_radiance * diffuse_weight * (0.35 * 0.31830988618);
+            }
+        }
+    }
+    radiance[index] = vec4(value, 1.0);
+}
