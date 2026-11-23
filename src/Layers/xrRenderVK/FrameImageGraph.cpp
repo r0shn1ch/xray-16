@@ -1159,10 +1159,20 @@ bool FrameImageGraph::compile_resource_lifetimes(ResourceLifetimes& lifetimes, s
         execution_indices[compiled.pass_order[index]] = index;
     compiled.images.reserve(m_images.size());
     for (const auto& image : m_images)
-        compiled.images.push_back(framegraph::resource_lifetime(image.versions, execution_indices));
+    {
+        framegraph::ResourceLifetime lifetime;
+        if (!framegraph::resource_lifetime(image.versions, execution_indices, lifetime))
+        { error = "Frame image graph: resource lifetime references an invalid pass"; return false; }
+        compiled.images.push_back(lifetime);
+    }
     compiled.buffers.reserve(m_buffers.size());
     for (const auto& buffer : m_buffers)
-        compiled.buffers.push_back(framegraph::resource_lifetime(buffer.versions, execution_indices));
+    {
+        framegraph::ResourceLifetime lifetime;
+        if (!framegraph::resource_lifetime(buffer.versions, execution_indices, lifetime))
+        { error = "Frame image graph: resource lifetime references an invalid pass"; return false; }
+        compiled.buffers.push_back(lifetime);
+    }
     lifetimes = std::move(compiled);
     return true;
 }

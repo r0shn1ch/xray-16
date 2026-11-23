@@ -73,18 +73,28 @@ struct ResourceLifetime
     }
 };
 
-inline ResourceLifetime resource_lifetime(const std::vector<ResourceVersion>& versions,
-    const std::vector<uint32_t>& execution_indices)
+inline bool resource_lifetime(const std::vector<ResourceVersion>& versions,
+    const std::vector<uint32_t>& execution_indices, ResourceLifetime& lifetime)
 {
-    ResourceLifetime lifetime;
+    ResourceLifetime compiled;
     for (const auto& version : versions)
     {
         if (version.producer != INVALID_INDEX)
-            lifetime.record_use(execution_indices[version.producer]);
+        {
+            if (version.producer >= execution_indices.size() ||
+                execution_indices[version.producer] == INVALID_INDEX)
+                return false;
+            compiled.record_use(execution_indices[version.producer]);
+        }
         for (uint32_t reader : version.readers)
-            lifetime.record_use(execution_indices[reader]);
+        {
+            if (reader >= execution_indices.size() || execution_indices[reader] == INVALID_INDEX)
+                return false;
+            compiled.record_use(execution_indices[reader]);
+        }
     }
-    return lifetime;
+    lifetime = compiled;
+    return true;
 }
 
 template <typename AddEdge>
