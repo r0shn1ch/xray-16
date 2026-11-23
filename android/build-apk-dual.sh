@@ -26,7 +26,18 @@ sdl_dir=${SDL2_ANDROID_HOME:-}
 gradle_bin=${GRADLE_BIN:-}
 android_lto=${XRAY_ANDROID_ENABLE_LTO:-OFF}
 arm64_only=${XRAY_ANDROID_ARM64_ONLY:-OFF}
+gradle_variant=${XRAY_ANDROID_GRADLE_VARIANT:-debug}
+skip_vital_lint=${XRAY_ANDROID_SKIP_VITAL_LINT:-OFF}
 native_config=${XRAY_ANDROID_NATIVE_CONFIG:-ReleaseMasterGold}
+gradle_task_variant=$(printf '%s' "$gradle_variant" | awk '{ print toupper(substr($0, 1, 1)) substr($0, 2) }')
+case "$gradle_variant" in
+    debug|release) ;;
+    *) echo "XRAY_ANDROID_GRADLE_VARIANT must be debug or release" >&2; exit 2 ;;
+esac
+case "$skip_vital_lint" in
+    ON|OFF) ;;
+    *) echo "XRAY_ANDROID_SKIP_VITAL_LINT must be ON or OFF" >&2; exit 2 ;;
+esac
 case "$native_config" in
     Debug|ReleaseMasterGold) ;;
     *) echo "XRAY_ANDROID_NATIVE_CONFIG must be Debug or ReleaseMasterGold" >&2; exit 2 ;;
@@ -164,7 +175,7 @@ else
 fi
 
 # A reusable SDL tree may contain Gradle task history and outputs from an
-# earlier OpenXRay package. Never let those copied files make assembleDebug
+# earlier OpenXRay package. Never let those copied files make Gradle package
 # consider a stale APK up to date after the launcher manifest or native engine
 # changed.
 for stale_path in \
@@ -290,14 +301,21 @@ chmod +x "$project_dir/gradlew"
     if [ "${XRAY_ANDROID_GRADLE_OFFLINE:-OFF}" = "ON" ]; then
         set -- --offline
     fi
+    if [ "$gradle_variant" = release ] && [ "$skip_vital_lint" = ON ]; then
+        set -- "$@" -x lintVitalAnalyzeRelease -x lintVitalReportRelease -x lintVitalRelease
+    fi
     if [ -n "$gradle_bin" ]; then
-        "$gradle_bin" "$@" --no-daemon --no-build-cache clean assembleDebug
+        "$gradle_bin" "$@" --no-daemon --no-build-cache clean "assemble$gradle_task_variant"
     else
-        ./gradlew "$@" --no-daemon --no-build-cache clean assembleDebug
+        ./gradlew "$@" --no-daemon --no-build-cache clean "assemble$gradle_task_variant"
     fi
 )
 
-apk="$project_dir/app/build/outputs/apk/debug/app-debug.apk"
+if [ "$gradle_variant" = release ]; then
+    apk="$project_dir/app/build/outputs/apk/release/app-release-unsigned.apk"
+else
+    apk="$project_dir/app/build/outputs/apk/debug/app-debug.apk"
+fi
 python3 "$repo_dir/tools/check_vulkan_shader_assets.py" \
     --shader-root "$asset_root/gamedata/shaders" \
     --manifest "$repo_dir/res/gamedata/shaders/vk/opaque-variants.json" \
@@ -323,9 +341,9 @@ if ! cmp -s "$script_dir/PORT_VERSION" "$project_dir/android-version.txt"; then
     exit 1
 fi
 if [ "$arm64_only" = ON ]; then
-    output_apk="$repo_dir/build/openxray-arm64-launcher-v$port_version-debug.apk"
+    output_apk="$repo_dir/build/openxray-arm64-launcher-v$port_version-$gradle_variant.apk"
 else
-    output_apk="$repo_dir/build/openxray-universal-launcher-v$port_version-debug.apk"
+    output_apk="$repo_dir/build/openxray-universal-launcher-v$port_version-$gradle_variant.apk"
 fi
 
 # AGP 8.1 aligns uncompressed native-library ZIP entries to 4 KiB. Re-align
